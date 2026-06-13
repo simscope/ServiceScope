@@ -29,6 +29,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       address: '35 Box St, Brooklyn, NY 11222, USA',
       issue: 'Need to clean the part',
       notes: '',
+      attachments: [],
       createdAt: '2026-06-11',
     },
     {
@@ -50,6 +51,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       address: '44 west 17th street, NY, 10011',
       issue: 'Need to put on the belts on the hood',
       notes: '',
+      attachments: [],
       createdAt: '2026-06-11',
     },
     {
@@ -71,6 +73,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       address: '615 23rd St, Union City, NJ 07087, USA',
       issue: 'Vegetable Freezer not blowing cold',
       notes: '',
+      attachments: [],
       createdAt: '2026-06-10',
     },
     {
@@ -92,6 +95,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       address: '6040 South Amboy Route 35.',
       issue: 'Ice machine is not working',
       notes: '',
+      attachments: [],
       createdAt: '2026-06-09',
     },
     {
@@ -113,6 +117,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       address: '209 W 42nd Street New York, New York 10036',
       issue: 'Refrigerator has an issue',
       notes: '',
+      attachments: [],
       createdAt: '2026-06-08',
     },
     {
@@ -134,9 +139,36 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       address: '615 23rd St, Union City, NJ 07087, USA',
       issue: 'AC is not working',
       notes: '',
+      attachments: [],
       createdAt: '2026-06-07',
     },
   ];
+}
+
+function normalizeJob(job: Partial<ServiceJob>): ServiceJob {
+  return {
+    id: job.id ?? crypto.randomUUID(),
+    companyId: job.companyId ?? '',
+    jobNumber: job.jobNumber ?? '0',
+    status: job.status ?? 'New',
+    system: job.system ?? 'General',
+    clientName: job.clientName ?? '',
+    organization: job.organization ?? '',
+    phone: job.phone ?? '',
+    email: job.email ?? '',
+    address: job.address ?? '',
+    technician: job.technician ?? 'No technician',
+    assignee: job.assignee ?? job.technician ?? 'No technician',
+    serviceCallFee: job.serviceCallFee ?? '0',
+    scfPayment: job.scfPayment ?? '',
+    labor: job.labor ?? '',
+    laborPayment: job.laborPayment ?? '',
+    issue: job.issue ?? '',
+    notes: job.notes ?? '',
+    attachments: job.attachments ?? [],
+    appointment: job.appointment,
+    createdAt: job.createdAt ?? todayIso(),
+  };
 }
 
 function readJobs(): ServiceJob[] {
@@ -144,7 +176,7 @@ function readJobs(): ServiceJob[] {
   if (!saved) return [];
 
   try {
-    return JSON.parse(saved) as ServiceJob[];
+    return (JSON.parse(saved) as Partial<ServiceJob>[]).map(normalizeJob);
   } catch {
     return [];
   }
@@ -179,6 +211,7 @@ export function createServiceJob(companyId: string, form: NewServiceJobForm): Se
     scfPayment: '',
     labor: '',
     laborPayment: '',
+    attachments: [],
     createdAt: todayIso(),
   };
 }

@@ -161,6 +161,16 @@ export type ServiceJobStatus =
   | 'Warranty'
   | 'Cancelled';
 
+export type JobAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  kind: 'photo' | 'file';
+  uploadedAt: string;
+  dataUrl?: string;
+};
+
 export type ServiceJob = {
   id: string;
   companyId: string;
@@ -180,6 +190,7 @@ export type ServiceJob = {
   laborPayment: string;
   issue: string;
   notes: string;
+  attachments: JobAttachment[];
   appointment?: string;
   createdAt: string;
 };

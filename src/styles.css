@@ -586,6 +586,109 @@ button {
   gap: 10px;
 }
 
+.job-files-card {
+  display: grid;
+  gap: 12px;
+}
+
+.job-files-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-files-header h2,
+.job-files-header p {
+  margin-bottom: 0;
+}
+
+.job-files-header p {
+  color: #667269;
+  font-size: 12px;
+}
+
+.file-upload-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  border: 1px solid #bdd1ee;
+  border-radius: 8px;
+  background: #edf5ff;
+  color: #1f5da8;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.file-upload-button input {
+  display: none;
+}
+
+.file-upload-error {
+  margin-bottom: 0;
+  color: #b42318;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.job-files-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.job-file-card {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 10px;
+}
+
+.job-file-card img,
+.job-file-icon {
+  width: 74px;
+  height: 58px;
+  border-radius: 8px;
+}
+
+.job-file-card img {
+  object-fit: cover;
+}
+
+.job-file-icon {
+  display: grid;
+  place-items: center;
+  background: #fff2c9;
+  color: #6f4b00;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.job-file-card strong,
+.job-file-card span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-file-card span {
+  color: #667269;
+  font-size: 12px;
+}
+
+.job-file-card button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
 .materials-table {
   display: grid;
   grid-template-columns: 1.2fr 1fr 0.8fr 1.2fr 1fr;
@@ -5067,6 +5170,10 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .job-files-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .invoice-card {
     display: grid;
   }
@@ -5236,6 +5343,8 @@ textarea {
   .email-toolbar,
   .email-template-grid,
   .finance-toolbar,
+  .job-files-grid,
+  .job-files-header,
   .technician-payroll-grid,
   .map-toolbar,
   .all-jobs-toolbar,

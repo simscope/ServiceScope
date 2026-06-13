@@ -1338,6 +1338,7 @@ function CompanyPortal({
     laborPayment: '',
     issue: 'AC not cooling in the main office.',
     notes: '',
+    attachments: [],
     createdAt: new Date().toISOString().slice(0, 10),
   };
   const jobStatusFilters = ['ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty'];
@@ -1584,6 +1585,18 @@ function CompanyPortal({
   }, {});
   const toggleSalaryPaid = (jobNumber: string) => {
     setSalaryPaidJobs((jobs) => (jobs.includes(jobNumber) ? jobs.filter((number) => number !== jobNumber) : [...jobs, jobNumber]));
+  };
+  const paymentMethodOptions = profile.acceptedPayments.map((method) => ({
+    value: method,
+    label: paymentMethodLabels[method],
+  }));
+  const handleSaveJob = (updatedJob: JobCardData) => {
+    setJobs((currentJobs) => {
+      const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
+      saveCompanyJobs(selectedCompany.id, nextJobs);
+      return nextJobs;
+    });
+    setOpenedJob(updatedJob);
   };
   const handleCreateJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2576,8 +2589,9 @@ function CompanyPortal({
                 job={openedJob}
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
-                paymentMethods={profile.acceptedPayments.map((method) => paymentMethodLabels[method])}
+                paymentMethods={paymentMethodOptions}
                 onClose={() => setOpenedJob(null)}
+                onSave={handleSaveJob}
               />
             ) : (
               <>
@@ -2664,8 +2678,9 @@ function CompanyPortal({
                 job={openedJob}
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
-                paymentMethods={profile.acceptedPayments.map((method) => paymentMethodLabels[method])}
+                paymentMethods={paymentMethodOptions}
                 onClose={() => setOpenedJob(null)}
+                onSave={handleSaveJob}
               />
             ) : (
               <>
@@ -2820,8 +2835,9 @@ function CompanyPortal({
                 job={openedJob}
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
-                paymentMethods={profile.acceptedPayments.map((method) => paymentMethodLabels[method])}
+                paymentMethods={paymentMethodOptions}
                 onClose={() => setOpenedJob(null)}
+                onSave={handleSaveJob}
               />
             ) : (
               <>
@@ -3232,8 +3248,9 @@ function CompanyPortal({
                 job={openedJob}
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
-                paymentMethods={profile.acceptedPayments.map((method) => paymentMethodLabels[method])}
+                paymentMethods={paymentMethodOptions}
                 onClose={() => setOpenedJob(null)}
+                onSave={handleSaveJob}
               />
             ) : (
               <>
@@ -3711,8 +3728,9 @@ function CompanyPortal({
                 job={openedJob}
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
-                paymentMethods={profile.acceptedPayments.map((method) => paymentMethodLabels[method])}
+                paymentMethods={paymentMethodOptions}
                 onClose={() => setOpenedJob(null)}
+                onSave={handleSaveJob}
               />
             ) : (
               <>
