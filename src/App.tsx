@@ -95,6 +95,7 @@ import type {
   CompanyTechnicianRole,
   NewServiceJobForm,
   ServiceJob,
+  ServiceJobStatus,
 } from './types';
 
 const emptyCompany: NewCompanyForm = {
@@ -1195,6 +1196,7 @@ function CompanyPortal({
   const [jobTypeForm, setJobTypeForm] = useState<NewCompanyJobTypeForm>(emptyJobTypeForm);
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
+  const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
   const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('week');
   const [activeCalendarTech, setActiveCalendarTech] = useState('all');
@@ -1341,7 +1343,7 @@ function CompanyPortal({
     attachments: [],
     createdAt: new Date().toISOString().slice(0, 10),
   };
-  const jobStatusFilters = ['ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty'];
+  const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
   const allJobsRows = jobs;
   const allJobsGroups = Array.from(new Set(['No technician', ...allJobsRows.map((job) => job.assignee)])).map((technician) => ({
     technician,
@@ -1590,6 +1592,15 @@ function CompanyPortal({
     value: method,
     label: paymentMethodLabels[method],
   }));
+  const updateInlineJobDraft = (jobId: string, patch: Partial<ServiceJob>) => {
+    setInlineJobDrafts((drafts) => ({
+      ...drafts,
+      [jobId]: {
+        ...drafts[jobId],
+        ...patch,
+      },
+    }));
+  };
   const handleSaveJob = (updatedJob: JobCardData) => {
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
@@ -1597,6 +1608,21 @@ function CompanyPortal({
       return nextJobs;
     });
     setOpenedJob(updatedJob);
+  };
+  const handleSaveInlineJob = (job: ServiceJob) => {
+    const draft = inlineJobDrafts[job.id] ?? {};
+    const updatedJob = {
+      ...job,
+      ...draft,
+      assignee: draft.technician ?? job.technician,
+    };
+
+    handleSaveJob(updatedJob);
+    setInlineJobDrafts((drafts) => {
+      const nextDrafts = { ...drafts };
+      delete nextDrafts[job.id];
+      return nextDrafts;
+    });
   };
   const handleCreateJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -2778,10 +2804,19 @@ function CompanyPortal({
                                 <td>{job.system}</td>
                                 <td>{job.issue}</td>
                                 <td>
-                                  <input defaultValue={job.serviceCallFee} aria-label={`SCF for job ${job.jobNumber}`} />
+                                  <input
+                                    value={inlineJobDrafts[job.id]?.serviceCallFee ?? job.serviceCallFee}
+                                    onChange={(event) => updateInlineJobDraft(job.id, { serviceCallFee: event.target.value })}
+                                    aria-label={`SCF for job ${job.jobNumber}`}
+                                  />
                                 </td>
                                 <td>
-                                  <select className={!job.scfPayment ? 'needs-payment' : ''} defaultValue={job.scfPayment} aria-label={`SCF payment for job ${job.jobNumber}`}>
+                                  <select
+                                    className={!(inlineJobDrafts[job.id]?.scfPayment ?? job.scfPayment) ? 'needs-payment' : ''}
+                                    value={inlineJobDrafts[job.id]?.scfPayment ?? job.scfPayment}
+                                    onChange={(event) => updateInlineJobDraft(job.id, { scfPayment: event.target.value })}
+                                    aria-label={`SCF payment for job ${job.jobNumber}`}
+                                  >
                                     <option value="">--</option>
                                     {profile.acceptedPayments.map((method) => (
                                       <option value={method} key={method}>
@@ -2791,10 +2826,18 @@ function CompanyPortal({
                                   </select>
                                 </td>
                                 <td>
-                                  <input defaultValue={job.labor} aria-label={`Labor for job ${job.jobNumber}`} />
+                                  <input
+                                    value={inlineJobDrafts[job.id]?.labor ?? job.labor}
+                                    onChange={(event) => updateInlineJobDraft(job.id, { labor: event.target.value })}
+                                    aria-label={`Labor for job ${job.jobNumber}`}
+                                  />
                                 </td>
                                 <td>
-                                  <select defaultValue={job.laborPayment} aria-label={`Labor payment for job ${job.jobNumber}`}>
+                                  <select
+                                    value={inlineJobDrafts[job.id]?.laborPayment ?? job.laborPayment}
+                                    onChange={(event) => updateInlineJobDraft(job.id, { laborPayment: event.target.value })}
+                                    aria-label={`Labor payment for job ${job.jobNumber}`}
+                                  >
                                     <option value="">--</option>
                                     {profile.acceptedPayments.map((method) => (
                                       <option value={method} key={method}>
@@ -2804,7 +2847,11 @@ function CompanyPortal({
                                   </select>
                                 </td>
                                 <td>
-                                  <select defaultValue={job.status} aria-label={`Status for job ${job.jobNumber}`}>
+                                  <select
+                                    value={inlineJobDrafts[job.id]?.status ?? job.status}
+                                    onChange={(event) => updateInlineJobDraft(job.id, { status: event.target.value as ServiceJobStatus })}
+                                    aria-label={`Status for job ${job.jobNumber}`}
+                                  >
                                     {jobStatusFilters.map((status) => (
                                       <option value={status} key={status}>
                                         {status}
@@ -2813,8 +2860,8 @@ function CompanyPortal({
                                   </select>
                                 </td>
                                 <td>
-                                  <button className="save-row-button" type="button" aria-label={`Save job ${job.jobNumber}`}>
-                                    Save
+                                  <button className="save-row-button" type="button" onClick={() => handleSaveInlineJob(job)} aria-label={`Save job ${job.jobNumber}`}>
+                                    {inlineJobDrafts[job.id] ? 'Save' : 'Saved'}
                                   </button>
                                 </td>
                               </tr>
