@@ -149,6 +149,18 @@ export type CompanyJobType = {
 
 export type NewCompanyJobTypeForm = Pick<CompanyJobType, 'name' | 'jobNumberPrefix' | 'defaultDurationMinutes' | 'defaultPriority' | 'requiresParts'>;
 
+export type MaterialStatus = 'Needed' | 'Ordered' | 'Received' | 'Installed' | 'Returned';
+
+export type MaterialRow = {
+  id: string;
+  jobNumber: string;
+  name: string;
+  quantity: number;
+  price: number;
+  supplier: string;
+  status: MaterialStatus;
+};
+
 export type ServiceJobStatus =
   | 'New'
   | 'ReCall'

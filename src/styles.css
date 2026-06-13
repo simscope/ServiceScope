@@ -586,6 +586,35 @@ button {
   gap: 10px;
 }
 
+.job-material-editor {
+  display: grid;
+  gap: 8px;
+}
+
+.job-material-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1.2fr) 90px 70px minmax(140px, 1fr) 130px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.job-material-head {
+  min-height: 34px;
+  border-radius: 8px;
+  background: #f6f8fa;
+  padding: 0 10px;
+  color: #17201b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.job-material-row input,
+.job-material-row select {
+  min-width: 0;
+  background: #fbfcfd;
+  font-size: 13px;
+}
+
 .job-files-card {
   display: grid;
   gap: 12px;
@@ -5170,6 +5199,15 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .job-material-row {
+    grid-template-columns: minmax(160px, 1fr) 90px 70px minmax(140px, 1fr);
+  }
+
+  .job-material-row > *:nth-child(5),
+  .job-material-row > *:nth-child(6) {
+    grid-column: span 2;
+  }
+
   .job-files-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -5336,6 +5374,7 @@ textarea {
   .portal-ticket-row,
   .job-card-row,
   .job-detail-form label,
+  .job-material-row,
   .materials-table,
   .materials-toolbar,
   .task-create-bar,

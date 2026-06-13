@@ -93,6 +93,7 @@ import type {
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
   CompanyTechnicianRole,
+  MaterialRow,
   NewServiceJobForm,
   ServiceJob,
   ServiceJobStatus,
@@ -219,16 +220,6 @@ const auditCategoryLabels: Record<AuditEventCategory, string> = {
 
 type AppPage = 'dashboard' | 'companies' | 'billing' | 'access' | 'audit' | 'support' | 'companyLogin' | 'portal';
 type ClientPage = 'onboarding' | 'jobs' | 'allJobs' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'portal';
-
-type MaterialRow = {
-  id: string;
-  jobNumber: string;
-  name: string;
-  quantity: number;
-  price: number;
-  supplier: string;
-  status: 'Needed' | 'Ordered' | 'Received' | 'Installed' | 'Returned';
-};
 
 type TaskPriority = 'Low' | 'Normal' | 'Urgent';
 type TaskStatus = 'To do' | 'In progress' | 'Done';
@@ -1507,6 +1498,23 @@ function CompanyPortal({
     setEditingMaterialsJobNumber('');
     setMaterialDraftRows([]);
   };
+  const saveJobMaterials = (jobNumber: string, rows: MaterialRow[]) => {
+    const cleanRows = rows
+      .filter((row) => row.name.trim() || row.supplier.trim())
+      .map((row) => ({
+        ...row,
+        jobNumber,
+        name: row.name.trim(),
+        supplier: row.supplier.trim(),
+        quantity: Math.max(1, Number(row.quantity) || 1),
+        price: Math.max(0, Number(row.price) || 0),
+      }));
+
+    setMaterials((currentRows) => [
+      ...currentRows.filter((row) => row.jobNumber !== jobNumber),
+      ...cleanRows,
+    ]);
+  };
   const financeRows = allJobsRows.map((job) => {
     const materialsCost = materials
       .filter((material) => material.jobNumber === job.jobNumber)
@@ -2616,8 +2624,10 @@ function CompanyPortal({
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
+                materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
+                onSaveMaterials={saveJobMaterials}
               />
             ) : (
               <>
@@ -2705,8 +2715,10 @@ function CompanyPortal({
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
+                materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
+                onSaveMaterials={saveJobMaterials}
               />
             ) : (
               <>
@@ -2883,8 +2895,10 @@ function CompanyPortal({
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
+                materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
+                onSaveMaterials={saveJobMaterials}
               />
             ) : (
               <>
@@ -3296,8 +3310,10 @@ function CompanyPortal({
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
+                materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
+                onSaveMaterials={saveJobMaterials}
               />
             ) : (
               <>
@@ -3776,8 +3792,10 @@ function CompanyPortal({
                 technicians={profile.technicians.map((technician) => technician.name)}
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
+                materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
+                onSaveMaterials={saveJobMaterials}
               />
             ) : (
               <>

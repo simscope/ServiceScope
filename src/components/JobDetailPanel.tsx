@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react';
-import type { JobAttachment, ServiceJobStatus } from '../types';
+import type { JobAttachment, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
 
 type PaymentMethodOption = {
@@ -12,8 +12,10 @@ type JobDetailPanelProps = {
   technicians: string[];
   systems: string[];
   paymentMethods: PaymentMethodOption[];
+  materials: MaterialRow[];
   onClose: () => void;
   onSave: (job: JobCardData) => void;
+  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
 };
 
 const jobStatuses: ServiceJobStatus[] = [
@@ -31,6 +33,7 @@ const jobStatuses: ServiceJobStatus[] = [
 
 const acceptedFileTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
 const acceptedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.pdf'];
+const materialStatuses: MaterialStatus[] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
 
 function formatFileSize(sizeBytes: number) {
   if (sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
@@ -55,9 +58,23 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
-export function JobDetailPanel({ job, technicians, systems, paymentMethods, onClose, onSave }: JobDetailPanelProps) {
+function emptyMaterialRow(jobNumber: string): MaterialRow {
+  return {
+    id: crypto.randomUUID(),
+    jobNumber,
+    name: '',
+    quantity: 1,
+    price: 0,
+    supplier: '',
+    status: 'Needed',
+  };
+}
+
+export function JobDetailPanel({ job, technicians, systems, paymentMethods, materials, onClose, onSave, onSaveMaterials }: JobDetailPanelProps) {
   const [draft, setDraft] = useState<JobCardData>(job);
+  const [materialDrafts, setMaterialDrafts] = useState<MaterialRow[]>(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
   const [saved, setSaved] = useState(false);
+  const [materialsSaved, setMaterialsSaved] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const jobNumberParts = draft.jobNumber.split('-');
   const jobNumber = jobNumberParts[jobNumberParts.length - 1] ?? draft.jobNumber;
@@ -65,9 +82,11 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, onCl
 
   useEffect(() => {
     setDraft(job);
+    setMaterialDrafts(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
     setSaved(false);
+    setMaterialsSaved(false);
     setUploadError('');
-  }, [job]);
+  }, [job, materials]);
 
   function updateDraft(patch: Partial<JobCardData>) {
     setSaved(false);
@@ -118,6 +137,26 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, onCl
 
   function removeAttachment(attachmentId: string) {
     updateDraft({ attachments: (draft.attachments ?? []).filter((attachment) => attachment.id !== attachmentId) });
+  }
+
+  function updateMaterial(rowId: string, patch: Partial<MaterialRow>) {
+    setMaterialsSaved(false);
+    setMaterialDrafts((rows) => rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  }
+
+  function addMaterial() {
+    setMaterialsSaved(false);
+    setMaterialDrafts((rows) => [...rows, emptyMaterialRow(draft.jobNumber)]);
+  }
+
+  function removeMaterial(rowId: string) {
+    setMaterialsSaved(false);
+    setMaterialDrafts((rows) => rows.filter((row) => row.id !== rowId));
+  }
+
+  function saveMaterials() {
+    onSaveMaterials(draft.jobNumber, materialDrafts);
+    setMaterialsSaved(true);
   }
 
   return (
@@ -287,20 +326,42 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, onCl
 
       <section className="job-detail-card materials-card">
         <h2>Materials</h2>
-        <div className="materials-table">
-          <span>Name</span>
-          <span>Price</span>
-          <span>Qty</span>
-          <span>Supplier</span>
-          <span>Actions</span>
+        <div className="job-material-editor">
+          <div className="job-material-row job-material-head">
+            <span>Name</span>
+            <span>Price</span>
+            <span>Qty</span>
+            <span>Supplier</span>
+            <span>Status</span>
+            <span>Actions</span>
+          </div>
+          {materialDrafts.map((material) => (
+            <div className="job-material-row" key={material.id}>
+              <input value={material.name} onChange={(event) => updateMaterial(material.id, { name: event.target.value })} placeholder="Material name" />
+              <input type="number" min={0} step={1} value={material.price} onChange={(event) => updateMaterial(material.id, { price: Number(event.target.value) || 0 })} placeholder="0" />
+              <input type="number" min={1} step={1} value={material.quantity} onChange={(event) => updateMaterial(material.id, { quantity: Number(event.target.value) || 1 })} placeholder="1" />
+              <input value={material.supplier} onChange={(event) => updateMaterial(material.id, { supplier: event.target.value })} placeholder="Supplier" />
+              <select value={material.status} onChange={(event) => updateMaterial(material.id, { status: event.target.value as MaterialStatus })}>
+                {materialStatuses.map((status) => (
+                  <option value={status} key={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+              <button className="secondary-button compact" type="button" onClick={() => removeMaterial(material.id)}>
+                Remove
+              </button>
+            </div>
+          ))}
         </div>
         <div className="job-detail-actions">
-          <button className="secondary-button compact" type="button">
+          <button className="secondary-button compact" type="button" onClick={addMaterial}>
             + Add
           </button>
-          <button className="primary-button" type="button">
+          <button className="primary-button" type="button" onClick={saveMaterials}>
             Save materials
           </button>
+          <span>{materialsSaved ? 'Saved' : 'Material changes stay here until Save materials'}</span>
         </div>
       </section>
 
@@ -331,7 +392,7 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, onCl
               )}
               <div>
                 <strong>{attachment.name}</strong>
-                <span>{attachment.kind === 'photo' ? 'Photo' : 'File'} · {formatFileSize(attachment.sizeBytes)}</span>
+                <span>{attachment.kind === 'photo' ? 'Photo' : 'File'} - {formatFileSize(attachment.sizeBytes)}</span>
               </div>
               <button className="secondary-button compact" type="button" onClick={() => removeAttachment(attachment.id)}>
                 Remove
