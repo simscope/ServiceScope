@@ -68,6 +68,7 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
+import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
   AuditEventCategory,
@@ -92,6 +93,8 @@ import type {
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
   CompanyTechnicianRole,
+  NewServiceJobForm,
+  ServiceJob,
 } from './types';
 
 const emptyCompany: NewCompanyForm = {
@@ -1191,6 +1194,7 @@ function CompanyPortal({
   const [technicianForm, setTechnicianForm] = useState<NewCompanyTechnicianForm>(emptyTechnicianForm);
   const [jobTypeForm, setJobTypeForm] = useState<NewCompanyJobTypeForm>(emptyJobTypeForm);
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
+  const [jobs, setJobs] = useState<ServiceJob[]>([]);
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
   const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('week');
   const [activeCalendarTech, setActiveCalendarTech] = useState('all');
@@ -1247,6 +1251,13 @@ function CompanyPortal({
     fileName: '',
   });
 
+  const defaultTechnicianName = onboardingProfile?.technicians[0]?.name ?? 'No technician';
+
+  useEffect(() => {
+    if (!selectedCompany) return;
+    setJobs(listCompanyJobs(selectedCompany.id, defaultTechnicianName));
+  }, [defaultTechnicianName, selectedCompany]);
+
   useEffect(() => {
     if (!resizingJob) return undefined;
     const activeResize = resizingJob;
@@ -1300,129 +1311,41 @@ function CompanyPortal({
   const defaultJobType = profile.jobTypes.find((jobType) => jobType.name === 'HVAC') ?? profile.jobTypes[0];
   const selectedJobType = profile.jobTypes.find((jobType) => jobType.id === selectedJobTypeId) ?? defaultJobType;
   const selectedJobPrefix = profile.useJobNumberPrefixes ? selectedJobType?.jobNumberPrefix || profile.jobNumberPrefix || 'JOB' : '';
-  const nextJobNumber = String(selectedCompany.openJobs + 1).padStart(4, '0');
+  const highestJobNumber = jobs.reduce((highest, job) => {
+    const lastPart = job.jobNumber.split('-').pop() ?? job.jobNumber;
+    const numericJobNumber = Number(lastPart);
+    return Number.isFinite(numericJobNumber) ? Math.max(highest, numericJobNumber) : highest;
+  }, selectedCompany.openJobs);
+  const nextJobNumber = String(highestJobNumber + 1).padStart(4, '0');
   const sampleJobNumber = selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber;
   const sampleTechnician = profile.technicians[0]?.name ?? 'Unassigned';
   const sampleJob: JobCardData = {
+    id: 'sample-job',
+    companyId: selectedCompany.id,
     jobNumber: sampleJobNumber,
     status: 'New',
     system: selectedJobType?.name ?? 'HVAC',
     clientName: 'John Smith',
     organization: 'Sharewood Office',
     phone: '(555) 210-4420',
+    email: 'client@example.com',
+    address: '35 Box St, Brooklyn, NY 11222, USA',
     technician: sampleTechnician,
+    assignee: sampleTechnician,
     serviceCallFee: money(profile.serviceCallFee),
+    scfPayment: '',
+    labor: '',
+    laborPayment: '',
     issue: 'AC not cooling in the main office.',
+    notes: '',
+    createdAt: new Date().toISOString().slice(0, 10),
   };
   const jobStatusFilters = ['ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty'];
-  const allJobsRows: Array<JobCardData & { address: string; assignee: string; scfPayment: string; labor: string; laborPayment: string }> = [
-    {
-      jobNumber: '244',
-      status: 'Diagnosis',
-      system: 'Appliance',
-      clientName: 'Ilona',
-      organization: 'Milk and roses',
-      phone: '(908) 259-7395',
-      technician: 'No technician',
-      assignee: 'No technician',
-      serviceCallFee: '120',
-      scfPayment: '',
-      labor: '',
-      laborPayment: '',
-      address: '35 Box St, Brooklyn, NY 11222, USA',
-      issue: 'Need to clean the part',
-    },
-    {
-      jobNumber: '243',
-      status: 'Diagnosis',
-      system: 'Appliance',
-      clientName: 'Brat Carr',
-      organization: 'FYC Flash NYC',
-      phone: '(615) 390-1779',
-      technician: sampleTechnician,
-      assignee: sampleTechnician,
-      serviceCallFee: '120',
-      scfPayment: '',
-      labor: '',
-      laborPayment: '',
-      address: '44 west 17th street, NY, 10011',
-      issue: 'Need to put on the belts on the hood',
-    },
-    {
-      jobNumber: '242',
-      status: 'Diagnosis',
-      system: 'Appliance',
-      clientName: 'Ricardo',
-      organization: 'Optima care castor heal',
-      phone: '9204049203',
-      technician: sampleTechnician,
-      assignee: sampleTechnician,
-      serviceCallFee: '120',
-      scfPayment: '',
-      labor: '',
-      laborPayment: '',
-      address: '615 23rd St, Union City, NJ 07087, USA',
-      issue: 'Vegetable Freezer not blowing cold',
-    },
-    {
-      jobNumber: '240',
-      status: 'Diagnosis',
-      system: 'Appliance',
-      clientName: 'Agarwal Ashish',
-      organization: 'EXXON',
-      phone: '(201) 920-6141',
-      technician: sampleTechnician,
-      assignee: sampleTechnician,
-      serviceCallFee: '120',
-      scfPayment: '',
-      labor: '',
-      laborPayment: '',
-      address: '6040 South Amboy Route 35.',
-      issue: 'Ice machine is not working',
-    },
-    {
-      jobNumber: '239',
-      status: 'Diagnosis',
-      system: 'Appliance',
-      clientName: 'Browne',
-      organization: 'The New 42',
-      phone: '3472684268',
-      technician: sampleTechnician,
-      assignee: sampleTechnician,
-      serviceCallFee: '120',
-      scfPayment: '',
-      labor: '',
-      laborPayment: '',
-      address: '209 W 42nd Street New York, New York 10036',
-      issue: 'Refrigerator has an issue',
-    },
-    {
-      jobNumber: '238',
-      status: 'Diagnosis',
-      system: 'HVAC',
-      clientName: 'Margo',
-      organization: 'Nursing home',
-      phone: '(201) 3211496',
-      technician: sampleTechnician,
-      assignee: sampleTechnician,
-      serviceCallFee: '120',
-      scfPayment: '',
-      labor: '',
-      laborPayment: '',
-      address: '615 23rd St, Union City, NJ 07087, USA',
-      issue: 'AC is not working',
-    },
-  ];
-  const allJobsGroups = [
-    {
-      technician: 'No technician',
-      jobs: allJobsRows.filter((job) => job.assignee === 'No technician'),
-    },
-    {
-      technician: sampleTechnician,
-      jobs: allJobsRows.filter((job) => job.assignee === sampleTechnician),
-    },
-  ].filter((group) => group.jobs.length > 0);
+  const allJobsRows = jobs;
+  const allJobsGroups = Array.from(new Set(['No technician', ...allJobsRows.map((job) => job.assignee)])).map((technician) => ({
+    technician,
+    jobs: allJobsRows.filter((job) => job.assignee === technician),
+  })).filter((group) => group.jobs.length > 0);
   const technicianLocations = profile.technicians.map((technician, index) => {
     const samples = [
       { x: 42, y: 61, lat: '40.72764', lng: '-74.05667', area: 'Hoboken / Jersey City', updatedAt: '11.06.2026, 21:39:58', online: false },
@@ -1581,31 +1504,22 @@ function CompanyPortal({
     setEditingMaterialsJobNumber('');
     setMaterialDraftRows([]);
   };
-  const financeOverrides: Record<string, { labor: string; scfPayment: string; laborPayment: string; createdAt: string }> = {
-    '244': { labor: '0', scfPayment: '', laborPayment: '', createdAt: '2026-06-11' },
-    '243': { labor: '420', scfPayment: 'cash', laborPayment: 'zelle', createdAt: '2026-06-11' },
-    '242': { labor: '650', scfPayment: 'credit_card', laborPayment: '', createdAt: '2026-06-10' },
-    '240': { labor: '380', scfPayment: 'cash', laborPayment: 'cash', createdAt: '2026-06-09' },
-    '239': { labor: '280', scfPayment: '', laborPayment: 'check', createdAt: '2026-06-08' },
-    '238': { labor: '520', scfPayment: 'zelle', laborPayment: 'zelle', createdAt: '2026-06-07' },
-  };
   const financeRows = allJobsRows.map((job) => {
-    const override = financeOverrides[job.jobNumber] ?? { labor: job.labor, scfPayment: job.scfPayment, laborPayment: job.laborPayment, createdAt: '2026-06-11' };
     const materialsCost = materials
       .filter((material) => material.jobNumber === job.jobNumber)
       .reduce((sum, material) => sum + material.quantity * material.price, 0);
     const scf = Number(job.serviceCallFee || 0);
-    const labor = Number(override.labor || 0);
-    const paidScf = override.scfPayment ? scf : 0;
-    const paidLabor = override.laborPayment ? labor : 0;
+    const labor = Number(job.labor || 0);
+    const paidScf = job.scfPayment ? scf : 0;
+    const paidLabor = job.laborPayment ? labor : 0;
     const onlyScf = paidScf > 0 && paidLabor === 0;
     const salaryBase = Math.max(0, (payrollRules.includeScf ? paidScf : 0) + paidLabor - (payrollRules.deductMaterials ? materialsCost : 0));
     const salary = onlyScf ? payrollRules.scfOnlyPayout : salaryBase * (payrollRules.commissionPercent / 100);
     const paid = salaryPaidJobs.includes(job.jobNumber);
     const warnings = [
       job.assignee === 'No technician' ? 'No technician assigned' : '',
-      scf > 0 && !override.scfPayment ? 'SCF payment is missing' : '',
-      labor > 0 && !override.laborPayment ? 'Labor payment is missing' : '',
+      scf > 0 && !job.scfPayment ? 'SCF payment is missing' : '',
+      labor > 0 && !job.laborPayment ? 'Labor payment is missing' : '',
       materialsCost > paidScf + paidLabor ? 'Materials exceed collected payments' : '',
       !paid && salary === 0 ? 'No payable payroll yet' : '',
     ].filter(Boolean);
@@ -1613,10 +1527,6 @@ function CompanyPortal({
 
     return {
       ...job,
-      labor: override.labor,
-      scfPayment: override.scfPayment,
-      laborPayment: override.laborPayment,
-      createdAt: override.createdAt,
       materialsCost,
       paidScf,
       paidLabor,
@@ -1674,6 +1584,33 @@ function CompanyPortal({
   }, {});
   const toggleSalaryPaid = (jobNumber: string) => {
     setSalaryPaidJobs((jobs) => (jobs.includes(jobNumber) ? jobs.filter((number) => number !== jobNumber) : [...jobs, jobNumber]));
+  };
+  const handleCreateJob = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const rawJobNumber = String(form.get('jobNumber') ?? '').trim();
+    const technicianName = String(form.get('technician') ?? '').trim();
+    const jobForm: NewServiceJobForm = {
+      jobNumber: rawJobNumber && rawJobNumber.toLowerCase() !== 'automatic' ? rawJobNumber : sampleJobNumber,
+      system: selectedJobType?.name ?? String(form.get('system') ?? 'General'),
+      clientName: String(form.get('clientName') ?? '').trim() || 'Unknown client',
+      organization: String(form.get('organization') ?? '').trim() || 'Unknown company',
+      phone: String(form.get('phone') ?? '').trim(),
+      email: String(form.get('email') ?? '').trim(),
+      address: String(form.get('address') ?? '').trim(),
+      technician: technicianName,
+      serviceCallFee: String(form.get('serviceCallFee') ?? profile.serviceCallFee).trim() || String(profile.serviceCallFee),
+      issue: String(form.get('issue') ?? '').trim() || 'Service request',
+      notes: String(form.get('notes') ?? '').trim(),
+    };
+    const createdJob = createServiceJob(selectedCompany.id, jobForm);
+
+    setJobs((currentJobs) => {
+      const nextJobs = [createdJob, ...currentJobs];
+      saveCompanyJobs(selectedCompany.id, nextJobs);
+      return nextJobs;
+    });
+    setOpenedJob(createdJob);
   };
   const librarySystems = Array.from(new Set([...profile.jobTypes.map((jobType) => jobType.name), ...libraryDocuments.map((document) => document.system)])).filter(Boolean);
   const filteredLibraryDocuments = libraryDocuments.filter((document) => {
@@ -2645,26 +2582,26 @@ function CompanyPortal({
             ) : (
               <>
                 <h1>Create Job</h1>
-                <form className="job-form">
+                <form className="job-form" onSubmit={handleCreateJob}>
                   <label>
                     Job number
-                    <input defaultValue="Automatic" placeholder={selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber} />
+                    <input name="jobNumber" defaultValue="Automatic" placeholder={selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber} />
                   </label>
                   <label>
                     Company
-                    <input placeholder="Organization / Company" />
+                    <input name="organization" placeholder="Organization / Company" />
                   </label>
                   <label>
                     Issue description
-                    <input placeholder="Describe the issue" />
+                    <input name="issue" placeholder="Describe the issue" />
                   </label>
                   <label>
                     Client name
-                    <input placeholder="Client name" />
+                    <input name="clientName" placeholder="Client name" />
                   </label>
                   <label>
                     System
-                    <select value={selectedJobType?.id ?? ''} onChange={(event) => setSelectedJobTypeId(event.target.value)} disabled={profile.jobTypes.length === 0}>
+                    <select name="system" value={selectedJobType?.id ?? ''} onChange={(event) => setSelectedJobTypeId(event.target.value)} disabled={profile.jobTypes.length === 0}>
                       {profile.jobTypes.length === 0 ? <option value="">Configure professions in onboarding</option> : null}
                       {profile.jobTypes.map((jobType) => (
                         <option value={jobType.id} key={jobType.id}>
@@ -2675,22 +2612,22 @@ function CompanyPortal({
                   </label>
                   <label>
                     Phone
-                    <input placeholder="Phone" />
+                    <input name="phone" placeholder="Phone" />
                   </label>
                   <label>
                     SCF ($)
-                    <input type="number" min={0} step={5} defaultValue={profile.serviceCallFee} />
+                    <input name="serviceCallFee" type="number" min={0} step={5} defaultValue={profile.serviceCallFee} />
                   </label>
                   <label>
                     Email
-                    <input type="email" placeholder="Email" />
+                    <input name="email" type="email" placeholder="Email" />
                   </label>
                   <label>
                     Select technician
-                    <select defaultValue="">
+                    <select name="technician" defaultValue="">
                       <option value="">--</option>
                       {profile.technicians.map((technician) => (
-                        <option value={technician.id} key={technician.id}>
+                        <option value={technician.name} key={technician.id}>
                           {technician.name}
                         </option>
                       ))}
@@ -2698,14 +2635,14 @@ function CompanyPortal({
                   </label>
                   <label>
                     Address
-                    <input placeholder="Address" />
+                    <input name="address" placeholder="Address" />
                   </label>
                   <label className="job-form-wide">
                     Notes
-                    <textarea placeholder="Notes" />
+                    <textarea name="notes" placeholder="Notes" />
                   </label>
                   <div className="job-form-actions">
-                    <button className="primary-button" type="button">
+                    <button className="primary-button" type="submit">
                       <Plus size={18} aria-hidden="true" />
                       Create job
                     </button>

@@ -131,11 +131,11 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, onCl
               </label>
               <label>
                 Email
-                <input defaultValue="client@example.com" />
+                <input defaultValue={job.email} />
               </label>
               <label>
                 Address
-                <input defaultValue="35 Box St, Brooklyn, NY 11222, USA" />
+                <input defaultValue={job.address} />
               </label>
               <label>
                 Additional info

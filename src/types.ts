@@ -149,6 +149,46 @@ export type CompanyJobType = {
 
 export type NewCompanyJobTypeForm = Pick<CompanyJobType, 'name' | 'jobNumberPrefix' | 'defaultDurationMinutes' | 'defaultPriority' | 'requiresParts'>;
 
+export type ServiceJobStatus =
+  | 'New'
+  | 'ReCall'
+  | 'Diagnosis'
+  | 'In progress'
+  | 'Parts ordered'
+  | 'Waiting for parts'
+  | 'To finish'
+  | 'Completed'
+  | 'Warranty'
+  | 'Cancelled';
+
+export type ServiceJob = {
+  id: string;
+  companyId: string;
+  jobNumber: string;
+  status: ServiceJobStatus;
+  system: string;
+  clientName: string;
+  organization: string;
+  phone: string;
+  email: string;
+  address: string;
+  technician: string;
+  assignee: string;
+  serviceCallFee: string;
+  scfPayment: string;
+  labor: string;
+  laborPayment: string;
+  issue: string;
+  notes: string;
+  appointment?: string;
+  createdAt: string;
+};
+
+export type NewServiceJobForm = Pick<
+  ServiceJob,
+  'jobNumber' | 'system' | 'clientName' | 'organization' | 'phone' | 'email' | 'address' | 'technician' | 'serviceCallFee' | 'issue' | 'notes'
+>;
+
 export type CompanyOnboardingProfile = {
   companyId: string;
   legalName: string;

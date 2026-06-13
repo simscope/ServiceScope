@@ -1,15 +1,6 @@
-export type JobCardData = {
-  jobNumber: string;
-  status: string;
-  system: string;
-  clientName: string;
-  organization: string;
-  phone: string;
-  technician: string;
-  serviceCallFee: string;
-  issue: string;
-  appointment?: string;
-};
+import type { ServiceJob } from '../types';
+
+export type JobCardData = ServiceJob;
 
 export function JobCard({ job, onOpen }: { job: JobCardData; onOpen?: () => void }) {
   return (
