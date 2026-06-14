@@ -637,17 +637,19 @@
 
 .technician-payroll-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: 1fr;
+  gap: 8px;
 }
 
 .technician-payroll-card {
   display: grid;
-  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) minmax(420px, 2fr);
+  align-items: center;
+  gap: 18px;
   border: 1px solid #d7dee8;
   border-radius: 8px;
   background: #ffffff;
-  padding: 14px;
+  padding: 12px 14px;
   color: inherit;
   text-align: left;
   cursor: pointer;
@@ -671,9 +673,14 @@
 
 .technician-payroll-card dl {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
+}
+
+.technician-payroll-card dl div {
+  border-left: 1px solid #e3e9e4;
+  padding-left: 12px;
 }
 
 .technician-payroll-card div,
@@ -694,6 +701,11 @@
   font-weight: 950;
 }
 
+.technician-finance-detail-shell {
+  display: grid;
+  min-height: calc(100vh - 100px);
+}
+
 .technician-finance-card {
   display: grid;
   gap: 14px;
@@ -704,6 +716,11 @@
   box-shadow: 0 14px 28px rgba(20, 30, 44, 0.08);
 }
 
+.technician-finance-card.fullscreen {
+  align-content: start;
+  min-height: calc(100vh - 128px);
+}
+
 .technician-finance-header {
   display: flex;
   align-items: flex-start;
@@ -711,9 +728,10 @@
   gap: 16px;
 }
 
+.technician-finance-header h1,
 .technician-finance-header h2 {
   margin: 0 0 4px;
-  font-size: 22px;
+  font-size: 28px;
 }
 
 .technician-finance-header p {

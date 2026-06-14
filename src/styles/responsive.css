@@ -1520,8 +1520,15 @@ textarea {
   .payroll-rule-controls,
   .library-filters,
   .library-document-card,
-  .technician-payroll-grid {
+  .technician-payroll-grid,
+  .technician-payroll-card,
+  .technician-finance-metrics,
+  .technician-finance-rules {
     grid-template-columns: 1fr;
+  }
+
+  .technician-payroll-card dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .library-upload-panel {
@@ -1643,6 +1650,11 @@ textarea {
   .email-toolbar,
   .email-template-grid,
   .finance-toolbar,
+  .technician-finance-header,
+  .technician-finance-metrics,
+  .technician-finance-rules,
+  .technician-payroll-card,
+  .technician-payroll-card dl,
   .job-files-grid,
   .job-files-header,
   .job-comment,
