@@ -196,6 +196,17 @@ h2 {
   gap: 16px;
 }
 
+.monitoring-page {
+  display: grid;
+  gap: 16px;
+}
+
+.monitoring-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .portal-page {
   display: grid;
   gap: 16px;
@@ -457,6 +468,173 @@ h2 {
 }
 
 .access-mode.limited {
+  background: #fff0c6;
+  color: #7a5600;
+}
+
+.monitoring-command-panel {
+  min-width: 0;
+}
+
+.monitoring-filter {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.monitoring-filter button {
+  min-height: 34px;
+  border: 1px solid #d7dee8;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4f5b53;
+  padding: 0 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.monitoring-filter button.active {
+  border-color: #17201b;
+  background: #17201b;
+  color: #ffffff;
+}
+
+.monitoring-signal-list {
+  display: grid;
+  gap: 10px;
+}
+
+.monitoring-signal {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fbfdfb;
+  padding: 12px;
+}
+
+.monitoring-signal.critical {
+  border-color: #ffb3aa;
+  background: #fff4f2;
+}
+
+.monitoring-signal.warning {
+  border-color: #f2c779;
+  background: #fff8e8;
+}
+
+.monitoring-signal h3 {
+  margin-bottom: 4px;
+  font-size: 15px;
+}
+
+.monitoring-signal p {
+  margin: 0;
+  color: #667269;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.monitoring-severity,
+.monitoring-category {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  border-radius: 999px;
+  padding: 0 9px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.monitoring-category {
+  margin-left: 5px;
+  background: #eef4ef;
+  color: #35543c;
+}
+
+.monitoring-severity.critical {
+  background: #ffe0dc;
+  color: #8c2c20;
+}
+
+.monitoring-severity.warning {
+  background: #fff0c6;
+  color: #7a5600;
+}
+
+.monitoring-severity.info {
+  background: #daf4e3;
+  color: #176237;
+}
+
+.monitoring-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.monitoring-tenant-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 16px 36px rgba(35, 50, 42, 0.08);
+  padding: 16px;
+}
+
+.monitoring-tenant-card.critical {
+  border-color: #ffb3aa;
+}
+
+.monitoring-tenant-card.warning {
+  border-color: #f2c779;
+}
+
+.monitoring-tenant-card.healthy {
+  border-color: #a8cc78;
+}
+
+.monitoring-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.monitoring-health-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 7px;
+}
+
+.monitoring-health-row .health-track {
+  grid-column: 1 / -1;
+}
+
+.monitoring-check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.monitoring-check-grid span {
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.monitoring-check-grid .ok {
+  background: #edf8ee;
+  color: #176237;
+}
+
+.monitoring-check-grid .bad {
   background: #fff0c6;
   color: #7a5600;
 }
@@ -1554,6 +1732,7 @@ textarea {
   .billing-summary,
   .audit-summary,
   .access-summary,
+  .monitoring-summary,
   .portal-metrics,
   .plan-grid,
   .access-page,
@@ -1649,6 +1828,7 @@ textarea {
   .library-filters,
   .audit-filter-grid,
   .billing-alert-row,
+  .monitoring-grid,
   .library-document-card,
   .technician-payroll-grid,
   .technician-payroll-card,
@@ -1726,6 +1906,10 @@ textarea {
     grid-template-columns: 1fr 1fr;
   }
 
+  .monitoring-signal {
+    grid-template-columns: 1fr;
+  }
+
   .billing-alert-actions {
     justify-content: flex-start;
   }
@@ -1754,6 +1938,7 @@ textarea {
   .overview-grid,
   .billing-summary,
   .audit-summary,
+  .monitoring-summary,
   .portal-metrics,
   .company-profile-layout,
   .mailbox-setup-content,
@@ -1765,6 +1950,7 @@ textarea {
   .payment-method-grid,
   .subscription-payment-layout,
   .subscription-payment-fields,
+  .monitoring-grid,
   .workflow-fields,
   .job-type-form,
   .job-type-row,
@@ -1774,6 +1960,7 @@ textarea {
   .ticket-workspace,
   .subscription-row,
   .user-row,
+  .monitoring-signal,
   .audit-row,
   .portal-ticket-row,
   .job-card-row,

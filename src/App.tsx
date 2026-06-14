@@ -55,6 +55,7 @@ import {
   DashboardOverview,
   MetricCard,
   MiniStat,
+  MonitoringPage,
   StatusPill,
   SupportPanel,
   formatStepStatus,
@@ -310,6 +311,8 @@ export function App() {
         ? 'portal'
       : window.location.hash === '#companies'
         ? 'companies'
+        : window.location.hash === '#monitoring'
+          ? 'monitoring'
         : window.location.hash === '#billing'
           ? 'billing'
           : window.location.hash === '#access'
@@ -546,7 +549,7 @@ export function App() {
             <Building2 size={18} aria-hidden="true" />
             Companies
           </button>
-          <button className={`nav-item ${page === 'companies' ? 'active' : ''}`} type="button" onClick={() => navigate('companies')}>
+          <button className={`nav-item ${page === 'monitoring' ? 'active' : ''}`} type="button" onClick={() => navigate('monitoring')}>
             <Activity size={18} aria-hidden="true" />
             Monitoring
           </button>
@@ -573,7 +576,7 @@ export function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">Platform owner</p>
-            <h1>{page === 'support' ? 'Support Inbox' : page === 'companies' ? 'Companies' : page === 'billing' ? 'Plans & Billing' : page === 'access' ? 'Access' : page === 'audit' ? 'Audit Log' : 'ServiceScope'}</h1>
+            <h1>{page === 'support' ? 'Support Inbox' : page === 'companies' ? 'Companies' : page === 'monitoring' ? 'Monitoring' : page === 'billing' ? 'Plans & Billing' : page === 'access' ? 'Access' : page === 'audit' ? 'Audit Log' : 'ServiceScope'}</h1>
           </div>
           <button className="icon-button" type="button" aria-label="Platform settings" title="Platform settings">
             <SlidersHorizontal size={20} aria-hidden="true" />
@@ -658,10 +661,10 @@ export function App() {
             </form>
           </section>
 
-          <section className="panel wide-panel" id="monitoring">
+          <section className="panel wide-panel" id="companies-list">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Monitor tenants</p>
+                <p className="eyebrow">Tenant directory</p>
                 <h2>Companies</h2>
               </div>
               <div className="filters">
@@ -707,6 +710,18 @@ export function App() {
             />
           ) : null}
         </div>
+        ) : page === 'monitoring' ? (
+          <MonitoringPage
+            companies={companies}
+            onboardingProfiles={onboardingProfiles}
+            supportTickets={supportTickets}
+            onOpenCompany={(companyId) => {
+              setSelectedCompanyId(companyId);
+              navigate('companies');
+            }}
+            onOpenBilling={() => navigate('billing')}
+            onOpenSupport={() => navigate('support')}
+          />
         ) : page === 'billing' ? (
           <BillingPage
             companies={companies}

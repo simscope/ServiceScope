@@ -495,6 +495,274 @@ export function BillingPage({
   );
 }
 
+type MonitoringSignal = {
+  id: string;
+  company: Company;
+  severity: 'critical' | 'warning' | 'info';
+  category: 'Billing' | 'Onboarding' | 'Support' | 'Usage' | 'Health' | 'Operations';
+  title: string;
+  detail: string;
+  action: 'billing' | 'company' | 'support';
+};
+
+export function MonitoringPage({
+  companies,
+  onboardingProfiles,
+  supportTickets,
+  onOpenCompany,
+  onOpenBilling,
+  onOpenSupport,
+}: {
+  companies: Company[];
+  onboardingProfiles: CompanyOnboardingProfile[];
+  supportTickets: SupportTicket[];
+  onOpenCompany: (companyId: string) => void;
+  onOpenBilling: () => void;
+  onOpenSupport: () => void;
+}) {
+  const [severityFilter, setSeverityFilter] = useState<'all' | MonitoringSignal['severity']>('all');
+  const getCompanyPlan = (company: Company) => plans.find((candidate) => candidate.name === company.plan) ?? plans[0];
+  const getPaymentProfile = (company: Company) => onboardingProfiles.find((profile) => profile.companyId === company.id);
+  const openTickets = supportTickets.filter((ticket) => ticket.status !== 'resolved');
+  const signals = companies.flatMap((company): MonitoringSignal[] => {
+    const plan = getCompanyPlan(company);
+    const paymentProfile = getPaymentProfile(company);
+    const autopayReady = Boolean(paymentProfile?.autoPayEnabled && paymentProfile.subscriptionPaymentStatus === 'active' && paymentProfile.subscriptionCardLast4);
+    const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
+    const companyTickets = openTickets.filter((ticket) => ticket.companyId === company.id);
+    const urgentTickets = companyTickets.filter((ticket) => ticket.priority === 'urgent');
+    const storageRatio = plan.storageGb ? company.usage.storageGb / plan.storageGb : 0;
+    const jobsPerTech = company.technicians ? company.openJobs / company.technicians : company.openJobs;
+    const nextSignals: MonitoringSignal[] = [];
+
+    if (company.billingStatus === 'overdue') {
+      nextSignals.push({
+        id: `${company.id}-billing-overdue`,
+        company,
+        severity: 'critical',
+        category: 'Billing',
+        title: 'Subscription payment overdue',
+        detail: `${company.plan} ${money(plan.price)}/mo is overdue. Limit invoices, email sending, reports, and new job creation.`,
+        action: 'billing',
+      });
+    } else if (company.billingStatus === 'not_started' || !autopayReady) {
+      nextSignals.push({
+        id: `${company.id}-autopay-missing`,
+        company,
+        severity: company.status === 'active' ? 'critical' : 'warning',
+        category: 'Billing',
+        title: 'Autopay is not connected',
+        detail: 'Company admin must connect a card before automatic monthly billing can run.',
+        action: 'billing',
+      });
+    }
+
+    if (company.health < 65) {
+      nextSignals.push({
+        id: `${company.id}-health-critical`,
+        company,
+        severity: 'critical',
+        category: 'Health',
+        title: 'Tenant health is critical',
+        detail: `Health is ${company.health}%. Review onboarding, billing, support, and recent activity.`,
+        action: 'company',
+      });
+    } else if (company.health < 80) {
+      nextSignals.push({
+        id: `${company.id}-health-warning`,
+        company,
+        severity: 'warning',
+        category: 'Health',
+        title: 'Tenant health needs attention',
+        detail: `Health is ${company.health}%. Watch this account before it becomes a support issue.`,
+        action: 'company',
+      });
+    }
+
+    if (completedSteps < onboardingStepOrder.length) {
+      nextSignals.push({
+        id: `${company.id}-onboarding`,
+        company,
+        severity: company.status === 'active' ? 'critical' : 'warning',
+        category: 'Onboarding',
+        title: 'Onboarding is incomplete',
+        detail: `${completedSteps}/${onboardingStepOrder.length} steps complete. Workspace may not be ready for daily operations.`,
+        action: 'company',
+      });
+    }
+
+    if (urgentTickets.length) {
+      nextSignals.push({
+        id: `${company.id}-urgent-support`,
+        company,
+        severity: 'critical',
+        category: 'Support',
+        title: 'Urgent support waiting',
+        detail: `${urgentTickets.length} urgent support request${urgentTickets.length > 1 ? 's' : ''} open.`,
+        action: 'support',
+      });
+    } else if (companyTickets.length) {
+      nextSignals.push({
+        id: `${company.id}-support`,
+        company,
+        severity: 'warning',
+        category: 'Support',
+        title: 'Open support requests',
+        detail: `${companyTickets.length} open support request${companyTickets.length > 1 ? 's' : ''}.`,
+        action: 'support',
+      });
+    }
+
+    if (storageRatio >= 0.8) {
+      nextSignals.push({
+        id: `${company.id}-storage`,
+        company,
+        severity: storageRatio >= 1 ? 'critical' : 'warning',
+        category: 'Usage',
+        title: storageRatio >= 1 ? 'Storage limit exceeded' : 'Storage near plan limit',
+        detail: `${company.usage.storageGb.toFixed(1)} GB used of ${plan.storageGb} GB on ${company.plan}.`,
+        action: 'billing',
+      });
+    }
+
+    if (jobsPerTech >= 4) {
+      nextSignals.push({
+        id: `${company.id}-workload`,
+        company,
+        severity: jobsPerTech >= 6 ? 'critical' : 'warning',
+        category: 'Operations',
+        title: 'Technician workload is high',
+        detail: `${company.openJobs} open jobs across ${company.technicians} technicians.`,
+        action: 'company',
+      });
+    }
+
+    company.alerts.forEach((alert, index) => {
+      nextSignals.push({
+        id: `${company.id}-owner-alert-${index}`,
+        company,
+        severity: 'info',
+        category: 'Operations',
+        title: alert,
+        detail: `Owner signal from ${company.name}.`,
+        action: 'company',
+      });
+    });
+
+    return nextSignals;
+  });
+  const filteredSignals = signals.filter((signal) => severityFilter === 'all' || signal.severity === severityFilter);
+  const criticalCount = signals.filter((signal) => signal.severity === 'critical').length;
+  const warningCount = signals.filter((signal) => signal.severity === 'warning').length;
+  const billingRisk = signals.filter((signal) => signal.category === 'Billing').length;
+  const avgHealth = companies.length ? Math.round(companies.reduce((sum, company) => sum + company.health, 0) / companies.length) : 0;
+  const healthyCompanies = companies.filter((company) => company.health >= 80 && !signals.some((signal) => signal.company.id === company.id && signal.severity === 'critical'));
+
+  const runAction = (signal: MonitoringSignal) => {
+    if (signal.action === 'billing') onOpenBilling();
+    if (signal.action === 'support') onOpenSupport();
+    if (signal.action === 'company') onOpenCompany(signal.company.id);
+  };
+
+  return (
+    <div className="monitoring-page">
+      <section className="monitoring-summary">
+        <MetricCard icon={<AlertTriangle size={20} />} label="Critical" value={criticalCount.toString()} detail="Needs owner action" />
+        <MetricCard icon={<ServerCog size={20} />} label="Warnings" value={warningCount.toString()} detail="Watch closely" />
+        <MetricCard icon={<CreditCard size={20} />} label="Billing risk" value={billingRisk.toString()} detail="Autopay or overdue issues" />
+        <MetricCard icon={<CheckCircle2 size={20} />} label="Avg health" value={`${avgHealth}%`} detail={`${healthyCompanies.length} healthy tenants`} />
+      </section>
+
+      <section className="panel monitoring-command-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Platform command center</p>
+            <h2>Action queue</h2>
+          </div>
+          <div className="monitoring-filter">
+            <button className={severityFilter === 'all' ? 'active' : ''} type="button" onClick={() => setSeverityFilter('all')}>All</button>
+            <button className={severityFilter === 'critical' ? 'active' : ''} type="button" onClick={() => setSeverityFilter('critical')}>Critical</button>
+            <button className={severityFilter === 'warning' ? 'active' : ''} type="button" onClick={() => setSeverityFilter('warning')}>Warning</button>
+            <button className={severityFilter === 'info' ? 'active' : ''} type="button" onClick={() => setSeverityFilter('info')}>Info</button>
+          </div>
+        </div>
+
+        <div className="monitoring-signal-list">
+          {filteredSignals.length ? (
+            filteredSignals.map((signal) => (
+              <article className={`monitoring-signal ${signal.severity}`} key={signal.id}>
+                <div>
+                  <span className={`monitoring-severity ${signal.severity}`}>{signal.severity}</span>
+                  <span className="monitoring-category">{signal.category}</span>
+                </div>
+                <div>
+                  <h3>{signal.title}</h3>
+                  <p>{signal.company.name} - {signal.detail}</p>
+                </div>
+                <button className="secondary-button compact" type="button" onClick={() => runAction(signal)}>
+                  Open
+                </button>
+              </article>
+            ))
+          ) : (
+            <div className="empty-state compact-empty">
+              <CheckCircle2 size={24} aria-hidden="true" />
+              <h3>No signals in this filter</h3>
+              <p>Switch filters or keep monitoring from the summary above.</p>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="monitoring-grid">
+        {companies.map((company) => {
+          const plan = getCompanyPlan(company);
+          const paymentProfile = getPaymentProfile(company);
+          const companySignals = signals.filter((signal) => signal.company.id === company.id);
+          const critical = companySignals.some((signal) => signal.severity === 'critical');
+          const warning = companySignals.some((signal) => signal.severity === 'warning');
+          const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
+          const storagePercent = Math.min(100, Math.round((company.usage.storageGb / plan.storageGb) * 100));
+          const autopayReady = Boolean(paymentProfile?.autoPayEnabled && paymentProfile.subscriptionPaymentStatus === 'active' && paymentProfile.subscriptionCardLast4);
+
+          return (
+            <article className={`monitoring-tenant-card ${critical ? 'critical' : warning ? 'warning' : 'healthy'}`} key={company.id}>
+              <div className="monitoring-card-header">
+                <div className="company-main">
+                  <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+                  <div>
+                    <h3>{company.name}</h3>
+                    <p>{company.plan} - {company.market}</p>
+                  </div>
+                </div>
+                <span className={`monitoring-severity ${critical ? 'critical' : warning ? 'warning' : 'info'}`}>
+                  {critical ? 'critical' : warning ? 'watch' : 'healthy'}
+                </span>
+              </div>
+              <div className="monitoring-health-row">
+                <span>Health</span>
+                <strong>{company.health}%</strong>
+                <div className="health-track">
+                  <span style={{ width: `${company.health}%` }} />
+                </div>
+              </div>
+              <div className="monitoring-check-grid">
+                <span className={company.billingStatus === 'paid' ? 'ok' : 'bad'}>Billing: {billingLabels[company.billingStatus]}</span>
+                <span className={autopayReady ? 'ok' : 'bad'}>Autopay: {autopayReady ? 'On' : 'Missing'}</span>
+                <span className={completedSteps === onboardingStepOrder.length ? 'ok' : 'bad'}>Onboarding: {completedSteps}/4</span>
+                <span className={storagePercent < 80 ? 'ok' : 'bad'}>Storage: {storagePercent}%</span>
+              </div>
+              <button className="secondary-button compact" type="button" onClick={() => onOpenCompany(company.id)}>
+                Open company
+              </button>
+            </article>
+          );
+        })}
+      </section>
+    </div>
+  );
+}
+
 export function AccessPage({
   users,
   form,
