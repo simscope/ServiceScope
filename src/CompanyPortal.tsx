@@ -1354,6 +1354,7 @@ export function CompanyPortal({
               setMaterialSearch('');
             }}
             onOpenMaterialEditor={openMaterialEditor}
+            onOpenJob={setOpenedJob}
             filteredMaterialRows={filteredMaterialRows}
             selectedMaterialsJob={selectedMaterialsJob}
             onCloseMaterialEditor={() => setEditingMaterialsJobNumber('')}

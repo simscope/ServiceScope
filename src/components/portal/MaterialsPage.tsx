@@ -21,6 +21,7 @@ export function MaterialsPage({
   onMaterialSearchChange,
   onResetFilters,
   onOpenMaterialEditor,
+  onOpenJob,
   filteredMaterialRows,
   selectedMaterialsJob,
   onCloseMaterialEditor,
@@ -43,6 +44,7 @@ export function MaterialsPage({
   onMaterialSearchChange: (value: string) => void;
   onResetFilters: () => void;
   onOpenMaterialEditor: (jobNumber: string) => void;
+  onOpenJob: (job: ServiceJob) => void;
   filteredMaterialRows: MaterialRowWithJob[];
   selectedMaterialsJob?: ServiceJob;
   onCloseMaterialEditor: () => void;
@@ -143,7 +145,7 @@ export function MaterialsPage({
             {filteredMaterialRows.map(({ material, job }) => (
               <tr key={material.id}>
                 <td>
-                  <button className="job-number-link" type="button" onClick={() => onOpenMaterialEditor(job.jobNumber)}>
+                  <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
                     #{job.jobNumber}
                   </button>
                   <strong>{job.organization}</strong>

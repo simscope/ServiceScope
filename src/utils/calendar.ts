@@ -21,7 +21,8 @@ export function addMonths(date: Date, months: number) {
 }
 
 export function startOfWeek(date: Date) {
-  return addDays(date, -date.getDay());
+  const mondayOffset = (date.getDay() + 6) % 7;
+  return addDays(date, -mondayOffset);
 }
 
 export function formatCalendarDay(date: Date) {

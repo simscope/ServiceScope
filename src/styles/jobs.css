@@ -694,6 +694,100 @@
   font-weight: 950;
 }
 
+.technician-finance-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #b9c9dc;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  box-shadow: 0 14px 28px rgba(20, 30, 44, 0.08);
+}
+
+.technician-finance-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.technician-finance-header h2 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+
+.technician-finance-header p {
+  margin: 0;
+  color: #667269;
+  font-size: 13px;
+}
+
+.technician-finance-metrics,
+.technician-finance-rules {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.technician-finance-metrics span,
+.technician-finance-rules span {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f8faf9;
+  padding: 10px;
+  color: #5d6a62;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.technician-finance-metrics strong {
+  color: #17201b;
+  font-size: 20px;
+}
+
+.technician-finance-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+}
+
+.technician-finance-table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+}
+
+.technician-finance-table th {
+  border-bottom: 1px solid #d7dee8;
+  background: #f4f6f8;
+  padding: 10px;
+  font-size: 12px;
+  text-align: left;
+}
+
+.technician-finance-table td {
+  border-bottom: 1px solid #e3e9e4;
+  padding: 10px;
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.technician-finance-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.technician-finance-table tr.needs-review td {
+  background: #fff8e7;
+}
+
+.technician-finance-table td span {
+  display: block;
+  color: #667269;
+  font-size: 12px;
+}
+
 .finance-table-wrap {
   overflow-x: auto;
   border: 1px solid #d7dee8;

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
 import type { FinancePeriod, FinanceTab, PayrollRules } from '../../appTypes';
@@ -78,6 +79,12 @@ export function FinancePage({
   onOpenJob: (job: FinanceJobRow) => void;
   onToggleSalaryPaid: (jobNumber: string) => void;
 }) {
+  const [selectedTechnicianName, setSelectedTechnicianName] = useState('');
+  const selectedTechnicianPayroll = technicianPayroll.find((row) => row.technician.name === selectedTechnicianName);
+  const selectedTechnicianJobs = selectedTechnicianName
+    ? financeBaseRows.filter((job) => job.assignee === selectedTechnicianName)
+    : [];
+
   if (openedJob) {
     return (
       <section className="job-detail-shell">
@@ -217,10 +224,13 @@ export function FinancePage({
       <section className="technician-payroll-grid">
         {technicianPayroll.map((row) => (
           <button
-            className={financeTechFilter === row.technician.name ? 'technician-payroll-card selected' : 'technician-payroll-card'}
+            className={selectedTechnicianName === row.technician.name ? 'technician-payroll-card selected' : 'technician-payroll-card'}
             key={row.technician.id}
             type="button"
-            onClick={() => onFinanceTechFilterChange(financeTechFilter === row.technician.name ? 'all' : row.technician.name)}
+            onClick={() => {
+              setSelectedTechnicianName(row.technician.name);
+              onFinanceTechFilterChange(row.technician.name);
+            }}
           >
             <div>
               <h3>{row.technician.name}</h3>
@@ -247,6 +257,103 @@ export function FinancePage({
           </button>
         ))}
       </section>
+
+      {selectedTechnicianPayroll ? (
+        <section className="technician-finance-card">
+          <div className="technician-finance-header">
+            <div>
+              <p className="eyebrow">Technician financial card</p>
+              <h2>{selectedTechnicianPayroll.technician.name}</h2>
+              <p>{selectedTechnicianPayroll.jobs} jobs counted - {selectedTechnicianPayroll.attention} need review</p>
+            </div>
+            <button
+              className="secondary-button compact"
+              type="button"
+              onClick={() => {
+                setSelectedTechnicianName('');
+                onFinanceTechFilterChange('all');
+              }}
+            >
+              Close card
+            </button>
+          </div>
+
+          <div className="technician-finance-metrics">
+            <span>
+              <strong>{money(selectedTechnicianPayroll.revenue)}</strong>
+              Paid revenue
+            </span>
+            <span>
+              <strong>{money(selectedTechnicianPayroll.materials)}</strong>
+              Materials
+            </span>
+            <span>
+              <strong>{money(selectedTechnicianPayroll.salary)}</strong>
+              Payroll
+            </span>
+            <span>
+              <strong>{money(selectedTechnicianPayroll.unpaid)}</strong>
+              Unpaid
+            </span>
+          </div>
+
+          <div className="technician-finance-rules">
+            <span>Commission: {payrollRules.commissionPercent}%</span>
+            <span>SCF-only payout: {money(payrollRules.scfOnlyPayout)}</span>
+            <span>{payrollRules.includeScf ? 'SCF included' : 'SCF excluded'}</span>
+            <span>{payrollRules.deductMaterials ? 'Materials deducted' : 'Materials not deducted'}</span>
+          </div>
+
+          <div className="technician-finance-table-wrap">
+            <table className="technician-finance-table">
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Client</th>
+                  <th>Status</th>
+                  <th>Collected</th>
+                  <th>Materials</th>
+                  <th>Salary</th>
+                  <th>Review</th>
+                  <th>Paid</th>
+                </tr>
+              </thead>
+              <tbody>
+                {selectedTechnicianJobs.map((job) => (
+                  <tr className={job.needsAttention ? 'needs-review' : ''} key={job.jobNumber}>
+                    <td>
+                      <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
+                        #{job.jobNumber}
+                      </button>
+                    </td>
+                    <td>
+                      <strong>{job.organization}</strong>
+                      <span>{job.clientName}</span>
+                    </td>
+                    <td>{job.status}</td>
+                    <td>{money(job.paidScf + job.paidLabor)}</td>
+                    <td>{money(job.materialsCost)}</td>
+                    <td>{money(job.salary)}</td>
+                    <td>{job.warnings.length ? job.warnings.join(' - ') : 'Ready'}</td>
+                    <td>
+                      <button className={job.paid ? 'payroll-toggle paid' : 'payroll-toggle'} type="button" onClick={() => onToggleSalaryPaid(job.jobNumber)}>
+                        {job.paid ? 'Paid' : 'Mark paid'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!selectedTechnicianJobs.length ? (
+                  <tr>
+                    <td colSpan={8}>
+                      <div className="empty-inline">No jobs in this period for this technician.</div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
 
       {financeBaseRows.some((job) => job.needsAttention) ? (
         <section className="finance-attention-panel">
