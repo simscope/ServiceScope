@@ -2,6 +2,8 @@ import type { ChangeEvent, FormEvent } from 'react';
 import { Building2, ClipboardList, CreditCard, MailPlus, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react';
 import type { EmailConnection, EmailProvider } from '../../appTypes';
 import { paymentMethodLabels } from '../../appLabels';
+import { getPlan } from '../../services/billingCatalog';
+import { money } from '../../utils/format';
 import type {
   Company,
   CompanyOnboardingProfile,
@@ -57,6 +59,9 @@ export function OnboardingPage({
   selectedCompany: Company;
   handleTechnicianSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const selectedPlan = getPlan(selectedCompany.plan);
+  const subscriptionConnected = profile.subscriptionPaymentStatus === 'active' && profile.autoPayEnabled;
+
   return (<section className="client-onboarding">
             <div className="onboarding-header">
               <div>
@@ -296,10 +301,112 @@ export function OnboardingPage({
                 </div>
               </section>
 
+              <section className={`panel subscription-payment-panel ${subscriptionConnected ? 'connected' : ''}`}>
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">ServiceScope subscription</p>
+                    <h2>Automatic billing</h2>
+                  </div>
+                  <CreditCard size={20} aria-hidden="true" />
+                </div>
+                <div className="subscription-payment-layout">
+                  <div className="subscription-payment-status">
+                    <strong>{subscriptionConnected ? 'Autopay connected' : 'Payment method required'}</strong>
+                    <p>
+                      {selectedCompany.plan} plan - {money(selectedPlan.price)}/mo. ServiceScope charges this card automatically every billing cycle.
+                    </p>
+                    <span className={`subscription-status-pill ${profile.subscriptionPaymentStatus}`}>
+                      {profile.subscriptionPaymentStatus === 'not_connected' ? 'Not connected' : profile.subscriptionPaymentStatus}
+                    </span>
+                  </div>
+
+                  <div className="subscription-card-preview">
+                    <span>{profile.subscriptionCardBrand || 'Card'}</span>
+                    <strong>{profile.subscriptionCardLast4 ? `•••• ${profile.subscriptionCardLast4}` : 'No card on file'}</strong>
+                    <small>
+                      {profile.subscriptionCardExpMonth && profile.subscriptionCardExpYear
+                        ? `Expires ${profile.subscriptionCardExpMonth}/${profile.subscriptionCardExpYear}`
+                        : 'Expiration not added'}
+                    </small>
+                  </div>
+                </div>
+
+                <div className="subscription-payment-fields">
+                  <label>
+                    Card brand
+                    <select value={profile.subscriptionCardBrand} onChange={(event) => updateProfile({ subscriptionCardBrand: event.target.value })}>
+                      <option value="Visa">Visa</option>
+                      <option value="Mastercard">Mastercard</option>
+                      <option value="American Express">American Express</option>
+                      <option value="Discover">Discover</option>
+                    </select>
+                  </label>
+                  <label>
+                    Card last 4
+                    <input
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={profile.subscriptionCardLast4}
+                      onChange={(event) => updateProfile({ subscriptionCardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })}
+                      placeholder="4242"
+                    />
+                  </label>
+                  <label>
+                    Exp. month
+                    <input
+                      inputMode="numeric"
+                      maxLength={2}
+                      value={profile.subscriptionCardExpMonth}
+                      onChange={(event) => updateProfile({ subscriptionCardExpMonth: event.target.value.replace(/\D/g, '').slice(0, 2) })}
+                      placeholder="MM"
+                    />
+                  </label>
+                  <label>
+                    Exp. year
+                    <input
+                      inputMode="numeric"
+                      maxLength={4}
+                      value={profile.subscriptionCardExpYear}
+                      onChange={(event) => updateProfile({ subscriptionCardExpYear: event.target.value.replace(/\D/g, '').slice(0, 4) })}
+                      placeholder="YYYY"
+                    />
+                  </label>
+                  <label>
+                    Billing name
+                    <input value={profile.subscriptionBillingName} onChange={(event) => updateProfile({ subscriptionBillingName: event.target.value })} />
+                  </label>
+                  <label>
+                    Billing ZIP
+                    <input value={profile.subscriptionBillingZip} onChange={(event) => updateProfile({ subscriptionBillingZip: event.target.value })} />
+                  </label>
+                  <label>
+                    Payment status
+                    <select value={profile.subscriptionPaymentStatus} onChange={(event) => updateProfile({ subscriptionPaymentStatus: event.target.value as CompanyOnboardingProfile['subscriptionPaymentStatus'] })}>
+                      <option value="not_connected">Not connected</option>
+                      <option value="pending">Pending verification</option>
+                      <option value="active">Active</option>
+                      <option value="failed">Failed</option>
+                    </select>
+                  </label>
+                  <label className="checkbox-field prefix-toggle">
+                    <input
+                      type="checkbox"
+                      checked={profile.autoPayEnabled}
+                      onChange={(event) => updateProfile({ autoPayEnabled: event.target.checked })}
+                    />
+                    Enable automatic monthly charges
+                  </label>
+                </div>
+
+                <div className="payment-token-warning">
+                  Production note: full card numbers must be collected by Stripe, Square, or another PCI provider. ServiceScope should store only the payment token, brand, last 4, expiration, and billing status.
+                </div>
+              </section>
+
               <section className="panel payment-setup-panel">
                 <div className="panel-heading">
                   <div>
-                    <p className="eyebrow">Payment setup</p>
+                    <p className="eyebrow">Customer payments</p>
                     <h2>Accepted payments</h2>
                   </div>
                   <CreditCard size={20} aria-hidden="true" />

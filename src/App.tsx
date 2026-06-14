@@ -710,6 +710,7 @@ export function App() {
         ) : page === 'billing' ? (
           <BillingPage
             companies={companies}
+            onboardingProfiles={onboardingProfiles}
             onChangePlan={(companyId, plan) => {
               const company = companies.find((candidate) => candidate.id === companyId);
               updateCompany(companyId, (currentCompany) => applyPlan(currentCompany, plan));

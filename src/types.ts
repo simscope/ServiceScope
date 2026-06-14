@@ -243,6 +243,14 @@ export type CompanyOnboardingProfile = {
   cashAppCashtag: string;
   paypalEmail: string;
   paymentNotes: string;
+  subscriptionPaymentStatus: 'not_connected' | 'pending' | 'active' | 'failed';
+  subscriptionCardBrand: string;
+  subscriptionCardLast4: string;
+  subscriptionCardExpMonth: string;
+  subscriptionCardExpYear: string;
+  subscriptionBillingName: string;
+  subscriptionBillingZip: string;
+  autoPayEnabled: boolean;
   jobNumberPrefix: string;
   useJobNumberPrefixes: boolean;
   serviceCallFee: number;

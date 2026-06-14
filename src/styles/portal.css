@@ -1088,6 +1088,7 @@
 
 .profile-fields label,
 .payment-fields label,
+.subscription-payment-fields label,
 .workflow-fields label,
 .job-type-form label,
 .technician-form label {
@@ -1136,6 +1137,95 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.subscription-payment-panel.connected {
+  border-color: #9ac36d;
+}
+
+.subscription-payment-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(220px, 320px);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.subscription-payment-status,
+.subscription-card-preview {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 14px;
+}
+
+.subscription-payment-status p {
+  margin: 0;
+  color: #627083;
+  font-size: 13px;
+}
+
+.subscription-card-preview {
+  min-height: 132px;
+  align-content: space-between;
+  background: #111827;
+  color: #ffffff;
+}
+
+.subscription-card-preview span,
+.subscription-card-preview small {
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.subscription-card-preview strong {
+  font-size: 22px;
+}
+
+.subscription-status-pill {
+  display: inline-flex;
+  justify-content: center;
+  width: fit-content;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #eceff1;
+  color: #5c6368;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.subscription-status-pill.active {
+  background: #daf4e3;
+  color: #176237;
+}
+
+.subscription-status-pill.pending {
+  background: #fff0c6;
+  color: #7a5600;
+}
+
+.subscription-status-pill.failed {
+  background: #ffe0dc;
+  color: #8c2c20;
+}
+
+.subscription-payment-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.payment-token-warning {
+  margin-top: 14px;
+  border: 1px solid #f2c779;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #6b4c12;
+  padding: 12px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .workflow-fields {

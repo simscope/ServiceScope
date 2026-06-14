@@ -40,6 +40,7 @@ import type {
   AuditEventCategory,
   BillingStatus,
   Company,
+  CompanyOnboardingProfile,
   CompanyPlan,
   CompanyStatus,
   NewPlatformUserForm,
@@ -315,19 +316,31 @@ export function AuditPage({
 
 export function BillingPage({
   companies,
+  onboardingProfiles,
   onChangePlan,
   onChangeBillingStatus,
 }: {
   companies: Company[];
+  onboardingProfiles: CompanyOnboardingProfile[];
   onChangePlan: (companyId: string, plan: CompanyPlan) => void;
   onChangeBillingStatus: (companyId: string, status: BillingStatus) => void;
 }) {
+  const getCompanyPlan = (company: Company) => plans.find((candidate) => candidate.name === company.plan) ?? plans[0];
+  const getPaymentProfile = (company: Company) => onboardingProfiles.find((profile) => profile.companyId === company.id);
+  const hasAutopay = (company: Company) => {
+    const profile = getPaymentProfile(company);
+
+    return Boolean(profile?.autoPayEnabled && profile.subscriptionPaymentStatus === 'active' && profile.subscriptionCardLast4);
+  };
   const monthlyRevenue = companies.reduce((total, company) => {
-    const plan = plans.find((candidate) => candidate.name === company.plan);
+    const plan = getCompanyPlan(company);
     return company.billingStatus === 'paid' || company.billingStatus === 'trialing'
       ? total + (plan?.price ?? 0)
       : total;
   }, 0);
+  const blockedStatuses: BillingStatus[] = ['overdue', 'not_started'];
+  const billingRiskCompanies = companies.filter((company) => blockedStatuses.includes(company.billingStatus) || !hasAutopay(company));
+  const revenueAtRisk = billingRiskCompanies.reduce((total, company) => total + getCompanyPlan(company).price, 0);
 
   return (
     <div className="billing-page">
@@ -335,6 +348,7 @@ export function BillingPage({
         <MetricCard icon={<CircleDollarSign size={20} />} label="Estimated MRR" value={money(monthlyRevenue)} detail="Paid and trialing tenants" />
         <MetricCard icon={<PackageCheck size={20} />} label="Plans" value={plans.length.toString()} detail="Launch, Growth, Scale" />
         <MetricCard icon={<CreditCard size={20} />} label="Paid tenants" value={companies.filter((company) => company.billingStatus === 'paid').length.toString()} detail="Current billing status" />
+        <MetricCard icon={<AlertTriangle size={20} />} label="Payment alerts" value={billingRiskCompanies.length.toString()} detail={`${money(revenueAtRisk)} needs attention`} />
       </section>
 
       <section className="plan-grid" aria-label="Plan catalog">
@@ -359,6 +373,60 @@ export function BillingPage({
         ))}
       </section>
 
+      <section className={`panel billing-alert-panel ${billingRiskCompanies.length ? 'has-alerts' : ''}`}>
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Payment monitoring</p>
+            <h2>Collection alerts</h2>
+          </div>
+          <AlertTriangle size={20} aria-hidden="true" />
+        </div>
+
+        {billingRiskCompanies.length ? (
+          <div className="billing-alert-list">
+            {billingRiskCompanies.map((company) => {
+              const plan = getCompanyPlan(company);
+              const paymentProfile = getPaymentProfile(company);
+              const isOverdue = company.billingStatus === 'overdue';
+              const autopayReady = hasAutopay(company);
+
+              return (
+                <article className="billing-alert-row" key={company.id}>
+                  <div>
+                    <strong>{company.name}</strong>
+                    <p>
+                      {billingLabels[company.billingStatus]} - {company.plan} {money(plan.price)}/mo
+                    </p>
+                  </div>
+                  <span className={`access-mode ${isOverdue ? 'blocked' : 'limited'}`}>{isOverdue ? 'Functions blocked' : autopayReady ? 'Monitor' : 'Autopay missing'}</span>
+                  <p className="billing-alert-detail">
+                    {isOverdue
+                      ? 'Invoices, email sending, reports, and new job creation should be limited until payment is restored.'
+                      : autopayReady
+                        ? `Card ${paymentProfile?.subscriptionCardBrand} **** ${paymentProfile?.subscriptionCardLast4} is ready for automatic billing.`
+                        : 'Company admin must connect a subscription card before go-live. Charges should run automatically each month.'}
+                  </p>
+                  <div className="billing-alert-actions">
+                    <button className="secondary-button compact" type="button" onClick={() => onChangeBillingStatus(company.id, 'overdue')}>
+                      Flag overdue
+                    </button>
+                    <button className="primary-button compact" type="button" onClick={() => onChangeBillingStatus(company.id, 'paid')}>
+                      Mark paid
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="empty-state compact-empty">
+            <CreditCard size={24} aria-hidden="true" />
+            <h3>No billing alerts</h3>
+            <p>All active companies are paid or still inside trial.</p>
+          </div>
+        )}
+      </section>
+
       <section className="panel subscription-panel">
         <div className="panel-heading">
           <div>
@@ -371,37 +439,54 @@ export function BillingPage({
         <div className="subscription-list">
           {companies.map((company) => (
             <article className="subscription-row" key={company.id}>
-              <div className="company-main">
-                <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
-                <div>
-                  <h3>{company.name}</h3>
-                  <p>{company.ownerEmail}</p>
-                </div>
-              </div>
-              <div className="billing-cell">
-                <span>Plan</span>
-                <select value={company.plan} onChange={(event) => onChangePlan(company.id, event.target.value as CompanyPlan)}>
-                  {plans.map((plan) => (
-                    <option value={plan.name} key={plan.name}>
-                      {plan.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="billing-cell">
-                <span>Status</span>
-                <select value={company.billingStatus} onChange={(event) => onChangeBillingStatus(company.id, event.target.value as BillingStatus)}>
-                  <option value="paid">Paid</option>
-                  <option value="trialing">Trialing</option>
-                  <option value="overdue">Overdue</option>
-                  <option value="not_started">Not started</option>
-                </select>
-              </div>
-              <div className="billing-cell">
-                <span>Seats</span>
-                <strong>{company.seats}</strong>
-              </div>
-              <span className={`billing-pill ${company.billingStatus}`}>{billingLabels[company.billingStatus]}</span>
+              {(() => {
+                const paymentProfile = getPaymentProfile(company);
+                const autopayReady = hasAutopay(company);
+
+                return (
+                  <>
+                    <div className="company-main">
+                      <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+                      <div>
+                        <h3>{company.name}</h3>
+                        <p>{company.ownerEmail}</p>
+                      </div>
+                    </div>
+                    <div className="billing-cell">
+                      <span>Plan</span>
+                      <select value={company.plan} onChange={(event) => onChangePlan(company.id, event.target.value as CompanyPlan)}>
+                        {plans.map((plan) => (
+                          <option value={plan.name} key={plan.name}>
+                            {plan.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="billing-cell">
+                      <span>Status</span>
+                      <select value={company.billingStatus} onChange={(event) => onChangeBillingStatus(company.id, event.target.value as BillingStatus)}>
+                        <option value="paid">Paid</option>
+                        <option value="trialing">Trialing</option>
+                        <option value="overdue">Overdue</option>
+                        <option value="not_started">Not started</option>
+                      </select>
+                    </div>
+                    <div className="billing-cell">
+                      <span>Autopay</span>
+                      <strong>{autopayReady ? 'On' : 'Off'}</strong>
+                    </div>
+                    <div className="billing-cell billing-card-cell">
+                      <span>Card</span>
+                      <strong>{paymentProfile?.subscriptionCardLast4 ? `${paymentProfile.subscriptionCardBrand} ${paymentProfile.subscriptionCardLast4}` : 'Missing'}</strong>
+                    </div>
+                    <div className="billing-cell billing-access-cell">
+                      <span>Access</span>
+                      <strong>{blockedStatuses.includes(company.billingStatus) ? 'Limited' : 'Full'}</strong>
+                    </div>
+                    <span className={`billing-pill ${company.billingStatus}`}>{billingLabels[company.billingStatus]}</span>
+                  </>
+                );
+              })()}
             </article>
           ))}
         </div>

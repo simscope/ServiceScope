@@ -3,7 +3,7 @@ import type { Company, CompanyPlan, PlanDefinition } from '../types';
 export const plans: PlanDefinition[] = [
   {
     name: 'Launch',
-    price: 299,
+    price: 149,
     seats: 5,
     technicians: 8,
     storageGb: 10,
@@ -12,7 +12,7 @@ export const plans: PlanDefinition[] = [
   },
   {
     name: 'Growth',
-    price: 599,
+    price: 299,
     seats: 15,
     technicians: 25,
     storageGb: 50,
@@ -21,7 +21,7 @@ export const plans: PlanDefinition[] = [
   },
   {
     name: 'Scale',
-    price: 1099,
+    price: 549,
     seats: 35,
     technicians: 75,
     storageGb: 150,

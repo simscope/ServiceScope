@@ -403,6 +403,64 @@ h2 {
   gap: 10px;
 }
 
+.billing-alert-panel.has-alerts {
+  border-color: #f4b45e;
+  background: #fff8e8;
+}
+
+.billing-alert-list {
+  display: grid;
+  gap: 10px;
+}
+
+.billing-alert-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 150px minmax(260px, 1.3fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #f2c779;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 12px;
+}
+
+.billing-alert-row p {
+  margin: 3px 0 0;
+  color: #667269;
+  font-size: 13px;
+}
+
+.billing-alert-detail {
+  line-height: 1.45;
+}
+
+.billing-alert-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.access-mode {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.access-mode.blocked {
+  background: #ffe0dc;
+  color: #8c2c20;
+}
+
+.access-mode.limited {
+  background: #fff0c6;
+  color: #7a5600;
+}
+
 .user-list {
   display: grid;
   gap: 10px;
@@ -411,7 +469,7 @@ h2 {
 .subscription-row,
 .user-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.3fr) minmax(130px, 0.7fr) minmax(150px, 0.8fr) 72px 110px;
+  grid-template-columns: minmax(220px, 1.3fr) minmax(120px, 0.7fr) minmax(140px, 0.8fr) 76px minmax(110px, 0.7fr) 92px 110px;
   align-items: center;
   gap: 14px;
   min-height: 78px;
@@ -446,6 +504,10 @@ h2 {
 
 .billing-cell strong {
   font-size: 18px;
+}
+
+.billing-access-cell strong {
+  font-size: 14px;
 }
 
 .user-status {
@@ -1586,6 +1648,7 @@ textarea {
   .payroll-rule-controls,
   .library-filters,
   .audit-filter-grid,
+  .billing-alert-row,
   .library-document-card,
   .technician-payroll-grid,
   .technician-payroll-card,
@@ -1663,6 +1726,10 @@ textarea {
     grid-template-columns: 1fr 1fr;
   }
 
+  .billing-alert-actions {
+    justify-content: flex-start;
+  }
+
   .audit-row {
     grid-template-columns: 42px minmax(0, 1fr);
   }
@@ -1696,6 +1763,8 @@ textarea {
   .profile-fields,
   .payment-fields,
   .payment-method-grid,
+  .subscription-payment-layout,
+  .subscription-payment-fields,
   .workflow-fields,
   .job-type-form,
   .job-type-row,
