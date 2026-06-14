@@ -1,0 +1,770 @@
+import type { FormEvent, ReactNode } from 'react';
+import {
+  AlertTriangle,
+  Building2,
+  CheckCircle2,
+  CircleDollarSign,
+  ClipboardList,
+  CreditCard,
+  Database,
+  FileClock,
+  Inbox,
+  MailPlus,
+  PackageCheck,
+  Rocket,
+  ServerCog,
+  ShieldCheck,
+  UserPlus,
+  Users,
+} from 'lucide-react';
+import type { CompanyOnboardingStepKey } from '../appTypes';
+import {
+  auditCategoryLabels,
+  billingLabels,
+  platformRoleLabels,
+  platformStatusLabels,
+  statusLabels,
+  stepLabels,
+  ticketKindLabels,
+  ticketPriorityLabels,
+  ticketStatusLabels,
+} from '../appLabels';
+import { plans } from '../services/billingCatalog';
+import { rolePermissions, SYSTEM_OWNER_ID } from '../services/accessStore';
+import { filterAuditEvents } from '../services/auditStore';
+import { onboardingStepOrder } from '../services/tenantStore';
+import { money } from '../utils/format';
+import type {
+  AuditEvent,
+  AuditEventCategory,
+  BillingStatus,
+  Company,
+  CompanyPlan,
+  CompanyStatus,
+  NewPlatformUserForm,
+  NewSupportTicketForm,
+  OnboardingStepStatus,
+  PlatformUser,
+  PlatformUserRole,
+  PlatformUserStatus,
+  SupportTicket,
+  SupportTicketKind,
+  SupportTicketPriority,
+  SupportTicketStatus,
+} from '../types';
+
+export function DashboardOverview({
+  companies,
+  supportTickets,
+  onOpenCompanies,
+  onOpenSupport,
+}: {
+  companies: Company[];
+  supportTickets: SupportTicket[];
+  onOpenCompanies: () => void;
+  onOpenSupport: () => void;
+}) {
+  const newestCompanies = companies.slice(0, 4);
+  const openTickets = supportTickets.filter((ticket) => ticket.status !== 'resolved').slice(0, 4);
+
+  return (
+    <div className="overview-grid">
+      <section className="panel overview-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Tenant overview</p>
+            <h2>Companies</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={onOpenCompanies}>
+            Open
+          </button>
+        </div>
+        <div className="overview-list">
+          {newestCompanies.map((company) => (
+            <div className="overview-row" key={company.id}>
+              <div className="company-main">
+                <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+                <div>
+                  <h3>{company.name}</h3>
+                  <p>{company.plan} - {company.market}</p>
+                </div>
+              </div>
+              <StatusPill status={company.status} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel overview-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Customer voice</p>
+            <h2>Support</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={onOpenSupport}>
+            Open
+          </button>
+        </div>
+        <div className="overview-list">
+          {openTickets.length ? (
+            openTickets.map((ticket) => (
+              <div className="overview-row support-summary" key={ticket.id}>
+                <div>
+                  <h3>{ticket.subject}</h3>
+                  <p>{ticket.companyName} - {ticketStatusLabels[ticket.status]}</p>
+                </div>
+                <span className={`ticket-priority ${ticket.priority}`}>{ticketPriorityLabels[ticket.priority]}</span>
+              </div>
+            ))
+          ) : (
+            <div className="empty-state compact-empty">
+              <CheckCircle2 size={24} aria-hidden="true" />
+              <h3>No open support</h3>
+              <p>Resolved requests stay out of the owner dashboard.</p>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function AuditPage({
+  events,
+  filter,
+  onFilterChange,
+}: {
+  events: AuditEvent[];
+  filter: 'all' | AuditEventCategory;
+  onFilterChange: (filter: 'all' | AuditEventCategory) => void;
+}) {
+  const filteredEvents = filterAuditEvents(events, filter);
+  const categoryCounts = events.reduce(
+    (counts, event) => ({
+      ...counts,
+      [event.category]: counts[event.category] + 1,
+    }),
+    { access: 0, billing: 0, support: 0, tenant: 0 } as Record<AuditEventCategory, number>,
+  );
+
+  return (
+    <div className="audit-page">
+      <section className="audit-summary">
+        <MetricCard icon={<FileClock size={20} />} label="Events" value={events.length.toString()} detail="Owner activity history" />
+        <MetricCard icon={<Building2 size={20} />} label="Tenants" value={categoryCounts.tenant.toString()} detail="Company changes" />
+        <MetricCard icon={<CreditCard size={20} />} label="Billing" value={categoryCounts.billing.toString()} detail="Plan and payment changes" />
+        <MetricCard icon={<Inbox size={20} />} label="Support" value={categoryCounts.support.toString()} detail="Tickets and replies" />
+      </section>
+
+      <section className="panel audit-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">System record</p>
+            <h2>Activity log</h2>
+          </div>
+          <select value={filter} onChange={(event) => onFilterChange(event.target.value as 'all' | AuditEventCategory)} aria-label="Filter audit events">
+            <option value="all">All events</option>
+            <option value="tenant">Tenants</option>
+            <option value="billing">Billing</option>
+            <option value="access">Access</option>
+            <option value="support">Support</option>
+          </select>
+        </div>
+
+        <div className="audit-list">
+          {filteredEvents.length ? (
+            filteredEvents.map((event) => (
+              <article className={`audit-row ${event.category}`} key={event.id}>
+                <div className="audit-icon">
+                  <FileClock size={18} aria-hidden="true" />
+                </div>
+                <div className="audit-main">
+                  <div className="audit-topline">
+                    <span className={`audit-category ${event.category}`}>{auditCategoryLabels[event.category]}</span>
+                    <strong>{event.action}</strong>
+                    <small>{event.createdAt}</small>
+                  </div>
+                  <h3>{event.resource}</h3>
+                  <p>{event.details}</p>
+                </div>
+                <div className="audit-actor">
+                  <span>Actor</span>
+                  <strong>{event.actor}</strong>
+                </div>
+              </article>
+            ))
+          ) : (
+            <div className="empty-state compact-empty">
+              <FileClock size={24} aria-hidden="true" />
+              <h3>No audit events</h3>
+              <p>Choose another filter or make a platform change.</p>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function BillingPage({
+  companies,
+  onChangePlan,
+  onChangeBillingStatus,
+}: {
+  companies: Company[];
+  onChangePlan: (companyId: string, plan: CompanyPlan) => void;
+  onChangeBillingStatus: (companyId: string, status: BillingStatus) => void;
+}) {
+  const monthlyRevenue = companies.reduce((total, company) => {
+    const plan = plans.find((candidate) => candidate.name === company.plan);
+    return company.billingStatus === 'paid' || company.billingStatus === 'trialing'
+      ? total + (plan?.price ?? 0)
+      : total;
+  }, 0);
+
+  return (
+    <div className="billing-page">
+      <section className="billing-summary">
+        <MetricCard icon={<CircleDollarSign size={20} />} label="Estimated MRR" value={money(monthlyRevenue)} detail="Paid and trialing tenants" />
+        <MetricCard icon={<PackageCheck size={20} />} label="Plans" value={plans.length.toString()} detail="Launch, Growth, Scale" />
+        <MetricCard icon={<CreditCard size={20} />} label="Paid tenants" value={companies.filter((company) => company.billingStatus === 'paid').length.toString()} detail="Current billing status" />
+      </section>
+
+      <section className="plan-grid" aria-label="Plan catalog">
+        {plans.map((plan) => (
+          <article className="plan-card" key={plan.name}>
+            <div>
+              <p className="eyebrow">{plan.support} support</p>
+              <h2>{plan.name}</h2>
+              <strong>{money(plan.price)}<span>/mo</span></strong>
+            </div>
+            <div className="plan-limits">
+              <span>{plan.seats} seats</span>
+              <span>{plan.technicians} techs</span>
+              <span>{plan.storageGb} GB storage</span>
+            </div>
+            <ul>
+              {plan.entitlements.map((entitlement) => (
+                <li key={entitlement}>{entitlement}</li>
+              ))}
+            </ul>
+          </article>
+        ))}
+      </section>
+
+      <section className="panel subscription-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Tenant billing</p>
+            <h2>Subscriptions</h2>
+          </div>
+          <CreditCard size={20} aria-hidden="true" />
+        </div>
+
+        <div className="subscription-list">
+          {companies.map((company) => (
+            <article className="subscription-row" key={company.id}>
+              <div className="company-main">
+                <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+                <div>
+                  <h3>{company.name}</h3>
+                  <p>{company.ownerEmail}</p>
+                </div>
+              </div>
+              <div className="billing-cell">
+                <span>Plan</span>
+                <select value={company.plan} onChange={(event) => onChangePlan(company.id, event.target.value as CompanyPlan)}>
+                  {plans.map((plan) => (
+                    <option value={plan.name} key={plan.name}>
+                      {plan.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="billing-cell">
+                <span>Status</span>
+                <select value={company.billingStatus} onChange={(event) => onChangeBillingStatus(company.id, event.target.value as BillingStatus)}>
+                  <option value="paid">Paid</option>
+                  <option value="trialing">Trialing</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="not_started">Not started</option>
+                </select>
+              </div>
+              <div className="billing-cell">
+                <span>Seats</span>
+                <strong>{company.seats}</strong>
+              </div>
+              <span className={`billing-pill ${company.billingStatus}`}>{billingLabels[company.billingStatus]}</span>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function AccessPage({
+  users,
+  form,
+  onFormChange,
+  onInvite,
+  onRoleChange,
+  onStatusChange,
+}: {
+  users: PlatformUser[];
+  form: NewPlatformUserForm;
+  onFormChange: (form: NewPlatformUserForm) => void;
+  onInvite: (event: FormEvent<HTMLFormElement>) => void;
+  onRoleChange: (userId: string, role: PlatformUserRole) => void;
+  onStatusChange: (userId: string, status: PlatformUserStatus) => void;
+}) {
+  return (
+    <div className="access-page">
+      <section className="panel invite-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Platform team</p>
+            <h2>Invite user</h2>
+          </div>
+          <UserPlus size={20} aria-hidden="true" />
+        </div>
+        <form className="access-form" onSubmit={onInvite}>
+          <label>
+            Name
+            <input value={form.name} onChange={(event) => onFormChange({ ...form, name: event.target.value })} placeholder="Taylor Smith" />
+          </label>
+          <label>
+            Email
+            <input type="email" value={form.email} onChange={(event) => onFormChange({ ...form, email: event.target.value })} placeholder="taylor@servicescope.app" />
+          </label>
+          <label>
+            Role
+            <select value={form.role} onChange={(event) => onFormChange({ ...form, role: event.target.value as PlatformUserRole })}>
+              <option value="support">Support</option>
+              <option value="admin">Admin</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </label>
+          <button className="primary-button" type="submit">
+            <UserPlus size={18} aria-hidden="true" />
+            Send invite
+          </button>
+        </form>
+      </section>
+
+      <section className="panel users-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">RBAC</p>
+            <h2>Users</h2>
+          </div>
+          <Users size={20} aria-hidden="true" />
+        </div>
+
+        <div className="user-list">
+          {users.map((user) => {
+            const lockedOwner = user.id === SYSTEM_OWNER_ID;
+
+            return (
+              <article className={`user-row ${lockedOwner ? 'locked-owner' : ''}`} key={user.id}>
+                <div className="company-main">
+                  <div className="company-avatar">{user.name.slice(0, 2).toUpperCase()}</div>
+                  <div>
+                    <h3>{user.name}</h3>
+                    <p>{lockedOwner ? `${user.email} - locked owner` : user.email}</p>
+                  </div>
+                </div>
+                <div className="billing-cell">
+                  <span>Role</span>
+                  {lockedOwner ? (
+                    <strong>Owner</strong>
+                  ) : (
+                    <select value={user.role} onChange={(event) => onRoleChange(user.id, event.target.value as PlatformUserRole)}>
+                      <option value="admin">Admin</option>
+                      <option value="support">Support</option>
+                      <option value="viewer">Viewer</option>
+                    </select>
+                  )}
+                </div>
+                <div className="billing-cell">
+                  <span>Status</span>
+                  {lockedOwner ? (
+                    <strong>Active</strong>
+                  ) : (
+                    <select value={user.status} onChange={(event) => onStatusChange(user.id, event.target.value as PlatformUserStatus)}>
+                      <option value="active">Active</option>
+                      <option value="invited">Invited</option>
+                      <option value="disabled">Disabled</option>
+                    </select>
+                  )}
+                </div>
+                <div className="billing-cell">
+                  <span>Last active</span>
+                  <strong>{user.lastActive}</strong>
+                </div>
+                <span className={`user-status ${user.status}`}>{platformStatusLabels[user.status]}</span>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="panel permissions-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Permission matrix</p>
+            <h2>Roles</h2>
+          </div>
+          <ShieldCheck size={20} aria-hidden="true" />
+        </div>
+
+        <div className="role-grid">
+          {(Object.keys(rolePermissions) as PlatformUserRole[]).map((role) => (
+            <article className={`role-card ${role === 'owner' ? 'system-role' : ''}`} key={role}>
+              <h3>{platformRoleLabels[role]}{role === 'owner' ? <span>System only</span> : null}</h3>
+              <ul>
+                {rolePermissions[role].map((permission) => (
+                  <li key={permission}>{permission}</li>
+                ))}
+              </ul>
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function SupportPanel({
+  companies,
+  tickets,
+  form,
+  onFormChange,
+  onSubmit,
+  onStatusChange,
+  selectedTicket,
+  onSelectTicket,
+  replyText,
+  onReplyTextChange,
+  onSendReply,
+}: {
+  companies: Company[];
+  tickets: SupportTicket[];
+  form: NewSupportTicketForm;
+  onFormChange: (form: NewSupportTicketForm) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onStatusChange: (ticketId: string, status: SupportTicketStatus) => void;
+  selectedTicket?: SupportTicket;
+  onSelectTicket: (ticketId: string) => void;
+  replyText: string;
+  onReplyTextChange: (value: string) => void;
+  onSendReply: (ticketId: string) => void;
+}) {
+  const selectedCompany = companies.find((company) => company.id === form.companyId);
+
+  function selectCompany(companyId: string) {
+    const company = companies.find((candidate) => candidate.id === companyId);
+    onFormChange({
+      ...form,
+      companyId,
+      authorName: company?.ownerName ?? '',
+      authorEmail: company?.ownerEmail ?? '',
+    });
+  }
+
+  return (
+    <section className="panel support-panel" id="support">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Company support</p>
+          <h2>Inbox</h2>
+        </div>
+        <MailPlus size={20} aria-hidden="true" />
+      </div>
+
+      <div className="support-layout">
+        <form className="support-form" onSubmit={onSubmit}>
+          <label>
+            Company
+            <select value={form.companyId} onChange={(event) => selectCompany(event.target.value)}>
+              {companies.map((company) => (
+                <option value={company.id} key={company.id}>
+                  {company.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="form-row">
+            <label>
+              Type
+              <select value={form.kind} onChange={(event) => onFormChange({ ...form, kind: event.target.value as SupportTicketKind })}>
+                <option value="bug">Bug</option>
+                <option value="change">Change</option>
+                <option value="question">Question</option>
+              </select>
+            </label>
+            <label>
+              Priority
+              <select value={form.priority} onChange={(event) => onFormChange({ ...form, priority: event.target.value as SupportTicketPriority })}>
+                <option value="normal">Normal</option>
+                <option value="urgent">Urgent</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            From
+            <input value={form.authorName} onChange={(event) => onFormChange({ ...form, authorName: event.target.value })} placeholder={selectedCompany?.ownerName ?? 'Company owner'} />
+          </label>
+          <label>
+            Reply email
+            <input type="email" value={form.authorEmail} onChange={(event) => onFormChange({ ...form, authorEmail: event.target.value })} placeholder={selectedCompany?.ownerEmail ?? 'owner@company.com'} />
+          </label>
+          <label>
+            Subject
+            <input value={form.subject} onChange={(event) => onFormChange({ ...form, subject: event.target.value })} placeholder="What should change?" />
+          </label>
+          <label>
+            Message
+            <textarea value={form.message} onChange={(event) => onFormChange({ ...form, message: event.target.value })} placeholder="Describe the bug, missing feature, or request." />
+          </label>
+          <button className="primary-button" type="submit">
+            <MailPlus size={18} aria-hidden="true" />
+            Send to owner
+          </button>
+        </form>
+
+        <div className="ticket-workspace">
+          <div className="ticket-list">
+            {tickets.map((ticket) => (
+              <button
+                className={`ticket-card ${ticket.priority} ${ticket.id === selectedTicket?.id ? 'selected' : ''}`}
+                key={ticket.id}
+                type="button"
+                onClick={() => onSelectTicket(ticket.id)}
+              >
+                <div className="ticket-topline">
+                  <span className={`ticket-kind ${ticket.kind}`}>{ticketKindLabels[ticket.kind]}</span>
+                  <span className={`ticket-priority ${ticket.priority}`}>{ticketPriorityLabels[ticket.priority]}</span>
+                </div>
+                <h3>{ticket.subject}</h3>
+                <p>{ticket.message}</p>
+                <div className="ticket-meta">
+                  <span>{ticket.companyName}</span>
+                  <span>{ticket.lastUpdate}</span>
+                </div>
+                <div className="ticket-footer">
+                  <span>{ticket.authorName}</span>
+                  <strong>{ticketStatusLabels[ticket.status]}</strong>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          {selectedTicket ? (
+            <article className="thread-panel">
+              <div className="thread-header">
+                <div>
+                  <p className="eyebrow">{selectedTicket.companyName}</p>
+                  <h3>{selectedTicket.subject}</h3>
+                </div>
+                <select value={selectedTicket.status} onChange={(event) => onStatusChange(selectedTicket.id, event.target.value as SupportTicketStatus)} aria-label={`Status for ${selectedTicket.subject}`}>
+                  <option value="new">New</option>
+                  <option value="reviewing">Reviewing</option>
+                  <option value="planned">Planned</option>
+                  <option value="resolved">Resolved</option>
+                </select>
+              </div>
+
+              <div className="message-list">
+                {selectedTicket.messages.map((message) => (
+                  <div className={`support-message ${message.author}`} key={message.id}>
+                    <div>
+                      <strong>{message.authorName}</strong>
+                      <span>{message.createdAt}</span>
+                    </div>
+                    <p>{message.body}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="reply-box">
+                <label>
+                  Owner reply
+                  <textarea value={replyText} onChange={(event) => onReplyTextChange(event.target.value)} placeholder="Write an answer or next step for the company." />
+                </label>
+                <button className="secondary-button" type="button" onClick={() => onSendReply(selectedTicket.id)}>
+                  Send reply
+                </button>
+              </div>
+            </article>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function MetricCard({ icon, label, value, detail }: { icon: ReactNode; label: string; value: string; detail: string }) {
+  return (
+    <article className="metric-card">
+      <div className="metric-icon">{icon}</div>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
+}
+
+export function CompanyRow({
+  company,
+  selected,
+  onSelect,
+}: {
+  company: Company;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button className={`company-row ${selected ? 'selected' : ''}`} type="button" onClick={onSelect}>
+      <div className="company-main">
+        <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+        <div>
+          <h3>{company.name}</h3>
+          <p>{company.ownerName} - {company.market}</p>
+        </div>
+      </div>
+      <StatusPill status={company.status} />
+      <div className="company-stat">
+        <span>Plan</span>
+        <strong>{company.plan}</strong>
+      </div>
+      <div className="company-stat">
+        <span>Jobs</span>
+        <strong>{company.openJobs}</strong>
+      </div>
+      <div className="health-cell">
+        <div className="health-label">
+          <span>Health</span>
+          <strong>{company.health}%</strong>
+        </div>
+        <div className="health-track">
+          <span style={{ width: `${company.health}%` }} />
+        </div>
+      </div>
+      <div className="sync-cell">
+        <CheckCircle2 size={16} aria-hidden="true" />
+        {company.lastSync}
+      </div>
+    </button>
+  );
+}
+
+export function CompanyDetail({
+  company,
+  onPrepareNext,
+  onCompleteStep,
+}: {
+  company: Company;
+  onPrepareNext: () => void;
+  onCompleteStep: (step: CompanyOnboardingStepKey) => void;
+}) {
+  const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
+  const readyToLaunch = completedSteps === onboardingStepOrder.length;
+
+  return (
+    <aside className="panel detail-panel" aria-label={`${company.name} details`}>
+      <div className="detail-header">
+        <div className="company-avatar large">{company.name.slice(0, 2).toUpperCase()}</div>
+        <div>
+          <p className="eyebrow">Selected tenant</p>
+          <h2>{company.name}</h2>
+          <p>{company.domain}</p>
+        </div>
+      </div>
+
+      <div className="detail-pills">
+        <StatusPill status={company.status} />
+        <span className={`billing-pill ${company.billingStatus}`}>{billingLabels[company.billingStatus]}</span>
+      </div>
+
+      <div className={`launch-readiness ${readyToLaunch ? 'ready' : ''}`}>
+        <Rocket size={18} aria-hidden="true" />
+        <div>
+          <strong>{readyToLaunch ? 'Ready to launch' : 'Launch readiness'}</strong>
+          <span>{readyToLaunch ? 'Tenant can be handed to the company owner.' : `${completedSteps} of ${onboardingStepOrder.length} provisioning steps complete.`}</span>
+        </div>
+      </div>
+
+      <div className="detail-grid">
+        <MiniStat icon={<Users size={17} />} label="Seats" value={company.seats.toString()} />
+        <MiniStat icon={<ServerCog size={17} />} label="Techs" value={company.technicians.toString()} />
+        <MiniStat icon={<ClipboardList size={17} />} label="Jobs" value={company.usage.jobsThisMonth.toString()} />
+        <MiniStat icon={<CreditCard size={17} />} label="Invoices" value={company.usage.invoicesThisMonth.toString()} />
+      </div>
+
+      <section className="detail-section">
+        <div className="section-title">
+          <Database size={18} aria-hidden="true" />
+          <h3>Provisioning</h3>
+          <span>{completedSteps}/4</span>
+        </div>
+        <div className="steps-list">
+          {Object.entries(company.onboarding).map(([step, stepStatus]) => (
+            <div className="step-row" key={step}>
+              <span className={`step-dot ${stepStatus}`} />
+              <span>{stepLabels[step as keyof Company['onboarding']]}</span>
+              {stepStatus === 'done' ? (
+                <strong>{formatStepStatus(stepStatus)}</strong>
+              ) : (
+                <button className="step-action" type="button" onClick={() => onCompleteStep(step as CompanyOnboardingStepKey)}>
+                  Complete
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="detail-section">
+        <div className="section-title">
+          <AlertTriangle size={18} aria-hidden="true" />
+          <h3>Owner signals</h3>
+          <span>{company.alerts.length}</span>
+        </div>
+        {company.alerts.length ? (
+          <div className="alerts-list">
+            {company.alerts.map((alert) => (
+              <p key={alert}>{alert}</p>
+            ))}
+          </div>
+        ) : (
+          <p className="quiet-line">No active owner actions.</p>
+        )}
+      </section>
+
+      <button className="secondary-button" type="button" onClick={onPrepareNext} disabled={readyToLaunch}>
+        {readyToLaunch ? <Rocket size={17} aria-hidden="true" /> : <ServerCog size={17} aria-hidden="true" />}
+        {readyToLaunch ? 'Workspace ready' : 'Prepare next step'}
+      </button>
+    </aside>
+  );
+}
+
+export function MiniStat({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
+  return (
+    <div className="mini-stat">
+      {icon}
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+export function StatusPill({ status }: { status: CompanyStatus }) {
+  return <span className={`status-pill ${status}`}>{statusLabels[status]}</span>;
+}
+
+export function formatStepStatus(status: OnboardingStepStatus) {
+  return status.replace('_', ' ');
+}
