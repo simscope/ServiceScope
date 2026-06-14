@@ -197,6 +197,9 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, mate
   return (
     <section className="job-detail-panel">
       <header className="job-detail-title">
+        <button className="secondary-button compact" type="button" onClick={onClose}>
+          Back
+        </button>
         <h1>Edit Job #{jobNumber}</h1>
       </header>
 

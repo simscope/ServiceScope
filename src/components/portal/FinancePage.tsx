@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
-import type { FinancePeriod, FinanceTab, PayrollRules } from '../../appTypes';
+import type { FinancePeriod, PayrollRules } from '../../appTypes';
 import type { CompanyOnboardingProfile, CompanyPaymentMethod, MaterialRow, ServiceJob } from '../../types';
 import { money, statusClassName } from '../../utils/format';
 
@@ -12,6 +12,8 @@ export type FinanceJobRow = ServiceJob & {
   salaryBase: number;
   salary: number;
   paid: boolean;
+  paidAt: string;
+  payrollArchived: boolean;
   warnings: string[];
   needsAttention: boolean;
 };
@@ -42,14 +44,9 @@ export function FinancePage({
   onFinanceTechFilterChange,
   payrollRules,
   onPayrollRulesChange,
-  financeTabCounts,
-  financeTab,
-  onFinanceTabChange,
   technicianPayroll,
   financeBaseRows,
-  filteredFinanceRows,
   paymentMethodLabels,
-  paymentBuckets,
   onOpenJob,
   onToggleSalaryPaid,
 }: {
@@ -68,14 +65,9 @@ export function FinancePage({
   onFinanceTechFilterChange: (technician: string) => void;
   payrollRules: PayrollRules;
   onPayrollRulesChange: (rules: PayrollRules) => void;
-  financeTabCounts: Record<FinanceTab, number>;
-  financeTab: FinanceTab;
-  onFinanceTabChange: (tab: FinanceTab) => void;
   technicianPayroll: TechnicianPayrollRow[];
   financeBaseRows: FinanceJobRow[];
-  filteredFinanceRows: FinanceJobRow[];
   paymentMethodLabels: Record<CompanyPaymentMethod, string>;
-  paymentBuckets: Record<string, number>;
   onOpenJob: (job: FinanceJobRow) => void;
   onToggleSalaryPaid: (jobNumber: string) => void;
 }) {
@@ -84,6 +76,60 @@ export function FinancePage({
   const selectedTechnicianJobs = selectedTechnicianName
     ? financeBaseRows.filter((job) => job.assignee === selectedTechnicianName)
     : [];
+  const unpaidTechnicianJobs = selectedTechnicianJobs.filter((job) => !job.paid);
+  const paidTechnicianJobs = selectedTechnicianJobs.filter((job) => job.paid && !job.payrollArchived);
+  const archivedTechnicianJobs = selectedTechnicianJobs.filter((job) => job.payrollArchived);
+  const renderTechnicianJobRows = (rows: FinanceJobRow[], emptyText: string) => (
+    <table className="technician-finance-table">
+      <thead>
+        <tr>
+          <th>Job</th>
+          <th>Client</th>
+          <th>Status</th>
+          <th>Collected</th>
+          <th>Materials</th>
+          <th>Salary</th>
+          <th>Review</th>
+          <th>Paid</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((job) => (
+          <tr className={job.needsAttention ? 'needs-review' : ''} key={job.jobNumber}>
+            <td>
+              <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
+                #{job.jobNumber}
+              </button>
+            </td>
+            <td>
+              <strong>{job.organization}</strong>
+              <span>{job.clientName}</span>
+            </td>
+            <td>{job.status}</td>
+            <td>{money(job.paidScf + job.paidLabor)}</td>
+            <td>{money(job.materialsCost)}</td>
+            <td>{money(job.salary)}</td>
+            <td>
+              {job.warnings.length ? job.warnings.join(' - ') : 'Ready'}
+              {job.paidAt ? <span>Paid on {job.paidAt}</span> : null}
+            </td>
+            <td>
+              <button className={job.paid ? 'payroll-toggle paid' : 'payroll-toggle'} type="button" onClick={() => onToggleSalaryPaid(job.jobNumber)}>
+                {job.paid ? 'Paid' : 'Mark paid'}
+              </button>
+            </td>
+          </tr>
+        ))}
+        {!rows.length ? (
+          <tr>
+            <td colSpan={8}>
+              <div className="empty-inline">{emptyText}</div>
+            </td>
+          </tr>
+        ) : null}
+      </tbody>
+    </table>
+  );
 
   if (openedJob) {
     return (
@@ -149,56 +195,38 @@ export function FinancePage({
             <span>SCF-only payout: {money(payrollRules.scfOnlyPayout)}</span>
             <span>{payrollRules.includeScf ? 'SCF included' : 'SCF excluded'}</span>
             <span>{payrollRules.deductMaterials ? 'Materials deducted' : 'Materials not deducted'}</span>
+            <span>Archive paid after {payrollRules.archivePaidAfterDays} days</span>
           </div>
 
-          <div className="technician-finance-table-wrap">
-            <table className="technician-finance-table">
-              <thead>
-                <tr>
-                  <th>Job</th>
-                  <th>Client</th>
-                  <th>Status</th>
-                  <th>Collected</th>
-                  <th>Materials</th>
-                  <th>Salary</th>
-                  <th>Review</th>
-                  <th>Paid</th>
-                </tr>
-              </thead>
-              <tbody>
-                {selectedTechnicianJobs.map((job) => (
-                  <tr className={job.needsAttention ? 'needs-review' : ''} key={job.jobNumber}>
-                    <td>
-                      <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
-                        #{job.jobNumber}
-                      </button>
-                    </td>
-                    <td>
-                      <strong>{job.organization}</strong>
-                      <span>{job.clientName}</span>
-                    </td>
-                    <td>{job.status}</td>
-                    <td>{money(job.paidScf + job.paidLabor)}</td>
-                    <td>{money(job.materialsCost)}</td>
-                    <td>{money(job.salary)}</td>
-                    <td>{job.warnings.length ? job.warnings.join(' - ') : 'Ready'}</td>
-                    <td>
-                      <button className={job.paid ? 'payroll-toggle paid' : 'payroll-toggle'} type="button" onClick={() => onToggleSalaryPaid(job.jobNumber)}>
-                        {job.paid ? 'Paid' : 'Mark paid'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!selectedTechnicianJobs.length ? (
-                  <tr>
-                    <td colSpan={8}>
-                      <div className="empty-inline">No jobs in this period for this technician.</div>
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
+          <section className="technician-finance-section">
+            <div className="technician-finance-section-heading">
+              <h2>Unpaid payroll</h2>
+              <span>{unpaidTechnicianJobs.length} jobs</span>
+            </div>
+            <div className="technician-finance-table-wrap">
+              {renderTechnicianJobRows(unpaidTechnicianJobs, 'No unpaid payroll jobs for this technician.')}
+            </div>
+          </section>
+
+          <details className="technician-finance-section collapsed-payroll">
+            <summary>
+              <span>Paid payroll</span>
+              <strong>{paidTechnicianJobs.length} jobs</strong>
+            </summary>
+            <div className="technician-finance-table-wrap">
+              {renderTechnicianJobRows(paidTechnicianJobs, 'No paid payroll jobs in this period.')}
+            </div>
+          </details>
+
+          <details className="technician-finance-section collapsed-payroll">
+            <summary>
+              <span>Payroll archive</span>
+              <strong>{archivedTechnicianJobs.length} jobs</strong>
+            </summary>
+            <div className="technician-finance-table-wrap">
+              {renderTechnicianJobRows(archivedTechnicianJobs, 'No archived payroll jobs yet.')}
+            </div>
+          </details>
         </div>
       </section>
     );
@@ -301,26 +329,17 @@ export function FinancePage({
             />
             Deduct materials before payroll
           </label>
+          <label>
+            Archive paid after days
+            <input
+              min="0"
+              type="number"
+              value={payrollRules.archivePaidAfterDays}
+              onChange={(event) => onPayrollRulesChange({ ...payrollRules, archivePaidAfterDays: Math.max(0, Number(event.target.value) || 0) })}
+            />
+          </label>
         </div>
       </section>
-
-      <div className="finance-tabs">
-        {[
-          { id: 'ready', label: 'Ready to pay', count: financeTabCounts.ready },
-          { id: 'paid', label: 'Paid', count: financeTabCounts.paid },
-          { id: 'attention', label: 'Needs attention', count: financeTabCounts.attention },
-        ].map((tab) => (
-          <button
-            className={financeTab === tab.id ? 'active' : ''}
-            key={tab.id}
-            type="button"
-            onClick={() => onFinanceTabChange(tab.id as FinanceTab)}
-          >
-            {tab.label}
-            <span>{tab.count}</span>
-          </button>
-        ))}
-      </div>
 
       <section className="technician-payroll-grid">
         {technicianPayroll.map((row) => (
@@ -357,104 +376,6 @@ export function FinancePage({
             </dl>
           </button>
         ))}
-      </section>
-
-      {financeBaseRows.some((job) => job.needsAttention) ? (
-        <section className="finance-attention-panel">
-          <div>
-            <p className="eyebrow">Review before paying</p>
-            <h2>Needs attention</h2>
-          </div>
-          {financeBaseRows
-            .filter((job) => job.needsAttention)
-            .slice(0, 4)
-            .map((job) => (
-              <button type="button" key={job.jobNumber} onClick={() => onOpenJob(job)}>
-                <strong>#{job.jobNumber} - {job.organization}</strong>
-                <span>{job.warnings.join(' - ')}</span>
-              </button>
-            ))}
-        </section>
-      ) : null}
-
-      <div className="finance-table-wrap">
-        <table className="finance-table">
-          <thead>
-            <tr>
-              <th>Job</th>
-              <th>Technician</th>
-              <th>Status</th>
-              <th>SCF</th>
-              <th>SCF payment</th>
-              <th>Labor</th>
-              <th>Labor payment</th>
-              <th>Materials</th>
-              <th>Payroll base</th>
-              <th>Salary</th>
-              <th>Review</th>
-              <th>Paid</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredFinanceRows.map((job) => (
-              <tr className={job.paid ? 'salary-paid-row' : job.needsAttention ? 'salary-attention-row' : ''} key={job.jobNumber}>
-                <td>
-                  <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
-                    #{job.jobNumber}
-                  </button>
-                  <span>{job.organization}</span>
-                </td>
-                <td>{job.assignee}</td>
-                <td>
-                  <span className={`material-status ${statusClassName(job.status)}`}>{job.status}</span>
-                </td>
-                <td>{money(job.paidScf)}</td>
-                <td>{job.scfPayment ? paymentMethodLabels[job.scfPayment as CompanyPaymentMethod] : '-'}</td>
-                <td>{money(job.paidLabor)}</td>
-                <td>{job.laborPayment ? paymentMethodLabels[job.laborPayment as CompanyPaymentMethod] : '-'}</td>
-                <td>{money(job.materialsCost)}</td>
-                <td>
-                  {money(job.salaryBase)}
-                  <span>{payrollRules.commissionPercent}% rule</span>
-                </td>
-                <td>
-                  <strong>{money(job.salary)}</strong>
-                </td>
-                <td>
-                  {job.warnings.length ? <span className="finance-warning-text">{job.warnings.join(' - ')}</span> : <span className="finance-ok-text">Ready</span>}
-                </td>
-                <td>
-                  <button className={job.paid ? 'payroll-toggle paid' : 'payroll-toggle'} type="button" onClick={() => onToggleSalaryPaid(job.jobNumber)}>
-                    {job.paid ? 'Paid' : 'Mark paid'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {!filteredFinanceRows.length ? (
-              <tr>
-                <td colSpan={12}>
-                  <div className="empty-inline">No finance rows match the filters.</div>
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
-
-      <section className="payment-report-panel">
-        <div>
-          <p className="eyebrow">Collected by method</p>
-          <h2>Money report</h2>
-        </div>
-        <div className="payment-bucket-grid">
-          {Object.entries(paymentBuckets).map(([label, amount]) => (
-            <span key={label}>
-              <strong>{money(amount)}</strong>
-              {label}
-            </span>
-          ))}
-          {!Object.keys(paymentBuckets).length ? <p>No paid customer payments in this filter.</p> : null}
-        </div>
       </section>
     </section>
   );

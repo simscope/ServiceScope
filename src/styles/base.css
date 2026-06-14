@@ -452,6 +452,12 @@ button {
   gap: 12px;
 }
 
+.job-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .job-detail-title h1 {
   margin-bottom: 0;
   font-size: 22px;

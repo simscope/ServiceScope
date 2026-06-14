@@ -771,6 +771,53 @@
   border-radius: 8px;
 }
 
+.technician-finance-section {
+  display: grid;
+  gap: 10px;
+}
+
+.technician-finance-section-heading,
+.collapsed-payroll summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f8faf9;
+  padding: 10px 12px;
+}
+
+.technician-finance-section-heading h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.technician-finance-section-heading span,
+.collapsed-payroll strong {
+  color: #5d6a62;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.collapsed-payroll {
+  border: 0;
+}
+
+.collapsed-payroll summary {
+  cursor: pointer;
+  font-weight: 950;
+}
+
+.collapsed-payroll[open] summary {
+  border-color: #b9c9dc;
+  background: #eef5ff;
+}
+
+.collapsed-payroll .technician-finance-table-wrap {
+  margin-top: 10px;
+}
+
 .technician-finance-table {
   width: 100%;
   min-width: 980px;

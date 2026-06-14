@@ -1,5 +1,5 @@
 import type { ChangeEvent, FormEvent } from 'react';
-import { Building2, ClipboardList, CreditCard, MailPlus, Plus, Rocket, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { Building2, ClipboardList, CreditCard, MailPlus, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react';
 import type { EmailConnection, EmailProvider } from '../../appTypes';
 import { paymentMethodLabels } from '../../appLabels';
 import type {
@@ -9,9 +9,8 @@ import type {
   CompanyTechnicianRole,
   NewCompanyJobTypeForm,
   NewCompanyTechnicianForm,
-  OnboardingStepStatus,
 } from '../../types';
-import { MiniStat, formatStepStatus } from '../OwnerPages';
+import { MiniStat } from '../OwnerPages';
 
 type ProfessionTemplate = NewCompanyJobTypeForm & { id: string };
 
@@ -24,7 +23,6 @@ export function OnboardingPage({
   connectMailbox,
   emailProviderLabels,
   updateMailbox,
-  onboardingItems,
   togglePaymentMethod,
   professionTemplates,
   configuredProfessionNames,
@@ -46,7 +44,6 @@ export function OnboardingPage({
   connectMailbox: (provider: EmailProvider) => void;
   emailProviderLabels: Record<EmailProvider, string>;
   updateMailbox: (patch: Partial<EmailConnection>) => void;
-  onboardingItems: { title: string; detail: string; status: string }[];
   togglePaymentMethod: (method: CompanyPaymentMethod) => void;
   professionTemplates: ProfessionTemplate[];
   configuredProfessionNames: Set<string>;
@@ -296,28 +293,6 @@ export function OnboardingPage({
                       Test disabled until backend is connected
                     </button>
                   </div>
-                </div>
-              </section>
-
-              <section className="panel onboarding-list-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">Setup path</p>
-                    <h2>Activation checklist</h2>
-                  </div>
-                  <Rocket size={20} aria-hidden="true" />
-                </div>
-                <div className="onboarding-list">
-                  {onboardingItems.map((item) => (
-                    <article className={`onboarding-item ${item.status}`} key={item.title}>
-                      <span className={`step-dot ${item.status}`} />
-                      <div>
-                        <h3>{item.title}</h3>
-                        <p>{item.detail}</p>
-                      </div>
-                      <strong>{formatStepStatus(item.status as OnboardingStepStatus)}</strong>
-                    </article>
-                  ))}
                 </div>
               </section>
 

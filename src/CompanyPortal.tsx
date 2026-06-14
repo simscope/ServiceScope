@@ -21,7 +21,6 @@ import {
   Plus,
   Rocket,
   Search,
-  ServerCog,
   ShieldCheck,
   SlidersHorizontal,
   UserPlus,
@@ -65,7 +64,6 @@ import {
   MiniStat,
   StatusPill,
   SupportPanel,
-  formatStepStatus,
 } from './components/OwnerPages';
 import {
   createPlatformUser,
@@ -104,7 +102,6 @@ import type {
   NewCompanyJobTypeForm,
   NewCompanyTechnicianForm,
   OnboardingStepKey,
-  OnboardingStepStatus,
   SupportTicket,
   SupportTicketKind,
   SupportTicketPriority,
@@ -127,7 +124,6 @@ import {
   platformRoleLabels,
   platformStatusLabels,
   statusLabels,
-  stepLabels,
   ticketKindLabels,
   ticketPriorityLabels,
   ticketStatusLabels,
@@ -158,7 +154,6 @@ import type {
   EmailProvider,
   EmailTemplate,
   FinancePeriod,
-  FinanceTab,
   LibraryCategory,
   LibraryDocument,
   LibraryDraft,
@@ -301,14 +296,14 @@ export function CompanyPortal({
   });
   const [financePeriod, setFinancePeriod] = useState<FinancePeriod>('this_month');
   const [financeTechFilter, setFinanceTechFilter] = useState('all');
-  const [financeTab, setFinanceTab] = useState<FinanceTab>('ready');
   const [payrollRules, setPayrollRules] = useState<PayrollRules>({
     commissionPercent: 50,
     scfOnlyPayout: 50,
     deductMaterials: true,
     includeScf: true,
+    archivePaidAfterDays: 30,
   });
-  const [salaryPaidJobs, setSalaryPaidJobs] = useState<string[]>(['243']);
+  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>({ '243': '2026-06-01' });
   const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>(initialLibraryDocuments);
   const [librarySearch, setLibrarySearch] = useState('');
   const [libraryCategoryFilter, setLibraryCategoryFilter] = useState<'all' | LibraryCategory>('all');
@@ -610,7 +605,10 @@ export function CompanyPortal({
     const onlyScf = paidScf > 0 && paidLabor === 0;
     const salaryBase = Math.max(0, (payrollRules.includeScf ? paidScf : 0) + paidLabor - (payrollRules.deductMaterials ? materialsCost : 0));
     const salary = onlyScf ? payrollRules.scfOnlyPayout : salaryBase * (payrollRules.commissionPercent / 100);
-    const paid = salaryPaidJobs.includes(job.jobNumber);
+    const paidAt = salaryPaidJobs[job.jobNumber] ?? '';
+    const paid = Boolean(paidAt);
+    const archiveTime = paidAt ? new Date(paidAt).getTime() + payrollRules.archivePaidAfterDays * 24 * 60 * 60 * 1000 : 0;
+    const payrollArchived = paid && payrollRules.archivePaidAfterDays >= 0 && archiveTime <= Date.now();
     const warnings = [
       job.assignee === 'No technician' ? 'No technician assigned' : '',
       scf > 0 && !job.scfPayment ? 'SCF payment is missing' : '',
@@ -628,6 +626,8 @@ export function CompanyPortal({
       salaryBase,
       salary,
       paid,
+      paidAt,
+      payrollArchived,
       warnings,
       needsAttention,
     };
@@ -640,17 +640,7 @@ export function CompanyPortal({
 
     return matchesTech && matchesPeriod;
   });
-  const financeTabCounts = {
-    ready: financeBaseRows.filter((job) => !job.paid && !job.needsAttention && job.salary > 0).length,
-    paid: financeBaseRows.filter((job) => job.paid).length,
-    attention: financeBaseRows.filter((job) => job.needsAttention).length,
-  };
-  const filteredFinanceRows = financeBaseRows.filter((job) => {
-    if (financeTab === 'paid') return job.paid;
-    if (financeTab === 'attention') return job.needsAttention;
-    return !job.paid && !job.needsAttention && job.salary > 0;
-  });
-  const financeSummary = filteredFinanceRows.reduce(
+  const financeSummary = financeBaseRows.reduce(
     (summary, job) => {
       summary.paidRevenue += job.paidScf + job.paidLabor;
       summary.materials += job.materialsCost;
@@ -672,13 +662,16 @@ export function CompanyPortal({
       attention: rows.filter((job) => job.needsAttention).length,
     };
   });
-  const paymentBuckets = filteredFinanceRows.reduce<Record<string, number>>((buckets, job) => {
-    if (job.scfPayment) buckets[paymentMethodLabels[job.scfPayment as CompanyPaymentMethod] ?? job.scfPayment] = (buckets[paymentMethodLabels[job.scfPayment as CompanyPaymentMethod] ?? job.scfPayment] ?? 0) + job.paidScf;
-    if (job.laborPayment) buckets[paymentMethodLabels[job.laborPayment as CompanyPaymentMethod] ?? job.laborPayment] = (buckets[paymentMethodLabels[job.laborPayment as CompanyPaymentMethod] ?? job.laborPayment] ?? 0) + job.paidLabor;
-    return buckets;
-  }, {});
   const toggleSalaryPaid = (jobNumber: string) => {
-    setSalaryPaidJobs((jobs) => (jobs.includes(jobNumber) ? jobs.filter((number) => number !== jobNumber) : [...jobs, jobNumber]));
+    setSalaryPaidJobs((jobs) => {
+      if (jobs[jobNumber]) {
+        const nextJobs = { ...jobs };
+        delete nextJobs[jobNumber];
+        return nextJobs;
+      }
+
+      return { ...jobs, [jobNumber]: new Date().toISOString().slice(0, 10) };
+    });
   };
   const paymentMethodOptions = profile.acceptedPayments.map((method) => ({
     value: method,
@@ -984,35 +977,6 @@ export function CompanyPortal({
   const unassignedCalendarJobs = calendarJobs.filter((job) => !job.dayKey || job.assignee === 'No technician');
   const visibleCalendarJobs = scheduledJobs.filter((job) => activeCalendarTech === 'all' || job.assignee === activeCalendarTech);
   const visibleCalendarDays = calendarView === 'day' ? [formatCalendarDay(calendarAnchor)] : calendarDays;
-  const onboardingItems = [
-    {
-      title: 'Workspace and mailbox',
-      detail: emailConnection
-        ? `${emailProviderLabels[emailConnection.provider]} setup drafted for ${emailConnection.address}. OAuth/backend integration required.`
-        : 'Business profile, logo, service area, and company mailbox connection.',
-      status: emailConnection?.status === 'connected' ? 'done' : 'current',
-    },
-    {
-      title: 'Team and access',
-      detail: 'Invite technicians, assign roles, set permissions, and choose who can manage jobs, finance, and support.',
-      status: selectedCompany.technicians > 0 ? 'current' : 'todo',
-    },
-    {
-      title: 'Job workflow',
-      detail: 'Configure job types, statuses, priority rules, dispatch fields, and required job notes.',
-      status: selectedCompany.onboarding.data,
-    },
-    {
-      title: 'Billing and plan',
-      detail: 'Confirm subscription plan, seats, technician limits, billing contact, and payment status.',
-      status: selectedCompany.onboarding.billing,
-    },
-    {
-      title: 'Go live',
-      detail: 'Final owner review before the company starts using ServiceScope with its team.',
-      status: completedSteps === onboardingStepOrder.length ? 'done' : 'todo',
-    },
-  ];
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
     { page: 'allJobs', label: 'All Jobs', icon: <LayoutDashboard size={16} /> },
@@ -1254,7 +1218,6 @@ export function CompanyPortal({
             connectMailbox={connectMailbox}
             emailProviderLabels={emailProviderLabels}
             updateMailbox={updateMailbox}
-            onboardingItems={onboardingItems}
             togglePaymentMethod={togglePaymentMethod}
             professionTemplates={professionTemplates}
             configuredProfessionNames={configuredProfessionNames}
@@ -1459,14 +1422,9 @@ export function CompanyPortal({
             onFinanceTechFilterChange={setFinanceTechFilter}
             payrollRules={payrollRules}
             onPayrollRulesChange={setPayrollRules}
-            financeTabCounts={financeTabCounts}
-            financeTab={financeTab}
-            onFinanceTabChange={setFinanceTab}
             technicianPayroll={technicianPayroll}
             financeBaseRows={financeBaseRows}
-            filteredFinanceRows={filteredFinanceRows}
             paymentMethodLabels={paymentMethodLabels}
-            paymentBuckets={paymentBuckets}
             onOpenJob={setOpenedJob}
             onToggleSalaryPaid={toggleSalaryPaid}
           />
@@ -1512,32 +1470,6 @@ export function CompanyPortal({
             </section>
 
             <div className="portal-grid">
-              <section className="panel portal-status-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">Workspace status</p>
-                    <h2>Launch checklist</h2>
-                  </div>
-                  <ServerCog size={20} aria-hidden="true" />
-                </div>
-                <div className="steps-list">
-                  {Object.entries(selectedCompany.onboarding).map(([step, stepStatus]) => (
-                    <div className="step-row" key={step}>
-                      <span className={`step-dot ${stepStatus}`} />
-                      <span>{stepLabels[step as keyof Company['onboarding']]}</span>
-                      <strong>{formatStepStatus(stepStatus)}</strong>
-                    </div>
-                  ))}
-                </div>
-                <div className={`launch-readiness ${completedSteps === onboardingStepOrder.length ? 'ready' : ''}`}>
-                  <Rocket size={18} aria-hidden="true" />
-                  <div>
-                    <strong>{completedSteps === onboardingStepOrder.length ? 'Ready for operations' : 'Setup in progress'}</strong>
-                    <span>{selectedCompany.lastSync}</span>
-                  </div>
-                </div>
-              </section>
-
               <section className="panel portal-support-panel">
                 <div className="panel-heading">
                   <div>
