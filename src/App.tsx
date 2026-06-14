@@ -194,7 +194,6 @@ function AuthLogin({
   platformUsers: PlatformUser[];
   onLogin: (session: AuthSession) => void;
 }) {
-  const [mode, setMode] = useState<'owner' | 'company'>('company');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -209,13 +208,8 @@ function AuthLogin({
       return;
     }
 
-    if (mode === 'owner') {
-      const user = platformUsers.find((candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.status === 'active');
-      if (!user) {
-        setError('Owner/team user not found or not active.');
-        return;
-      }
-
+    const user = platformUsers.find((candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.status === 'active');
+    if (user) {
       onLogin({ kind: 'owner', userId: user.id, name: user.name, email: user.email });
       return;
     }
@@ -240,7 +234,7 @@ function AuthLogin({
       }
     }
 
-    setError('Company user not found. Check owner or technician email.');
+    setError('User not found. Check owner, company, manager, or technician email.');
   }
 
   return (
@@ -259,17 +253,8 @@ function AuthLogin({
 
           <div className="login-heading">
             <p className="eyebrow">Login</p>
-            <h1>{mode === 'owner' ? 'Owner console' : 'Company workspace'}</h1>
-            <p>{mode === 'owner' ? 'Owner and support team access for tenant management.' : 'Company admins, managers, and technicians sign in here.'}</p>
-          </div>
-
-          <div className="auth-mode-toggle" aria-label="Login type">
-            <button className={mode === 'company' ? 'active' : ''} type="button" onClick={() => setMode('company')}>
-              Company
-            </button>
-            <button className={mode === 'owner' ? 'active' : ''} type="button" onClick={() => setMode('owner')}>
-              Owner
-            </button>
+            <h1>Sign in to ServiceScope</h1>
+            <p>Enter your email and ServiceScope opens the right workspace automatically.</p>
           </div>
 
           <label>
@@ -278,7 +263,7 @@ function AuthLogin({
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder={mode === 'owner' ? 'owner@servicescope.app' : 'owner@company.com'}
+              placeholder="owner@servicescope.app"
               autoComplete="email"
             />
           </label>

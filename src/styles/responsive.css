@@ -208,8 +208,11 @@ h2 {
   align-items: start;
 }
 
-.permissions-panel {
+.access-summary {
   grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .access-form,
@@ -470,54 +473,69 @@ h2 {
   color: #5c6368;
 }
 
-.role-grid {
+.access-filter-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.45fr) minmax(150px, 0.45fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 12px;
 }
 
-.role-card {
-  border: 1px solid #e3e9e4;
-  border-radius: 8px;
-  background: #fbfdfb;
-  padding: 14px;
-}
-
-.role-card h3 {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 10px;
-  font-size: 16px;
-}
-
-.role-card h3 span {
-  border-radius: 999px;
-  background: #f0f8d7;
-  color: #4f6b24;
-  padding: 4px 8px;
-  font-size: 11px;
+.access-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: #4f5b53;
+  font-size: 12px;
   font-weight: 800;
 }
 
-.role-card.system-role {
-  border-color: #a8cc78;
-  background: #f7fbec;
-}
-
-.role-card ul {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  padding-left: 18px;
-  color: #4f5b53;
-  font-size: 13px;
+.access-filter-grid input,
+.access-filter-grid select {
+  min-height: 38px;
+  border: 1px solid #cfd9d1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0 10px;
 }
 
 .audit-panel .panel-heading select {
   width: auto;
   min-width: 160px;
+}
+
+.audit-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 0.8fr) minmax(180px, 0.8fr) minmax(140px, 0.6fr) auto;
+  align-items: end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.audit-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: #4f5b53;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.audit-filter-grid input,
+.audit-filter-grid select {
+  min-height: 38px;
+  border: 1px solid #cfd9d1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0 10px;
+}
+
+.audit-result-summary {
+  margin-bottom: 12px;
+  color: #667269;
+  font-size: 13px;
+}
+
+.audit-result-summary strong {
+  color: #17201b;
 }
 
 .audit-list {
@@ -579,6 +597,16 @@ h2 {
   font-size: 13px;
 }
 
+.audit-topline em {
+  border-radius: 999px;
+  background: #fff0c6;
+  color: #7a5600;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
 .audit-topline small,
 .audit-actor span {
   color: #667269;
@@ -598,6 +626,43 @@ h2 {
   color: #4f5b53;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.audit-details {
+  margin-top: 8px;
+  color: #4f5b53;
+  font-size: 12px;
+}
+
+.audit-details summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.audit-details dl {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.audit-details div {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.audit-details dt,
+.audit-details dd {
+  margin: 0;
+}
+
+.audit-details dt {
+  color: #667269;
+  font-weight: 900;
+}
+
+.audit-details dd {
+  overflow-wrap: anywhere;
 }
 
 .audit-category {
@@ -1426,12 +1491,13 @@ textarea {
 
   .billing-summary,
   .audit-summary,
+  .access-summary,
   .portal-metrics,
   .plan-grid,
   .access-page,
+  .access-filter-grid,
   .onboarding-grid,
-  .portal-grid,
-  .role-grid {
+  .portal-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1519,6 +1585,7 @@ textarea {
   .finance-toolbar,
   .payroll-rule-controls,
   .library-filters,
+  .audit-filter-grid,
   .library-document-card,
   .technician-payroll-grid,
   .technician-payroll-card,

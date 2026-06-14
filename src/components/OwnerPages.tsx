@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   AlertTriangle,
@@ -30,7 +31,7 @@ import {
   ticketStatusLabels,
 } from '../appLabels';
 import { plans } from '../services/billingCatalog';
-import { rolePermissions, SYSTEM_OWNER_ID } from '../services/accessStore';
+import { SYSTEM_OWNER_ID } from '../services/accessStore';
 import { filterAuditEvents } from '../services/auditStore';
 import { onboardingStepOrder } from '../services/tenantStore';
 import { money } from '../utils/format';
@@ -138,7 +139,41 @@ export function AuditPage({
   filter: 'all' | AuditEventCategory;
   onFilterChange: (filter: 'all' | AuditEventCategory) => void;
 }) {
-  const filteredEvents = filterAuditEvents(events, filter);
+  const [auditSearch, setAuditSearch] = useState('');
+  const [resourceFilter, setResourceFilter] = useState('all');
+  const [actorFilter, setActorFilter] = useState('all');
+  const [periodFilter, setPeriodFilter] = useState<'all' | 'today' | 'yesterday'>('all');
+  const filteredByCategory = filterAuditEvents(events, filter);
+  const resources = useMemo(() => Array.from(new Set(events.map((event) => event.resource))).sort(), [events]);
+  const actors = useMemo(() => Array.from(new Set(events.map((event) => event.actor))).sort(), [events]);
+  const filteredEvents = filteredByCategory.filter((event) => {
+    const normalizedSearch = auditSearch.trim().toLowerCase();
+    const haystack = [event.action, event.actor, event.resource, event.details, auditCategoryLabels[event.category]]
+      .join(' ')
+      .toLowerCase();
+    const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch);
+    const matchesResource = resourceFilter === 'all' || event.resource === resourceFilter;
+    const matchesActor = actorFilter === 'all' || event.actor === actorFilter;
+    const normalizedDate = event.createdAt.toLowerCase();
+    const matchesPeriod =
+      periodFilter === 'all' ||
+      (periodFilter === 'today' ? normalizedDate === 'just now' || normalizedDate === 'today' : normalizedDate === 'yesterday');
+
+    return matchesSearch && matchesResource && matchesActor && matchesPeriod;
+  });
+  const groupedEvents = filteredEvents.reduce<Array<{ event: AuditEvent; count: number; ids: string[] }>>((groups, event) => {
+    const previous = groups[groups.length - 1];
+    const key = `${event.category}|${event.action}|${event.actor}|${event.resource}|${event.details}|${event.createdAt}`;
+    const previousKey = previous ? `${previous.event.category}|${previous.event.action}|${previous.event.actor}|${previous.event.resource}|${previous.event.details}|${previous.event.createdAt}` : '';
+
+    if (previous && previousKey === key) {
+      previous.count += 1;
+      previous.ids.push(event.id);
+      return groups;
+    }
+
+    return [...groups, { event, count: 1, ids: [event.id] }];
+  }, []);
   const categoryCounts = events.reduce(
     (counts, event) => ({
       ...counts,
@@ -171,10 +206,64 @@ export function AuditPage({
           </select>
         </div>
 
+        <div className="audit-filter-grid">
+          <label>
+            Search
+            <input value={auditSearch} onChange={(event) => setAuditSearch(event.target.value)} placeholder="Action, company, actor, details" />
+          </label>
+          <label>
+            Company / resource
+            <select value={resourceFilter} onChange={(event) => setResourceFilter(event.target.value)}>
+              <option value="all">All resources</option>
+              {resources.map((resource) => (
+                <option value={resource} key={resource}>
+                  {resource}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Actor
+            <select value={actorFilter} onChange={(event) => setActorFilter(event.target.value)}>
+              <option value="all">All actors</option>
+              {actors.map((actor) => (
+                <option value={actor} key={actor}>
+                  {actor}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Period
+            <select value={periodFilter} onChange={(event) => setPeriodFilter(event.target.value as 'all' | 'today' | 'yesterday')}>
+              <option value="all">All time</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+            </select>
+          </label>
+          <button
+            className="secondary-button compact"
+            type="button"
+            onClick={() => {
+              setAuditSearch('');
+              setResourceFilter('all');
+              setActorFilter('all');
+              setPeriodFilter('all');
+              onFilterChange('all');
+            }}
+          >
+            Reset
+          </button>
+        </div>
+
+        <div className="audit-result-summary">
+          Showing <strong>{groupedEvents.length}</strong> rows from <strong>{filteredEvents.length}</strong> events
+        </div>
+
         <div className="audit-list">
-          {filteredEvents.length ? (
-            filteredEvents.map((event) => (
-              <article className={`audit-row ${event.category}`} key={event.id}>
+          {groupedEvents.length ? (
+            groupedEvents.map(({ event, count, ids }) => (
+              <article className={`audit-row ${event.category}`} key={ids.join('-')}>
                 <div className="audit-icon">
                   <FileClock size={18} aria-hidden="true" />
                 </div>
@@ -182,10 +271,28 @@ export function AuditPage({
                   <div className="audit-topline">
                     <span className={`audit-category ${event.category}`}>{auditCategoryLabels[event.category]}</span>
                     <strong>{event.action}</strong>
+                    {count > 1 ? <em>{count} repeated</em> : null}
                     <small>{event.createdAt}</small>
                   </div>
                   <h3>{event.resource}</h3>
                   <p>{event.details}</p>
+                  <details className="audit-details">
+                    <summary>Event details</summary>
+                    <dl>
+                      <div>
+                        <dt>Category</dt>
+                        <dd>{auditCategoryLabels[event.category]}</dd>
+                      </div>
+                      <div>
+                        <dt>Action</dt>
+                        <dd>{event.action}</dd>
+                      </div>
+                      <div>
+                        <dt>Event IDs</dt>
+                        <dd>{ids.join(', ')}</dd>
+                      </div>
+                    </dl>
+                  </details>
                 </div>
                 <div className="audit-actor">
                   <span>Actor</span>
@@ -318,8 +425,33 @@ export function AccessPage({
   onRoleChange: (userId: string, role: PlatformUserRole) => void;
   onStatusChange: (userId: string, status: PlatformUserStatus) => void;
 }) {
+  const [accessSearch, setAccessSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | PlatformUserRole>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | PlatformUserStatus>('all');
+  const filteredUsers = users.filter((user) => {
+    const normalizedSearch = accessSearch.trim().toLowerCase();
+    const haystack = [user.name, user.email, platformRoleLabels[user.role], platformStatusLabels[user.status]]
+      .join(' ')
+      .toLowerCase();
+    const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch);
+    const matchesRole = roleFilter === 'all' || user.role === roleFilter;
+    const matchesStatus = statusFilter === 'all' || user.status === statusFilter;
+
+    return matchesSearch && matchesRole && matchesStatus;
+  });
+  const activeUsers = users.filter((user) => user.status === 'active').length;
+  const invitedUsers = users.filter((user) => user.status === 'invited').length;
+  const disabledUsers = users.filter((user) => user.status === 'disabled').length;
+
   return (
     <div className="access-page">
+      <section className="access-summary">
+        <MetricCard icon={<Users size={20} />} label="Team users" value={users.length.toString()} detail="Owner console access" />
+        <MetricCard icon={<CheckCircle2 size={20} />} label="Active" value={activeUsers.toString()} detail="Can sign in" />
+        <MetricCard icon={<UserPlus size={20} />} label="Invited" value={invitedUsers.toString()} detail="Pending setup" />
+        <MetricCard icon={<ShieldCheck size={20} />} label="Disabled" value={disabledUsers.toString()} detail="Access blocked" />
+      </section>
+
       <section className="panel invite-panel">
         <div className="panel-heading">
           <div>
@@ -361,8 +493,45 @@ export function AccessPage({
           <Users size={20} aria-hidden="true" />
         </div>
 
+        <div className="access-filter-grid">
+          <label>
+            Search
+            <input value={accessSearch} onChange={(event) => setAccessSearch(event.target.value)} placeholder="Name or email" />
+          </label>
+          <label>
+            Role
+            <select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value as 'all' | PlatformUserRole)}>
+              <option value="all">All roles</option>
+              <option value="owner">Owner</option>
+              <option value="admin">Admin</option>
+              <option value="support">Support</option>
+              <option value="viewer">Viewer</option>
+            </select>
+          </label>
+          <label>
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | PlatformUserStatus)}>
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="invited">Invited</option>
+              <option value="disabled">Disabled</option>
+            </select>
+          </label>
+          <button
+            className="secondary-button compact"
+            type="button"
+            onClick={() => {
+              setAccessSearch('');
+              setRoleFilter('all');
+              setStatusFilter('all');
+            }}
+          >
+            Reset
+          </button>
+        </div>
+
         <div className="user-list">
-          {users.map((user) => {
+          {filteredUsers.map((user) => {
             const lockedOwner = user.id === SYSTEM_OWNER_ID;
 
             return (
@@ -406,29 +575,13 @@ export function AccessPage({
               </article>
             );
           })}
-        </div>
-      </section>
-
-      <section className="panel permissions-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Permission matrix</p>
-            <h2>Roles</h2>
-          </div>
-          <ShieldCheck size={20} aria-hidden="true" />
-        </div>
-
-        <div className="role-grid">
-          {(Object.keys(rolePermissions) as PlatformUserRole[]).map((role) => (
-            <article className={`role-card ${role === 'owner' ? 'system-role' : ''}`} key={role}>
-              <h3>{platformRoleLabels[role]}{role === 'owner' ? <span>System only</span> : null}</h3>
-              <ul>
-                {rolePermissions[role].map((permission) => (
-                  <li key={permission}>{permission}</li>
-                ))}
-              </ul>
-            </article>
-          ))}
+          {!filteredUsers.length ? (
+            <div className="empty-state compact-empty">
+              <Users size={24} aria-hidden="true" />
+              <h3>No users match</h3>
+              <p>Clear filters or invite a new team member.</p>
+            </div>
+          ) : null}
         </div>
       </section>
     </div>
