@@ -1,5 +1,5 @@
 import { ChangeEvent, useEffect, useState } from 'react';
-import type { JobAttachment, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
+import type { JobAttachment, JobComment, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
 
 type PaymentMethodOption = {
@@ -13,6 +13,10 @@ type JobDetailPanelProps = {
   systems: string[];
   paymentMethods: PaymentMethodOption[];
   materials: MaterialRow[];
+  currentUser: {
+    name: string;
+    role: JobComment['authorRole'];
+  };
   onClose: () => void;
   onSave: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
@@ -58,6 +62,15 @@ function readFileAsDataUrl(file: File) {
   });
 }
 
+function formatCommentTime(value: string) {
+  return new Date(value).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 function emptyMaterialRow(jobNumber: string): MaterialRow {
   return {
     id: crypto.randomUUID(),
@@ -70,9 +83,10 @@ function emptyMaterialRow(jobNumber: string): MaterialRow {
   };
 }
 
-export function JobDetailPanel({ job, technicians, systems, paymentMethods, materials, onClose, onSave, onSaveMaterials }: JobDetailPanelProps) {
+export function JobDetailPanel({ job, technicians, systems, paymentMethods, materials, currentUser, onClose, onSave, onSaveMaterials }: JobDetailPanelProps) {
   const [draft, setDraft] = useState<JobCardData>(job);
   const [materialDrafts, setMaterialDrafts] = useState<MaterialRow[]>(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
+  const [commentDraft, setCommentDraft] = useState('');
   const [saved, setSaved] = useState(false);
   const [materialsSaved, setMaterialsSaved] = useState(false);
   const [uploadError, setUploadError] = useState('');
@@ -157,6 +171,27 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, mate
   function saveMaterials() {
     onSaveMaterials(draft.jobNumber, materialDrafts);
     setMaterialsSaved(true);
+  }
+
+  function addComment() {
+    if (!commentDraft.trim()) return;
+
+    const nextComment: JobComment = {
+      id: crypto.randomUUID(),
+      authorName: currentUser.name,
+      authorRole: currentUser.role,
+      message: commentDraft.trim(),
+      createdAt: new Date().toISOString(),
+    };
+    const nextJob = {
+      ...draft,
+      comments: [...(draft.comments ?? []), nextComment],
+    };
+
+    onSave(nextJob);
+    setDraft(nextJob);
+    setCommentDraft('');
+    setSaved(true);
   }
 
   return (
@@ -365,9 +400,34 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, mate
         </div>
       </section>
 
-      <section className="job-detail-card">
+      <section className="job-detail-card job-comments-card">
         <h2>Comments</h2>
-        <textarea value={draft.notes} onChange={(event) => updateDraft({ notes: event.target.value })} placeholder="Add internal comments for this job." />
+        <div className="job-comment-list">
+          {(draft.comments ?? []).map((comment) => (
+            <article className={`job-comment ${comment.authorRole.toLowerCase()}`} key={comment.id}>
+              <div>
+                <strong>{comment.authorName}</strong>
+                <span>{comment.authorRole} - {formatCommentTime(comment.createdAt)}</span>
+              </div>
+              <p>{comment.message}</p>
+            </article>
+          ))}
+          {(draft.comments ?? []).length === 0 ? <p className="empty-inline">No comments yet.</p> : null}
+        </div>
+        <div className="job-comment-compose">
+          <div className="job-comment-author">
+            <strong>{currentUser.name}</strong>
+            <span>{currentUser.role}</span>
+          </div>
+          <textarea
+            value={commentDraft}
+            onChange={(event) => setCommentDraft(event.target.value)}
+            placeholder="Write a comment..."
+          />
+          <button className="primary-button" type="button" onClick={addComment}>
+            Send
+          </button>
+        </div>
       </section>
 
       <section className="job-detail-card job-files-card">

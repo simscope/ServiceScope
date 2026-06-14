@@ -30,6 +30,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       issue: 'Need to clean the part',
       notes: '',
       attachments: [],
+      comments: [],
       createdAt: '2026-06-11',
     },
     {
@@ -52,6 +53,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       issue: 'Need to put on the belts on the hood',
       notes: '',
       attachments: [],
+      comments: [],
       createdAt: '2026-06-11',
     },
     {
@@ -74,6 +76,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       issue: 'Vegetable Freezer not blowing cold',
       notes: '',
       attachments: [],
+      comments: [],
       createdAt: '2026-06-10',
     },
     {
@@ -96,6 +99,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       issue: 'Ice machine is not working',
       notes: '',
       attachments: [],
+      comments: [],
       createdAt: '2026-06-09',
     },
     {
@@ -118,6 +122,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       issue: 'Refrigerator has an issue',
       notes: '',
       attachments: [],
+      comments: [],
       createdAt: '2026-06-08',
     },
     {
@@ -140,6 +145,7 @@ function seedJobs(companyId: string, technicianName: string): ServiceJob[] {
       issue: 'AC is not working',
       notes: '',
       attachments: [],
+      comments: [],
       createdAt: '2026-06-07',
     },
   ];
@@ -166,6 +172,7 @@ function normalizeJob(job: Partial<ServiceJob>): ServiceJob {
     issue: job.issue ?? '',
     notes: job.notes ?? '',
     attachments: job.attachments ?? [],
+    comments: job.comments ?? [],
     appointment: job.appointment,
     createdAt: job.createdAt ?? todayIso(),
   };
@@ -212,6 +219,7 @@ export function createServiceJob(companyId: string, form: NewServiceJobForm): Se
     labor: '',
     laborPayment: '',
     attachments: [],
+    comments: [],
     createdAt: todayIso(),
   };
 }

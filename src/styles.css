@@ -718,6 +718,106 @@ button {
   justify-self: start;
 }
 
+.job-comments-card {
+  display: grid;
+  gap: 12px;
+}
+
+.job-comment-list {
+  display: grid;
+  gap: 8px;
+}
+
+.job-comment {
+  display: grid;
+  gap: 6px;
+  max-width: 840px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 10px 12px;
+}
+
+.job-comment.admin {
+  border-color: #bdd1ee;
+  background: #edf5ff;
+}
+
+.job-comment.manager {
+  border-color: #d7e7ba;
+  background: #f5faee;
+}
+
+.job-comment.technician {
+  border-color: #f2d89a;
+  background: #fff8e7;
+}
+
+.job-comment div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.job-comment strong {
+  color: #17201b;
+  font-size: 13px;
+}
+
+.job-comment span {
+  color: #667269;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.job-comment p {
+  margin-bottom: 0;
+  color: #223028;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.job-comment-compose {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.job-comment-author {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-height: 62px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 8px 10px;
+}
+
+.job-comment-author strong {
+  overflow: hidden;
+  color: #17201b;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-comment-author span {
+  color: #667269;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.job-comment-compose textarea {
+  min-height: 62px;
+}
+
+.job-comment-compose button {
+  min-width: 74px;
+}
+
 .materials-table {
   display: grid;
   grid-template-columns: 1.2fr 1fr 0.8fr 1.2fr 1fr;
@@ -2820,6 +2920,13 @@ button {
   font-size: 30px;
 }
 
+.calendar-range-title {
+  margin: 4px 0 0;
+  color: #667269;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .calendar-controls {
   display: flex;
   align-items: center;
@@ -2837,6 +2944,35 @@ button {
 
 .calendar-controls input {
   width: min(320px, 42vw);
+}
+
+.calendar-nav-buttons {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.calendar-nav-buttons button {
+  min-height: 36px;
+  border: 0;
+  border-right: 1px solid #d7dee8;
+  background: transparent;
+  color: #253244;
+  padding: 0 12px;
+  font-size: 13px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.calendar-nav-buttons button:last-child {
+  border-right: 0;
+}
+
+.calendar-nav-buttons button:hover {
+  background: #edf5ff;
+  color: #1f5da8;
 }
 
 .calendar-view-toggle {
@@ -3166,6 +3302,14 @@ button {
 
 .calendar-month-day.drop-enabled:hover {
   background: rgba(31, 107, 199, 0.08);
+}
+
+.calendar-month-day.outside-month {
+  background: #f7f8fa;
+}
+
+.calendar-month-day.outside-month strong {
+  color: #a5aea8;
 }
 
 .calendar-month-day strong {
@@ -3598,6 +3742,23 @@ button {
 
 .workflow-fields {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.workflow-rule-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.workflow-rule-summary span {
+  border: 1px solid #d7dee8;
+  border-radius: 999px;
+  background: #fbfcfd;
+  color: #4f5b53;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 850;
 }
 
 .prefix-toggle {
@@ -5212,6 +5373,15 @@ textarea {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .job-comment-compose {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .job-comment-compose button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
   .invoice-card {
     display: grid;
   }
@@ -5384,6 +5554,9 @@ textarea {
   .finance-toolbar,
   .job-files-grid,
   .job-files-header,
+  .job-comment,
+  .job-comment div,
+  .job-comment-compose,
   .technician-payroll-grid,
   .map-toolbar,
   .all-jobs-toolbar,

@@ -471,6 +471,45 @@ function money(value: number) {
   }).format(value);
 }
 
+function toLocalIsoDate(date: Date) {
+  const localDate = new Date(date);
+  localDate.setMinutes(localDate.getMinutes() - localDate.getTimezoneOffset());
+  return localDate.toISOString().slice(0, 10);
+}
+
+function parseLocalDate(isoDate: string) {
+  return new Date(`${isoDate}T12:00:00`);
+}
+
+function addDays(date: Date, days: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function addMonths(date: Date, months: number) {
+  const nextDate = new Date(date);
+  nextDate.setMonth(nextDate.getMonth() + months);
+  return nextDate;
+}
+
+function startOfWeek(date: Date) {
+  return addDays(date, -date.getDay());
+}
+
+function formatCalendarDay(date: Date) {
+  const isoDate = toLocalIsoDate(date);
+
+  return {
+    key: isoDate,
+    label: date.toLocaleDateString('en-US', { weekday: 'short' }),
+    date: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+    isoDate,
+    day: date.getDate(),
+    month: date.getMonth(),
+  };
+}
+
 function statusClassName(status: string) {
   return status.toLowerCase().replace(/\s+/g, '-');
 }
@@ -1190,6 +1229,7 @@ function CompanyPortal({
   const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
   const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('week');
+  const [calendarAnchorDate, setCalendarAnchorDate] = useState(() => toLocalIsoDate(new Date()));
   const [activeCalendarTech, setActiveCalendarTech] = useState('all');
   const [calendarAssignments, setCalendarAssignments] = useState<Record<string, { assignee: string; dayKey: string; time: string; durationMinutes: number }>>({});
   const [draggingJobNumber, setDraggingJobNumber] = useState('');
@@ -1332,6 +1372,7 @@ function CompanyPortal({
     issue: 'AC not cooling in the main office.',
     notes: '',
     attachments: [],
+    comments: [],
     createdAt: new Date().toISOString().slice(0, 10),
   };
   const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
@@ -1600,6 +1641,10 @@ function CompanyPortal({
     value: method,
     label: paymentMethodLabels[method],
   }));
+  const currentPortalUser = {
+    name: selectedCompany.ownerName,
+    role: 'Admin' as const,
+  };
   const updateInlineJobDraft = (jobId: string, patch: Partial<ServiceJob>) => {
     setInlineJobDrafts((drafts) => ({
       ...drafts,
@@ -1831,28 +1876,19 @@ function CompanyPortal({
 
     setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? { ...row, status } : row)));
   };
-  const calendarDays = [
-    { key: '2026-06-08', label: 'Mon', date: 'Jun 8', isoDate: '2026-06-08' },
-    { key: '2026-06-09', label: 'Tue', date: 'Jun 9', isoDate: '2026-06-09' },
-    { key: '2026-06-10', label: 'Wed', date: 'Jun 10', isoDate: '2026-06-10' },
-    { key: '2026-06-11', label: 'Thu', date: 'Jun 11', isoDate: '2026-06-11' },
-    { key: '2026-06-12', label: 'Fri', date: 'Jun 12', isoDate: '2026-06-12' },
-    { key: '2026-06-13', label: 'Sat', date: 'Jun 13', isoDate: '2026-06-13' },
-    { key: '2026-06-14', label: 'Sun', date: 'Jun 14', isoDate: '2026-06-14' },
-  ];
-  const calendarMonthDays = Array.from({ length: 30 }, (_, index) => {
-    const day = index + 1;
-    const isoDate = `2026-06-${String(day).padStart(2, '0')}`;
-
-    return {
-      key: isoDate,
-      label: new Date(`${isoDate}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short' }),
-      date: `Jun ${day}`,
-      isoDate,
-      day,
-    };
-  });
-  const allCalendarDays = [...calendarMonthDays];
+  const calendarAnchor = parseLocalDate(calendarAnchorDate);
+  const calendarWeekStart = startOfWeek(calendarAnchor);
+  const calendarDays = Array.from({ length: 7 }, (_, index) => formatCalendarDay(addDays(calendarWeekStart, index)));
+  const calendarMonthStart = new Date(calendarAnchor.getFullYear(), calendarAnchor.getMonth(), 1, 12);
+  const calendarMonthGridStart = startOfWeek(calendarMonthStart);
+  const calendarMonthDays = Array.from({ length: 42 }, (_, index) => formatCalendarDay(addDays(calendarMonthGridStart, index)));
+  const allCalendarDays = Array.from(new globalThis.Map([...calendarMonthDays, ...calendarDays, formatCalendarDay(calendarAnchor)].map((day) => [day.key, day])).values());
+  const calendarRangeTitle =
+    calendarView === 'month'
+      ? calendarAnchor.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+      : calendarView === 'day'
+        ? calendarAnchor.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+        : `${calendarDays[0].date} - ${calendarDays[6].date}, ${calendarDays[6].isoDate.slice(0, 4)}`;
   const calendarSlots = ['8 AM', '9 AM', '10 AM', '11 AM', '12 PM', '1 PM', '2 PM', '3 PM', '4 PM', '5 PM', '6 PM', '7 PM', '8 PM'];
   const calendarSlotHours: Record<string, number> = {
     '8 AM': 8,
@@ -1904,7 +1940,7 @@ function CompanyPortal({
   const scheduledJobs = calendarJobs.filter((job) => job.dayKey && job.time && job.assignee !== 'No technician');
   const unassignedCalendarJobs = calendarJobs.filter((job) => !job.dayKey || job.assignee === 'No technician');
   const visibleCalendarJobs = scheduledJobs.filter((job) => activeCalendarTech === 'all' || job.assignee === activeCalendarTech);
-  const visibleCalendarDays = calendarView === 'day' ? [calendarDays[2]] : calendarDays;
+  const visibleCalendarDays = calendarView === 'day' ? [formatCalendarDay(calendarAnchor)] : calendarDays;
   const onboardingItems = [
     {
       title: 'Workspace and mailbox',
@@ -2017,6 +2053,20 @@ function CompanyPortal({
     setDraggingJobNumber(jobNumber);
     event.dataTransfer.setData('text/plain', jobNumber);
     event.dataTransfer.effectAllowed = 'move';
+  }
+
+  function moveCalendar(direction: -1 | 1) {
+    const anchor = parseLocalDate(calendarAnchorDate);
+    const nextDate =
+      calendarView === 'month'
+        ? addMonths(anchor, direction)
+        : addDays(anchor, direction * (calendarView === 'week' ? 7 : 1));
+
+    setCalendarAnchorDate(toLocalIsoDate(nextDate));
+  }
+
+  function showTodayInCalendar() {
+    setCalendarAnchorDate(toLocalIsoDate(new Date()));
   }
 
   function handleCalendarDrop(event: DragEvent<HTMLDivElement>, dayKey: string, slotKey: string) {
@@ -2482,6 +2532,18 @@ function CompanyPortal({
                     Default SCF ($)
                     <input type="number" min={0} step={5} value={profile.serviceCallFee} onChange={(event) => updateProfile({ serviceCallFee: Number(event.target.value) })} />
                   </label>
+                  <label>
+                    Warranty period (days)
+                    <input type="number" min={0} step={1} value={profile.warrantyDays} onChange={(event) => updateProfile({ warrantyDays: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    Archive completed after
+                    <input type="number" min={0} step={1} value={profile.autoArchiveCompletedAfterDays} onChange={(event) => updateProfile({ autoArchiveCompletedAfterDays: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    Archive cancelled after
+                    <input type="number" min={0} step={1} value={profile.autoArchiveCancelledAfterDays} onChange={(event) => updateProfile({ autoArchiveCancelledAfterDays: Number(event.target.value) })} />
+                  </label>
                   <label className="checkbox-field prefix-toggle">
                     <input
                       type="checkbox"
@@ -2490,6 +2552,35 @@ function CompanyPortal({
                     />
                     Use profession prefixes for job numbers
                   </label>
+                  <label className="checkbox-field prefix-toggle">
+                    <input
+                      type="checkbox"
+                      checked={profile.requireCompletionNote}
+                      onChange={(event) => updateProfile({ requireCompletionNote: event.target.checked })}
+                    />
+                    Require completion note before closing
+                  </label>
+                  <label className="checkbox-field prefix-toggle">
+                    <input
+                      type="checkbox"
+                      checked={profile.requireCompletionPhoto}
+                      onChange={(event) => updateProfile({ requireCompletionPhoto: event.target.checked })}
+                    />
+                    Require photo before closing
+                  </label>
+                  <label className="checkbox-field prefix-toggle">
+                    <input
+                      type="checkbox"
+                      checked={profile.allowWarrantyReopen}
+                      onChange={(event) => updateProfile({ allowWarrantyReopen: event.target.checked })}
+                    />
+                    Allow warranty reopen from completed jobs
+                  </label>
+                </div>
+                <div className="workflow-rule-summary">
+                  <span>Warranty ends {profile.warrantyDays} days after completion.</span>
+                  <span>Completed jobs auto-archive after {profile.autoArchiveCompletedAfterDays} days.</span>
+                  <span>Cancelled jobs auto-archive after {profile.autoArchiveCancelledAfterDays} days.</span>
                 </div>
                 <div className="profession-picker">
                   <p className="eyebrow">Suggested professions</p>
@@ -2625,6 +2716,7 @@ function CompanyPortal({
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
                 materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+                currentUser={currentPortalUser}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
                 onSaveMaterials={saveJobMaterials}
@@ -2716,6 +2808,7 @@ function CompanyPortal({
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
                 materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+                currentUser={currentPortalUser}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
                 onSaveMaterials={saveJobMaterials}
@@ -2896,6 +2989,7 @@ function CompanyPortal({
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
                 materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+                currentUser={currentPortalUser}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
                 onSaveMaterials={saveJobMaterials}
@@ -2906,8 +3000,20 @@ function CompanyPortal({
                   <div>
                     <p className="eyebrow">Dispatch calendar</p>
                     <h1>Calendar</h1>
+                    <p className="calendar-range-title">{calendarRangeTitle}</p>
                   </div>
                   <div className="calendar-controls">
+                    <div className="calendar-nav-buttons" aria-label="Calendar navigation">
+                      <button type="button" onClick={() => moveCalendar(-1)} aria-label="Previous period">
+                        ‹
+                      </button>
+                      <button type="button" onClick={showTodayInCalendar}>
+                        Today
+                      </button>
+                      <button type="button" onClick={() => moveCalendar(1)} aria-label="Next period">
+                        ›
+                      </button>
+                    </div>
                     <select value={activeCalendarTech} onChange={(event) => setActiveCalendarTech(event.target.value)}>
                       <option value="all">All technicians</option>
                       {profile.technicians.map((technician) => (
@@ -2968,7 +3074,7 @@ function CompanyPortal({
 
                       return (
                         <div
-                          className="calendar-month-day drop-enabled"
+                          className={`calendar-month-day drop-enabled ${calendarDay.month !== calendarAnchor.getMonth() ? 'outside-month' : ''}`}
                           onDragOver={(event) => {
                             event.preventDefault();
                           }}
@@ -3311,6 +3417,7 @@ function CompanyPortal({
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
                 materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+                currentUser={currentPortalUser}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
                 onSaveMaterials={saveJobMaterials}
@@ -3793,6 +3900,7 @@ function CompanyPortal({
                 systems={profile.jobTypes.map((jobType) => jobType.name)}
                 paymentMethods={paymentMethodOptions}
                 materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+                currentUser={currentPortalUser}
                 onClose={() => setOpenedJob(null)}
                 onSave={handleSaveJob}
                 onSaveMaterials={saveJobMaterials}

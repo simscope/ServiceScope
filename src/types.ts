@@ -183,6 +183,14 @@ export type JobAttachment = {
   dataUrl?: string;
 };
 
+export type JobComment = {
+  id: string;
+  authorName: string;
+  authorRole: 'Manager' | 'Admin' | 'Technician';
+  message: string;
+  createdAt: string;
+};
+
 export type ServiceJob = {
   id: string;
   companyId: string;
@@ -203,6 +211,7 @@ export type ServiceJob = {
   issue: string;
   notes: string;
   attachments: JobAttachment[];
+  comments: JobComment[];
   appointment?: string;
   createdAt: string;
 };
@@ -238,6 +247,12 @@ export type CompanyOnboardingProfile = {
   useJobNumberPrefixes: boolean;
   serviceCallFee: number;
   defaultJobPriority: CompanyJobPriority;
+  warrantyDays: number;
+  autoArchiveCompletedAfterDays: number;
+  autoArchiveCancelledAfterDays: number;
+  requireCompletionNote: boolean;
+  requireCompletionPhoto: boolean;
+  allowWarrantyReopen: boolean;
   jobTypes: CompanyJobType[];
   technicians: CompanyTechnician[];
 };
