@@ -570,7 +570,8 @@
   font-weight: 900;
 }
 
-.payroll-rule-controls input[type='number'] {
+.payroll-rule-controls input[type='number'],
+.payroll-rule-controls input[readonly] {
   min-height: 36px;
   border: 1px solid #cfd8d1;
   border-radius: 8px;
@@ -579,6 +580,10 @@
   color: #17201b;
   font-size: 13px;
   font-weight: 850;
+}
+
+.payroll-rule-controls input[readonly] {
+  color: #4f5b53;
 }
 
 .payroll-rule-controls .payroll-checkbox {
@@ -765,6 +770,29 @@
   font-size: 20px;
 }
 
+.payroll-batch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f8faf9;
+  padding: 10px;
+}
+
+.payroll-batch-actions span {
+  margin-right: auto;
+  color: #5d6a62;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.payroll-batch-actions strong {
+  color: #17201b;
+  font-size: 16px;
+}
+
 .technician-finance-table-wrap {
   overflow-x: auto;
   border: 1px solid #d7dee8;
@@ -830,6 +858,16 @@
   padding: 10px;
   font-size: 12px;
   text-align: left;
+}
+
+.technician-finance-table th:first-child,
+.technician-finance-table td:first-child {
+  width: 38px;
+}
+
+.technician-finance-table input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
 }
 
 .technician-finance-table td {

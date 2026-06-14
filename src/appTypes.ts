@@ -77,7 +77,6 @@ export type PayrollRules = {
   scfOnlyPayout: number;
   deductMaterials: boolean;
   includeScf: boolean;
-  archivePaidAfterDays: number;
 };
 
 export type LibraryCategory = 'Manual' | 'Wiring diagram' | 'Service bulletin' | 'Install guide' | 'Parts list' | 'Warranty' | 'Training';

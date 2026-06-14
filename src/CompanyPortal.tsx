@@ -301,7 +301,6 @@ export function CompanyPortal({
     scfOnlyPayout: 50,
     deductMaterials: true,
     includeScf: true,
-    archivePaidAfterDays: 30,
   });
   const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>({ '243': '2026-06-01' });
   const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>(initialLibraryDocuments);
@@ -607,8 +606,9 @@ export function CompanyPortal({
     const salary = onlyScf ? payrollRules.scfOnlyPayout : salaryBase * (payrollRules.commissionPercent / 100);
     const paidAt = salaryPaidJobs[job.jobNumber] ?? '';
     const paid = Boolean(paidAt);
-    const archiveTime = paidAt ? new Date(paidAt).getTime() + payrollRules.archivePaidAfterDays * 24 * 60 * 60 * 1000 : 0;
-    const payrollArchived = paid && payrollRules.archivePaidAfterDays >= 0 && archiveTime <= Date.now();
+    const warrantyEndTime = new Date(job.createdAt).getTime() + profile.warrantyDays * 24 * 60 * 60 * 1000;
+    const warrantyPassed = warrantyEndTime <= Date.now();
+    const payrollArchived = paid && warrantyPassed;
     const warnings = [
       job.assignee === 'No technician' ? 'No technician assigned' : '',
       scf > 0 && !job.scfPayment ? 'SCF payment is missing' : '',
@@ -627,6 +627,7 @@ export function CompanyPortal({
       salary,
       paid,
       paidAt,
+      warrantyPassed,
       payrollArchived,
       warnings,
       needsAttention,
@@ -672,6 +673,14 @@ export function CompanyPortal({
 
       return { ...jobs, [jobNumber]: new Date().toISOString().slice(0, 10) };
     });
+  };
+  const markSalaryJobsPaid = (jobNumbers: string[]) => {
+    if (!jobNumbers.length) return;
+    const paidAt = new Date().toISOString().slice(0, 10);
+    setSalaryPaidJobs((jobs) => ({
+      ...jobs,
+      ...Object.fromEntries(jobNumbers.map((jobNumber) => [jobNumber, paidAt])),
+    }));
   };
   const paymentMethodOptions = profile.acceptedPayments.map((method) => ({
     value: method,
@@ -1424,9 +1433,9 @@ export function CompanyPortal({
             onPayrollRulesChange={setPayrollRules}
             technicianPayroll={technicianPayroll}
             financeBaseRows={financeBaseRows}
-            paymentMethodLabels={paymentMethodLabels}
             onOpenJob={setOpenedJob}
             onToggleSalaryPaid={toggleSalaryPaid}
+            onMarkSalaryJobsPaid={markSalaryJobsPaid}
           />
         ) : clientPage === 'knowledge' ? (
           <KnowledgePage
