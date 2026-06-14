@@ -45,7 +45,7 @@ import {
 import { applyPlan, plans } from './services/billingCatalog';
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
-import { CompanyLogin, CompanyPortal } from './CompanyPortal';
+import { CompanyPortal } from './CompanyPortal';
 import {
   AccessPage,
   AuditPage,
@@ -165,6 +165,151 @@ import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 
+type AuthSession =
+  | { kind: 'owner'; userId: string; name: string; email: string }
+  | { kind: 'company'; companyId: string; name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
+
+const AUTH_STORAGE_KEY = 'servicescope.authSession';
+const DEMO_PASSWORD = 'demo123';
+
+function readAuthSession(): AuthSession | null {
+  const saved = window.localStorage.getItem(AUTH_STORAGE_KEY);
+  if (!saved) return null;
+
+  try {
+    return JSON.parse(saved) as AuthSession;
+  } catch {
+    return null;
+  }
+}
+
+function AuthLogin({
+  companies,
+  onboardingProfiles,
+  platformUsers,
+  onLogin,
+}: {
+  companies: Company[];
+  onboardingProfiles: CompanyOnboardingProfile[];
+  platformUsers: PlatformUser[];
+  onLogin: (session: AuthSession) => void;
+}) {
+  const [mode, setMode] = useState<'owner' | 'company'>('company');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+  function submitLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError('');
+
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || password !== DEMO_PASSWORD) {
+      setError('Use a valid email and demo password demo123.');
+      return;
+    }
+
+    if (mode === 'owner') {
+      const user = platformUsers.find((candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.status === 'active');
+      if (!user) {
+        setError('Owner/team user not found or not active.');
+        return;
+      }
+
+      onLogin({ kind: 'owner', userId: user.id, name: user.name, email: user.email });
+      return;
+    }
+
+    for (const company of companies) {
+      if (company.ownerEmail.toLowerCase() === normalizedEmail) {
+        onLogin({ kind: 'company', companyId: company.id, name: company.ownerName, email: company.ownerEmail, role: 'Admin' });
+        return;
+      }
+
+      const profile = onboardingProfiles.find((candidate) => candidate.companyId === company.id);
+      const technician = profile?.technicians.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
+      if (technician) {
+        onLogin({
+          kind: 'company',
+          companyId: company.id,
+          name: technician.name,
+          email: technician.email,
+          role: technician.role === 'manager' ? 'Manager' : 'Technician',
+        });
+        return;
+      }
+    }
+
+    setError('Company user not found. Check owner or technician email.');
+  }
+
+  return (
+    <main className="company-shell">
+      <div className="company-login">
+        <form className="company-login-card auth-login-card" onSubmit={submitLogin}>
+          <div className="brand-lockup company-brand">
+            <div className="brand-mark">
+              <ShieldCheck size={22} aria-hidden="true" />
+            </div>
+            <div>
+              <strong>ServiceScope</strong>
+              <span>Secure access</span>
+            </div>
+          </div>
+
+          <div className="login-heading">
+            <p className="eyebrow">Login</p>
+            <h1>{mode === 'owner' ? 'Owner console' : 'Company workspace'}</h1>
+            <p>{mode === 'owner' ? 'Owner and support team access for tenant management.' : 'Company admins, managers, and technicians sign in here.'}</p>
+          </div>
+
+          <div className="auth-mode-toggle" aria-label="Login type">
+            <button className={mode === 'company' ? 'active' : ''} type="button" onClick={() => setMode('company')}>
+              Company
+            </button>
+            <button className={mode === 'owner' ? 'active' : ''} type="button" onClick={() => setMode('owner')}>
+              Owner
+            </button>
+          </div>
+
+          <label>
+            Email
+            <input
+              type="email"
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder={mode === 'owner' ? 'owner@servicescope.app' : 'owner@company.com'}
+              autoComplete="email"
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="demo123"
+              autoComplete="current-password"
+            />
+          </label>
+
+          {error ? <p className="login-error">{error}</p> : null}
+
+          <button className="primary-button" type="submit">
+            Sign in
+          </button>
+
+          <div className="login-demo-hints">
+            <span>Demo password: <strong>demo123</strong></span>
+            <span>Owner: owner@servicescope.app</span>
+            <span>Company: use company owner or technician email</span>
+          </div>
+        </form>
+      </div>
+    </main>
+  );
+}
+
 export function App() {
   const initialCompanies = useMemo(() => listCompanies(), []);
   const initialSupportTickets = useMemo(() => listSupportTickets(initialCompanies), [initialCompanies]);
@@ -204,15 +349,33 @@ export function App() {
   }));
   const [accessForm, setAccessForm] = useState<NewPlatformUserForm>(emptyAccessForm);
   const [page, setPage] = useState<AppPage>(initialPage);
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => readAuthSession());
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | CompanyStatus>('all');
   const [auditFilter, setAuditFilter] = useState<'all' | AuditEventCategory>('all');
-  const [companyLoginEmail, setCompanyLoginEmail] = useState('');
 
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId) ?? companies[0];
   const selectedOnboardingProfile = onboardingProfiles.find((profile) => profile.companyId === selectedCompany?.id);
   const selectedTicket = supportTickets.find((ticket) => ticket.id === selectedTicketId) ?? supportTickets[0];
   const openSupportCount = supportTickets.filter((ticket) => ticket.status !== 'resolved').length;
+
+  useEffect(() => {
+    if (!authSession) return;
+
+    if (authSession.kind === 'company') {
+      setSelectedCompanyId(authSession.companyId);
+      if (page !== 'portal') {
+        setPage('portal');
+        window.history.replaceState(null, '', '#portal');
+      }
+      return;
+    }
+
+    if (page === 'portal' || page === 'companyLogin') {
+      setPage('dashboard');
+      window.history.replaceState(null, '', '#dashboard');
+    }
+  }, [authSession, page]);
 
   const totals = useMemo(() => {
     return companies.reduce(
@@ -293,6 +456,24 @@ export function App() {
     });
   }
 
+  function handleLogin(session: AuthSession) {
+    setAuthSession(session);
+    window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+    if (session.kind === 'company') {
+      setSelectedCompanyId(session.companyId);
+      navigate('portal');
+      return;
+    }
+
+    navigate('dashboard');
+  }
+
+  function handleSignOut() {
+    setAuthSession(null);
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.history.replaceState(null, '', '#login');
+  }
+
   function createPortalRequest(request: Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>) {
     if (!selectedCompany) return;
 
@@ -318,44 +499,42 @@ export function App() {
     });
   }
 
-  if (page === 'companyLogin' || page === 'portal') {
+  if (!authSession) {
+    return (
+      <AuthLogin
+        companies={companies}
+        onboardingProfiles={onboardingProfiles}
+        platformUsers={platformUsers}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
+  if (authSession.kind === 'company') {
     return (
       <main className="company-shell">
-        {page === 'companyLogin' ? (
-          <CompanyLogin
-            companies={companies}
-            email={companyLoginEmail}
-            onEmailChange={setCompanyLoginEmail}
-            onSelectCompany={(companyId) => {
-              setSelectedCompanyId(companyId);
-              const company = companies.find((candidate) => candidate.id === companyId);
-              setCompanyLoginEmail(company?.ownerEmail ?? '');
-              navigate('portal');
-            }}
-          />
-        ) : (
-          <CompanyPortal
-            selectedCompany={selectedCompany}
-            onboardingProfile={selectedOnboardingProfile}
-            tickets={supportTickets.filter((ticket) => ticket.companyId === selectedCompany?.id)}
-            onSignOut={() => navigate('companyLogin')}
-            onUpdateOnboardingProfile={(nextProfile) => {
-              const nextProfiles = onboardingProfiles.map((profile) =>
-                profile.companyId === nextProfile.companyId ? nextProfile : profile,
-              );
-              setOnboardingProfiles(nextProfiles);
-              saveCompanyOnboardingProfiles(nextProfiles);
-              recordAudit({
-                category: 'tenant',
-                action: 'onboarding.profile_updated',
-                actor: selectedCompany?.ownerName ?? 'Company owner',
-                resource: selectedCompany?.name ?? 'Company',
-                details: 'Company onboarding profile was updated.',
-              });
-            }}
-            onCreateRequest={createPortalRequest}
-          />
-        )}
+        <CompanyPortal
+          selectedCompany={selectedCompany}
+          onboardingProfile={selectedOnboardingProfile}
+          signedInUser={{ name: authSession.name, role: authSession.role }}
+          tickets={supportTickets.filter((ticket) => ticket.companyId === selectedCompany?.id)}
+          onSignOut={handleSignOut}
+          onUpdateOnboardingProfile={(nextProfile) => {
+            const nextProfiles = onboardingProfiles.map((profile) =>
+              profile.companyId === nextProfile.companyId ? nextProfile : profile,
+            );
+            setOnboardingProfiles(nextProfiles);
+            saveCompanyOnboardingProfiles(nextProfiles);
+            recordAudit({
+              category: 'tenant',
+              action: 'onboarding.profile_updated',
+              actor: authSession.name,
+              resource: selectedCompany?.name ?? 'Company',
+              details: 'Company onboarding profile was updated.',
+            });
+          }}
+          onCreateRequest={createPortalRequest}
+        />
       </main>
     );
   }
@@ -413,6 +592,9 @@ export function App() {
           </div>
           <button className="icon-button" type="button" aria-label="Platform settings" title="Platform settings">
             <SlidersHorizontal size={20} aria-hidden="true" />
+          </button>
+          <button className="secondary-button compact" type="button" onClick={handleSignOut}>
+            Sign out
           </button>
         </header>
 

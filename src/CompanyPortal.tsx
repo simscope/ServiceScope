@@ -237,6 +237,7 @@ export function CompanyLogin({
 export function CompanyPortal({
   selectedCompany,
   onboardingProfile,
+  signedInUser,
   tickets,
   onSignOut,
   onUpdateOnboardingProfile,
@@ -244,6 +245,7 @@ export function CompanyPortal({
 }: {
   selectedCompany?: Company;
   onboardingProfile?: CompanyOnboardingProfile;
+  signedInUser?: { name: string; role: 'Manager' | 'Admin' | 'Technician' };
   tickets: SupportTicket[];
   onSignOut: () => void;
   onUpdateOnboardingProfile: (profile: CompanyOnboardingProfile) => void;
@@ -687,8 +689,8 @@ export function CompanyPortal({
     label: paymentMethodLabels[method],
   }));
   const currentPortalUser = {
-    name: selectedCompany.ownerName,
-    role: 'Admin' as const,
+    name: signedInUser?.name ?? selectedCompany.ownerName,
+    role: signedInUser?.role ?? 'Admin' as const,
   };
   const updateInlineJobDraft = (jobId: string, patch: Partial<ServiceJob>) => {
     setInlineJobDrafts((drafts) => ({

@@ -149,6 +149,57 @@ button {
   font-weight: 700;
 }
 
+.auth-login-card {
+  width: min(100%, 520px);
+}
+
+.auth-mode-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  border: 1px solid #dce4dd;
+  border-radius: 8px;
+  background: #f4f7f5;
+  padding: 5px;
+}
+
+.auth-mode-toggle button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #4f5b53;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.auth-mode-toggle button.active {
+  background: #17201b;
+  color: #ffffff;
+}
+
+.login-error {
+  margin: 0;
+  border: 1px solid #ffb8b8;
+  border-radius: 8px;
+  background: #fff0f0;
+  color: #a01818;
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.login-demo-hints {
+  display: grid;
+  gap: 4px;
+  color: #667269;
+  font-size: 12px;
+}
+
+.login-demo-hints strong {
+  color: #17201b;
+}
+
 .login-company-list {
   display: grid;
   gap: 10px;
