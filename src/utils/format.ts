@@ -1,3 +1,5 @@
+import type { ServiceJob } from '../types';
+
 export function money(value: number) {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -8,6 +10,13 @@ export function money(value: number) {
 
 export function statusClassName(status: string) {
   return status.toLowerCase().replace(/\s+/g, '-');
+}
+
+export function isCustomerJobPaid(job: ServiceJob) {
+  const scf = Number(job.serviceCallFee || 0);
+  const labor = Number(job.labor || 0);
+
+  return (scf <= 0 || Boolean(job.scfPayment)) && (labor <= 0 || Boolean(job.laborPayment));
 }
 
 export function googleRouteUrl(addresses: string[]) {

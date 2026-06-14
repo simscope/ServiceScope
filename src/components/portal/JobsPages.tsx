@@ -156,6 +156,11 @@ export function AllJobsPage({
   onSaveMaterials,
   jobStatusFilters,
   allJobsGroups,
+  allJobsVisibility,
+  onAllJobsVisibilityChange,
+  activeJobsCount,
+  paidJobsCount,
+  totalJobsCount,
   inlineJobDrafts,
   onUpdateInlineJobDraft,
   onSaveInlineJob,
@@ -171,6 +176,11 @@ export function AllJobsPage({
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
   jobStatusFilters: ServiceJobStatus[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
+  allJobsVisibility: 'active' | 'paid' | 'all';
+  onAllJobsVisibilityChange: (value: 'active' | 'paid' | 'all') => void;
+  activeJobsCount: number;
+  paidJobsCount: number;
+  totalJobsCount: number;
   inlineJobDrafts: Record<string, Partial<ServiceJob>>;
   onUpdateInlineJobDraft: (jobId: string, patch: Partial<ServiceJob>) => void;
   onSaveInlineJob: (job: ServiceJob) => void;
@@ -218,10 +228,10 @@ export function AllJobsPage({
             </option>
           ))}
         </select>
-        <select defaultValue="active">
-          <option value="active">Active</option>
-          <option value="archived">Archived</option>
-          <option value="all">All jobs</option>
+        <select value={allJobsVisibility} onChange={(event) => onAllJobsVisibilityChange(event.target.value as 'active' | 'paid' | 'all')} aria-label="Job visibility">
+          <option value="active">Active ({activeJobsCount})</option>
+          <option value="paid">Paid ({paidJobsCount})</option>
+          <option value="all">All jobs ({totalJobsCount})</option>
         </select>
         <input placeholder="Company, name, phone or address" />
         <input placeholder="Invoice # or Job #" />
@@ -237,6 +247,10 @@ export function AllJobsPage({
           <option value="status">Sort by status</option>
         </select>
       </div>
+
+      <p className="all-jobs-visibility-note">
+        Paid jobs are hidden from the active board. Open Paid or All jobs here whenever you need them.
+      </p>
 
       <div className="all-jobs-groups">
         {allJobsGroups.map((group) => (

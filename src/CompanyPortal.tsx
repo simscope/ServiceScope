@@ -171,7 +171,7 @@ import type {
 } from './appTypes';
 import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
-import { googleRouteUrl, money, statusClassName } from './utils/format';
+import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
 
 export function CompanyLogin({
@@ -266,6 +266,7 @@ export function CompanyPortal({
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
   const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
+  const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
   const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('week');
   const [calendarAnchorDate, setCalendarAnchorDate] = useState(() => toLocalIsoDate(new Date()));
@@ -416,9 +417,12 @@ export function CompanyPortal({
   };
   const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
   const allJobsRows = jobs;
+  const activeJobsRows = allJobsRows.filter((job) => !isCustomerJobPaid(job));
+  const paidJobsRows = allJobsRows.filter(isCustomerJobPaid);
+  const visibleAllJobsRows = allJobsVisibility === 'paid' ? paidJobsRows : allJobsVisibility === 'all' ? allJobsRows : activeJobsRows;
   const allJobsGroups = Array.from(new Set(['No technician', ...allJobsRows.map((job) => job.assignee)])).map((technician) => ({
     technician,
-    jobs: allJobsRows.filter((job) => job.assignee === technician),
+    jobs: visibleAllJobsRows.filter((job) => job.assignee === technician),
   })).filter((group) => group.jobs.length > 0);
   const technicianLocations = profile.technicians.map((technician, index) => {
     const samples = [
@@ -540,7 +544,7 @@ export function CompanyPortal({
 
     return matchesStatus && matchesTech && (!normalizedSearch || haystack.includes(normalizedSearch));
   });
-  const jobsWithoutMaterials = allJobsRows.filter((job) => !materials.some((material) => material.jobNumber === job.jobNumber));
+  const jobsWithoutMaterials = activeJobsRows.filter((job) => !materials.some((material) => material.jobNumber === job.jobNumber));
   const selectedMaterialsJob = materialJobMap.get(editingMaterialsJobNumber);
   const materialsTotal = filteredMaterialRows.reduce((sum, { material }) => sum + material.quantity * material.price, 0);
   const openMaterialEditor = (jobNumber: string) => {
@@ -950,7 +954,7 @@ export function CompanyPortal({
   ]);
   const calendarDurations = [60, 120, 240, 90, 360, 180];
   const defaultScheduledAssignments = Object.fromEntries(
-    allJobsRows.slice(1).map((job, index) => [
+    activeJobsRows.slice(1).map((job, index) => [
       job.jobNumber,
       {
         assignee: job.assignee,
@@ -960,7 +964,7 @@ export function CompanyPortal({
       },
     ]),
   );
-  const calendarJobs = allJobsRows.map((job) => {
+  const calendarJobs = activeJobsRows.map((job) => {
     const assignment = calendarAssignments[job.jobNumber] ?? defaultScheduledAssignments[job.jobNumber];
     const appointmentDay = allCalendarDays.find((day) => day.key === assignment?.dayKey);
     const appointmentSlot = calendarDropSlots.find((slot) => slot.key === assignment?.time);
@@ -1295,6 +1299,11 @@ export function CompanyPortal({
             onSaveMaterials={saveJobMaterials}
             jobStatusFilters={jobStatusFilters}
             allJobsGroups={allJobsGroups}
+            allJobsVisibility={allJobsVisibility}
+            onAllJobsVisibilityChange={setAllJobsVisibility}
+            activeJobsCount={activeJobsRows.length}
+            paidJobsCount={paidJobsRows.length}
+            totalJobsCount={allJobsRows.length}
             inlineJobDrafts={inlineJobDrafts}
             onUpdateInlineJobDraft={updateInlineJobDraft}
             onSaveInlineJob={handleSaveInlineJob}
