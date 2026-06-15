@@ -1,17 +1,35 @@
 # ServiceScope
 
-Owner console for launching and monitoring service companies as separate tenants.
+ServiceScope is a multi-tenant service company platform prototype for HVAC, appliance, plumbing, handyman, and similar field-service businesses.
 
-## Current scope
+## Current Scope
 
-- Clean Vite + React + TypeScript app.
-- Owner dashboard for adding companies.
-- Company monitoring list with status, health, jobs, technicians, revenue, and search/filter controls.
-- LocalStorage persistence for prototype data.
+- Owner Console for creating and monitoring companies.
+- Company Portal with jobs, all jobs, calendar, materials, tasks, map, email, finance, library, onboarding, and support portal.
+- Owner Monitoring command center for billing risk, onboarding health, support signals, storage, workload, and tenant health.
+- Company onboarding for profile/logo, mailbox setup, ServiceScope autopay setup, accepted customer payment methods, job workflow, job types, technicians, and warranty/archive rules.
+- Job detail card with client data, materials, invoices, comments, photos/files, and payment fields.
+- Payroll workflow with technician financial cards, selected payouts, paid payroll, and archive logic.
+- Supabase schema draft in `supabase/schema.sql`.
 
-## Next product steps
+## Prototype Status
 
-- Add authentication and owner-only access.
-- Replace LocalStorage with tenant tables in Supabase or Postgres.
-- Add per-company workspace creation and onboarding status.
-- Add billing, plan limits, and health alerts.
+The frontend still uses localStorage/demo seed data. The next product step is replacing local stores with Supabase Auth, Postgres tables, Storage, and Stripe billing webhooks.
+
+## Development
+
+```bash
+npm install
+npm run dev
+npm run build
+```
+
+## Supabase
+
+The initial database schema is in:
+
+```text
+supabase/schema.sql
+```
+
+Run it in a clean Supabase project, then create the first Auth user and insert that user into `platform_users` as `owner`.
