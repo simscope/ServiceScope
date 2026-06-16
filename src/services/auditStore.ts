@@ -1,36 +1,6 @@
 import type { AuditEvent, AuditEventCategory } from '../types';
 
-const STORAGE_KEY = 'servicescope.auditEvents';
-
-const auditSeed: AuditEvent[] = [
-  {
-    id: 'aud-seed-company',
-    category: 'tenant',
-    action: 'company.created',
-    actor: 'ServiceScope Owner',
-    resource: 'Northline HVAC',
-    details: 'Tenant workspace created from owner console.',
-    createdAt: 'Today',
-  },
-  {
-    id: 'aud-seed-support',
-    category: 'support',
-    action: 'support.ticket_created',
-    actor: 'Maria Chen',
-    resource: 'Apex Service Co',
-    details: 'Urgent bug report opened for CSV import.',
-    createdAt: 'Today',
-  },
-  {
-    id: 'aud-seed-access',
-    category: 'access',
-    action: 'access.user_invited',
-    actor: 'ServiceScope Owner',
-    resource: 'Operations Admin',
-    details: 'Admin invitation sent.',
-    createdAt: 'Yesterday',
-  },
-];
+const STORAGE_KEY = 'servicescope.v2.auditEvents';
 
 function normalizeEvent(event: Partial<AuditEvent>): AuditEvent {
   return {
@@ -46,12 +16,12 @@ function normalizeEvent(event: Partial<AuditEvent>): AuditEvent {
 
 export function listAuditEvents() {
   const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (!saved) return auditSeed;
+  if (!saved) return [];
 
   try {
     return (JSON.parse(saved) as Partial<AuditEvent>[]).map(normalizeEvent);
   } catch {
-    return auditSeed;
+    return [];
   }
 }
 

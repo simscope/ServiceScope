@@ -8,7 +8,7 @@ import type {
   NewCompanyTechnicianForm,
 } from '../types';
 
-const STORAGE_KEY = 'servicescope.companyOnboardingProfiles';
+const STORAGE_KEY = 'servicescope.v2.companyOnboardingProfiles';
 const validPaymentMethods: CompanyPaymentMethod[] = [
   'ach',
   'zelle',
@@ -28,14 +28,15 @@ const validPaymentMethods: CompanyPaymentMethod[] = [
 ];
 
 function makeTechnicians(company: Company): CompanyTechnician[] {
-  const count = Math.max(company.technicians, 1);
+  const count = company.technicians;
 
   return Array.from({ length: count }, (_, index) => ({
     id: `${company.id}-tech-${index + 1}`,
-    name: index === 0 ? 'Lead Technician' : `Technician ${index + 1}`,
+    name: `Technician ${index + 1}`,
     email: `tech${index + 1}@${company.domain || 'company.local'}`,
     phone: '',
-    role: index === 0 ? 'manager' : 'technician',
+    accessPassword: '',
+    role: 'technician',
     status: 'active',
     assignedJobs: index === 0 ? Math.min(company.openJobs, 4) : 0,
   }));
@@ -135,13 +136,22 @@ function makeJobTypePrefix(name: string) {
   return knownPrefixes[compact] ?? (compact.slice(0, 4) || 'JOB');
 }
 
+function makeWebsite(value: string) {
+  const normalized = value.trim();
+  if (!normalized) return '';
+  const protocol = normalized.match(/^https?:\/\//i)?.[0] ?? 'https://';
+  const address = normalized.replace(/^(https?:\/\/)+/i, '');
+
+  return `${protocol}${address}`;
+}
+
 export function createDefaultCompanyOnboardingProfile(company: Company): CompanyOnboardingProfile {
   return {
     companyId: company.id,
     legalName: company.name,
     displayName: company.name,
     logoUrl: '',
-    website: company.domain ? `https://${company.domain}` : '',
+    website: makeWebsite(company.domain),
     phone: '',
     billingEmail: company.ownerEmail,
     serviceAddress: '',
@@ -205,11 +215,30 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
     ...jobType,
     jobNumberPrefix: jobType.jobNumberPrefix || makeJobTypePrefix(jobType.name),
   }));
+  const technicians = profile.technicians?.length ? profile.technicians : makeTechnicians(company);
+  const normalizedTechnicians = technicians.filter((technician) => {
+    const legacyAutoLead =
+      technician.name === 'Lead Technician' &&
+      technician.email.startsWith('tech1@') &&
+      !technician.phone &&
+      !technician.accessPassword &&
+      !(technician as CompanyTechnician & { temporaryPassword?: string }).temporaryPassword;
+
+    return !legacyAutoLead;
+  }).map((technician) => {
+    const legacyTechnician = technician as CompanyTechnician & { temporaryPassword?: string };
+
+    return {
+      ...technician,
+      accessPassword: technician.accessPassword ?? legacyTechnician.temporaryPassword ?? '',
+    };
+  });
 
   return {
     ...createDefaultCompanyOnboardingProfile(company),
     ...profile,
     companyId: company.id,
+    website: makeWebsite(profile.website ?? company.domain),
     acceptedPayments: acceptedPayments.length ? acceptedPayments : ['ach', 'zelle', 'credit_card', 'check', 'cash'],
     achAccountNumber: profile.achAccountNumber ?? legacyProfile.achAccountLast4 ?? '',
     subscriptionPaymentStatus: profile.subscriptionPaymentStatus ?? (company.billingStatus === 'paid' ? 'active' : 'not_connected'),
@@ -228,7 +257,7 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
     requireCompletionPhoto: profile.requireCompletionPhoto ?? false,
     allowWarrantyReopen: profile.allowWarrantyReopen ?? true,
     jobTypes: normalizedJobTypes,
-    technicians: profile.technicians?.length ? profile.technicians : makeTechnicians(company),
+    technicians: normalizedTechnicians,
   };
 }
 

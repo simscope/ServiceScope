@@ -1,6 +1,6 @@
 import type { FormEvent } from 'react';
 import { ClipboardList, Plus } from 'lucide-react';
-import { JobCard, type JobCardData } from '../JobCard';
+import type { JobCardData } from '../JobCard';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type {
   CompanyJobType,
@@ -28,8 +28,6 @@ export function JobsPage({
   selectedJobType,
   selectedJobTypeId,
   onSelectedJobTypeIdChange,
-  sampleJob,
-  onOpenJob,
 }: {
   openedJob: JobCardData | null;
   profile: CompanyOnboardingProfile;
@@ -45,8 +43,6 @@ export function JobsPage({
   selectedJobType?: CompanyJobType;
   selectedJobTypeId: string;
   onSelectedJobTypeIdChange: (id: string) => void;
-  sampleJob: JobCardData;
-  onOpenJob: (job: JobCardData) => void;
 }) {
   if (openedJob) {
     return (
@@ -135,12 +131,6 @@ export function JobsPage({
           </button>
         </div>
       </form>
-      <section className="sample-job-strip" aria-label="Example created job">
-        <div className="sample-job-strip-heading">
-          <p className="eyebrow">Example created job</p>
-        </div>
-        <JobCard job={sampleJob} onOpen={() => onOpenJob(sampleJob)} />
-      </section>
     </section>
   );
 }

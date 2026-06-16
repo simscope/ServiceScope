@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   AlertTriangle,
@@ -82,18 +82,26 @@ export function DashboardOverview({
           </button>
         </div>
         <div className="overview-list">
-          {newestCompanies.map((company) => (
-            <div className="overview-row" key={company.id}>
-              <div className="company-main">
-                <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
-                <div>
-                  <h3>{company.name}</h3>
-                  <p>{company.plan} - {company.market}</p>
+          {newestCompanies.length ? (
+            newestCompanies.map((company) => (
+              <div className="overview-row" key={company.id}>
+                <div className="company-main">
+                  <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+                  <div>
+                    <h3>{company.name}</h3>
+                    <p>{company.plan} - {company.market}</p>
+                  </div>
                 </div>
+                <StatusPill status={company.status} />
               </div>
-              <StatusPill status={company.status} />
+            ))
+          ) : (
+            <div className="empty-state compact-empty">
+              <Building2 size={24} aria-hidden="true" />
+              <h3>No companies yet</h3>
+              <p>Add the first tenant from the Companies page.</p>
             </div>
-          ))}
+          )}
         </div>
       </section>
 
@@ -1170,13 +1178,35 @@ export function CompanyDetail({
   company,
   onPrepareNext,
   onCompleteStep,
+  onSetTemporaryPassword,
 }: {
   company: Company;
   onPrepareNext: () => void;
   onCompleteStep: (step: CompanyOnboardingStepKey) => void;
+  onSetTemporaryPassword: (password: string) => void;
 }) {
   const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
   const readyToLaunch = completedSteps === onboardingStepOrder.length;
+  const [temporaryPassword, setTemporaryPassword] = useState(company.temporaryPassword);
+
+  useEffect(() => {
+    setTemporaryPassword(company.temporaryPassword);
+  }, [company.id, company.temporaryPassword]);
+
+  function generatePassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
+    const values = new Uint32Array(12);
+    crypto.getRandomValues(values);
+
+    return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
+  }
+
+  function saveTemporaryPassword(password: string) {
+    const nextPassword = password.trim();
+    if (!nextPassword) return;
+    setTemporaryPassword(nextPassword);
+    onSetTemporaryPassword(nextPassword);
+  }
 
   return (
     <aside className="panel detail-panel" aria-label={`${company.name} details`}>
@@ -1208,6 +1238,43 @@ export function CompanyDetail({
         <MiniStat icon={<ClipboardList size={17} />} label="Jobs" value={company.usage.jobsThisMonth.toString()} />
         <MiniStat icon={<CreditCard size={17} />} label="Invoices" value={company.usage.invoicesThisMonth.toString()} />
       </div>
+
+      <section className="detail-section company-access-panel">
+        <div className="section-title">
+          <ShieldCheck size={18} aria-hidden="true" />
+          <h3>Company invite</h3>
+        </div>
+        <div className="access-credential-list">
+          <div>
+            <span>Company owner email</span>
+            <strong>{company.ownerEmail}</strong>
+          </div>
+        </div>
+        <label className="password-reset-field">
+          Temporary password
+          <div className="password-field-row">
+            <input
+              type="text"
+              value={temporaryPassword}
+              onChange={(event) => setTemporaryPassword(event.target.value)}
+              placeholder="Set new temporary password"
+            />
+            <button className="secondary-button compact" type="button" onClick={() => saveTemporaryPassword(temporaryPassword)}>
+              Save
+            </button>
+          </div>
+        </label>
+        <button
+          className="secondary-button compact"
+          type="button"
+          onClick={() => saveTemporaryPassword(generatePassword())}
+        >
+          Generate new password
+        </button>
+        <p className="access-note">
+          The owner console prepares access only. Company users sign in with their own account.
+        </p>
+      </section>
 
       <section className="detail-section">
         <div className="section-title">

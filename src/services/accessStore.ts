@@ -1,6 +1,6 @@
 import type { NewPlatformUserForm, PlatformUser, PlatformUserRole, PlatformUserStatus } from '../types';
 
-const STORAGE_KEY = 'servicescope.platformUsers';
+const STORAGE_KEY = 'servicescope.v2.platformUsers';
 export const SYSTEM_OWNER_ID = 'usr-owner';
 
 const platformUsersSeed: PlatformUser[] = [
@@ -11,22 +11,6 @@ const platformUsersSeed: PlatformUser[] = [
     role: 'owner',
     status: 'active',
     lastActive: 'Now',
-  },
-  {
-    id: 'usr-support',
-    name: 'Support Lead',
-    email: 'support@servicescope.app',
-    role: 'support',
-    status: 'active',
-    lastActive: '22 min ago',
-  },
-  {
-    id: 'usr-admin-invite',
-    name: 'Operations Admin',
-    email: 'ops@servicescope.app',
-    role: 'admin',
-    status: 'invited',
-    lastActive: 'Invite sent',
   },
 ];
 

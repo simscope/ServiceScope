@@ -83,6 +83,7 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
+import { saveCompanyCoreToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
@@ -173,6 +174,14 @@ type AuthSession =
 const AUTH_STORAGE_KEY = 'servicescope.authSession';
 const DEMO_PASSWORD = 'demo123';
 
+function generateTemporaryPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
+  const values = new Uint32Array(12);
+  crypto.getRandomValues(values);
+
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
+}
+
 function readAuthSession(): AuthSession | null {
   const saved = window.localStorage.getItem(AUTH_STORAGE_KEY);
   if (!saved) return null;
@@ -204,19 +213,27 @@ function AuthLogin({
     setError('');
 
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || password !== DEMO_PASSWORD) {
-      setError('Use a valid email and demo password demo123.');
+    if (!normalizedEmail || !password.trim()) {
+      setError('Enter your email and password.');
       return;
     }
 
     const user = platformUsers.find((candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.status === 'active');
     if (user) {
+      if (password !== DEMO_PASSWORD) {
+        setError('Invalid owner password.');
+        return;
+      }
       onLogin({ kind: 'owner', userId: user.id, name: user.name, email: user.email });
       return;
     }
 
     for (const company of companies) {
       if (company.ownerEmail.toLowerCase() === normalizedEmail) {
+        if (password !== company.temporaryPassword) {
+          setError('Invalid company temporary password.');
+          return;
+        }
         onLogin({ kind: 'company', companyId: company.id, name: company.ownerName, email: company.ownerEmail, role: 'Admin' });
         return;
       }
@@ -224,6 +241,14 @@ function AuthLogin({
       const profile = onboardingProfiles.find((candidate) => candidate.companyId === company.id);
       const technician = profile?.technicians.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
       if (technician) {
+        if (technician.status === 'disabled') {
+          setError('Technician access is disabled.');
+          return;
+        }
+        if (password !== technician.accessPassword) {
+          setError('Invalid technician password.');
+          return;
+        }
         onLogin({
           kind: 'company',
           companyId: company.id,
@@ -286,9 +311,8 @@ function AuthLogin({
           </button>
 
           <div className="login-demo-hints">
-            <span>Demo password: <strong>demo123</strong></span>
-            <span>Owner: owner@servicescope.app</span>
-            <span>Company: use company owner or technician email</span>
+            <span>Platform owner: owner@servicescope.app / <strong>demo123</strong></span>
+            <span>Company owner: use the temporary password created by ServiceScope owner</span>
           </div>
         </form>
       </div>
@@ -351,6 +375,15 @@ export function App() {
     if (!authSession) return;
 
     if (authSession.kind === 'company') {
+      const companyExists = companies.some((company) => company.id === authSession.companyId);
+      if (!companyExists) {
+        setAuthSession(null);
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        setPage('dashboard');
+        window.history.replaceState(null, '', '#login');
+        return;
+      }
+
       setSelectedCompanyId(authSession.companyId);
       if (page !== 'portal') {
         setPage('portal');
@@ -363,7 +396,7 @@ export function App() {
       setPage('dashboard');
       window.history.replaceState(null, '', '#dashboard');
     }
-  }, [authSession, page]);
+  }, [authSession, companies, page]);
 
   const totals = useMemo(() => {
     return companies.reduce(
@@ -402,16 +435,20 @@ export function App() {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.name.trim() || !form.ownerEmail.trim()) return;
+    if (!form.name.trim() || !form.ownerEmail.trim() || !form.temporaryPassword.trim()) return;
 
     const nextCompany = createCompany(form);
+    const nextProfile = createDefaultCompanyOnboardingProfile(nextCompany);
     persist([nextCompany, ...companies]);
     const nextProfiles = [
       ...onboardingProfiles,
-      createDefaultCompanyOnboardingProfile(nextCompany),
+      nextProfile,
     ];
     setOnboardingProfiles(nextProfiles);
     saveCompanyOnboardingProfiles(nextProfiles);
+    saveOnboardingProfileToBackend(nextCompany, nextProfile, null).catch((error) => {
+      console.error('Failed to save company onboarding to backend', error);
+    });
     recordAudit({
       category: 'tenant',
       action: 'company.created',
@@ -424,7 +461,14 @@ export function App() {
   }
 
   function updateCompany(companyId: string, updater: (company: Company) => Company) {
-    persist(companies.map((company) => (company.id === companyId ? updater(company) : company)));
+    const nextCompanies = companies.map((company) => (company.id === companyId ? updater(company) : company));
+    persist(nextCompanies);
+    const nextCompany = nextCompanies.find((company) => company.id === companyId);
+    if (nextCompany) {
+      saveCompanyCoreToBackend(nextCompany).catch((error) => {
+        console.error('Failed to save company to backend', error);
+      });
+    }
   }
 
   function prepareNextStep(companyId: string) {
@@ -628,6 +672,24 @@ export function App() {
                 <input type="email" value={form.ownerEmail} onChange={(event) => setForm({ ...form, ownerEmail: event.target.value })} placeholder="owner@company.com" />
               </label>
               <label>
+                Temporary password
+                <div className="password-field-row">
+                  <input
+                    type="text"
+                    value={form.temporaryPassword}
+                    onChange={(event) => setForm({ ...form, temporaryPassword: event.target.value })}
+                    placeholder="Set temporary password"
+                  />
+                  <button
+                    className="secondary-button compact"
+                    type="button"
+                    onClick={() => setForm({ ...form, temporaryPassword: generateTemporaryPassword() })}
+                  >
+                    Generate
+                  </button>
+                </div>
+              </label>
+              <label>
                 Tenant domain
                 <input value={form.domain} onChange={(event) => setForm({ ...form, domain: event.target.value })} placeholder="brightair.servicescope.app" />
               </label>
@@ -707,6 +769,16 @@ export function App() {
               company={selectedCompany}
               onPrepareNext={() => prepareNextStep(selectedCompany.id)}
               onCompleteStep={(step) => updateCompany(selectedCompany.id, (company) => completeOnboardingStep(company, step))}
+              onSetTemporaryPassword={(temporaryPassword) => {
+                updateCompany(selectedCompany.id, (company) => ({ ...company, temporaryPassword, lastSync: 'Access updated' }));
+                recordAudit({
+                  category: 'access',
+                  action: 'company.password_reset',
+                  actor: 'ServiceScope Owner',
+                  resource: selectedCompany.name,
+                  details: `Temporary password updated for ${selectedCompany.ownerEmail}.`,
+                });
+              }}
             />
           ) : null}
         </div>

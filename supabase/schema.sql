@@ -135,6 +135,7 @@ create table companies (
   name text not null,
   owner_name text not null default '',
   owner_email citext not null,
+  temporary_password text not null default '',
   domain citext unique,
   market text not null default '',
   status company_status not null default 'setup',
@@ -215,6 +216,7 @@ create table company_technicians (
   name text not null,
   email citext,
   phone text,
+  access_password text not null default '',
   role technician_role not null default 'technician',
   status user_status not null default 'active',
   assigned_jobs_count integer not null default 0,
@@ -675,7 +677,8 @@ create table subscription_payment_methods (
   autopay_enabled boolean not null default false,
   is_default boolean not null default true,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  unique (company_id, is_default)
 );
 
 create table subscription_invoices (

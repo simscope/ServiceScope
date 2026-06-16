@@ -37,6 +37,7 @@ export function OnboardingPage({
   setTechnicianForm,
   selectedCompany,
   handleTechnicianSubmit,
+  generateAccessPassword,
 }: {
   completedSteps: number;
   profile: CompanyOnboardingProfile;
@@ -58,9 +59,26 @@ export function OnboardingPage({
   setTechnicianForm: (form: NewCompanyTechnicianForm) => void;
   selectedCompany: Company;
   handleTechnicianSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  generateAccessPassword: () => string;
 }) {
   const selectedPlan = getPlan(selectedCompany.plan);
   const subscriptionConnected = profile.subscriptionPaymentStatus === 'active' && profile.autoPayEnabled;
+  const subscriptionStatusLabel =
+    profile.subscriptionPaymentStatus === 'not_connected'
+      ? 'Not connected'
+      : profile.subscriptionPaymentStatus === 'pending'
+        ? 'Pending verification'
+        : profile.subscriptionPaymentStatus === 'active'
+          ? 'Active'
+          : 'Failed';
+
+  function updateTechnician(technicianId: string, updates: Partial<CompanyOnboardingProfile['technicians'][number]>) {
+    updateProfile({
+      technicians: profile.technicians.map((technician) =>
+        technician.id === technicianId ? { ...technician, ...updates } : technician,
+      ),
+    });
+  }
 
   return (<section className="client-onboarding">
             <div className="onboarding-header">
@@ -233,7 +251,7 @@ export function OnboardingPage({
                     <div className="mailbox-settings-grid">
                       <label>
                         Sender name
-                        <input value={emailConnection?.senderName ?? ''} onChange={(event) => updateMailbox({ senderName: event.target.value })} placeholder="Northline HVAC" disabled={!emailConnection} />
+                        <input value={emailConnection?.senderName ?? ''} onChange={(event) => updateMailbox({ senderName: event.target.value })} placeholder="Company name" disabled={!emailConnection} />
                       </label>
                       <label>
                         Reply-to email
@@ -316,7 +334,7 @@ export function OnboardingPage({
                       {selectedCompany.plan} plan - {money(selectedPlan.price)}/mo. ServiceScope charges this card automatically every billing cycle.
                     </p>
                     <span className={`subscription-status-pill ${profile.subscriptionPaymentStatus}`}>
-                      {profile.subscriptionPaymentStatus === 'not_connected' ? 'Not connected' : profile.subscriptionPaymentStatus}
+                      {subscriptionStatusLabel}
                     </span>
                   </div>
 
@@ -342,13 +360,16 @@ export function OnboardingPage({
                     </select>
                   </label>
                   <label>
-                    Card last 4
+                    Card number
                     <input
                       inputMode="numeric"
-                      maxLength={4}
-                      value={profile.subscriptionCardLast4}
-                      onChange={(event) => updateProfile({ subscriptionCardLast4: event.target.value.replace(/\D/g, '').slice(0, 4) })}
-                      placeholder="4242"
+                      maxLength={19}
+                      defaultValue=""
+                      onChange={(event) => {
+                        const digits = event.target.value.replace(/\D/g, '').slice(0, 19);
+                        updateProfile({ subscriptionCardLast4: digits.slice(-4) });
+                      }}
+                      placeholder="Card number"
                     />
                   </label>
                   <label>
@@ -379,15 +400,10 @@ export function OnboardingPage({
                     Billing ZIP
                     <input value={profile.subscriptionBillingZip} onChange={(event) => updateProfile({ subscriptionBillingZip: event.target.value })} />
                   </label>
-                  <label>
-                    Payment status
-                    <select value={profile.subscriptionPaymentStatus} onChange={(event) => updateProfile({ subscriptionPaymentStatus: event.target.value as CompanyOnboardingProfile['subscriptionPaymentStatus'] })}>
-                      <option value="not_connected">Not connected</option>
-                      <option value="pending">Pending verification</option>
-                      <option value="active">Active</option>
-                      <option value="failed">Failed</option>
-                    </select>
-                  </label>
+                  <div className="readonly-status-field">
+                    <span>Payment status</span>
+                    <strong>{subscriptionStatusLabel}</strong>
+                  </div>
                   <label className="checkbox-field prefix-toggle">
                     <input
                       type="checkbox"
@@ -396,10 +412,6 @@ export function OnboardingPage({
                     />
                     Enable automatic monthly charges
                   </label>
-                </div>
-
-                <div className="payment-token-warning">
-                  Production note: full card numbers must be collected by Stripe, Square, or another PCI provider. ServiceScope should store only the payment token, brand, last 4, expiration, and billing status.
                 </div>
               </section>
 
@@ -477,11 +489,11 @@ export function OnboardingPage({
                     <input type="number" min={0} step={1} value={profile.warrantyDays} onChange={(event) => updateProfile({ warrantyDays: Number(event.target.value) })} />
                   </label>
                   <label>
-                    Archive completed after
+                    Archive completed after (days)
                     <input type="number" min={0} step={1} value={profile.autoArchiveCompletedAfterDays} onChange={(event) => updateProfile({ autoArchiveCompletedAfterDays: Number(event.target.value) })} />
                   </label>
                   <label>
-                    Archive cancelled after
+                    Archive cancelled after (days)
                     <input type="number" min={0} step={1} value={profile.autoArchiveCancelledAfterDays} onChange={(event) => updateProfile({ autoArchiveCancelledAfterDays: Number(event.target.value) })} />
                   </label>
                   <label className="checkbox-field prefix-toggle">
@@ -605,14 +617,6 @@ export function OnboardingPage({
                       <option value="manager">Manager</option>
                     </select>
                   </label>
-                  <label>
-                    Job assignment mode
-                    <select value={profile.jobAssignmentMode} onChange={(event) => updateProfile({ jobAssignmentMode: event.target.value as CompanyOnboardingProfile['jobAssignmentMode'] })}>
-                      <option value="manual">Manual dispatch</option>
-                      <option value="round_robin">Round robin</option>
-                      <option value="skill_based">Skill based</option>
-                    </select>
-                  </label>
                 </div>
                 <form className="technician-form" onSubmit={handleTechnicianSubmit}>
                   <label>
@@ -627,6 +631,24 @@ export function OnboardingPage({
                     Phone
                     <input value={technicianForm.phone} onChange={(event) => setTechnicianForm({ ...technicianForm, phone: event.target.value })} placeholder="(555) 000-0000" />
                   </label>
+                  <label>
+                    Access password
+                    <div className="password-field-row">
+                      <input
+                        type="text"
+                        value={technicianForm.accessPassword}
+                        onChange={(event) => setTechnicianForm({ ...technicianForm, accessPassword: event.target.value })}
+                        placeholder="Set access password"
+                      />
+                      <button
+                        className="secondary-button compact"
+                        type="button"
+                        onClick={() => setTechnicianForm({ ...technicianForm, accessPassword: generateAccessPassword() })}
+                      >
+                        Generate
+                      </button>
+                    </div>
+                  </label>
                   <button className="secondary-button" type="submit">
                     <UserPlus size={17} aria-hidden="true" />
                     Add technician
@@ -638,8 +660,39 @@ export function OnboardingPage({
                       <div>
                         <h3>{technician.name}</h3>
                         <p>{technician.email || 'No email'} - {technician.phone || 'No phone'}</p>
+                        <div className="technician-access-controls">
+                          <label>
+                            Access password
+                            <div className="password-field-row">
+                              <input
+                                type="text"
+                                value={technician.accessPassword}
+                                onChange={(event) => updateTechnician(technician.id, { accessPassword: event.target.value })}
+                                placeholder="Set access password"
+                              />
+                              <button
+                                className="secondary-button compact"
+                                type="button"
+                                onClick={() => updateTechnician(technician.id, { accessPassword: generateAccessPassword() })}
+                              >
+                                Generate
+                              </button>
+                            </div>
+                          </label>
+                          <label>
+                            Access
+                            <select
+                              value={technician.status}
+                              onChange={(event) => updateTechnician(technician.id, { status: event.target.value as typeof technician.status })}
+                            >
+                              <option value="active">Active</option>
+                              <option value="invited">Invited</option>
+                              <option value="disabled">Disabled</option>
+                            </select>
+                          </label>
+                        </div>
                       </div>
-                      <span>{technician.role}</span>
+                      <span>{technician.status === 'disabled' ? 'Access disabled' : technician.role}</span>
                       <strong>{technician.assignedJobs} jobs</strong>
                     </article>
                   ))}

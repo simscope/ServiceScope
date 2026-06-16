@@ -88,6 +88,7 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
+import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
@@ -372,9 +373,16 @@ export function CompanyPortal({
     );
   }
 
-  const completedSteps = Object.values(selectedCompany.onboarding).filter((step) => step === 'done').length;
+  const activeCompany = selectedCompany;
+  const completedSteps = Object.values(activeCompany.onboarding).filter((step) => step === 'done').length;
   const openTickets = tickets.filter((ticket) => ticket.status !== 'resolved');
-  const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(selectedCompany);
+  const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(activeCompany);
+  function persistOnboardingToBackend(nextProfile: CompanyOnboardingProfile, nextEmailConnection = emailConnection) {
+    saveOnboardingProfileToBackend(activeCompany, nextProfile, nextEmailConnection).catch((error) => {
+      console.error('Failed to save onboarding to backend', error);
+    });
+  }
+
   const professionTemplates = makeJobTypes();
   const configuredProfessionNames = new Set(profile.jobTypes.map((jobType) => jobType.name.toLowerCase()));
   const defaultJobType = profile.jobTypes.find((jobType) => jobType.name === 'HVAC') ?? profile.jobTypes[0];
@@ -387,30 +395,6 @@ export function CompanyPortal({
   }, selectedCompany.openJobs);
   const nextJobNumber = String(highestJobNumber + 1).padStart(4, '0');
   const sampleJobNumber = selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber;
-  const sampleTechnician = profile.technicians[0]?.name ?? 'Unassigned';
-  const sampleJob: JobCardData = {
-    id: 'sample-job',
-    companyId: selectedCompany.id,
-    jobNumber: sampleJobNumber,
-    status: 'New',
-    system: selectedJobType?.name ?? 'HVAC',
-    clientName: 'John Smith',
-    organization: 'Sharewood Office',
-    phone: '(555) 210-4420',
-    email: 'client@example.com',
-    address: '35 Box St, Brooklyn, NY 11222, USA',
-    technician: sampleTechnician,
-    assignee: sampleTechnician,
-    serviceCallFee: money(profile.serviceCallFee),
-    scfPayment: '',
-    labor: '',
-    laborPayment: '',
-    issue: 'AC not cooling in the main office.',
-    notes: '',
-    attachments: [],
-    comments: [],
-    createdAt: new Date().toISOString().slice(0, 10),
-  };
   const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
   const allJobsRows = jobs;
   const activeJobsRows = allJobsRows.filter((job) => !isCustomerJobPaid(job));
@@ -446,39 +430,7 @@ export function CompanyPortal({
   });
   const materialStatuses: MaterialRow['status'][] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
   const materialJobMap = new globalThis.Map(allJobsRows.map((job) => [job.jobNumber, job]));
-  const emailMessages: EmailMessage[] = [
-    {
-      id: 'mail-1',
-      folder: 'inbox',
-      from: 'ilona@example.com',
-      to: emailConnection?.address ?? profile.billingEmail,
-      subject: 'Re: Service request #244',
-      preview: 'Can you confirm what time the technician will arrive?',
-      jobNumber: '244',
-      receivedAt: 'Today, 9:14 AM',
-      unread: true,
-    },
-    {
-      id: 'mail-2',
-      folder: 'inbox',
-      from: 'manager@fycflash.com',
-      to: emailConnection?.address ?? profile.billingEmail,
-      subject: 'Parts for hood repair',
-      preview: 'Please send the estimate before ordering belts.',
-      jobNumber: '243',
-      receivedAt: 'Yesterday, 4:42 PM',
-    },
-    {
-      id: 'mail-3',
-      folder: 'sent',
-      from: emailConnection?.address ?? profile.billingEmail,
-      to: 'ricardo@example.com',
-      subject: 'Service appointment confirmation',
-      preview: 'Your technician is scheduled for the freezer diagnosis.',
-      jobNumber: '242',
-      receivedAt: 'Yesterday, 1:08 PM',
-    },
-  ];
+  const emailMessages: EmailMessage[] = [];
   const visibleEmailMessages = emailMessages.filter((message) => {
     const normalizedSearch = emailSearch.trim().toLowerCase();
     const job = materialJobMap.get(message.jobNumber);
@@ -491,8 +443,7 @@ export function CompanyPortal({
   const connectMailbox = (provider: EmailProvider) => {
     const domain = selectedCompany.domain?.replace(/^https?:\/\//, '').split('.')[0] || selectedCompany.name.toLowerCase().replace(/\s+/g, '');
     const address = provider === 'smtp' ? `dispatch@${domain}.com` : selectedCompany.ownerEmail;
-
-    setEmailConnection({
+    const nextConnection: EmailConnection = {
       provider,
       address,
       status: 'backend_required',
@@ -510,10 +461,18 @@ export function CompanyPortal({
       smtpPort: provider === 'smtp' ? '587' : '',
       security: provider === 'smtp' ? 'tls' : 'ssl',
       username: provider === 'smtp' ? address : '',
-    });
+    };
+
+    setEmailConnection(nextConnection);
+    persistOnboardingToBackend(profile, nextConnection);
   };
   const updateMailbox = (patch: Partial<EmailConnection>) => {
-    setEmailConnection((connection) => (connection ? { ...connection, ...patch } : connection));
+    setEmailConnection((connection) => {
+      if (!connection) return connection;
+      const nextConnection = { ...connection, ...patch };
+      persistOnboardingToBackend(profile, nextConnection);
+      return nextConnection;
+    });
   };
   const applyEmailTemplate = (template: EmailTemplate) => {
     setEmailCompose((draft) => ({
@@ -1016,7 +975,9 @@ export function CompanyPortal({
   }
 
   function updateProfile(updates: Partial<CompanyOnboardingProfile>) {
-    onUpdateOnboardingProfile({ ...profile, ...updates });
+    const nextProfile = { ...profile, ...updates };
+    onUpdateOnboardingProfile(nextProfile);
+    persistOnboardingToBackend(nextProfile);
   }
 
   function handleLogoUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -1032,12 +993,20 @@ export function CompanyPortal({
 
   function handleTechnicianSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!technicianForm.name.trim() || !technicianForm.email.trim()) return;
+    if (!technicianForm.name.trim() || !technicianForm.email.trim() || !technicianForm.accessPassword.trim()) return;
 
     updateProfile({
       technicians: [createCompanyTechnician(technicianForm), ...profile.technicians],
     });
     setTechnicianForm(emptyTechnicianForm);
+  }
+
+  function generateAccessPassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
+    const values = new Uint32Array(12);
+    crypto.getRandomValues(values);
+
+    return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
   }
 
   function handleJobTypeSubmit(event: FormEvent<HTMLFormElement>) {
@@ -1241,6 +1210,7 @@ export function CompanyPortal({
             setTechnicianForm={setTechnicianForm}
             selectedCompany={selectedCompany}
             handleTechnicianSubmit={handleTechnicianSubmit}
+            generateAccessPassword={generateAccessPassword}
           />
         ) : clientPage === 'jobs' ? (
           <JobsPage
@@ -1258,8 +1228,6 @@ export function CompanyPortal({
             selectedJobType={selectedJobType}
             selectedJobTypeId={selectedJobTypeId}
             onSelectedJobTypeIdChange={setSelectedJobTypeId}
-            sampleJob={sampleJob}
-            onOpenJob={setOpenedJob}
           />
         ) : clientPage === 'allJobs' ? (
           <AllJobsPage
