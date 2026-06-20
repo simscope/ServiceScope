@@ -71,7 +71,7 @@
 
 .technician-access-controls {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 140px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   margin-top: 8px;
 }
@@ -1417,6 +1417,22 @@ textarea {
   font-size: 14px;
 }
 
+.access-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.access-status {
+  margin: 0;
+  border-radius: 8px;
+  background: #f2f6ef;
+  color: #4f5b53;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .password-reset-field {
   display: grid;
   gap: 8px;
@@ -1833,6 +1849,7 @@ textarea {
   .access-summary,
   .monitoring-summary,
   .portal-metrics,
+  .team-setup-grid,
   .plan-grid,
   .access-page,
   .access-filter-grid,
@@ -1920,6 +1937,20 @@ textarea {
   .library-summary,
   .map-summary {
     justify-content: flex-start;
+  }
+
+  .email-message-modal-backdrop {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .email-message-modal {
+    max-height: calc(100vh - 20px);
+  }
+
+  .email-message-detail-header,
+  .email-message-detail-meta {
+    grid-template-columns: 1fr;
   }
 
   .finance-toolbar,
@@ -2040,10 +2071,14 @@ textarea {
   .monitoring-summary,
   .portal-metrics,
   .company-profile-layout,
+  .owner-account-grid,
   .mailbox-setup-content,
   .provider-step,
   .mailbox-test-row,
   .mailbox-settings-grid,
+  .mailbox-sync-grid,
+  .oauth-instructions,
+  .copy-field-row,
   .profile-fields,
   .payment-fields,
   .payment-method-grid,

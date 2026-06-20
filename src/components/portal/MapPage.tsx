@@ -11,8 +11,8 @@ type TechnicianLocation = {
   area: string;
   lat: string;
   lng: string;
-  x: number;
-  y: number;
+  x: number | null;
+  y: number | null;
 };
 
 export function MapPage({
@@ -99,7 +99,7 @@ export function MapPage({
             <button type="button">-</button>
           </div>
 
-          {filteredTechnicianLocations.map((technician) => (
+          {filteredTechnicianLocations.filter((technician) => technician.x !== null && technician.y !== null).map((technician) => (
             <button
               className={`technician-location-pin ${technician.online ? 'online' : 'offline'}`}
               style={{ left: `${technician.x}%`, top: `${technician.y}%` }}
@@ -138,7 +138,7 @@ export function MapPage({
                 </div>
                 <div>
                   <dt>Coords</dt>
-                  <dd>{technician.lat}, {technician.lng}</dd>
+                  <dd>{technician.lat && technician.lng ? `${technician.lat}, ${technician.lng}` : '-'}</dd>
                 </div>
                 <div>
                   <dt>Phone</dt>
@@ -149,7 +149,7 @@ export function MapPage({
                   <dd>{technician.email || '-'}</dd>
                 </div>
               </dl>
-              <button className="secondary-button compact" type="button">
+              <button className="secondary-button compact" type="button" disabled={technician.x === null || technician.y === null}>
                 Show on map
               </button>
             </article>

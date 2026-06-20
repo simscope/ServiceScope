@@ -1,6 +1,25 @@
 import type { EmailConnection } from '../appTypes';
-import type { Company, CompanyOnboardingProfile } from '../types';
+import type { Company, CompanyOnboardingProfile, CompanyPaymentMethod } from '../types';
 import { isSupabaseConfigured, sqlEq, supabaseRequest } from './supabaseRest';
+import { onboardingStepOrder } from './tenantStore';
+
+const paymentMethods: CompanyPaymentMethod[] = [
+  'ach',
+  'zelle',
+  'venmo',
+  'cash_app',
+  'paypal',
+  'credit_card',
+  'debit_card',
+  'check',
+  'cash',
+  'wire_transfer',
+  'apple_pay',
+  'google_pay',
+  'stripe',
+  'square',
+  'financing',
+];
 
 function cents(value: number) {
   return Math.round((Number(value) || 0) * 100);
@@ -34,7 +53,6 @@ export async function saveCompanyCoreToBackend(company: Company) {
       name: company.name,
       owner_name: company.ownerName,
       owner_email: company.ownerEmail,
-      temporary_password: company.temporaryPassword,
       domain: company.domain || null,
       market: company.market,
       status: company.status,
@@ -47,12 +65,58 @@ export async function saveCompanyCoreToBackend(company: Company) {
       last_sync_label: company.lastSync,
     },
   ]);
+
+  if (company.ownerEmail) {
+    await upsert('company_users', 'company_id,email', [
+      {
+        company_id: company.id,
+        name: company.ownerName || company.ownerEmail,
+        email: company.ownerEmail,
+        role: 'admin',
+        status: 'active',
+      },
+    ]);
+  }
 }
 
-export async function saveOnboardingProfileToBackend(company: Company, profile: CompanyOnboardingProfile, emailConnection: EmailConnection | null) {
+export async function saveCompanyOnboardingStepsToBackend(company: Company) {
   if (!canUseOnboardingBackend()) return;
 
-  await saveCompanyCoreToBackend(company);
+  await upsert(
+    'company_onboarding_steps',
+    'company_id,step_key',
+    onboardingStepOrder.map((step) => ({
+      company_id: company.id,
+      step_key: step,
+      status: company.onboarding[step],
+      completed_at: company.onboarding[step] === 'done' ? new Date().toISOString() : null,
+    })),
+  );
+}
+
+type SaveOnboardingProfileOptions = {
+  saveCompanyCore?: boolean;
+  saveOnboardingSteps?: boolean;
+  saveSubscriptionPaymentMethod?: boolean;
+};
+
+export async function saveOnboardingProfileToBackend(
+  company: Company,
+  profile: CompanyOnboardingProfile,
+  emailConnection: EmailConnection | null,
+  options: SaveOnboardingProfileOptions = {},
+) {
+  if (!canUseOnboardingBackend()) return;
+
+  const { saveCompanyCore = true, saveOnboardingSteps = true, saveSubscriptionPaymentMethod = false } = options;
+
+  if (saveCompanyCore) {
+    await saveCompanyCoreToBackend(company);
+  }
+
+  if (saveOnboardingSteps) {
+    await saveCompanyOnboardingStepsToBackend(company);
+  }
 
   await upsert('company_profiles', 'company_id', [
     {
@@ -106,10 +170,10 @@ export async function saveOnboardingProfileToBackend(company: Company, profile: 
   await upsert(
     'company_payment_methods',
     'company_id,method',
-    profile.acceptedPayments.map((method) => ({
+    paymentMethods.map((method) => ({
       company_id: company.id,
       method,
-      enabled: true,
+      enabled: profile.acceptedPayments.includes(method),
       display_label: null,
       details: {
         achRoutingNumber: method === 'ach' ? profile.achRoutingNumber : undefined,
@@ -127,17 +191,30 @@ export async function saveOnboardingProfileToBackend(company: Company, profile: 
     'company_technicians',
     'id',
     profile.technicians.map((technician) => ({
-      id: technician.id,
+      id: technician.id.startsWith('user-') ? crypto.randomUUID() : technician.id,
       company_id: company.id,
       name: technician.name,
       email: technician.email || null,
       phone: technician.phone,
-      access_password: technician.accessPassword,
       role: technician.role,
       status: technician.status,
       assigned_jobs_count: technician.assignedJobs,
       gps_enabled: true,
     })),
+  );
+
+  await upsert(
+    'company_users',
+    'company_id,email',
+    profile.technicians
+      .filter((technician) => technician.email)
+      .map((technician) => ({
+        company_id: company.id,
+        name: technician.name,
+        email: technician.email,
+        role: technician.role === 'manager' ? 'manager' : technician.role === 'dispatcher' ? 'dispatcher' : 'technician',
+        status: technician.status,
+      })),
   );
 
   if (emailConnection) {
@@ -165,22 +242,24 @@ export async function saveOnboardingProfileToBackend(company: Company, profile: 
     ]);
   }
 
-  await upsert('subscription_payment_methods', 'company_id,is_default', [
-    {
-      company_id: company.id,
-      provider: 'stripe',
-      provider_payment_method_id: null,
-      status: profile.subscriptionPaymentStatus,
-      brand: profile.subscriptionCardBrand,
-      last4: profile.subscriptionCardLast4,
-      exp_month: numberOrNull(profile.subscriptionCardExpMonth),
-      exp_year: numberOrNull(profile.subscriptionCardExpYear),
-      billing_name: profile.subscriptionBillingName,
-      billing_zip: profile.subscriptionBillingZip,
-      autopay_enabled: profile.autoPayEnabled,
-      is_default: true,
-    },
-  ]);
+  if (saveSubscriptionPaymentMethod) {
+    await upsert('subscription_payment_methods', 'company_id,is_default', [
+      {
+        company_id: company.id,
+        provider: 'square',
+        provider_payment_method_id: null,
+        status: profile.subscriptionPaymentStatus,
+        brand: profile.subscriptionCardBrand,
+        last4: profile.subscriptionCardLast4,
+        exp_month: numberOrNull(profile.subscriptionCardExpMonth),
+        exp_year: numberOrNull(profile.subscriptionCardExpYear),
+        billing_name: profile.subscriptionBillingName,
+        billing_zip: profile.subscriptionBillingZip,
+        autopay_enabled: profile.autoPayEnabled,
+        is_default: true,
+      },
+    ]);
+  }
 }
 
 export async function deleteJobTypeFromBackend(jobTypeId: string) {

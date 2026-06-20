@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
 import { Building2, ClipboardList, CreditCard, MailPlus, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react';
 import type { EmailConnection, EmailProvider } from '../../appTypes';
@@ -8,6 +9,7 @@ import type {
   Company,
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
+  CompanyTechnician,
   CompanyTechnicianRole,
   NewCompanyJobTypeForm,
   NewCompanyTechnicianForm,
@@ -37,7 +39,27 @@ export function OnboardingPage({
   setTechnicianForm,
   selectedCompany,
   handleTechnicianSubmit,
-  generateAccessPassword,
+  onSendTechnicianAccess,
+  technicianAccessStatusById,
+  technicianAccessPasswordById,
+  setTechnicianAccessPasswordById,
+  ownerAccessPassword,
+  ownerAccessPasswordConfirm,
+  ownerAccessStatus,
+  setOwnerAccessPassword,
+  setOwnerAccessPasswordConfirm,
+  onGenerateOwnerPassword,
+  onSaveOwnerPassword,
+  mailboxConnectStatus,
+  mailboxOAuthSecretDraft,
+  mailboxOAuthStatus,
+  mailboxOAuthRedirectUrl,
+  setMailboxOAuthSecretDraft,
+  onCopyMailboxRedirectUrl,
+  onSaveMailboxOAuth,
+  onStartMailboxConnection,
+  billingStatus,
+  onConnectSubscriptionBilling,
 }: {
   completedSteps: number;
   profile: CompanyOnboardingProfile;
@@ -59,9 +81,41 @@ export function OnboardingPage({
   setTechnicianForm: (form: NewCompanyTechnicianForm) => void;
   selectedCompany: Company;
   handleTechnicianSubmit: (event: FormEvent<HTMLFormElement>) => void;
-  generateAccessPassword: () => string;
+  onSendTechnicianAccess: (technicianId: string, mode: 'create' | 'reset', password: string) => void;
+  technicianAccessStatusById: Record<string, string>;
+  technicianAccessPasswordById: Record<string, string>;
+  setTechnicianAccessPasswordById: (passwords: Record<string, string>) => void;
+  ownerAccessPassword: string;
+  ownerAccessPasswordConfirm: string;
+  ownerAccessStatus: string;
+  setOwnerAccessPassword: (password: string) => void;
+  setOwnerAccessPasswordConfirm: (password: string) => void;
+  onGenerateOwnerPassword: () => void;
+  onSaveOwnerPassword: () => void;
+  mailboxConnectStatus: string;
+  mailboxOAuthSecretDraft: string;
+  mailboxOAuthStatus: string;
+  mailboxOAuthRedirectUrl: string;
+  setMailboxOAuthSecretDraft: (secret: string) => void;
+  onCopyMailboxRedirectUrl: () => void;
+  onSaveMailboxOAuth: () => void;
+  onStartMailboxConnection: () => void;
+  billingStatus: string;
+  onConnectSubscriptionBilling: () => void;
 }) {
   const selectedPlan = getPlan(selectedCompany.plan);
+  const technicianLimit = selectedPlan.technicians;
+  const technicianLimitReached = profile.technicians.length >= technicianLimit;
+  const [technicianEditorId, setTechnicianEditorId] = useState<string | null>('');
+  const [technicianDraft, setTechnicianDraft] = useState<NewCompanyTechnicianForm & { status: CompanyTechnician['status'] }>({
+    name: '',
+    email: '',
+    phone: '',
+    photoUrl: '',
+    accessPassword: '',
+    role: technicianForm.role,
+    status: 'invited',
+  });
   const subscriptionConnected = profile.subscriptionPaymentStatus === 'active' && profile.autoPayEnabled;
   const subscriptionStatusLabel =
     profile.subscriptionPaymentStatus === 'not_connected'
@@ -71,6 +125,19 @@ export function OnboardingPage({
         : profile.subscriptionPaymentStatus === 'active'
           ? 'Active'
           : 'Failed';
+  const generatedMailboxSignature = [
+    profile.displayName || selectedCompany.name,
+    profile.serviceAddress,
+    profile.phone ? `Phone: ${profile.phone}` : '',
+    profile.website ? `Website: ${profile.website}` : '',
+    'HVAC and Appliance Repair',
+    profile.serviceArea ? `Serving ${profile.serviceArea}` : '',
+  ].filter(Boolean).join('\n');
+  const sendingIdentityReady = Boolean(
+    emailConnection?.senderName.trim() &&
+    emailConnection.replyTo.trim() &&
+    emailConnection.signature.trim(),
+  );
 
   function updateTechnician(technicianId: string, updates: Partial<CompanyOnboardingProfile['technicians'][number]>) {
     updateProfile({
@@ -80,7 +147,118 @@ export function OnboardingPage({
     });
   }
 
-  return (<section className="client-onboarding">
+  function openNewTechnicianModal() {
+    if (technicianLimitReached) return;
+
+    setTechnicianEditorId(null);
+    setTechnicianDraft({
+      name: '',
+      email: '',
+      phone: '',
+      photoUrl: '',
+      accessPassword: '',
+      role: technicianForm.role,
+      status: 'invited',
+    });
+  }
+
+  function openEditTechnicianModal(technician: CompanyTechnician) {
+    setTechnicianEditorId(technician.id);
+    setTechnicianDraft({
+      name: technician.name,
+      email: technician.email,
+      phone: technician.phone,
+      photoUrl: technician.photoUrl,
+      accessPassword: technicianAccessPasswordById[technician.id] ?? technician.accessPassword ?? '',
+      role: technician.role,
+      status: technician.status,
+    });
+  }
+
+  function closeTechnicianModal() {
+    setTechnicianEditorId('');
+  }
+
+  function persistTechnicianDraft() {
+    if (!technicianDraft.name.trim() || !technicianDraft.email.trim()) return '';
+
+    if (technicianEditorId) {
+      updateProfile({
+        technicians: profile.technicians.map((technician) =>
+          technician.id === technicianEditorId
+            ? {
+                ...technician,
+                name: technicianDraft.name.trim(),
+                email: technicianDraft.email.trim(),
+                phone: technicianDraft.phone.trim(),
+                photoUrl: technicianDraft.photoUrl,
+                role: technicianDraft.role,
+                status: technicianDraft.status,
+                accessPassword: technicianDraft.accessPassword,
+              }
+            : technician,
+        ),
+      });
+      setTechnicianAccessPasswordById({
+        ...technicianAccessPasswordById,
+        [technicianEditorId]: technicianDraft.accessPassword,
+      });
+      return technicianEditorId;
+    } else {
+      if (technicianLimitReached) return '';
+      const technician: CompanyTechnician = {
+        id: crypto.randomUUID(),
+        name: technicianDraft.name.trim(),
+        email: technicianDraft.email.trim(),
+        phone: technicianDraft.phone.trim(),
+        photoUrl: technicianDraft.photoUrl,
+        accessPassword: technicianDraft.accessPassword,
+        role: technicianDraft.role,
+        status: technicianDraft.status,
+        assignedJobs: 0,
+      };
+      updateProfile({
+        technicians: [technician, ...profile.technicians],
+      });
+      if (technicianDraft.accessPassword) {
+        setTechnicianAccessPasswordById({
+          ...technicianAccessPasswordById,
+          [technician.id]: technicianDraft.accessPassword,
+        });
+      }
+      return technician.id;
+    }
+  }
+
+  function saveTechnicianDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const technicianId = persistTechnicianDraft();
+    if (!technicianId) return;
+
+    closeTechnicianModal();
+  }
+
+  function handleTechnicianPhotoUpload(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      setTechnicianDraft((draft) => ({ ...draft, photoUrl: String(reader.result ?? '') }));
+    });
+    reader.readAsDataURL(file);
+  }
+
+  function generateTechnicianDraftPassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
+    const values = new Uint32Array(12);
+    crypto.getRandomValues(values);
+    const password = Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
+    setTechnicianDraft((draft) => ({ ...draft, accessPassword: password }));
+  }
+
+  return (<>
+          <section className="client-onboarding">
             <div className="onboarding-header">
               <div>
                 <p className="eyebrow">Company onboarding</p>
@@ -162,11 +340,57 @@ export function OnboardingPage({
                 </div>
               </section>
 
+              <section className="panel owner-account-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Owner account</p>
+                    <h2>Sign-in password</h2>
+                  </div>
+                  <ShieldCheck size={20} aria-hidden="true" />
+                </div>
+                <div className="owner-account-grid">
+                  <div className="owner-account-summary">
+                    <span>Company owner</span>
+                    <strong>{selectedCompany.ownerName}</strong>
+                    <p>{selectedCompany.ownerEmail}</p>
+                  </div>
+                  <label>
+                    New password
+                    <input
+                      type="text"
+                      value={ownerAccessPassword}
+                      onChange={(event) => setOwnerAccessPassword(event.target.value)}
+                      placeholder="Enter a new password"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                  <label>
+                    Confirm password
+                    <input
+                      type="text"
+                      value={ownerAccessPasswordConfirm}
+                      onChange={(event) => setOwnerAccessPasswordConfirm(event.target.value)}
+                      placeholder="Repeat the password"
+                      autoComplete="new-password"
+                    />
+                  </label>
+                </div>
+                <div className="owner-account-actions">
+                  <button className="secondary-button compact" type="button" onClick={onGenerateOwnerPassword}>
+                    Generate password
+                  </button>
+                  <button className="primary-button compact" type="button" onClick={onSaveOwnerPassword}>
+                    Change password
+                  </button>
+                  {ownerAccessStatus ? <p className="access-status">{ownerAccessStatus}</p> : null}
+                </div>
+              </section>
+
               <section className="panel workspace-mailbox-panel">
                 <div className="panel-heading">
                   <div>
                     <p className="eyebrow">Mailbox setup</p>
-                    <h2>{emailConnection ? emailConnection.address : 'Configure company email'}</h2>
+                    <h2>{emailConnection?.address || 'Configure company email'}</h2>
                   </div>
                   <MailPlus size={20} aria-hidden="true" />
                 </div>
@@ -174,21 +398,128 @@ export function OnboardingPage({
                   <div className="mailbox-step provider-step">
                     <div>
                       <strong>1. Provider</strong>
-                      <p>Choose a provider. This only prepares the setup; real OAuth/SMTP backend is still required.</p>
+                      <p>Choose how this company mailbox will be connected.</p>
                     </div>
                     <div className="email-provider-actions">
                       {(['google', 'microsoft', 'smtp'] as EmailProvider[]).map((provider) => (
                         <button className={emailConnection?.provider === provider ? 'provider-button active' : 'provider-button'} type="button" onClick={() => connectMailbox(provider)} key={provider}>
-                          {emailConnection?.provider === provider ? `${emailProviderLabels[provider]} selected` : `Start ${emailProviderLabels[provider]} setup`}
+                          {emailConnection?.provider === provider ? `${emailProviderLabels[provider]} selected` : emailProviderLabels[provider]}
                         </button>
                       ))}
                     </div>
                   </div>
 
+                  {emailConnection && emailConnection.provider !== 'smtp' ? (
+                    <div className="mailbox-step oauth-setup-card">
+                      <div>
+                        <strong>2. Google / Microsoft app credentials</strong>
+                        <p>
+                          Create an OAuth app in the mailbox provider console, paste these values here, then connect the mailbox.
+                        </p>
+                      </div>
+                      <div className="oauth-instructions">
+                        <div>
+                          <strong>Where to get this</strong>
+                          <span>Google Cloud Console or Microsoft Azure Portal</span>
+                        </div>
+                        <div>
+                          <strong>Required API</strong>
+                          <span>{emailConnection.provider === 'google' ? 'Gmail API' : 'Microsoft Graph Mail.ReadWrite and Mail.Send'}</span>
+                        </div>
+                        <div>
+                          <strong>Application type</strong>
+                          <span>Web application</span>
+                        </div>
+                      </div>
+                      <details className="oauth-cheatsheet">
+                        <summary>Step-by-step setup guide</summary>
+                        {emailConnection.provider === 'google' ? (
+                          <ol>
+                            <li>Open Google Cloud Console: console.cloud.google.com.</li>
+                            <li>Create a new project or choose the company project.</li>
+                            <li>Go to APIs & Services, then Library.</li>
+                            <li>Search for Gmail API and click Enable.</li>
+                            <li>Go to APIs & Services, then OAuth consent screen.</li>
+                            <li>Choose External unless the company uses Google Workspace internal apps.</li>
+                            <li>Enter the app name, support email, company domain, and developer contact email.</li>
+                            <li>Go to APIs & Services, then Credentials.</li>
+                            <li>Click Create credentials, then OAuth client ID.</li>
+                            <li>Choose Web application.</li>
+                            <li>Under Authorized redirect URIs, paste the redirect URL from ServiceScope.</li>
+                            <li>Click Create, then copy Client ID and Client Secret into ServiceScope.</li>
+                            <li>Click Save OAuth settings, then Connect mailbox.</li>
+                          </ol>
+                        ) : (
+                          <ol>
+                            <li>Open Microsoft Azure Portal: portal.azure.com.</li>
+                            <li>Go to Microsoft Entra ID, then App registrations.</li>
+                            <li>Click New registration.</li>
+                            <li>Enter the app name, usually ServiceScope Mail.</li>
+                            <li>Choose who can use this app for the company tenant.</li>
+                            <li>Set Redirect URI type to Web.</li>
+                            <li>Paste the redirect URL from ServiceScope.</li>
+                            <li>Open API permissions and add Microsoft Graph permissions.</li>
+                            <li>Add Mail.ReadWrite, Mail.Send, and offline_access.</li>
+                            <li>Grant admin consent if Microsoft requires it.</li>
+                            <li>Open Certificates & secrets, then create a new Client secret.</li>
+                            <li>Copy Application client ID and Client secret value into ServiceScope.</li>
+                            <li>Click Save OAuth settings, then Connect mailbox.</li>
+                          </ol>
+                        )}
+                      </details>
+                      <div className="mailbox-settings-grid">
+                        <label className="profile-wide">
+                          Company mailbox email
+                          <input
+                            type="email"
+                            value={emailConnection.address}
+                            onChange={(event) => updateMailbox({ address: event.target.value, replyTo: event.target.value })}
+                            placeholder="dispatch@company.com"
+                          />
+                        </label>
+                        <label className="profile-wide">
+                          Authorized redirect URL
+                          <div className="copy-field-row">
+                            <input value={emailConnection.oauthRedirectUrl || mailboxOAuthRedirectUrl} readOnly />
+                            <button className="secondary-button compact" type="button" onClick={onCopyMailboxRedirectUrl}>
+                              Copy
+                            </button>
+                          </div>
+                        </label>
+                        <label>
+                          Client ID
+                          <input
+                            value={emailConnection.oauthClientId}
+                            onChange={(event) => updateMailbox({ oauthClientId: event.target.value })}
+                            placeholder={emailConnection.provider === 'google' ? 'Google OAuth client ID' : 'Microsoft application client ID'}
+                          />
+                        </label>
+                        <label>
+                          Client secret
+                          <input
+                            type="password"
+                            value={mailboxOAuthSecretDraft}
+                            onChange={(event) => setMailboxOAuthSecretDraft(event.target.value)}
+                            placeholder={emailConnection.oauthClientSecretSaved ? 'Secret saved - enter a new one to replace' : 'Paste client secret'}
+                          />
+                        </label>
+                      </div>
+                      <div className="mailbox-connect-actions">
+                        <button className="primary-button compact" type="button" onClick={onSaveMailboxOAuth}>
+                          Save OAuth settings
+                        </button>
+                        <span className={emailConnection.oauthClientSecretSaved ? 'saved-pill' : 'pending-pill'}>
+                          {emailConnection.oauthClientSecretSaved ? 'Secret saved' : 'Secret required'}
+                        </span>
+                        {mailboxOAuthStatus ? <p className="access-status">{mailboxOAuthStatus}</p> : null}
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="mailbox-step">
                     <div>
-                      <strong>2. Mailbox and permissions</strong>
-                      <p>{emailConnection ? `${emailProviderLabels[emailConnection.provider]} setup draft created. Last sync: ${emailConnection.lastSync}.` : 'Select a provider to configure address, permissions, sync, and sending identity.'}</p>
+                      <strong>{emailConnection?.provider === 'smtp' ? '2' : '3'}. Mailbox and permissions</strong>
+                      <p>{emailConnection ? `${emailProviderLabels[emailConnection.provider]} settings are saved with this workspace.` : 'Select a provider to configure address, permissions, sync, and sending identity.'}</p>
                     </div>
                     <div className="mailbox-permissions">
                       <span>Read company mailbox</span>
@@ -197,30 +528,36 @@ export function OnboardingPage({
                       <span>Tenant isolated tokens</span>
                     </div>
                     <div className="mailbox-settings-grid">
-                      <label>
-                        Mailbox address
-                        <input value={emailConnection?.address ?? ''} onChange={(event) => updateMailbox({ address: event.target.value, replyTo: event.target.value })} placeholder="dispatch@company.com" disabled={!emailConnection} />
-                      </label>
-                      <label>
-                        Connection status
-                        <select value={emailConnection?.status ?? 'backend_required'} onChange={(event) => updateMailbox({ status: event.target.value as EmailConnection['status'] })} disabled={!emailConnection}>
-                          <option value="backend_required">OAuth/backend required</option>
-                          <option value="connected">Connected by backend</option>
-                        </select>
-                      </label>
+                      {emailConnection?.provider === 'smtp' ? (
+                        <label>
+                          Mailbox address
+                          <input value={emailConnection.address} onChange={(event) => updateMailbox({ address: event.target.value, replyTo: event.target.value })} placeholder="dispatch@company.com" />
+                        </label>
+                      ) : null}
+                      <div className="mailbox-readiness-card">
+                        <span>Connection</span>
+                        <strong>{emailConnection?.status === 'connected' ? 'Connected' : emailConnection ? 'Ready to connect' : 'Not configured'}</strong>
+                        <p>{emailConnection ? 'Save provider credentials, then connect the mailbox.' : 'Choose a provider first.'}</p>
+                      </div>
                     </div>
-                    <div className="mailbox-backend-warning">
-                      This screen does not connect Gmail or Microsoft by itself. Production requires OAuth app setup, redirect URL, encrypted token storage, token refresh, Gmail/Graph API calls, webhook/sync jobs, and reconnect handling.
+                    <div className="mailbox-connect-actions">
+                      <button className="primary-button compact" type="button" onClick={onStartMailboxConnection} disabled={!emailConnection}>
+                        Connect mailbox
+                      </button>
+                      {mailboxConnectStatus ? <p className="access-status">{mailboxConnectStatus}</p> : null}
                     </div>
                   </div>
 
                   <div className="mailbox-step">
-                    <div>
-                      <strong>3. Sync rules</strong>
-                      <p>Choose how messages are imported and linked to operations.</p>
+                    <div className="mailbox-step-heading">
+                      <div>
+                        <strong>{emailConnection?.provider === 'smtp' ? '3' : '4'}. Sync rules</strong>
+                        <p>Choose how messages are imported and linked to operations.</p>
+                      </div>
+                      <span className="mailbox-status-pill">{emailConnection?.syncRange ?? '30'} days</span>
                     </div>
-                    <div className="mailbox-settings-grid">
-                      <label>
+                    <div className="mailbox-sync-grid">
+                      <label className="mailbox-sync-range">
                         Sync inbox from
                         <select value={emailConnection?.syncRange ?? '30'} onChange={(event) => updateMailbox({ syncRange: event.target.value as EmailConnection['syncRange'] })} disabled={!emailConnection}>
                           <option value="7">Last 7 days</option>
@@ -230,23 +567,37 @@ export function OnboardingPage({
                       </label>
                       <label className="mailbox-check">
                         <input type="checkbox" checked={emailConnection?.autoLinkJobNumber ?? false} onChange={(event) => updateMailbox({ autoLinkJobNumber: event.target.checked })} disabled={!emailConnection} />
-                        Auto-link by job number
+                        <span>
+                          <strong>Auto-link by job number</strong>
+                          <small>Match messages that mention an existing job number.</small>
+                        </span>
                       </label>
                       <label className="mailbox-check">
                         <input type="checkbox" checked={emailConnection?.autoLinkClientEmail ?? false} onChange={(event) => updateMailbox({ autoLinkClientEmail: event.target.checked })} disabled={!emailConnection} />
-                        Auto-link by client email
+                        <span>
+                          <strong>Auto-link by client email</strong>
+                          <small>Attach messages when the sender matches a job contact.</small>
+                        </span>
                       </label>
                       <label className="mailbox-check">
                         <input type="checkbox" checked={emailConnection?.createTaskFromUnread ?? false} onChange={(event) => updateMailbox({ createTaskFromUnread: event.target.checked })} disabled={!emailConnection} />
-                        Create task from unread client email
+                        <span>
+                          <strong>Create task from unread client email</strong>
+                          <small>Flag new client emails for follow-up.</small>
+                        </span>
                       </label>
                     </div>
                   </div>
 
                   <div className="mailbox-step">
-                    <div>
-                      <strong>4. Sending identity</strong>
-                      <p>This is what customers see when the company sends email.</p>
+                    <div className="mailbox-step-heading">
+                      <div>
+                        <strong>{emailConnection?.provider === 'smtp' ? '4' : '5'}. Sending identity</strong>
+                        <p>This is what customers see when the company sends email.</p>
+                      </div>
+                      <span className={sendingIdentityReady ? 'saved-pill' : 'pending-pill'}>
+                        {sendingIdentityReady ? 'Ready' : 'Needs review'}
+                      </span>
                     </div>
                     <div className="mailbox-settings-grid">
                       <label>
@@ -262,12 +613,27 @@ export function OnboardingPage({
                         <textarea value={emailConnection?.signature ?? ''} onChange={(event) => updateMailbox({ signature: event.target.value })} placeholder="Company signature" disabled={!emailConnection} />
                       </label>
                     </div>
+                    <div className="mailbox-connect-actions">
+                      <button
+                        className="secondary-button compact"
+                        type="button"
+                        onClick={() => updateMailbox({
+                          senderName: profile.displayName || selectedCompany.name,
+                          replyTo: emailConnection?.address || emailConnection?.replyTo || profile.billingEmail,
+                          signature: generatedMailboxSignature,
+                        })}
+                        disabled={!emailConnection}
+                      >
+                        Use company profile
+                      </button>
+                      <span className="mailbox-helper-text">Pulls name, address, phone, website, and service area from Company data.</span>
+                    </div>
                   </div>
 
                   {emailConnection?.provider === 'smtp' ? (
                     <div className="mailbox-step">
                       <div>
-                        <strong>5. SMTP / IMAP fallback</strong>
+                        <strong>5. SMTP / IMAP manual setup</strong>
                         <p>Use app password credentials from the mailbox provider.</p>
                       </div>
                       <div className="mailbox-settings-grid">
@@ -309,11 +675,11 @@ export function OnboardingPage({
 
                   <div className="mailbox-test-row">
                     <div>
-                      <strong>Test connection</strong>
-                      <p>Send a test email and verify inbox sync before launch.</p>
+                      <strong>Mailbox readiness</strong>
+                      <p>{emailConnection ? 'Mailbox connection is handled by Supabase Edge Functions. Provider credentials must be saved before OAuth connect.' : 'Select a provider and mailbox address first.'}</p>
                     </div>
-                    <button className="secondary-button compact" type="button" disabled={emailConnection?.status !== 'connected'}>
-                      Test disabled until backend is connected
+                    <button className="secondary-button compact" type="button" onClick={onStartMailboxConnection} disabled={!emailConnection}>
+                      Test connector
                     </button>
                   </div>
                 </div>
@@ -340,7 +706,7 @@ export function OnboardingPage({
 
                   <div className="subscription-card-preview">
                     <span>{profile.subscriptionCardBrand || 'Card'}</span>
-                    <strong>{profile.subscriptionCardLast4 ? `•••• ${profile.subscriptionCardLast4}` : 'No card on file'}</strong>
+                    <strong>{profile.subscriptionCardLast4 ? `**** ${profile.subscriptionCardLast4}` : 'No card on file'}</strong>
                     <small>
                       {profile.subscriptionCardExpMonth && profile.subscriptionCardExpYear
                         ? `Expires ${profile.subscriptionCardExpMonth}/${profile.subscriptionCardExpYear}`
@@ -350,48 +716,6 @@ export function OnboardingPage({
                 </div>
 
                 <div className="subscription-payment-fields">
-                  <label>
-                    Card brand
-                    <select value={profile.subscriptionCardBrand} onChange={(event) => updateProfile({ subscriptionCardBrand: event.target.value })}>
-                      <option value="Visa">Visa</option>
-                      <option value="Mastercard">Mastercard</option>
-                      <option value="American Express">American Express</option>
-                      <option value="Discover">Discover</option>
-                    </select>
-                  </label>
-                  <label>
-                    Card number
-                    <input
-                      inputMode="numeric"
-                      maxLength={19}
-                      defaultValue=""
-                      onChange={(event) => {
-                        const digits = event.target.value.replace(/\D/g, '').slice(0, 19);
-                        updateProfile({ subscriptionCardLast4: digits.slice(-4) });
-                      }}
-                      placeholder="Card number"
-                    />
-                  </label>
-                  <label>
-                    Exp. month
-                    <input
-                      inputMode="numeric"
-                      maxLength={2}
-                      value={profile.subscriptionCardExpMonth}
-                      onChange={(event) => updateProfile({ subscriptionCardExpMonth: event.target.value.replace(/\D/g, '').slice(0, 2) })}
-                      placeholder="MM"
-                    />
-                  </label>
-                  <label>
-                    Exp. year
-                    <input
-                      inputMode="numeric"
-                      maxLength={4}
-                      value={profile.subscriptionCardExpYear}
-                      onChange={(event) => updateProfile({ subscriptionCardExpYear: event.target.value.replace(/\D/g, '').slice(0, 4) })}
-                      placeholder="YYYY"
-                    />
-                  </label>
                   <label>
                     Billing name
                     <input value={profile.subscriptionBillingName} onChange={(event) => updateProfile({ subscriptionBillingName: event.target.value })} />
@@ -404,6 +728,10 @@ export function OnboardingPage({
                     <span>Payment status</span>
                     <strong>{subscriptionStatusLabel}</strong>
                   </div>
+                  <div className="readonly-status-field">
+                    <span>Card on file</span>
+                    <strong>{profile.subscriptionCardLast4 ? `${profile.subscriptionCardBrand || 'Card'} **** ${profile.subscriptionCardLast4}` : 'Not connected'}</strong>
+                  </div>
                   <label className="checkbox-field prefix-toggle">
                     <input
                       type="checkbox"
@@ -412,6 +740,17 @@ export function OnboardingPage({
                     />
                     Enable automatic monthly charges
                   </label>
+                  <button
+                    className="primary-button compact"
+                    type="button"
+                    onClick={onConnectSubscriptionBilling}
+                  >
+                    Connect Square billing
+                  </button>
+                  {billingStatus ? <p className="access-status">{billingStatus}</p> : null}
+                  <p className="subscription-safe-note">
+                    Card numbers are collected by Square, not stored in ServiceScope.
+                  </p>
                 </div>
               </section>
 
@@ -603,101 +942,166 @@ export function OnboardingPage({
                   <Users size={20} aria-hidden="true" />
                 </div>
                 <div className="team-setup-grid">
-                  <MiniStat icon={<Users size={17} />} label="Technicians" value={profile.technicians.length.toString()} />
-                  <MiniStat icon={<UserPlus size={17} />} label="Seats" value={selectedCompany.seats.toString()} />
+                  <MiniStat icon={<Users size={17} />} label="Technicians" value={`${profile.technicians.length}/${technicianLimit}`} />
+                  <MiniStat icon={<UserPlus size={17} />} label="Plan limit" value={selectedPlan.name} />
                   <MiniStat icon={<ShieldCheck size={17} />} label="Owner" value="1" />
                   <MiniStat icon={<ClipboardList size={17} />} label="Assigned jobs" value={profile.technicians.reduce((total, technician) => total + technician.assignedJobs, 0).toString()} />
                 </div>
-                <div className="setup-fields">
+                <div className="technician-toolbar">
                   <label>
-                    Default technician role
+                    Default role
                     <select value={technicianForm.role} onChange={(event) => setTechnicianForm({ ...technicianForm, role: event.target.value as CompanyTechnicianRole })}>
                       <option value="technician">Technician</option>
                       <option value="dispatcher">Dispatcher</option>
                       <option value="manager">Manager</option>
                     </select>
                   </label>
-                </div>
-                <form className="technician-form" onSubmit={handleTechnicianSubmit}>
-                  <label>
-                    Technician name
-                    <input value={technicianForm.name} onChange={(event) => setTechnicianForm({ ...technicianForm, name: event.target.value })} placeholder="Alex Rivera" />
-                  </label>
-                  <label>
-                    Email
-                    <input type="email" value={technicianForm.email} onChange={(event) => setTechnicianForm({ ...technicianForm, email: event.target.value })} placeholder="tech@company.com" />
-                  </label>
-                  <label>
-                    Phone
-                    <input value={technicianForm.phone} onChange={(event) => setTechnicianForm({ ...technicianForm, phone: event.target.value })} placeholder="(555) 000-0000" />
-                  </label>
-                  <label>
-                    Access password
-                    <div className="password-field-row">
-                      <input
-                        type="text"
-                        value={technicianForm.accessPassword}
-                        onChange={(event) => setTechnicianForm({ ...technicianForm, accessPassword: event.target.value })}
-                        placeholder="Set access password"
-                      />
-                      <button
-                        className="secondary-button compact"
-                        type="button"
-                        onClick={() => setTechnicianForm({ ...technicianForm, accessPassword: generateAccessPassword() })}
-                      >
-                        Generate
-                      </button>
-                    </div>
-                  </label>
-                  <button className="secondary-button" type="submit">
+                  <button className="primary-button compact" type="button" onClick={openNewTechnicianModal} disabled={technicianLimitReached}>
                     <UserPlus size={17} aria-hidden="true" />
                     Add technician
                   </button>
-                </form>
-                <div className="technician-list">
+                </div>
+                {technicianLimitReached ? (
+                  <p className="access-status">
+                    {selectedPlan.name} plan allows up to {technicianLimit} technicians. Upgrade the plan before adding more.
+                  </p>
+                ) : null}
+                <div className="technician-list compact">
                   {profile.technicians.map((technician) => (
                     <article className="technician-row" key={technician.id}>
-                      <div>
+                      <div className="technician-summary">
+                        <div className="technician-avatar">
+                          {technician.photoUrl ? <img src={technician.photoUrl} alt="" /> : technician.name.slice(0, 2).toUpperCase()}
+                        </div>
+                        <div>
                         <h3>{technician.name}</h3>
                         <p>{technician.email || 'No email'} - {technician.phone || 'No phone'}</p>
-                        <div className="technician-access-controls">
-                          <label>
-                            Access password
-                            <div className="password-field-row">
-                              <input
-                                type="text"
-                                value={technician.accessPassword}
-                                onChange={(event) => updateTechnician(technician.id, { accessPassword: event.target.value })}
-                                placeholder="Set access password"
-                              />
-                              <button
-                                className="secondary-button compact"
-                                type="button"
-                                onClick={() => updateTechnician(technician.id, { accessPassword: generateAccessPassword() })}
-                              >
-                                Generate
-                              </button>
-                            </div>
-                          </label>
-                          <label>
-                            Access
-                            <select
-                              value={technician.status}
-                              onChange={(event) => updateTechnician(technician.id, { status: event.target.value as typeof technician.status })}
-                            >
-                              <option value="active">Active</option>
-                              <option value="invited">Invited</option>
-                              <option value="disabled">Disabled</option>
-                            </select>
-                          </label>
                         </div>
                       </div>
-                      <span>{technician.status === 'disabled' ? 'Access disabled' : technician.role}</span>
+                      <span className={`technician-status ${technician.status}`}>{technician.status === 'disabled' ? 'Disabled' : technician.status}</span>
+                      <span>{technician.role}</span>
                       <strong>{technician.assignedJobs} jobs</strong>
+                      <button className="secondary-button compact" type="button" onClick={() => openEditTechnicianModal(technician)}>
+                        Edit
+                      </button>
                     </article>
                   ))}
+                  {profile.technicians.length === 0 ? (
+                    <div className="empty-inline">No technicians added yet.</div>
+                  ) : null}
                 </div>
               </section>
             </div>
-          </section>  );
+          </section>
+          {technicianEditorId !== '' ? (
+            <div className="email-message-modal-backdrop" role="presentation" onClick={closeTechnicianModal}>
+              <section className="email-message-modal technician-modal" role="dialog" aria-modal="true" aria-label="Technician details" onClick={(event) => event.stopPropagation()}>
+                <div className="email-message-detail-header">
+                  <div>
+                    <p className="eyebrow">Team member</p>
+                    <h2>{technicianEditorId ? 'Edit technician' : 'Add technician'}</h2>
+                  </div>
+                  <button className="secondary-button compact" type="button" onClick={closeTechnicianModal}>
+                    Close
+                  </button>
+                </div>
+
+                <form className="technician-modal-form" onSubmit={saveTechnicianDraft}>
+                  <div className="technician-photo-editor">
+                    <div className="technician-photo-preview">
+                      {technicianDraft.photoUrl ? <img src={technicianDraft.photoUrl} alt="" /> : technicianDraft.name.slice(0, 2).toUpperCase() || 'T'}
+                    </div>
+                    <label className="secondary-button compact">
+                      Upload photo
+                      <input type="file" accept="image/*" onChange={handleTechnicianPhotoUpload} hidden />
+                    </label>
+                  </div>
+
+                  <div className="technician-modal-fields">
+                    <label>
+                      Name
+                      <input value={technicianDraft.name} onChange={(event) => setTechnicianDraft({ ...technicianDraft, name: event.target.value })} placeholder="Technician name" />
+                    </label>
+                    <label>
+                      Email
+                      <input type="email" value={technicianDraft.email} onChange={(event) => setTechnicianDraft({ ...technicianDraft, email: event.target.value })} placeholder="tech@company.com" />
+                    </label>
+                    <label>
+                      Phone
+                      <input value={technicianDraft.phone} onChange={(event) => setTechnicianDraft({ ...technicianDraft, phone: event.target.value })} placeholder="(555) 000-0000" />
+                    </label>
+                    <label>
+                      Role
+                      <select value={technicianDraft.role} onChange={(event) => setTechnicianDraft({ ...technicianDraft, role: event.target.value as CompanyTechnicianRole })}>
+                        <option value="technician">Technician</option>
+                        <option value="dispatcher">Dispatcher</option>
+                        <option value="manager">Manager</option>
+                      </select>
+                    </label>
+                    <label>
+                      Access
+                      <select value={technicianDraft.status} onChange={(event) => setTechnicianDraft({ ...technicianDraft, status: event.target.value as CompanyTechnician['status'] })}>
+                        <option value="active">Active</option>
+                        <option value="invited">Invited</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
+                    </label>
+                    <label>
+                      Password
+                      <div className="password-field-row">
+                        <input
+                          type="text"
+                          value={technicianDraft.accessPassword}
+                          onChange={(event) => setTechnicianDraft({ ...technicianDraft, accessPassword: event.target.value })}
+                          placeholder="Set or generate password"
+                          autoComplete="off"
+                        />
+                        <button className="secondary-button compact" type="button" onClick={generateTechnicianDraftPassword}>
+                          Generate
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+
+                  {technicianEditorId ? (
+                    <div className="access-actions technician-modal-actions">
+                      <button
+                        className="secondary-button compact"
+                        type="button"
+                        onClick={() => {
+                          const technicianId = persistTechnicianDraft();
+                          if (technicianId) onSendTechnicianAccess(technicianId, 'create', technicianDraft.accessPassword);
+                        }}
+                      >
+                        Create access
+                      </button>
+                      <button
+                        className="secondary-button compact"
+                        type="button"
+                        onClick={() => {
+                          const technicianId = persistTechnicianDraft();
+                          if (technicianId) onSendTechnicianAccess(technicianId, 'reset', technicianDraft.accessPassword);
+                        }}
+                      >
+                        Reset password
+                      </button>
+                      {technicianAccessStatusById[technicianEditorId] ? (
+                        <p className="access-status">{technicianAccessStatusById[technicianEditorId]}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="email-message-modal-actions">
+                    <button className="secondary-button" type="button" onClick={closeTechnicianModal}>
+                      Cancel
+                    </button>
+                    <button className="primary-button" type="submit">
+                      Save technician
+                    </button>
+                  </div>
+                </form>
+              </section>
+            </div>
+          ) : null}
+        </>);
 }

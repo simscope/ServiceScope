@@ -3,6 +3,10 @@ import type { Company, MaterialRow } from './types';
 export type AppPage = 'dashboard' | 'companies' | 'monitoring' | 'billing' | 'access' | 'audit' | 'support' | 'companyLogin' | 'portal';
 export type ClientPage = 'onboarding' | 'jobs' | 'allJobs' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'portal';
 
+export type AuthSession =
+  | { kind: 'owner'; userId: string; name: string; email: string }
+  | { kind: 'company'; companyId: string; name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
+
 export type TaskPriority = 'Low' | 'Normal' | 'Urgent';
 export type TaskStatus = 'To do' | 'In progress' | 'Done';
 
@@ -27,6 +31,9 @@ export type EmailConnection = {
   provider: EmailProvider;
   address: string;
   status: 'backend_required' | 'connected';
+  oauthClientId: string;
+  oauthClientSecretSaved: boolean;
+  oauthRedirectUrl: string;
   lastSync: string;
   syncRange: '7' | '30' | '90';
   autoLinkJobNumber: boolean;
@@ -50,9 +57,30 @@ export type EmailMessage = {
   to: string;
   subject: string;
   preview: string;
+  body: string;
+  bodyHtml: string;
+  attachments: EmailAttachment[];
   jobNumber: string;
   receivedAt: string;
   unread?: boolean;
+};
+
+export type EmailAttachment = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  dataUrl: string;
+  isInline: boolean;
+  contentId?: string;
+};
+
+export type EmailComposeAttachment = {
+  id: string;
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  contentBase64: string;
 };
 
 export type EmailTemplate = {
@@ -67,6 +95,10 @@ export type EmailCompose = {
   subject: string;
   body: string;
   jobNumber: string;
+  includeSignature: boolean;
+  includePaymentBlock: boolean;
+  signatureText: string;
+  paymentBlockText: string;
 };
 
 export type FinancePeriod = 'this_week' | 'this_month' | 'all';

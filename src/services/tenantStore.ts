@@ -1,7 +1,5 @@
 import type { Company, NewCompanyForm, OnboardingStepKey, OnboardingStepStatus } from '../types';
 
-const STORAGE_KEY = 'servicescope.v2.companies';
-
 export const onboardingStepOrder: OnboardingStepKey[] = ['workspace', 'users', 'data', 'billing'];
 
 const stepNames: Record<OnboardingStepKey, string> = {
@@ -19,52 +17,12 @@ function slugify(value: string) {
     .replace(/(^-|-$)/g, '');
 }
 
-function normalizeCompany(company: Partial<Company>): Company {
-  return {
-    id: company.id ?? crypto.randomUUID(),
-    name: company.name ?? 'New company',
-    ownerName: company.ownerName ?? 'Owner',
-    ownerEmail: company.ownerEmail ?? '',
-    temporaryPassword: company.temporaryPassword ?? '',
-    domain: company.domain ?? '',
-    market: company.market ?? 'Unassigned market',
-    plan: company.plan ?? 'Launch',
-    status: company.status ?? 'setup',
-    billingStatus: company.billingStatus ?? 'not_started',
-    seats: company.seats ?? 5,
-    technicians: company.technicians ?? 0,
-    openJobs: company.openJobs ?? 0,
-    revenue: company.revenue ?? 0,
-    health: company.health ?? 58,
-    lastSync: company.lastSync ?? 'Not synced',
-    onboarding: company.onboarding ?? {
-      workspace: 'current',
-      users: 'todo',
-      data: 'todo',
-      billing: 'blocked',
-    },
-    alerts: company.alerts ?? [],
-    usage: company.usage ?? {
-      jobsThisMonth: 0,
-      invoicesThisMonth: 0,
-      storageGb: 0,
-    },
-  };
-}
-
-export function listCompanies() {
-  const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (!saved) return [];
-
-  try {
-    return (JSON.parse(saved) as Partial<Company>[]).map(normalizeCompany);
-  } catch {
-    return [];
-  }
+export function listCompanies(): Company[] {
+  return [];
 }
 
 export function saveCompanies(companies: Company[]) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(companies));
+  void companies;
 }
 
 export function createCompany(form: NewCompanyForm): Company {

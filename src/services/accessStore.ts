@@ -1,13 +1,13 @@
 import type { NewPlatformUserForm, PlatformUser, PlatformUserRole, PlatformUserStatus } from '../types';
 
-const STORAGE_KEY = 'servicescope.v2.platformUsers';
 export const SYSTEM_OWNER_ID = 'usr-owner';
+export const SYSTEM_OWNER_EMAIL = 'simscopeinc@gmail.com';
 
 const platformUsersSeed: PlatformUser[] = [
   {
     id: 'usr-owner',
     name: 'ServiceScope Owner',
-    email: 'owner@servicescope.app',
+    email: SYSTEM_OWNER_EMAIL,
     role: 'owner',
     status: 'active',
     lastActive: 'Now',
@@ -21,32 +21,12 @@ export const rolePermissions: Record<PlatformUserRole, string[]> = {
   viewer: ['Read dashboard', 'Read companies', 'Read support'],
 };
 
-function normalizeUser(user: Partial<PlatformUser>): PlatformUser {
-  const isSystemOwner = user.id === SYSTEM_OWNER_ID;
-
-  return {
-    id: user.id ?? crypto.randomUUID(),
-    name: user.name ?? 'Platform user',
-    email: user.email ?? '',
-    role: isSystemOwner ? 'owner' : user.role === 'owner' ? 'admin' : user.role ?? 'viewer',
-    status: isSystemOwner ? 'active' : user.status ?? 'invited',
-    lastActive: user.lastActive ?? 'Invite sent',
-  };
-}
-
 export function listPlatformUsers() {
-  const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (!saved) return platformUsersSeed;
-
-  try {
-    return (JSON.parse(saved) as Partial<PlatformUser>[]).map(normalizeUser);
-  } catch {
-    return platformUsersSeed;
-  }
+  return platformUsersSeed;
 }
 
 export function savePlatformUsers(users: PlatformUser[]) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
+  void users;
 }
 
 export function createPlatformUser(form: NewPlatformUserForm): PlatformUser {
