@@ -237,10 +237,7 @@ export function JobDetailPanel({
         <td>${money(line.price * line.quantity)}</td>
       </tr>
     `).join('');
-    const invoiceWindow = window.open('', '_blank', 'noopener,noreferrer');
-    if (!invoiceWindow) return;
-
-    invoiceWindow.document.write(`
+    const invoiceHtml = `
       <!doctype html>
       <html>
         <head>
@@ -304,9 +301,14 @@ export function JobDetailPanel({
           <button onclick="window.print()">Print / Save PDF</button>
         </body>
       </html>
-    `);
-    invoiceWindow.document.close();
-    invoiceWindow.focus();
+    `;
+    const invoiceUrl = URL.createObjectURL(new Blob([invoiceHtml], { type: 'text/html' }));
+    const invoiceWindow = window.open(invoiceUrl, '_blank');
+    if (!invoiceWindow) {
+      URL.revokeObjectURL(invoiceUrl);
+      return;
+    }
+    window.setTimeout(() => URL.revokeObjectURL(invoiceUrl), 60_000);
   }
 
   async function createInvoice() {
