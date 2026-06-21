@@ -8,6 +8,10 @@ import type {
   NewCompanyTechnicianForm,
 } from '../types';
 
+export function defaultWarrantyTerms() {
+  return 'A {days}-day limited warranty applies ONLY to the work performed and/or parts installed by {company}. The warranty does not cover other components or the appliance as a whole, normal wear, consumables, damage caused by external factors (impacts, moisture, power surges, etc.), or any third-party tampering. The warranty starts on the job completion date and is valid only when the invoice is paid in full.';
+}
+
 const validPaymentMethods: CompanyPaymentMethod[] = [
   'ach',
   'zelle',
@@ -176,6 +180,7 @@ export function createDefaultCompanyOnboardingProfile(company: Company): Company
     cashAppCashtag: '',
     paypalEmail: company.ownerEmail,
     paymentNotes: '',
+    warrantyTerms: defaultWarrantyTerms(),
     subscriptionPaymentStatus: company.billingStatus === 'paid' || company.billingStatus === 'trialing' ? 'active' : 'not_connected',
     subscriptionCardBrand: 'Visa',
     subscriptionCardLast4: company.billingStatus === 'paid' ? '4242' : '',
@@ -260,6 +265,7 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
     autoPayEnabled: profile.autoPayEnabled ?? (company.billingStatus === 'paid'),
     useJobNumberPrefixes: profile.useJobNumberPrefixes ?? true,
     warrantyDays: profile.warrantyDays ?? 30,
+    warrantyTerms: profile.warrantyTerms ?? defaultWarrantyTerms(),
     autoArchiveCompletedAfterDays: profile.autoArchiveCompletedAfterDays ?? 14,
     autoArchiveCancelledAfterDays: profile.autoArchiveCancelledAfterDays ?? 7,
     requireCompletionNote: profile.requireCompletionNote ?? true,

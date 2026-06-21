@@ -178,7 +178,8 @@ export function JobDetailPanel({
   const jobNumberParts = draft.jobNumber.split('-');
   const jobNumber = jobNumberParts[jobNumberParts.length - 1] ?? draft.jobNumber;
   const scfPaid = Boolean(draft.scfPayment);
-  const invoiceSubtotal = invoiceDraft.lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
+  const visibleInvoiceLines = invoiceDraft.lines.length ? invoiceDraft.lines : makeInvoiceLines(draft, materialDrafts);
+  const invoiceSubtotal = visibleInvoiceLines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
   const invoiceDiscount = Math.max(0, Number(invoiceDraft.discount) || 0);
   const invoiceComputedTotal = Math.max(0, invoiceSubtotal - invoiceDiscount);
   const invoiceTotal = Math.max(0, Number(invoiceDraft.balanceDue) || 0);
@@ -341,17 +342,14 @@ export function JobDetailPanel({
   }
 
   function writeInvoiceDocument(invoiceWindow: Window, invoiceHtml: string) {
-    invoiceWindow.document.open();
-    invoiceWindow.document.write(invoiceHtml);
-    invoiceWindow.document.close();
-    invoiceWindow.focus();
-    window.setTimeout(() => {
-      invoiceWindow.print();
-    }, 350);
+    const invoiceUrl = URL.createObjectURL(new Blob([invoiceHtml], { type: 'text/html' }));
+    invoiceWindow.location.replace(invoiceUrl);
+    window.setTimeout(() => URL.revokeObjectURL(invoiceUrl), 60_000);
   }
 
   function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft, targetWindow?: Window | null) {
-    const lines = printableDraft.lines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
+    const draftLines = printableDraft.lines.length ? printableDraft.lines : makeInvoiceLines(draft, materialDrafts);
+    const lines = draftLines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
     const serviceLines = lines.filter((line) => line.type !== 'material');
     const materialLines = lines.filter((line) => line.type === 'material');
     const makeRows = (items: InvoiceLineDraft[]) => items.map((line) => `
@@ -377,10 +375,13 @@ export function JobDetailPanel({
     const companyName = profile.displayName || profile.legalName || 'Service company';
     const companyLogo = profile.logoUrl ? `<img class="logo" src="${escapeHtml(profile.logoUrl)}" alt="${escapeHtml(companyName)} logo" />` : '<div class="logo placeholder">S</div>';
     const warrantyDays = Number(printableDraft.warrantyDays) || 0;
+    const warrantyTerms = (profile.warrantyTerms || '')
+      .replace(/\{days\}/g, String(warrantyDays))
+      .replace(/\{company\}/g, companyName);
     const warranty = printableDraft.includeWarranty ? `
       <section class="warranty">
         <strong>Warranty (${warrantyDays} days):</strong>
-        <p>A ${warrantyDays}-day limited warranty applies ONLY to the work performed and/or parts installed by ${escapeHtml(companyName)}. The warranty does not cover other components or the appliance as a whole, normal wear, consumables, damage caused by external factors, or third-party tampering. The warranty starts on the job completion date and is valid only when the invoice is paid in full.</p>
+        <p>${escapeHtml(warrantyTerms)}</p>
       </section>
     ` : '';
     const invoiceHtml = `
@@ -412,6 +413,9 @@ export function JobDetailPanel({
             .footer { margin-top: 22px; color: #526158; font-size: 12px; }
             @media print { body { background: #fff; } .page { width: auto; min-height: auto; margin: 0; padding: 28px 44px; } }
           </style>
+          <script>
+            window.addEventListener('load', () => window.setTimeout(() => window.print(), 350));
+          </script>
         </head>
         <body>
         <main class="page">
@@ -470,11 +474,13 @@ export function JobDetailPanel({
   async function createInvoice() {
     const invoiceWindow = window.open('', '_blank');
     if (invoiceWindow) {
+      invoiceWindow.document.open();
       invoiceWindow.document.write('<p style="font-family: Arial, sans-serif; padding: 24px;">Preparing invoice...</p>');
+      invoiceWindow.document.close();
     }
     setInvoiceStatus('Creating invoice...');
     try {
-      const currentInvoiceDraft = invoiceDraft;
+      const currentInvoiceDraft = { ...invoiceDraft, lines: visibleInvoiceLines };
       const invoice = await onCreateInvoice(draft, materialDrafts, invoiceTotal);
       const nextJob = {
         ...draft,
@@ -863,7 +869,7 @@ export function JobDetailPanel({
                   <span>Amount</span>
                   <span />
                 </div>
-                {invoiceDraft.lines.map((line) => (
+                {visibleInvoiceLines.map((line) => (
                   <div className="invoice-line-row" key={line.id}>
                     <select value={line.type} onChange={(event) => updateInvoiceLine(line.id, { type: event.target.value as InvoiceLineType })}>
                       <option value="service">service</option>
