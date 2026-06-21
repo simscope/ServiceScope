@@ -228,6 +228,9 @@ function getFriendlyLoginError(error: unknown) {
     return parsed.msg || parsed.message || fallback;
   } catch {
     const normalized = message.toLowerCase();
+    if (normalized.includes('failed to fetch') || normalized.includes('networkerror')) {
+      return 'Cannot connect to Supabase right now. Check the internet connection, then reload and try again.';
+    }
     if (normalized.includes('invalid login credentials') || normalized.includes('invalid_credentials')) {
       return fallback;
     }
