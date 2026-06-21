@@ -1,7 +1,7 @@
 import type { DragEvent, PointerEvent } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
-import type { CompanyOnboardingProfile, CompanyPaymentMethod, MaterialRow, ServiceJobStatus } from '../../types';
+import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobInvoice, MaterialRow, ServiceJobStatus } from '../../types';
 import { googleRouteUrl, statusClassName } from '../../utils/format';
 
 type CalendarDay = {
@@ -43,6 +43,7 @@ export function CalendarPage({
   onCloseJob,
   onSaveJob,
   onSaveMaterials,
+  onCreateInvoice,
   calendarRangeTitle,
   onMoveCalendar,
   onShowToday,
@@ -76,6 +77,7 @@ export function CalendarPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
   calendarRangeTitle: string;
   onMoveCalendar: (direction: -1 | 1) => void;
   onShowToday: () => void;
@@ -110,10 +112,12 @@ export function CalendarPage({
           systems={profile.jobTypes.map((jobType) => jobType.name)}
           paymentMethods={paymentMethodOptions}
           materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+          profile={profile}
           currentUser={currentPortalUser}
           onClose={onCloseJob}
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
+          onCreateInvoice={onCreateInvoice}
         />
       </section>
     );

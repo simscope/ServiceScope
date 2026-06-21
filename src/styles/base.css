@@ -613,6 +613,41 @@ button {
   color: #667269;
 }
 
+.invoice-list {
+  display: grid;
+  gap: 8px;
+  min-width: 260px;
+  margin-top: 8px;
+}
+
+.invoice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 8px 10px;
+  color: #17201b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.invoice-row span {
+  display: grid;
+  gap: 2px;
+  color: #667269;
+  font-size: 12px;
+}
+
+.invoice-row strong,
+.invoice-row b {
+  color: #17201b;
+  font-size: 13px;
+}
+
 .invoice-actions {
   display: flex;
   align-items: center;
@@ -1086,106 +1121,6 @@ button {
 .all-jobs-table .needs-payment {
   border-color: #ff6666;
   background: #fff0f0;
-}
-
-.customers-page {
-  display: grid;
-  gap: 18px;
-  width: 100%;
-}
-
-.customers-toolbar {
-  display: grid;
-  grid-template-columns: minmax(240px, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-}
-
-.customers-search {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  border: 1px solid #d7dee8;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 0 12px;
-}
-
-.customers-search input {
-  min-height: 40px;
-  border: 0;
-  background: transparent;
-  padding-inline: 0;
-}
-
-.customers-table-wrap {
-  overflow-x: auto;
-  border: 1px solid #d7dee8;
-  border-radius: 8px;
-  background: #ffffff;
-}
-
-.customers-table {
-  width: 100%;
-  min-width: 920px;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.customers-table th {
-  border-bottom: 1px solid #d7dee8;
-  background: #f4f6f8;
-  padding: 10px;
-  text-align: left;
-  font-weight: 900;
-}
-
-.customers-table td {
-  border-bottom: 1px solid #e3e9e4;
-  padding: 10px;
-  vertical-align: top;
-}
-
-.customers-table tr:last-child td {
-  border-bottom: 0;
-}
-
-.customers-table td strong,
-.customers-table td span {
-  display: block;
-}
-
-.customers-table td span {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.customer-modal {
-  max-width: 760px;
-}
-
-.customer-form {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.customer-form label {
-  display: grid;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 900;
-}
-
-.customer-form-wide,
-.customer-form .email-message-modal-actions {
-  grid-column: 1 / -1;
-}
-
-.customer-form textarea {
-  min-height: 100px;
 }
 
 .job-number-link {

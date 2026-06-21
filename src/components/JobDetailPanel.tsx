@@ -1,6 +1,7 @@
 import { ChangeEvent, useEffect, useState } from 'react';
-import type { JobAttachment, JobComment, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
+import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobInvoice, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
+import { money } from '../utils/format';
 
 type PaymentMethodOption = {
   value: string;
@@ -13,6 +14,7 @@ type JobDetailPanelProps = {
   systems: string[];
   paymentMethods: PaymentMethodOption[];
   materials: MaterialRow[];
+  profile: CompanyOnboardingProfile;
   currentUser: {
     name: string;
     role: JobComment['authorRole'];
@@ -20,6 +22,7 @@ type JobDetailPanelProps = {
   onClose: () => void;
   onSave: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
 };
 
 const jobStatuses: ServiceJobStatus[] = [
@@ -83,13 +86,26 @@ function emptyMaterialRow(jobNumber: string): MaterialRow {
   };
 }
 
-export function JobDetailPanel({ job, technicians, systems, paymentMethods, materials, currentUser, onClose, onSave, onSaveMaterials }: JobDetailPanelProps) {
+export function JobDetailPanel({
+  job,
+  technicians,
+  systems,
+  paymentMethods,
+  materials,
+  profile,
+  currentUser,
+  onClose,
+  onSave,
+  onSaveMaterials,
+  onCreateInvoice,
+}: JobDetailPanelProps) {
   const [draft, setDraft] = useState<JobCardData>(job);
   const [materialDrafts, setMaterialDrafts] = useState<MaterialRow[]>(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
   const [commentDraft, setCommentDraft] = useState('');
   const [saved, setSaved] = useState(false);
   const [materialsSaved, setMaterialsSaved] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [invoiceStatus, setInvoiceStatus] = useState('');
   const jobNumberParts = draft.jobNumber.split('-');
   const jobNumber = jobNumberParts[jobNumberParts.length - 1] ?? draft.jobNumber;
   const scfPaid = Boolean(draft.scfPayment);
@@ -192,6 +208,136 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, mate
     setDraft(nextJob);
     setCommentDraft('');
     setSaved(true);
+  }
+
+  const escapeHtml = (value: string) =>
+    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
+  function invoiceLines() {
+    return [
+      { label: 'Service call fee', quantity: 1, price: Number(draft.serviceCallFee || 0) },
+      { label: 'Labor', quantity: 1, price: Number(draft.labor || 0) },
+      ...materialDrafts
+        .filter((material) => material.name.trim() || material.price)
+        .map((material) => ({
+          label: material.name.trim() || 'Material',
+          quantity: Number(material.quantity) || 1,
+          price: Number(material.price) || 0,
+        })),
+    ].filter((line) => line.price > 0 || line.label === 'Labor');
+  }
+
+  function openInvoice(invoice: JobInvoice) {
+    const lines = invoiceLines();
+    const rows = lines.map((line) => `
+      <tr>
+        <td>${escapeHtml(line.label)}</td>
+        <td>${line.quantity}</td>
+        <td>${money(line.price)}</td>
+        <td>${money(line.price * line.quantity)}</td>
+      </tr>
+    `).join('');
+    const invoiceWindow = window.open('', '_blank', 'noopener,noreferrer');
+    if (!invoiceWindow) return;
+
+    invoiceWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>${escapeHtml(invoice.invoiceNumber)}</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #17201b; margin: 32px; }
+            header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #17201b; padding-bottom: 18px; margin-bottom: 24px; }
+            h1 { margin: 0; font-size: 30px; }
+            h2 { margin: 0 0 8px; font-size: 16px; }
+            p { margin: 3px 0; }
+            .muted { color: #526158; }
+            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
+            .box { border: 1px solid #cfd8d1; border-radius: 8px; padding: 14px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+            th, td { border-bottom: 1px solid #d7dee8; padding: 10px; text-align: left; vertical-align: top; }
+            th { background: #f4f6f8; }
+            td:nth-child(2), td:nth-child(3), td:nth-child(4), th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: right; }
+            .total { display: flex; justify-content: flex-end; margin-top: 18px; font-size: 22px; font-weight: 800; }
+            .footer { margin-top: 28px; color: #526158; font-size: 12px; }
+            @media print { button { display: none; } body { margin: 18px; } }
+          </style>
+        </head>
+        <body>
+          <header>
+            <div>
+              <h1>Invoice</h1>
+              <p><strong>${escapeHtml(invoice.invoiceNumber)}</strong></p>
+              <p class="muted">Created ${escapeHtml(invoice.createdAt)}</p>
+            </div>
+            <div>
+              <h2>${escapeHtml(profile.displayName || profile.legalName || 'Service company')}</h2>
+              <p>${escapeHtml(profile.serviceAddress || '')}</p>
+              <p>${escapeHtml(profile.phone || '')}</p>
+              <p>${escapeHtml(profile.website || '')}</p>
+            </div>
+          </header>
+          <div class="grid">
+            <section class="box">
+              <h2>Bill to</h2>
+              <p><strong>${escapeHtml(draft.organization || draft.clientName || 'Customer')}</strong></p>
+              <p>${escapeHtml(draft.clientName || '')}</p>
+              <p>${escapeHtml(draft.phone || '')}</p>
+              <p>${escapeHtml(draft.email || '')}</p>
+              <p>${escapeHtml(draft.address || '')}</p>
+            </section>
+            <section class="box">
+              <h2>Job</h2>
+              <p><strong>${escapeHtml(draft.jobNumber)}</strong></p>
+              <p>${escapeHtml(draft.system)}</p>
+              <p>${escapeHtml(draft.issue)}</p>
+            </section>
+          </div>
+          <table>
+            <thead>
+              <tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div class="total">Total: ${money(invoice.amount)}</div>
+          <p class="footer">${escapeHtml(profile.paymentNotes || 'Thank you for your business.')}</p>
+          <button onclick="window.print()">Print / Save PDF</button>
+        </body>
+      </html>
+    `);
+    invoiceWindow.document.close();
+    invoiceWindow.focus();
+  }
+
+  async function createInvoice() {
+    setInvoiceStatus('Creating invoice...');
+    try {
+      const invoice = await onCreateInvoice(draft, materialDrafts);
+      const nextJob = {
+        ...draft,
+        invoices: [invoice, ...(draft.invoices ?? [])],
+      };
+      setDraft(nextJob);
+      setInvoiceStatus('Invoice created.');
+      openInvoice(invoice);
+    } catch (error) {
+      setInvoiceStatus(error instanceof Error ? error.message : 'Invoice could not be created.');
+    }
+  }
+
+  function sendInvoices() {
+    const invoices = draft.invoices ?? [];
+    if (!invoices.length || !draft.email) return;
+    const body = [
+      `Hello ${draft.clientName || ''},`,
+      '',
+      'Invoice details:',
+      ...invoices.map((invoice) => `${invoice.invoiceNumber} - ${money(invoice.amount)} - ${invoice.status}`),
+      '',
+      profile.paymentNotes || 'Please contact us if you have any questions.',
+    ].join('\n');
+
+    window.location.href = `mailto:${encodeURIComponent(draft.email)}?subject=${encodeURIComponent(`Invoice for job ${draft.jobNumber}`)}&body=${encodeURIComponent(body)}`;
   }
 
   return (
@@ -341,20 +487,28 @@ export function JobDetailPanel({ job, technicians, systems, paymentMethods, mate
           <section className="job-detail-card invoice-card">
             <div>
               <h2>Invoices (PDF)</h2>
-              <p>No invoices for this job yet</p>
+              {(draft.invoices ?? []).length ? (
+                <div className="invoice-list">
+                  {(draft.invoices ?? []).map((invoice) => (
+                    <button className="invoice-row" type="button" key={invoice.id} onClick={() => openInvoice(invoice)}>
+                      <span>
+                        <strong>{invoice.invoiceNumber}</strong>
+                        {invoice.status}
+                      </span>
+                      <b>{money(invoice.amount)}</b>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p>No invoices for this job yet</p>
+              )}
+              {invoiceStatus ? <p>{invoiceStatus}</p> : null}
             </div>
             <div className="invoice-actions">
-              <label className="invoice-select">
-                <input type="checkbox" />
-                Select all
-              </label>
-              <button className="secondary-button compact" type="button">
+              <button className="secondary-button compact" type="button" onClick={sendInvoices} disabled={!(draft.invoices ?? []).length || !draft.email}>
                 Send selected
               </button>
-              <button className="secondary-button compact" type="button">
-                Refresh
-              </button>
-              <button className="primary-button" type="button">
+              <button className="primary-button" type="button" onClick={createInvoice}>
                 + Create invoice
               </button>
             </div>
