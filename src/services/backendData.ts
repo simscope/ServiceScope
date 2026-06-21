@@ -164,7 +164,7 @@ function mapOnboardingStatus(status: string): OnboardingStepStatus {
 
 function companyFilter(companyIds: string[]) {
   if (!companyIds.length) return '';
-  return `&company_id=in.(${companyIds.map((id) => `"${encodeURIComponent(id)}"`).join(',')})`;
+  return `&company_id=in.(${companyIds.map((id) => encodeURIComponent(id)).join(',')})`;
 }
 
 function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAlert[]): Company {
