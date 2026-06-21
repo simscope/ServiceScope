@@ -827,6 +827,14 @@ export function OnboardingPage({
                     Warranty period (days)
                     <input type="number" min={0} step={1} value={profile.warrantyDays} onChange={(event) => updateProfile({ warrantyDays: Number(event.target.value) })} />
                   </label>
+                  <label className="profile-wide">
+                    Warranty terms
+                    <textarea
+                      value={profile.warrantyTerms}
+                      onChange={(event) => updateProfile({ warrantyTerms: event.target.value })}
+                      placeholder="Use {days} and {company} to insert warranty days and company name."
+                    />
+                  </label>
                   <label>
                     Archive completed after (days)
                     <input type="number" min={0} step={1} value={profile.autoArchiveCompletedAfterDays} onChange={(event) => updateProfile({ autoArchiveCompletedAfterDays: Number(event.target.value) })} />

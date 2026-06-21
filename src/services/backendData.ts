@@ -73,6 +73,7 @@ type DbWorkflow = {
   require_completion_photo: boolean;
   allow_warranty_reopen: boolean;
   payment_notes: string;
+  warranty_terms?: string | null;
 };
 
 type DbJobType = {
@@ -233,6 +234,7 @@ function profileFromDb(
     requireCompletionPhoto: workflow?.require_completion_photo ?? defaults.requireCompletionPhoto,
     allowWarrantyReopen: workflow?.allow_warranty_reopen ?? defaults.allowWarrantyReopen,
     paymentNotes: workflow?.payment_notes ?? defaults.paymentNotes,
+    warrantyTerms: workflow?.warranty_terms ?? defaults.warrantyTerms,
     acceptedPayments: enabledPayments.length ? enabledPayments : [],
     achRoutingNumber: achDetails.achRoutingNumber ?? '',
     achAccountNumber: achDetails.achAccountNumber ?? '',

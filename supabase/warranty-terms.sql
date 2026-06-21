@@ -1,0 +1,2 @@
+alter table public.company_job_workflow_settings
+  add column if not exists warranty_terms text not null default 'A {days}-day limited warranty applies ONLY to the work performed and/or parts installed by {company}. The warranty does not cover other components or the appliance as a whole, normal wear, consumables, damage caused by external factors (impacts, moisture, power surges, etc.), or any third-party tampering. The warranty starts on the job completion date and is valid only when the invoice is paid in full.';

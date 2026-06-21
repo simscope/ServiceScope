@@ -134,23 +134,34 @@ export async function saveOnboardingProfileToBackend(
     },
   ]);
 
-  await upsert('company_job_workflow_settings', 'company_id', [
-    {
-      company_id: company.id,
-      job_assignment_mode: profile.jobAssignmentMode,
-      use_job_number_prefixes: profile.useJobNumberPrefixes,
-      default_job_number_prefix: profile.jobNumberPrefix,
-      default_service_call_fee_cents: cents(profile.serviceCallFee),
-      default_job_priority: profile.defaultJobPriority,
-      warranty_days: profile.warrantyDays,
-      auto_archive_completed_after_days: profile.autoArchiveCompletedAfterDays,
-      auto_archive_cancelled_after_days: profile.autoArchiveCancelledAfterDays,
-      require_completion_note: profile.requireCompletionNote,
-      require_completion_photo: profile.requireCompletionPhoto,
-      allow_warranty_reopen: profile.allowWarrantyReopen,
-      payment_notes: profile.paymentNotes,
-    },
-  ]);
+  const workflowSettings = {
+    company_id: company.id,
+    job_assignment_mode: profile.jobAssignmentMode,
+    use_job_number_prefixes: profile.useJobNumberPrefixes,
+    default_job_number_prefix: profile.jobNumberPrefix,
+    default_service_call_fee_cents: cents(profile.serviceCallFee),
+    default_job_priority: profile.defaultJobPriority,
+    warranty_days: profile.warrantyDays,
+    auto_archive_completed_after_days: profile.autoArchiveCompletedAfterDays,
+    auto_archive_cancelled_after_days: profile.autoArchiveCancelledAfterDays,
+    require_completion_note: profile.requireCompletionNote,
+    require_completion_photo: profile.requireCompletionPhoto,
+    allow_warranty_reopen: profile.allowWarrantyReopen,
+    payment_notes: profile.paymentNotes,
+    warranty_terms: profile.warrantyTerms,
+  };
+
+  try {
+    await upsert('company_job_workflow_settings', 'company_id', [workflowSettings]);
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes('warranty_terms')) {
+      throw error;
+    }
+
+    const { warranty_terms: _warrantyTerms, ...legacyWorkflowSettings } = workflowSettings;
+    void _warrantyTerms;
+    await upsert('company_job_workflow_settings', 'company_id', [legacyWorkflowSettings]);
+  }
 
   await upsert(
     'company_job_types',

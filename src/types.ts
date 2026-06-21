@@ -277,6 +277,7 @@ export type CompanyOnboardingProfile = {
   cashAppCashtag: string;
   paypalEmail: string;
   paymentNotes: string;
+  warrantyTerms: string;
   subscriptionPaymentStatus: 'not_connected' | 'pending' | 'active' | 'failed';
   subscriptionCardBrand: string;
   subscriptionCardLast4: string;
