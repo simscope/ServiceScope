@@ -154,9 +154,8 @@ export async function saveOnboardingProfileToBackend(
 
   await upsert(
     'company_job_types',
-    'id',
+    'company_id,name',
     profile.jobTypes.map((jobType) => ({
-      id: jobType.id,
       company_id: company.id,
       name: jobType.name,
       job_number_prefix: jobType.jobNumberPrefix,
@@ -262,7 +261,12 @@ export async function saveOnboardingProfileToBackend(
   }
 }
 
-export async function deleteJobTypeFromBackend(jobTypeId: string) {
+export async function deleteJobTypeFromBackend(jobTypeId: string, companyId?: string, name?: string) {
   if (!canUseOnboardingBackend()) return;
+  if (companyId && name) {
+    await supabaseRequest(`company_job_types?company_id=${sqlEq(companyId)}&name=${sqlEq(name)}`, { method: 'DELETE' });
+    return;
+  }
+
   await supabaseRequest(`company_job_types?id=${sqlEq(jobTypeId)}`, { method: 'DELETE' });
 }
