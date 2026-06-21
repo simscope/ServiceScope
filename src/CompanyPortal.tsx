@@ -46,6 +46,7 @@ import { confirmSubscriptionBillingSetup, startSubscriptionBillingSetup } from '
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CalendarPage } from './components/portal/CalendarPage';
+import { CustomersPage } from './components/portal/CustomersPage';
 import { EmailPage } from './components/portal/EmailPage';
 import { FinancePage } from './components/portal/FinancePage';
 import { AllJobsPage, JobsPage } from './components/portal/JobsPages';
@@ -101,7 +102,7 @@ import {
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
+import { createCompanyCustomer, createServiceJob, listCompanyCustomers, listCompanyJobs, saveServiceJob } from './services/jobsStore';
 import type {
   AuditEvent,
   AuditEventCategory,
@@ -125,7 +126,9 @@ import type {
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
   CompanyTechnicianRole,
+  Customer,
   MaterialRow,
+  NewCustomerForm,
   NewServiceJobForm,
   ServiceJob,
   ServiceJobStatus,
@@ -183,7 +186,7 @@ import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toL
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
-const clientPageValues: ClientPage[] = ['onboarding', 'jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
+const clientPageValues: ClientPage[] = ['onboarding', 'jobs', 'allJobs', 'customers', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
@@ -534,6 +537,8 @@ export function CompanyPortal({
   const [jobTypeForm, setJobTypeForm] = useState<NewCompanyJobTypeForm>(emptyJobTypeForm);
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [jobsStatus, setJobsStatus] = useState('');
   const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
   const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
@@ -607,12 +612,44 @@ export function CompanyPortal({
   });
 
   const selectedCompanyId = selectedCompany?.id ?? '';
-  const defaultTechnicianName = onboardingProfile?.technicians[0]?.name ?? 'No technician';
 
   useEffect(() => {
-    if (!selectedCompany) return;
-    setJobs(listCompanyJobs(selectedCompany.id, defaultTechnicianName));
-  }, [defaultTechnicianName, selectedCompany]);
+    if (!selectedCompany) {
+      setJobs([]);
+      setCustomers([]);
+      setJobsStatus('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    const company = selectedCompany;
+    setJobsStatus('Loading jobs and customers...');
+
+    async function loadJobsAndCustomers() {
+      try {
+        const [savedJobs, savedCustomers] = await Promise.all([
+          listCompanyJobs(company.id),
+          listCompanyCustomers(company.id),
+        ]);
+
+        if (cancelled) return;
+        setJobs(savedJobs);
+        setCustomers(savedCustomers);
+        setJobsStatus('');
+      } catch (error) {
+        if (cancelled) return;
+        setJobs([]);
+        setCustomers([]);
+        setJobsStatus(error instanceof Error ? error.message : 'Jobs and customers could not be loaded.');
+      }
+    }
+
+    void loadJobsAndCustomers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCompany]);
 
   useEffect(() => {
     window.localStorage.setItem(CLIENT_PAGE_STORAGE_KEY, clientPage);
@@ -1234,13 +1271,29 @@ export function CompanyPortal({
       },
     }));
   };
+  const reloadCustomers = async () => {
+    const savedCustomers = await listCompanyCustomers(selectedCompany.id);
+    setCustomers(savedCustomers);
+  };
+
   const handleSaveJob = (updatedJob: JobCardData) => {
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
-      saveCompanyJobs(selectedCompany.id, nextJobs);
       return nextJobs;
     });
     setOpenedJob(updatedJob);
+    setJobsStatus('Saving job...');
+
+    saveServiceJob(selectedCompany.id, updatedJob)
+      .then((savedJob) => {
+        setJobs((currentJobs) => currentJobs.map((job) => (job.id === updatedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job)));
+        setOpenedJob(savedJob);
+        setJobsStatus('Job saved.');
+        return reloadCustomers();
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Job could not be saved.');
+      });
   };
   const handleSaveInlineJob = (job: ServiceJob) => {
     const draft = inlineJobDrafts[job.id] ?? {};
@@ -1279,10 +1332,50 @@ export function CompanyPortal({
 
     setJobs((currentJobs) => {
       const nextJobs = [createdJob, ...currentJobs];
-      saveCompanyJobs(selectedCompany.id, nextJobs);
       return nextJobs;
     });
     setOpenedJob(createdJob);
+    setJobsStatus('Creating job...');
+
+    saveServiceJob(selectedCompany.id, createdJob)
+      .then((savedJob) => {
+        setJobs((currentJobs) => currentJobs.map((job) => (job.id === createdJob.id ? savedJob : job)));
+        setOpenedJob(savedJob);
+        setJobsStatus('Job created.');
+        return reloadCustomers();
+      })
+      .catch((error) => {
+        setJobs((currentJobs) => currentJobs.filter((job) => job.id !== createdJob.id));
+        setOpenedJob(null);
+        setJobsStatus(error instanceof Error ? error.message : 'Job could not be created.');
+      });
+  };
+  const handleCreateCustomer = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const customerForm: NewCustomerForm = {
+      organization: String(form.get('organization') ?? '').trim(),
+      primaryName: String(form.get('primaryName') ?? '').trim(),
+      primaryPhone: String(form.get('primaryPhone') ?? '').trim(),
+      primaryEmail: String(form.get('primaryEmail') ?? '').trim(),
+      address: String(form.get('address') ?? '').trim(),
+      notes: String(form.get('notes') ?? '').trim(),
+    };
+
+    if (!customerForm.organization && !customerForm.primaryName && !customerForm.primaryPhone && !customerForm.primaryEmail) {
+      setJobsStatus('Add at least a company, name, phone, or email.');
+      return;
+    }
+
+    setJobsStatus('Saving customer...');
+    createCompanyCustomer(selectedCompany.id, customerForm)
+      .then((customer) => {
+        setCustomers((currentCustomers) => [customer, ...currentCustomers.filter((item) => item.id !== customer.id)]);
+        setJobsStatus('Customer saved.');
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Customer could not be saved.');
+      });
   };
   const librarySystems = Array.from(new Set([...profile.jobTypes.map((jobType) => jobType.name), ...libraryDocuments.map((document) => document.system)])).filter(Boolean);
   const filteredLibraryDocuments = libraryDocuments.filter((document) => {
@@ -1524,6 +1617,7 @@ export function CompanyPortal({
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
     { page: 'allJobs', label: 'All Jobs', icon: <LayoutDashboard size={16} /> },
+    { page: 'customers', label: 'Customers', icon: <Users size={16} /> },
     { page: 'calendar', label: 'Calendar', icon: <CalendarDays size={16} /> },
     { page: 'materials', label: 'Materials', icon: <Box size={16} /> },
     { page: 'tasks', label: 'Tasks', icon: <CheckCircle2 size={16} /> },
@@ -1878,6 +1972,7 @@ export function CompanyPortal({
       </header>
 
       <main className="client-workspace">
+        {jobsStatus ? <p className="access-status portal-status">{jobsStatus}</p> : null}
         {clientPage === 'onboarding' ? (
           <OnboardingPage
             completedSteps={completedSteps}
@@ -1938,6 +2033,11 @@ export function CompanyPortal({
             selectedJobType={selectedJobType}
             selectedJobTypeId={selectedJobTypeId}
             onSelectedJobTypeIdChange={setSelectedJobTypeId}
+          />
+        ) : clientPage === 'customers' ? (
+          <CustomersPage
+            customers={customers}
+            onCreateCustomer={handleCreateCustomer}
           />
         ) : clientPage === 'allJobs' ? (
           <AllJobsPage

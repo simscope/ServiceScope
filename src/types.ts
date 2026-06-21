@@ -219,6 +219,22 @@ export type ServiceJob = {
   createdAt: string;
 };
 
+export type Customer = {
+  id: string;
+  companyId: string;
+  organization: string;
+  primaryName: string;
+  primaryEmail: string;
+  primaryPhone: string;
+  address: string;
+  notes: string;
+  jobsCount: number;
+  lastJobAt: string;
+  createdAt: string;
+};
+
+export type NewCustomerForm = Pick<Customer, 'organization' | 'primaryName' | 'primaryEmail' | 'primaryPhone' | 'address' | 'notes'>;
+
 export type NewServiceJobForm = Pick<
   ServiceJob,
   'jobNumber' | 'system' | 'clientName' | 'organization' | 'phone' | 'email' | 'address' | 'technician' | 'serviceCallFee' | 'issue' | 'notes'
