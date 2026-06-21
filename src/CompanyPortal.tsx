@@ -571,6 +571,7 @@ export function CompanyPortal({
   const [billingStatus, setBillingStatus] = useState('');
   const [billingModalOpen, setBillingModalOpen] = useState(false);
   const mailboxSyncingRef = useRef(false);
+  const onboardingSaveQueueRef = useRef(Promise.resolve());
   const [emailCompose, setEmailCompose] = useState<EmailCompose>({
     to: '',
     subject: '',
@@ -833,13 +834,18 @@ export function CompanyPortal({
     profile.paymentNotes,
   ].filter(Boolean).join('\n');
   function persistOnboardingToBackend(nextProfile: CompanyOnboardingProfile, nextEmailConnection = emailConnection) {
-    saveOnboardingProfileToBackend(activeCompany, nextProfile, nextEmailConnection, {
-      saveCompanyCore: false,
-      saveOnboardingSteps: false,
-      saveSubscriptionPaymentMethod: false,
-    }).catch((error) => {
-      console.error('Failed to save onboarding to backend', error);
-    });
+    onboardingSaveQueueRef.current = onboardingSaveQueueRef.current
+      .catch(() => undefined)
+      .then(() =>
+        saveOnboardingProfileToBackend(activeCompany, nextProfile, nextEmailConnection, {
+          saveCompanyCore: false,
+          saveOnboardingSteps: false,
+          saveSubscriptionPaymentMethod: false,
+        }),
+      )
+      .catch((error) => {
+        console.error('Failed to save onboarding to backend', error);
+      });
   }
 
   const professionTemplates = makeJobTypes();
@@ -1686,10 +1692,15 @@ export function CompanyPortal({
 
   function handleJobTypeSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!jobTypeForm.name.trim()) return;
+    const name = jobTypeForm.name.trim();
+    if (!name) return;
+    const jobNumberPrefix =
+      jobTypeForm.jobNumberPrefix.trim() ||
+      name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) ||
+      'JOB';
 
     updateProfile({
-      jobTypes: [createCompanyJobType(jobTypeForm), ...profile.jobTypes],
+      jobTypes: [createCompanyJobType({ ...jobTypeForm, name, jobNumberPrefix }), ...profile.jobTypes],
     });
     setJobTypeForm(emptyJobTypeForm);
   }
