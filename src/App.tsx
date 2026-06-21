@@ -303,6 +303,7 @@ function AuthLogin({
               onChange={(event) => setEmail(event.target.value)}
               placeholder="email@company.com"
               autoComplete="email"
+              disabled={isSigningIn}
             />
           </label>
           <label>
@@ -314,11 +315,13 @@ function AuthLogin({
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Password"
                 autoComplete="current-password"
+                disabled={isSigningIn}
               />
               <button
                 className="password-visibility-button"
                 type="button"
                 onClick={() => setShowPassword((visible) => !visible)}
+                disabled={isSigningIn}
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 title={showPassword ? 'Hide password' : 'Show password'}
               >
@@ -529,7 +532,7 @@ export function App() {
       setPage('dashboard');
       window.history.replaceState(null, '', '#dashboard');
     }
-  }, [authSession, companies, page]);
+  }, [authSession, backendLoaded, companies, page]);
 
   const totals = useMemo(() => {
     return companies.reduce(
@@ -680,6 +683,7 @@ export function App() {
   }
 
   function handleLogin(session: AuthSession) {
+    setAuthNotice('');
     setAuthSession(session);
     window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
     if (session.kind === 'company') {
