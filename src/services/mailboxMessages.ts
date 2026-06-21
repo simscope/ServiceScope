@@ -68,7 +68,7 @@ function clampMailboxLimit(limit = DEFAULT_MAILBOX_LIMIT) {
 }
 
 function sqlIn(values: string[]) {
-  return `in.(${values.map((value) => `"${encodeURIComponent(value)}"`).join(',')})`;
+  return `in.(${values.map((value) => encodeURIComponent(value)).join(',')})`;
 }
 
 export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAILBOX_LIMIT): Promise<EmailMessage[]> {
