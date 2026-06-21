@@ -8,7 +8,6 @@ import type {
   CompanyPlan,
   CompanyStatus,
   CompanyTechnician,
-  OnboardingStepKey,
   OnboardingStepStatus,
 } from '../types';
 import { createDefaultCompanyOnboardingProfile } from './companyOnboardingStore';
@@ -124,6 +123,9 @@ type DbSubscriptionPayment = {
   autopay_enabled: boolean;
 };
 
+const WORKSPACE_COMPANY_LIMIT = 100;
+const WORKSPACE_CHILD_LIMIT = 500;
+
 function dollars(cents: number | null | undefined) {
   return Math.round(Number(cents ?? 0)) / 100;
 }
@@ -158,6 +160,11 @@ function mapPlan(plan: string | null | undefined): CompanyPlan {
 
 function mapOnboardingStatus(status: string): OnboardingStepStatus {
   return status === 'done' || status === 'current' || status === 'blocked' || status === 'todo' ? status : 'todo';
+}
+
+function companyFilter(companyIds: string[]) {
+  if (!companyIds.length) return '';
+  return `&company_id=in.(${companyIds.map((id) => `"${encodeURIComponent(id)}"`).join(',')})`;
 }
 
 function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAlert[]): Company {
@@ -295,8 +302,14 @@ export async function loadOwnerWorkspaceFromBackend() {
     return { companies: [], onboardingProfiles: [] };
   }
 
+  const companyRows = await supabaseRequest<DbCompany[]>(`companies?select=*,plans(name)&order=created_at.desc&limit=${WORKSPACE_COMPANY_LIMIT}`);
+  const companyIds = companyRows.map((company) => company.id);
+  if (!companyIds.length) {
+    return { companies: [], onboardingProfiles: [] };
+  }
+
+  const filter = companyFilter(companyIds);
   const [
-    companyRows,
     onboardingSteps,
     alerts,
     profileRows,
@@ -307,16 +320,15 @@ export async function loadOwnerWorkspaceFromBackend() {
     companyUsers,
     subscriptionPayments,
   ] = await Promise.all([
-    supabaseRequest<DbCompany[]>('companies?select=*,plans(name)&order=created_at.desc'),
-    supabaseRequest<DbOnboardingStep[]>('company_onboarding_steps?select=company_id,step_key,status'),
-    supabaseRequest<DbAlert[]>('company_alerts?select=company_id,title&resolved_at=is.null'),
-    supabaseRequest<DbCompanyProfile[]>('company_profiles?select=*'),
-    supabaseRequest<DbWorkflow[]>('company_job_workflow_settings?select=*'),
-    supabaseRequest<DbJobType[]>('company_job_types?select=*&active=eq.true'),
-    supabaseRequest<DbPaymentMethod[]>('company_payment_methods?select=company_id,method,details&enabled=eq.true'),
-    supabaseRequest<DbTechnician[]>('company_technicians?select=*'),
-    supabaseRequest<DbCompanyUser[]>('company_users?select=id,company_id,name,email,role,status'),
-    supabaseRequest<DbSubscriptionPayment[]>('subscription_payment_methods?select=*&is_default=eq.true'),
+    supabaseRequest<DbOnboardingStep[]>(`company_onboarding_steps?select=company_id,step_key,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbAlert[]>(`company_alerts?select=company_id,title&resolved_at=is.null${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbCompanyProfile[]>(`company_profiles?select=*${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbWorkflow[]>(`company_job_workflow_settings?select=*${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbJobType[]>(`company_job_types?select=*&active=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbPaymentMethod[]>(`company_payment_methods?select=company_id,method,details&enabled=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbTechnician[]>(`company_technicians?select=*${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbSubscriptionPayment[]>(`subscription_payment_methods?select=*&is_default=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
   ]);
 
   const companies = companyRows.map((company) => companyFromDb(company, onboardingSteps, alerts));
