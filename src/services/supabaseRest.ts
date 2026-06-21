@@ -135,3 +135,7 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
 export function sqlEq(value: string) {
   return `eq.${encodeURIComponent(value)}`;
 }
+
+export function sqlIn(values: string[]) {
+  return `in.(${values.map((value) => encodeURIComponent(value)).join(',')})`;
+}
