@@ -60,7 +60,7 @@ export function FinancePage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
   financeSummary: { paidRevenue: number; materials: number; salary: number; unpaidSalary: number };
   financePeriod: FinancePeriod;
   onFinancePeriodChange: (period: FinancePeriod) => void;

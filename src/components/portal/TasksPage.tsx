@@ -44,7 +44,7 @@ export function TasksPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
   openTaskCount: number;
   autoTaskCount: number;
   urgentTaskCount: number;

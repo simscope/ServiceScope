@@ -1334,8 +1334,8 @@ export function CompanyPortal({
         setJobsStatus(error instanceof Error ? error.message : 'Job could not be created.');
       });
   };
-  const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[]) => {
-    const invoice = await createJobInvoice(selectedCompany.id, job, invoiceMaterials);
+  const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number) => {
+    const invoice = await createJobInvoice(selectedCompany.id, job, invoiceMaterials, amount);
     setJobs((currentJobs) => currentJobs.map((currentJob) => (
       currentJob.id === job.id
         ? { ...currentJob, invoices: [invoice, ...(currentJob.invoices ?? [])] }
