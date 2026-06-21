@@ -5,6 +5,7 @@ type SupabaseRequestOptions = {
   body?: unknown;
   prefer?: string;
   select?: boolean;
+  timeoutMs?: number;
 };
 
 type SupabaseAuthResponse = {
@@ -27,6 +28,7 @@ const viteEnv = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as Vit
 const supabaseUrl = viteEnv.VITE_SUPABASE_URL?.replace(/\/$/, '') ?? '';
 const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY ?? '';
 const AUTH_TOKEN_STORAGE_KEY = 'servicescope.supabaseAccessToken';
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
 export const SUPABASE_AUTH_EXPIRED_CODE = 'SERVICESCOPE_AUTH_EXPIRED';
 
 export function isSupabaseConfigured() {
@@ -76,17 +78,30 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
   }
 
   const accessToken = getSupabaseAccessToken();
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
 
-  const response = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
-    method: options.method ?? 'GET',
-    headers: {
-      apikey: supabaseAnonKey,
-      Authorization: `Bearer ${accessToken || supabaseAnonKey}`,
-      'Content-Type': 'application/json',
-      Prefer: options.prefer ?? (options.select ? 'return=representation' : 'return=minimal'),
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
+      method: options.method ?? 'GET',
+      signal: controller.signal,
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${accessToken || supabaseAnonKey}`,
+        'Content-Type': 'application/json',
+        Prefer: options.prefer ?? (options.select ? 'return=representation' : 'return=minimal'),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Supabase request timed out. Database is overloaded or not accepting connections.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const message = await response.text();
