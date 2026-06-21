@@ -1714,9 +1714,10 @@ export function CompanyPortal({
   }
 
   function removeJobType(jobTypeId: string) {
+    const removedJobType = profile.jobTypes.find((jobType) => jobType.id === jobTypeId);
     const jobTypes = profile.jobTypes.filter((jobType) => jobType.id !== jobTypeId);
     updateProfile({ jobTypes });
-    deleteJobTypeFromBackend(jobTypeId).catch((error) => {
+    deleteJobTypeFromBackend(jobTypeId, activeCompany.id, removedJobType?.name).catch((error) => {
       console.error('Failed to delete job type from backend', error);
     });
 
