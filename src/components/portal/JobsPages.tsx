@@ -6,6 +6,7 @@ import type {
   CompanyJobType,
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
+  JobInvoice,
   MaterialRow,
   ServiceJob,
   ServiceJobStatus,
@@ -22,6 +23,7 @@ export function JobsPage({
   onCloseJob,
   onSaveJob,
   onSaveMaterials,
+  onCreateInvoice,
   onCreateJob,
   selectedJobPrefix,
   nextJobNumber,
@@ -37,6 +39,7 @@ export function JobsPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
   onCreateJob: (event: FormEvent<HTMLFormElement>) => void;
   selectedJobPrefix: string;
   nextJobNumber: string;
@@ -53,10 +56,12 @@ export function JobsPage({
           systems={profile.jobTypes.map((jobType) => jobType.name)}
           paymentMethods={paymentMethodOptions}
           materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+          profile={profile}
           currentUser={currentPortalUser}
           onClose={onCloseJob}
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
+          onCreateInvoice={onCreateInvoice}
         />
       </section>
     );
@@ -144,6 +149,7 @@ export function AllJobsPage({
   onCloseJob,
   onSaveJob,
   onSaveMaterials,
+  onCreateInvoice,
   jobStatusFilters,
   allJobsGroups,
   allJobsVisibility,
@@ -164,6 +170,7 @@ export function AllJobsPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
   jobStatusFilters: ServiceJobStatus[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
   allJobsVisibility: 'active' | 'paid' | 'all';
@@ -185,10 +192,12 @@ export function AllJobsPage({
           systems={profile.jobTypes.map((jobType) => jobType.name)}
           paymentMethods={paymentMethodOptions}
           materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+          profile={profile}
           currentUser={currentPortalUser}
           onClose={onCloseJob}
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
+          onCreateInvoice={onCreateInvoice}
         />
       </section>
     );

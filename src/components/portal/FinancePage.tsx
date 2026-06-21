@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
 import type { FinancePeriod, PayrollRules } from '../../appTypes';
-import type { CompanyOnboardingProfile, CompanyPaymentMethod, MaterialRow, ServiceJob } from '../../types';
+import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobInvoice, MaterialRow, ServiceJob } from '../../types';
 import { money } from '../../utils/format';
 
 export type FinanceJobRow = ServiceJob & {
@@ -38,6 +38,7 @@ export function FinancePage({
   onCloseJob,
   onSaveJob,
   onSaveMaterials,
+  onCreateInvoice,
   financeSummary,
   financePeriod,
   onFinancePeriodChange,
@@ -59,6 +60,7 @@ export function FinancePage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
   financeSummary: { paidRevenue: number; materials: number; salary: number; unpaidSalary: number };
   financePeriod: FinancePeriod;
   onFinancePeriodChange: (period: FinancePeriod) => void;
@@ -256,10 +258,12 @@ export function FinancePage({
           systems={profile.jobTypes.map((jobType) => jobType.name)}
           paymentMethods={paymentMethodOptions}
           materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+          profile={profile}
           currentUser={currentPortalUser}
           onClose={onCloseJob}
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
+          onCreateInvoice={onCreateInvoice}
         />
       </section>
     );

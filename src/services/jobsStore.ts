@@ -1,4 +1,4 @@
-import type { Customer, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
+import type { Customer, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
 import { sqlEq, supabaseRequest } from './supabaseRest';
 
 type CustomerRow = {
@@ -51,6 +51,18 @@ type JobPaymentRow = {
   amount_cents: number;
 };
 
+type JobInvoiceRow = {
+  id: string;
+  company_id: string;
+  job_id: string;
+  invoice_number: string;
+  status: JobInvoiceStatus;
+  amount_cents: number;
+  sent_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -90,6 +102,7 @@ function mapJob(
   locations: CustomerLocationRow[],
   technicians: TechnicianRow[],
   payments: JobPaymentRow[],
+  invoices: JobInvoiceRow[],
 ): ServiceJob {
   const customer = customers.find((item) => item.id === row.customer_id);
   const location = locations.find((item) => item.id === row.customer_location_id);
@@ -119,20 +132,38 @@ function mapJob(
     notes: row.notes ?? '',
     attachments: [],
     comments: [],
+    invoices: invoices
+      .filter((invoice) => invoice.job_id === row.id)
+      .map((invoice) => mapInvoice(invoice)),
     createdAt: row.created_at?.slice(0, 10) ?? todayIso(),
   };
 }
 
+function mapInvoice(row: JobInvoiceRow): JobInvoice {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    jobId: row.job_id,
+    invoiceNumber: row.invoice_number,
+    status: row.status,
+    amount: (Number(row.amount_cents) || 0) / 100,
+    createdAt: row.created_at?.slice(0, 10) ?? todayIso(),
+    sentAt: row.sent_at?.slice(0, 10) ?? '',
+    paidAt: row.paid_at?.slice(0, 10) ?? '',
+  };
+}
+
 async function loadCompanyJobTables(companyId: string) {
-  const [customers, locations, technicians, jobs, payments] = await Promise.all([
+  const [customers, locations, technicians, jobs, payments, invoices] = await Promise.all([
     supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc`),
     supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&order=created_at.desc`),
     supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name`),
     supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&order=created_at.desc`),
     supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}`),
+    supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&order=created_at.desc`),
   ]);
 
-  return { customers, locations, technicians, jobs, payments };
+  return { customers, locations, technicians, jobs, payments, invoices };
 }
 
 export async function listCompanyCustomers(companyId: string): Promise<Customer[]> {
@@ -142,7 +173,7 @@ export async function listCompanyCustomers(companyId: string): Promise<Customer[
 
 export async function listCompanyJobs(companyId: string): Promise<ServiceJob[]> {
   const tables = await loadCompanyJobTables(companyId);
-  return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments));
+  return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments, tables.invoices));
 }
 
 export async function createCompanyCustomer(companyId: string, form: NewCustomerForm): Promise<Customer> {
@@ -289,6 +320,40 @@ export async function saveCompanyJobs(companyId: string, companyJobs: ServiceJob
   return savedJobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+function nextInvoiceNumber(jobNumber: string, existingInvoices: JobInvoice[]) {
+  const nextIndex = existingInvoices.length + 1;
+  return `INV-${jobNumber}-${String(nextIndex).padStart(2, '0')}`;
+}
+
+function invoiceTotal(job: ServiceJob, materials: MaterialRow[]) {
+  const scf = Number(job.serviceCallFee || 0);
+  const labor = Number(job.labor || 0);
+  const materialTotal = materials.reduce((sum, material) => sum + (Number(material.price) || 0) * (Number(material.quantity) || 0), 0);
+  return Math.max(0, scf + labor + materialTotal);
+}
+
+export async function createJobInvoice(
+  companyId: string,
+  job: ServiceJob,
+  materials: MaterialRow[],
+): Promise<JobInvoice> {
+  const amount = invoiceTotal(job, materials);
+  const invoiceNumber = nextInvoiceNumber(job.jobNumber, job.invoices ?? []);
+  const [invoice] = await supabaseRequest<JobInvoiceRow[]>('job_invoices?select=*', {
+    method: 'POST',
+    select: true,
+    body: [{
+      company_id: companyId,
+      job_id: job.id,
+      invoice_number: invoiceNumber,
+      status: 'open',
+      amount_cents: dollarsToCents(String(amount)),
+    }],
+  });
+
+  return mapInvoice(invoice);
+}
+
 export function createServiceJob(companyId: string, form: NewServiceJobForm): ServiceJob {
   const assignee = form.technician || 'No technician';
 
@@ -304,6 +369,7 @@ export function createServiceJob(companyId: string, form: NewServiceJobForm): Se
     laborPayment: '',
     attachments: [],
     comments: [],
+    invoices: [],
     createdAt: todayIso(),
   };
 }

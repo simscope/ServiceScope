@@ -3,7 +3,7 @@ import { Plus } from 'lucide-react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
 import type { TaskForm, TaskPriority, TaskRow, TaskStatus } from '../../appTypes';
-import type { CompanyOnboardingProfile, CompanyPaymentMethod, MaterialRow, ServiceJob } from '../../types';
+import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobInvoice, MaterialRow, ServiceJob } from '../../types';
 import { statusClassName } from '../../utils/format';
 
 export function TasksPage({
@@ -15,6 +15,7 @@ export function TasksPage({
   onCloseJob,
   onSaveJob,
   onSaveMaterials,
+  onCreateInvoice,
   openTaskCount,
   autoTaskCount,
   urgentTaskCount,
@@ -43,6 +44,7 @@ export function TasksPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
   openTaskCount: number;
   autoTaskCount: number;
   urgentTaskCount: number;
@@ -72,10 +74,12 @@ export function TasksPage({
           systems={profile.jobTypes.map((jobType) => jobType.name)}
           paymentMethods={paymentMethodOptions}
           materials={materials.filter((material) => material.jobNumber === openedJob.jobNumber)}
+          profile={profile}
           currentUser={currentPortalUser}
           onClose={onCloseJob}
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
+          onCreateInvoice={onCreateInvoice}
         />
       </section>
     );
