@@ -53,7 +53,7 @@ function toDataUrl(mimeType: string, value: string) {
 }
 
 function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
 }
 
 function inlineCidImages(bodyHtml: string, attachments: EmailMessage['attachments']) {
