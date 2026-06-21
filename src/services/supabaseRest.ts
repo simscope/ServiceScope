@@ -19,14 +19,12 @@ type SupabaseAuthResponse = {
 };
 
 type ViteEnv = {
-  DEV?: boolean;
   VITE_SUPABASE_URL?: string;
   VITE_SUPABASE_ANON_KEY?: string;
 };
 
 const viteEnv = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as ViteEnv;
 const supabaseUrl = viteEnv.VITE_SUPABASE_URL?.replace(/\/$/, '') ?? '';
-const supabaseHttpBaseUrl = viteEnv.DEV && supabaseUrl ? '/supabase' : supabaseUrl;
 const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY ?? '';
 const AUTH_TOKEN_STORAGE_KEY = 'servicescope.supabaseAccessToken';
 export const SUPABASE_AUTH_EXPIRED_CODE = 'SERVICESCOPE_AUTH_EXPIRED';
@@ -53,7 +51,7 @@ export async function signInWithSupabasePassword(email: string, password: string
     throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }
 
-  const response = await fetch(`${supabaseHttpBaseUrl}/auth/v1/token?grant_type=password`, {
+  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
     method: 'POST',
     headers: {
       apikey: supabaseAnonKey,
@@ -79,7 +77,7 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
 
   const accessToken = getSupabaseAccessToken();
 
-  const response = await fetch(`${supabaseHttpBaseUrl}/rest/v1/${path}`, {
+  const response = await fetch(`${supabaseUrl}/rest/v1/${path}`, {
     method: options.method ?? 'GET',
     headers: {
       apikey: supabaseAnonKey,
