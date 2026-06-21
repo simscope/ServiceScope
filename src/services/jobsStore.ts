@@ -63,6 +63,9 @@ type JobInvoiceRow = {
   created_at: string;
 };
 
+const DEFAULT_LIMIT = 200;
+const RECENT_LOOKUP_LIMIT = 50;
+
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -155,20 +158,41 @@ function mapInvoice(row: JobInvoiceRow): JobInvoice {
 
 async function loadCompanyJobTables(companyId: string) {
   const [customers, locations, technicians, jobs, payments, invoices] = await Promise.all([
-    supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc`),
-    supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&order=created_at.desc`),
-    supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name`),
-    supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&order=created_at.desc`),
-    supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}`),
-    supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&order=created_at.desc`),
+    supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
   ]);
 
   return { customers, locations, technicians, jobs, payments, invoices };
 }
 
+async function loadSingleJob(companyId: string, jobId: string): Promise<ServiceJob | null> {
+  const [jobs, customers, locations, technicians, payments, invoices] = await Promise.all([
+    supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&id=${sqlEq(jobId)}&limit=1`),
+    supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&limit=${RECENT_LOOKUP_LIMIT}`),
+    supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&limit=${RECENT_LOOKUP_LIMIT}`),
+    supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&limit=10`),
+    supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=created_at.desc&limit=20`),
+  ]);
+
+  const job = jobs[0];
+  if (!job) return null;
+
+  return mapJob(job, customers, locations, technicians, payments, invoices);
+}
+
 export async function listCompanyCustomers(companyId: string): Promise<Customer[]> {
-  const tables = await loadCompanyJobTables(companyId);
-  return tables.customers.map((customer) => mapCustomer(customer, tables.locations, tables.jobs));
+  const [customers, locations, jobs] = await Promise.all([
+    supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&order=created_at.desc&select=id,company_id,customer_id,customer_location_id,technician_id,job_type_id,job_number,status,system,issue,notes,service_call_fee_cents,labor_cents,created_at&limit=${DEFAULT_LIMIT}`),
+  ]);
+
+  return customers.map((customer) => mapCustomer(customer, locations, jobs));
 }
 
 export async function listCompanyJobs(companyId: string): Promise<ServiceJob[]> {
@@ -190,9 +214,11 @@ export async function createCompanyCustomer(companyId: string, form: NewCustomer
     }],
   });
 
+  let location: CustomerLocationRow | undefined;
   if (form.address.trim()) {
-    await supabaseRequest('customer_locations', {
+    [location] = await supabaseRequest<CustomerLocationRow[]>('customer_locations?select=*', {
       method: 'POST',
+      select: true,
       body: [{
         company_id: companyId,
         customer_id: customer.id,
@@ -201,8 +227,7 @@ export async function createCompanyCustomer(companyId: string, form: NewCustomer
     });
   }
 
-  const customers = await listCompanyCustomers(companyId);
-  return customers.find((item) => item.id === customer.id) ?? mapCustomer(customer, [], []);
+  return mapCustomer(customer, location ? [location] : [], []);
 }
 
 async function findOrCreateCustomer(companyId: string, job: ServiceJob) {
@@ -210,7 +235,7 @@ async function findOrCreateCustomer(companyId: string, job: ServiceJob) {
   const phone = job.phone.trim();
   const customerName = job.clientName.trim();
   const organization = job.organization.trim();
-  const customers = await supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc`);
+  const customers = await supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`);
   const existingCustomer = customers.find((customer) => (
     (email && customer.primary_email?.toLowerCase() === email) ||
     (phone && customer.primary_phone === phone) ||
@@ -232,7 +257,7 @@ async function findOrCreateCustomer(companyId: string, job: ServiceJob) {
 
   let location: CustomerLocationRow | undefined;
   if (job.address.trim()) {
-    const locations = await supabaseRequest<CustomerLocationRow[]>(`customer_locations?customer_id=${sqlEq(customer.id)}&order=created_at.desc`);
+    const locations = await supabaseRequest<CustomerLocationRow[]>(`customer_locations?customer_id=${sqlEq(customer.id)}&order=created_at.desc&limit=${RECENT_LOOKUP_LIMIT}`);
     location = locations.find((item) => item.address?.trim().toLowerCase() === job.address.trim().toLowerCase());
     if (!location) {
       [location] = await supabaseRequest<CustomerLocationRow[]>('customer_locations?select=*', {
@@ -254,12 +279,12 @@ async function findTechnicianId(companyId: string, technicianName: string) {
   const name = technicianName.trim();
   if (!name || name === 'No technician') return null;
 
-  const rows = await supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&name=${sqlEq(name)}&select=id,name`);
+  const rows = await supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&name=${sqlEq(name)}&select=id,name&limit=1`);
   return rows[0]?.id ?? null;
 }
 
 async function savePayment(companyId: string, jobId: string, scope: 'scf' | 'labor', method: string, amount: string) {
-  const existing = await supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&scope=${sqlEq(scope)}`);
+  const existing = await supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&scope=${sqlEq(scope)}&limit=1`);
   if (!method) {
     if (existing[0]) {
       await supabaseRequest(`job_payments?id=${sqlEq(existing[0].id)}`, { method: 'DELETE' });
@@ -287,7 +312,7 @@ async function savePayment(companyId: string, jobId: string, scope: 'scf' | 'lab
 export async function saveServiceJob(companyId: string, job: ServiceJob): Promise<ServiceJob> {
   const { customer, location } = await findOrCreateCustomer(companyId, job);
   const technicianId = await findTechnicianId(companyId, job.technician || job.assignee);
-  const existing = await supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&job_number=${sqlEq(job.jobNumber)}&select=id`);
+  const existing = await supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&job_number=${sqlEq(job.jobNumber)}&select=id&limit=1`);
   const body = {
     company_id: companyId,
     customer_id: customer.id,
@@ -311,12 +336,23 @@ export async function saveServiceJob(companyId: string, job: ServiceJob): Promis
     savePayment(companyId, savedJob.id, 'labor', job.laborPayment, job.labor),
   ]);
 
-  const jobs = await listCompanyJobs(companyId);
-  return jobs.find((item) => item.id === savedJob.id) ?? job;
+  return (await loadSingleJob(companyId, savedJob.id)) ?? mapJob(
+    savedJob,
+    [customer],
+    location ? [location] : [],
+    [],
+    [],
+    [],
+  );
 }
 
 export async function saveCompanyJobs(companyId: string, companyJobs: ServiceJob[]): Promise<ServiceJob[]> {
-  const savedJobs = await Promise.all(companyJobs.map((job) => saveServiceJob(companyId, job)));
+  const savedJobs: ServiceJob[] = [];
+
+  for (const job of companyJobs) {
+    savedJobs.push(await saveServiceJob(companyId, job));
+  }
+
   return savedJobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
