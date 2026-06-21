@@ -931,7 +931,16 @@
   grid-column: 1 / -1;
 }
 
+.subscription-payment-panel,
+.team-setup-panel {
+  grid-column: 1 / -1;
+}
+
 .workspace-mailbox-panel {
+  grid-column: 1 / -1;
+}
+
+.owner-account-panel {
   grid-column: 1 / -1;
 }
 
@@ -984,6 +993,23 @@
   font-size: 13px;
 }
 
+.mailbox-step-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mailbox-status-pill {
+  border-radius: 999px;
+  background: #edf5ff;
+  color: #1f5da8;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
 .mailbox-permissions {
   display: flex;
   flex-wrap: wrap;
@@ -1005,7 +1031,15 @@
   gap: 10px;
 }
 
-.mailbox-settings-grid label {
+.mailbox-sync-grid {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) repeat(3, minmax(220px, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.mailbox-settings-grid label,
+.mailbox-sync-range {
   display: grid;
   gap: 6px;
   color: #4f5b53;
@@ -1015,7 +1049,8 @@
 
 .mailbox-settings-grid input,
 .mailbox-settings-grid select,
-.mailbox-settings-grid textarea {
+.mailbox-settings-grid textarea,
+.mailbox-sync-range select {
   min-height: 36px;
   background: #ffffff;
   font-size: 13px;
@@ -1026,34 +1061,165 @@
 }
 
 .mailbox-check {
-  display: flex !important;
-  min-height: 36px;
-  align-items: center;
-  gap: 8px;
+  display: grid !important;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-height: 72px;
+  align-items: start;
+  gap: 10px;
   border: 1px solid #d7dee8;
   border-radius: 8px;
   background: #ffffff;
-  padding: 0 10px;
+  padding: 11px 12px;
+  color: #17201b !important;
 }
 
 .mailbox-check input {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
   min-height: 0;
 }
 
-.mailbox-backend-warning {
-  border: 1px solid #f5b06b;
+.mailbox-check span {
+  display: grid;
+  gap: 3px;
+}
+
+.mailbox-check strong {
+  margin: 0;
+  color: #17201b;
+  font-size: 13px;
+}
+
+.mailbox-check small,
+.mailbox-helper-text {
+  color: #667269;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.oauth-setup-card {
+  border-color: #b6cff8;
+  background: #f7fbff;
+}
+
+.oauth-instructions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.oauth-instructions div {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #d6e6fb;
   border-radius: 8px;
-  background: #fff7ed;
-  color: #8a4300;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.oauth-instructions strong {
+  margin: 0;
+  font-size: 12px;
+}
+
+.oauth-instructions span {
+  color: #5c6b62;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.oauth-cheatsheet {
+  border: 1px solid #d6e6fb;
+  border-radius: 8px;
+  background: #ffffff;
   padding: 10px 12px;
+}
+
+.oauth-cheatsheet summary {
+  cursor: pointer;
+  color: #12345a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.oauth-cheatsheet ol {
+  display: grid;
+  gap: 7px;
+  margin: 12px 0 0 18px;
+  padding: 0;
+  color: #334238;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.copy-field-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.saved-pill,
+.pending-pill {
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.saved-pill {
+  background: #d9f7e5;
+  color: #126339;
+}
+
+.pending-pill {
+  background: #fff0c7;
+  color: #7a4a00;
+}
+
+.mailbox-readiness-card {
+  display: grid;
+  min-height: 62px;
+  gap: 3px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #f7faf7;
+  padding: 10px 12px;
+}
+
+.mailbox-readiness-card span {
+  color: #667269;
   font-size: 12px;
   font-weight: 800;
-  line-height: 1.45;
+}
+
+.mailbox-readiness-card strong {
+  color: #17201b;
+}
+
+.mailbox-readiness-card p {
+  margin: 0;
+  color: #667269;
+  font-size: 12px;
+}
+
+.mailbox-connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .logo-uploader {
   display: grid;
   gap: 12px;
+}
+
+.team-setup-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
 }
 
 .logo-preview {
@@ -1084,6 +1250,192 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.owner-account-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.owner-account-grid label {
+  display: grid;
+  gap: 8px;
+  color: #4f5b53;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.owner-account-summary {
+  display: grid;
+  min-height: 70px;
+  gap: 4px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+}
+
+.owner-account-summary span {
+  color: #667269;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.owner-account-summary strong,
+.owner-account-summary p {
+  overflow-wrap: anywhere;
+}
+
+.owner-account-summary p {
+  margin: 0;
+  color: #4f5b53;
+  font-size: 13px;
+}
+
+.owner-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.technician-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+.technician-toolbar label {
+  display: grid;
+  min-width: 220px;
+  gap: 8px;
+  color: #4f5b53;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.technician-list.compact {
+  gap: 8px;
+}
+
+.technician-list.compact .technician-row {
+  grid-template-columns: minmax(260px, 1fr) 92px 110px 78px auto;
+  align-items: center;
+  min-height: 58px;
+  padding: 10px 12px;
+}
+
+.technician-summary {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+}
+
+.technician-avatar,
+.technician-photo-preview {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #d7dee8;
+  background: #edf5ff;
+  color: #254173;
+  font-weight: 900;
+}
+
+.technician-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  font-size: 12px;
+}
+
+.technician-avatar img,
+.technician-photo-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.technician-summary h3,
+.technician-summary p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.technician-status {
+  display: inline-flex;
+  justify-content: center;
+  border-radius: 999px;
+  background: #e9f2ff;
+  color: #1f5da8;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.technician-status.disabled {
+  background: #eceff1;
+  color: #5c6368;
+}
+
+.technician-status.invited {
+  background: #fff0c6;
+  color: #7a5600;
+}
+
+.technician-modal {
+  max-width: 860px;
+}
+
+.technician-modal-form {
+  display: grid;
+  gap: 14px;
+}
+
+.technician-photo-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+}
+
+.technician-photo-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 12px;
+  font-size: 24px;
+}
+
+.technician-modal-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.technician-modal-fields label {
+  display: grid;
+  gap: 8px;
+  color: #4f5b53;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.technician-modal-fields label:last-child {
+  grid-column: 1 / -1;
+}
+
+.technician-modal-actions {
+  align-items: center;
 }
 
 .profile-fields label,
@@ -1213,8 +1565,51 @@
 
 .subscription-payment-fields {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
+}
+
+.subscription-safe-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  border: 1px solid #d6e6fb;
+  border-radius: 8px;
+  background: #f7fbff;
+  color: #4f5b53;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.square-billing-modal {
+  max-width: 720px;
+}
+
+.square-billing-form {
+  display: grid;
+  gap: 14px;
+}
+
+.square-billing-summary {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 12px;
+}
+
+.square-billing-summary span {
+  color: #627083;
+  font-size: 13px;
+}
+
+.square-card-container {
+  min-height: 92px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
 }
 
 .payment-token-warning {

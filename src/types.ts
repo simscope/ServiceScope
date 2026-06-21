@@ -132,13 +132,14 @@ export type CompanyTechnician = {
   name: string;
   email: string;
   phone: string;
+  photoUrl: string;
   accessPassword: string;
   role: CompanyTechnicianRole;
   status: CompanyTechnicianStatus;
   assignedJobs: number;
 };
 
-export type NewCompanyTechnicianForm = Pick<CompanyTechnician, 'name' | 'email' | 'phone' | 'accessPassword' | 'role'>;
+export type NewCompanyTechnicianForm = Pick<CompanyTechnician, 'name' | 'email' | 'phone' | 'photoUrl' | 'accessPassword' | 'role'>;
 
 export type CompanyJobType = {
   id: string;

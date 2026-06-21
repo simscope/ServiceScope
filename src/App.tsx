@@ -26,6 +26,8 @@ import {
   SlidersHorizontal,
   UserPlus,
   Users,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import {
   completeOnboardingStep,
@@ -65,7 +67,6 @@ import {
   listPlatformUsers,
   rolePermissions,
   savePlatformUsers,
-  SYSTEM_OWNER_ID,
   updatePlatformUserRole,
   updatePlatformUserStatus,
 } from './services/accessStore';
@@ -83,7 +84,11 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
-import { saveCompanyCoreToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
+import { resolveCurrentAuthSession, signInAndResolveSession } from './services/authBackend';
+import { saveUserAccess, type AccessActionMode } from './services/accessInvite';
+import { clearLegacyLocalBusinessData, loadOwnerWorkspaceFromBackend } from './services/backendData';
+import { saveCompanyCoreToBackend, saveCompanyOnboardingStepsToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
+import { getSupabaseAccessToken, isSupabaseConfigured, setSupabaseAccessToken, SUPABASE_AUTH_EXPIRED_CODE } from './services/supabaseRest';
 import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
@@ -143,6 +148,7 @@ import {
 } from './appSeeds';
 import type {
   AppPage,
+  AuthSession,
   ClientPage,
   CompanyOnboardingStepKey,
   EmailCompose,
@@ -167,24 +173,19 @@ import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 
-type AuthSession =
-  | { kind: 'owner'; userId: string; name: string; email: string }
-  | { kind: 'company'; companyId: string; name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
-
 const AUTH_STORAGE_KEY = 'servicescope.authSession';
-const DEMO_PASSWORD = 'demo123';
-
-function generateTemporaryPassword() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
-  const values = new Uint32Array(12);
-  crypto.getRandomValues(values);
-
-  return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
-}
 
 function readAuthSession(): AuthSession | null {
+  const hashParams = getAuthHashParams();
+  if (hashParams.has('error') || hashParams.has('access_token')) return null;
+
   const saved = window.localStorage.getItem(AUTH_STORAGE_KEY);
   if (!saved) return null;
+
+  if (!getSupabaseAccessToken()) {
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    return null;
+  }
 
   try {
     return JSON.parse(saved) as AuthSession;
@@ -193,22 +194,61 @@ function readAuthSession(): AuthSession | null {
   }
 }
 
+function getAuthHashParams() {
+  const hash = window.location.hash.replace(/^#/, '');
+  const authParams = hash.includes('#') ? hash.slice(hash.lastIndexOf('#') + 1) : hash;
+  return new URLSearchParams(authParams);
+}
+
+function getAuthLinkError() {
+  const hashParams = getAuthHashParams();
+  if (!hashParams.has('error')) return '';
+
+  const code = hashParams.get('error_code') ?? '';
+  const description = hashParams.get('error_description')?.replace(/\+/g, ' ') ?? '';
+
+  if (code === 'otp_expired') {
+    return 'This access link is expired or was already used. Send a new invite or reset link.';
+  }
+
+  return description || 'This access link is invalid. Send a new invite or reset link.';
+}
+
+function getFriendlyLoginError(error: unknown) {
+  const fallback = 'Email or password is incorrect.';
+  const message = error instanceof Error ? error.message : '';
+
+  if (!message) return fallback;
+
+  try {
+    const parsed = JSON.parse(message) as { error_code?: string; msg?: string; message?: string };
+    if (parsed.error_code === 'invalid_credentials' || parsed.msg?.toLowerCase().includes('invalid login')) {
+      return fallback;
+    }
+    return parsed.msg || parsed.message || fallback;
+  } catch {
+    const normalized = message.toLowerCase();
+    if (normalized.includes('invalid login credentials') || normalized.includes('invalid_credentials')) {
+      return fallback;
+    }
+    return message;
+  }
+}
+
 function AuthLogin({
-  companies,
-  onboardingProfiles,
-  platformUsers,
+  authNotice,
   onLogin,
 }: {
-  companies: Company[];
-  onboardingProfiles: CompanyOnboardingProfile[];
-  platformUsers: PlatformUser[];
+  authNotice: string;
   onLogin: (session: AuthSession) => void;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSigningIn, setIsSigningIn] = useState(false);
 
-  function submitLogin(event: FormEvent<HTMLFormElement>) {
+  async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
 
@@ -218,49 +258,21 @@ function AuthLogin({
       return;
     }
 
-    const user = platformUsers.find((candidate) => candidate.email.toLowerCase() === normalizedEmail && candidate.status === 'active');
-    if (user) {
-      if (password !== DEMO_PASSWORD) {
-        setError('Invalid owner password.');
-        return;
-      }
-      onLogin({ kind: 'owner', userId: user.id, name: user.name, email: user.email });
+    if (!isSupabaseConfigured()) {
+      setError('Sign in is not configured. Add Supabase environment variables.');
       return;
     }
 
-    for (const company of companies) {
-      if (company.ownerEmail.toLowerCase() === normalizedEmail) {
-        if (password !== company.temporaryPassword) {
-          setError('Invalid company temporary password.');
-          return;
-        }
-        onLogin({ kind: 'company', companyId: company.id, name: company.ownerName, email: company.ownerEmail, role: 'Admin' });
-        return;
-      }
-
-      const profile = onboardingProfiles.find((candidate) => candidate.companyId === company.id);
-      const technician = profile?.technicians.find((candidate) => candidate.email.toLowerCase() === normalizedEmail);
-      if (technician) {
-        if (technician.status === 'disabled') {
-          setError('Technician access is disabled.');
-          return;
-        }
-        if (password !== technician.accessPassword) {
-          setError('Invalid technician password.');
-          return;
-        }
-        onLogin({
-          kind: 'company',
-          companyId: company.id,
-          name: technician.name,
-          email: technician.email,
-          role: technician.role === 'manager' ? 'Manager' : 'Technician',
-        });
-        return;
-      }
+    setIsSigningIn(true);
+    try {
+      const session = await signInAndResolveSession(normalizedEmail, password);
+      onLogin(session);
+    } catch (error) {
+      setSupabaseAccessToken(null);
+      setError(getFriendlyLoginError(error));
+    } finally {
+      setIsSigningIn(false);
     }
-
-    setError('User not found. Check owner, company, manager, or technician email.');
   }
 
   return (
@@ -289,31 +301,41 @@ function AuthLogin({
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="owner@servicescope.app"
+              placeholder="email@company.com"
               autoComplete="email"
+              disabled={isSigningIn}
             />
           </label>
           <label>
             Password
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="demo123"
-              autoComplete="current-password"
-            />
+            <div className="password-input-shell">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Password"
+                autoComplete="current-password"
+                disabled={isSigningIn}
+              />
+              <button
+                className="password-visibility-button"
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                disabled={isSigningIn}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                title={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={18} aria-hidden="true" /> : <Eye size={18} aria-hidden="true" />}
+              </button>
+            </div>
           </label>
 
+          {authNotice ? <p className="login-error">{authNotice}</p> : null}
           {error ? <p className="login-error">{error}</p> : null}
 
-          <button className="primary-button" type="submit">
-            Sign in
+          <button className="primary-button" type="submit" disabled={isSigningIn}>
+            {isSigningIn ? 'Signing in...' : 'Sign in'}
           </button>
-
-          <div className="login-demo-hints">
-            <span>Platform owner: owner@servicescope.app / <strong>demo123</strong></span>
-            <span>Company owner: use the temporary password created by ServiceScope owner</span>
-          </div>
         </form>
       </div>
     </main>
@@ -362,9 +384,15 @@ export function App() {
   const [accessForm, setAccessForm] = useState<NewPlatformUserForm>(emptyAccessForm);
   const [page, setPage] = useState<AppPage>(initialPage);
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => readAuthSession());
+  const [authNotice, setAuthNotice] = useState(() => getAuthLinkError());
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | CompanyStatus>('all');
   const [auditFilter, setAuditFilter] = useState<'all' | AuditEventCategory>('all');
+  const [backendLoading, setBackendLoading] = useState(false);
+  const [backendLoaded, setBackendLoaded] = useState(false);
+  const [backendError, setBackendError] = useState('');
+  const [companyCreateStatus, setCompanyCreateStatus] = useState('');
+  const [ownerAccessStatusByCompany, setOwnerAccessStatusByCompany] = useState<Record<string, string>>({});
 
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId) ?? companies[0];
   const selectedOnboardingProfile = onboardingProfiles.find((profile) => profile.companyId === selectedCompany?.id);
@@ -372,10 +400,118 @@ export function App() {
   const openSupportCount = supportTickets.filter((ticket) => ticket.status !== 'resolved').length;
 
   useEffect(() => {
+    clearLegacyLocalBusinessData();
+  }, []);
+
+  useEffect(() => {
+    let ignore = false;
+
+    function processAuthCallback() {
+      const hashParams = getAuthHashParams();
+      const authError = getAuthLinkError();
+
+      if (authError) {
+        setAuthSession(null);
+        setSupabaseAccessToken(null);
+        window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        setAuthNotice(authError);
+        window.history.replaceState(null, '', '#login');
+        return;
+      }
+
+      const accessToken = hashParams.get('access_token');
+      if (!accessToken) return;
+
+      setSupabaseAccessToken(accessToken);
+      setAuthNotice('Opening your ServiceScope workspace...');
+
+      resolveCurrentAuthSession()
+        .then((session) => {
+          if (ignore) return;
+          setAuthNotice('');
+          handleLogin(session);
+        })
+        .catch((error) => {
+          if (ignore) return;
+          setSupabaseAccessToken(null);
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+          setAuthSession(null);
+          setAuthNotice(error instanceof Error ? error.message : 'Could not open this access link.');
+          window.history.replaceState(null, '', '#login');
+        });
+    }
+
+    processAuthCallback();
+    window.addEventListener('hashchange', processAuthCallback);
+
+    return () => {
+      ignore = true;
+      window.removeEventListener('hashchange', processAuthCallback);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!authSession || getSupabaseAccessToken()) return;
+
+    setAuthSession(null);
+    window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    window.history.replaceState(null, '', '#login');
+  }, [authSession]);
+
+  useEffect(() => {
+    if (!authSession) return;
+
+    let ignore = false;
+    setBackendLoading(true);
+    setBackendLoaded(false);
+    setBackendError('');
+
+    loadOwnerWorkspaceFromBackend()
+      .then(({ companies: backendCompanies, onboardingProfiles: backendProfiles }) => {
+        if (ignore) return;
+        setCompanies(backendCompanies);
+        setOnboardingProfiles(backendProfiles);
+        setSupportTickets([]);
+        setAuditEvents([]);
+        setCompanyCreateStatus('');
+        setSelectedCompanyId((currentId) => {
+          if (backendCompanies.some((company) => company.id === currentId)) return currentId;
+          if (authSession.kind === 'company' && backendCompanies.some((company) => company.id === authSession.companyId)) {
+            return authSession.companyId;
+          }
+          return backendCompanies[0]?.id ?? '';
+        });
+      })
+      .catch((error) => {
+        if (ignore) return;
+        if (error instanceof Error && error.name === SUPABASE_AUTH_EXPIRED_CODE) {
+          setAuthSession(null);
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+          window.history.replaceState(null, '', '#login');
+          setBackendError('');
+          return;
+        }
+        setBackendError(error instanceof Error ? error.message : 'Failed to load Supabase data.');
+      })
+      .finally(() => {
+        if (!ignore) {
+          setBackendLoaded(true);
+          setBackendLoading(false);
+        }
+      });
+
+    return () => {
+      ignore = true;
+    };
+  }, [authSession]);
+
+  useEffect(() => {
     if (!authSession) return;
 
     if (authSession.kind === 'company') {
       const companyExists = companies.some((company) => company.id === authSession.companyId);
+      if (!companyExists && !backendLoaded) return;
+
       if (!companyExists) {
         setAuthSession(null);
         window.localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -396,7 +532,7 @@ export function App() {
       setPage('dashboard');
       window.history.replaceState(null, '', '#dashboard');
     }
-  }, [authSession, companies, page]);
+  }, [authSession, backendLoaded, companies, page]);
 
   const totals = useMemo(() => {
     return companies.reduce(
@@ -433,12 +569,25 @@ export function App() {
     saveCompanies(nextCompanies);
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!form.name.trim() || !form.ownerEmail.trim() || !form.temporaryPassword.trim()) return;
+    if (!form.name.trim() || !form.ownerEmail.trim()) return;
 
     const nextCompany = createCompany(form);
     const nextProfile = createDefaultCompanyOnboardingProfile(nextCompany);
+
+    setCompanyCreateStatus('Saving company...');
+    setBackendError('');
+
+    try {
+      await saveOnboardingProfileToBackend(nextCompany, nextProfile, null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save company to Supabase.';
+      setCompanyCreateStatus(message);
+      setBackendError(message);
+      return;
+    }
+
     persist([nextCompany, ...companies]);
     const nextProfiles = [
       ...onboardingProfiles,
@@ -446,9 +595,6 @@ export function App() {
     ];
     setOnboardingProfiles(nextProfiles);
     saveCompanyOnboardingProfiles(nextProfiles);
-    saveOnboardingProfileToBackend(nextCompany, nextProfile, null).catch((error) => {
-      console.error('Failed to save company onboarding to backend', error);
-    });
     recordAudit({
       category: 'tenant',
       action: 'company.created',
@@ -458,6 +604,7 @@ export function App() {
     });
     setSelectedCompanyId(nextCompany.id);
     setForm(emptyCompany);
+    setCompanyCreateStatus('Company saved.');
   }
 
   function updateCompany(companyId: string, updater: (company: Company) => Company) {
@@ -465,7 +612,10 @@ export function App() {
     persist(nextCompanies);
     const nextCompany = nextCompanies.find((company) => company.id === companyId);
     if (nextCompany) {
-      saveCompanyCoreToBackend(nextCompany).catch((error) => {
+      Promise.all([
+        saveCompanyCoreToBackend(nextCompany),
+        saveCompanyOnboardingStepsToBackend(nextCompany),
+      ]).catch((error) => {
         console.error('Failed to save company to backend', error);
       });
     }
@@ -488,7 +638,52 @@ export function App() {
     });
   }
 
+  async function sendCompanyOwnerAccess(company: Company, mode: AccessActionMode, password: string) {
+    if (!company.ownerEmail.trim()) {
+      setOwnerAccessStatusByCompany((statuses) => ({ ...statuses, [company.id]: 'Owner email is required.' }));
+      return;
+    }
+
+    if (password.trim().length < 6) {
+      setOwnerAccessStatusByCompany((statuses) => ({ ...statuses, [company.id]: 'Password must be at least 6 characters.' }));
+      return;
+    }
+
+    setOwnerAccessStatusByCompany((statuses) => ({ ...statuses, [company.id]: 'Saving access...' }));
+
+    try {
+      const result = await saveUserAccess({
+        email: company.ownerEmail,
+        password,
+        name: company.ownerName,
+        companyId: company.id,
+        role: 'admin',
+        mode,
+      });
+      const message =
+        result.action === 'access_created'
+          ? 'Access created. Share this email and password with the company owner.'
+          : result.action === 'access_updated'
+            ? 'Access already existed. Password was updated.'
+            : 'Password was reset.';
+      setOwnerAccessStatusByCompany((statuses) => ({ ...statuses, [company.id]: message }));
+      recordAudit({
+        category: 'tenant',
+        action: mode === 'create' ? 'company.owner_access_created' : 'company.owner_password_reset',
+        actor: 'ServiceScope Owner',
+        resource: company.name,
+        details: `${message} ${company.ownerEmail}`,
+      });
+    } catch (error) {
+      setOwnerAccessStatusByCompany((statuses) => ({
+        ...statuses,
+        [company.id]: error instanceof Error ? error.message : 'Access email failed.',
+      }));
+    }
+  }
+
   function handleLogin(session: AuthSession) {
+    setAuthNotice('');
     setAuthSession(session);
     window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
     if (session.kind === 'company') {
@@ -502,6 +697,7 @@ export function App() {
 
   function handleSignOut() {
     setAuthSession(null);
+    setSupabaseAccessToken(null);
     window.localStorage.removeItem(AUTH_STORAGE_KEY);
     window.history.replaceState(null, '', '#login');
   }
@@ -533,12 +729,7 @@ export function App() {
 
   if (!authSession) {
     return (
-      <AuthLogin
-        companies={companies}
-        onboardingProfiles={onboardingProfiles}
-        platformUsers={platformUsers}
-        onLogin={handleLogin}
-      />
+      <AuthLogin authNotice={authNotice} onLogin={handleLogin} />
     );
   }
 
@@ -548,7 +739,7 @@ export function App() {
         <CompanyPortal
           selectedCompany={selectedCompany}
           onboardingProfile={selectedOnboardingProfile}
-          signedInUser={{ name: authSession.name, role: authSession.role }}
+          signedInUser={{ name: authSession.name, email: authSession.email, role: authSession.role }}
           tickets={supportTickets.filter((ticket) => ticket.companyId === selectedCompany?.id)}
           onSignOut={handleSignOut}
           onUpdateOnboardingProfile={(nextProfile) => {
@@ -630,6 +821,12 @@ export function App() {
           </button>
         </header>
 
+        {backendLoading ? (
+          <div className="backend-status">Loading Supabase workspace...</div>
+        ) : backendError ? (
+          <div className="backend-status error">{backendError}</div>
+        ) : null}
+
         {page === 'dashboard' ? (
           <>
         <section className="metrics-grid" aria-label="Platform metrics">
@@ -661,41 +858,23 @@ export function App() {
             <form className="company-form" onSubmit={handleSubmit}>
               <label>
                 Company name
-                <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Bright Air Services" />
+                <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Company name" />
               </label>
               <label>
                 Owner name
-                <input value={form.ownerName} onChange={(event) => setForm({ ...form, ownerName: event.target.value })} placeholder="Jordan Lee" />
+                <input value={form.ownerName} onChange={(event) => setForm({ ...form, ownerName: event.target.value })} placeholder="Owner full name" />
               </label>
               <label>
                 Owner email
-                <input type="email" value={form.ownerEmail} onChange={(event) => setForm({ ...form, ownerEmail: event.target.value })} placeholder="owner@company.com" />
-              </label>
-              <label>
-                Temporary password
-                <div className="password-field-row">
-                  <input
-                    type="text"
-                    value={form.temporaryPassword}
-                    onChange={(event) => setForm({ ...form, temporaryPassword: event.target.value })}
-                    placeholder="Set temporary password"
-                  />
-                  <button
-                    className="secondary-button compact"
-                    type="button"
-                    onClick={() => setForm({ ...form, temporaryPassword: generateTemporaryPassword() })}
-                  >
-                    Generate
-                  </button>
-                </div>
+                <input type="email" value={form.ownerEmail} onChange={(event) => setForm({ ...form, ownerEmail: event.target.value })} placeholder="Owner email" />
               </label>
               <label>
                 Tenant domain
-                <input value={form.domain} onChange={(event) => setForm({ ...form, domain: event.target.value })} placeholder="brightair.servicescope.app" />
+                <input value={form.domain} onChange={(event) => setForm({ ...form, domain: event.target.value })} placeholder="Company domain" />
               </label>
               <label>
                 Market
-                <input value={form.market} onChange={(event) => setForm({ ...form, market: event.target.value })} placeholder="Brooklyn, NY" />
+                <input value={form.market} onChange={(event) => setForm({ ...form, market: event.target.value })} placeholder="Service area" />
               </label>
               <div className="form-row">
                 <label>
@@ -720,6 +899,7 @@ export function App() {
                 <Plus size={18} aria-hidden="true" />
                 Add company
               </button>
+              {companyCreateStatus ? <p className="access-status">{companyCreateStatus}</p> : null}
             </form>
           </section>
 
@@ -769,16 +949,8 @@ export function App() {
               company={selectedCompany}
               onPrepareNext={() => prepareNextStep(selectedCompany.id)}
               onCompleteStep={(step) => updateCompany(selectedCompany.id, (company) => completeOnboardingStep(company, step))}
-              onSetTemporaryPassword={(temporaryPassword) => {
-                updateCompany(selectedCompany.id, (company) => ({ ...company, temporaryPassword, lastSync: 'Access updated' }));
-                recordAudit({
-                  category: 'access',
-                  action: 'company.password_reset',
-                  actor: 'ServiceScope Owner',
-                  resource: selectedCompany.name,
-                  details: `Temporary password updated for ${selectedCompany.ownerEmail}.`,
-                });
-              }}
+              onSaveOwnerAccess={(mode, password) => sendCompanyOwnerAccess(selectedCompany, mode, password)}
+              ownerInviteStatus={ownerAccessStatusByCompany[selectedCompany.id] ?? ''}
             />
           ) : null}
         </div>

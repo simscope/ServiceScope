@@ -47,6 +47,7 @@ export const emptyTechnicianForm: NewCompanyTechnicianForm = {
   name: '',
   email: '',
   phone: '',
+  photoUrl: '',
   accessPassword: '',
   role: 'technician',
 };

@@ -1,0 +1,23 @@
+[functions.access-invite]
+verify_jwt = true
+
+[functions.mailbox-connect]
+verify_jwt = true
+
+[functions.mailbox-oauth-settings]
+verify_jwt = true
+
+[functions.mailbox-sync]
+verify_jwt = true
+
+[functions.mailbox-send]
+verify_jwt = true
+
+[functions.billing-connect]
+verify_jwt = true
+
+[functions.billing-confirm]
+verify_jwt = true
+
+[functions.mailbox-oauth-callback]
+verify_jwt = false

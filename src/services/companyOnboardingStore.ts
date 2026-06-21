@@ -8,7 +8,6 @@ import type {
   NewCompanyTechnicianForm,
 } from '../types';
 
-const STORAGE_KEY = 'servicescope.v2.companyOnboardingProfiles';
 const validPaymentMethods: CompanyPaymentMethod[] = [
   'ach',
   'zelle',
@@ -35,6 +34,7 @@ function makeTechnicians(company: Company): CompanyTechnician[] {
     name: `Technician ${index + 1}`,
     email: `tech${index + 1}@${company.domain || 'company.local'}`,
     phone: '',
+    photoUrl: '',
     accessPassword: '',
     role: 'technician',
     status: 'active',
@@ -145,6 +145,14 @@ function makeWebsite(value: string) {
   return `${protocol}${address}`;
 }
 
+function savedWebsiteOrCompanyWebsite(savedWebsite: string | undefined, company: Company) {
+  const normalizedSavedWebsite = makeWebsite(savedWebsite ?? '');
+  const normalizedCompanyWebsite = makeWebsite(company.domain);
+  const legacyPlaceholder = !normalizedSavedWebsite || normalizedSavedWebsite === 'https://company.com';
+
+  return legacyPlaceholder ? normalizedCompanyWebsite : normalizedSavedWebsite;
+}
+
 export function createDefaultCompanyOnboardingProfile(company: Company): CompanyOnboardingProfile {
   return {
     companyId: company.id,
@@ -230,6 +238,7 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
 
     return {
       ...technician,
+      photoUrl: technician.photoUrl ?? '',
       accessPassword: technician.accessPassword ?? legacyTechnician.temporaryPassword ?? '',
     };
   });
@@ -238,7 +247,7 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
     ...createDefaultCompanyOnboardingProfile(company),
     ...profile,
     companyId: company.id,
-    website: makeWebsite(profile.website ?? company.domain),
+    website: savedWebsiteOrCompanyWebsite(profile.website, company),
     acceptedPayments: acceptedPayments.length ? acceptedPayments : ['ach', 'zelle', 'credit_card', 'check', 'cash'],
     achAccountNumber: profile.achAccountNumber ?? legacyProfile.achAccountLast4 ?? '',
     subscriptionPaymentStatus: profile.subscriptionPaymentStatus ?? (company.billingStatus === 'paid' ? 'active' : 'not_connected'),
@@ -262,31 +271,18 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
 }
 
 export function listCompanyOnboardingProfiles(companies: Company[]) {
-  const saved = window.localStorage.getItem(STORAGE_KEY);
-
-  try {
-    const profiles = saved ? (JSON.parse(saved) as Partial<CompanyOnboardingProfile>[]) : [];
-    const normalizedProfiles = companies
-      .filter((company) => profiles.some((profile) => profile.companyId === company.id))
-      .map((company) => normalizeProfile(profiles.find((profile) => profile.companyId === company.id) ?? {}, company));
-    const missingProfiles = companies
-      .filter((company) => !normalizedProfiles.some((profile) => profile.companyId === company.id))
-      .map(createDefaultCompanyOnboardingProfile);
-
-    return [...normalizedProfiles, ...missingProfiles];
-  } catch {
-    return companies.map(createDefaultCompanyOnboardingProfile);
-  }
+  return companies.map(createDefaultCompanyOnboardingProfile);
 }
 
 export function saveCompanyOnboardingProfiles(profiles: CompanyOnboardingProfile[]) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+  void profiles;
 }
 
 export function createCompanyTechnician(form: NewCompanyTechnicianForm): CompanyTechnician {
   return {
     id: crypto.randomUUID(),
     ...form,
+    photoUrl: form.photoUrl ?? '',
     status: 'invited',
     assignedJobs: 0,
   };

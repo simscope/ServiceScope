@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent, PointerEvent } from 'react';
 import {
   Activity,
@@ -42,6 +42,7 @@ import {
   updateSupportTicketStatus,
 } from './services/supportStore';
 import { applyPlan, plans } from './services/billingCatalog';
+import { confirmSubscriptionBillingSetup, startSubscriptionBillingSetup } from './services/billingConnector';
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CalendarPage } from './components/portal/CalendarPage';
@@ -88,7 +89,18 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
-import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
+import { saveUserAccess, type AccessActionMode } from './services/accessInvite';
+import { uploadCompanyLogo } from './services/companyAssets';
+import { startMailboxConnection } from './services/mailboxConnector';
+import {
+  loadMailboxEmailConnection,
+  loadMailboxOAuthSettings,
+  mailboxOAuthRedirectUrl,
+  saveMailboxOAuthSettings,
+} from './services/mailboxOAuthSettings';
+import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
+import { sendMailboxEmail } from './services/mailboxSend';
+import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
@@ -149,6 +161,7 @@ import type {
   ClientPage,
   CompanyOnboardingStepKey,
   EmailCompose,
+  EmailComposeAttachment,
   EmailConnection,
   EmailFolder,
   EmailMessage,
@@ -169,6 +182,213 @@ import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
+const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
+const clientPageValues: ClientPage[] = ['onboarding', 'jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
+
+type SquareCard = {
+  attach: (selector: string) => Promise<void>;
+  tokenize: (details: Record<string, unknown>) => Promise<{
+    status: string;
+    token?: string;
+    errors?: Array<{ message?: string; detail?: string }>;
+  }>;
+  destroy?: () => Promise<void>;
+};
+
+type SquarePayments = {
+  card: () => Promise<SquareCard>;
+};
+
+declare global {
+  interface Window {
+    Square?: {
+      payments: (applicationId: string, locationId: string) => SquarePayments;
+    };
+  }
+}
+
+function readSavedClientPage(): ClientPage {
+  const saved = window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY);
+  return clientPageValues.includes(saved as ClientPage) ? saved as ClientPage : 'jobs';
+}
+
+function loadSquareScript(environment: 'sandbox' | 'production') {
+  const scriptUrl = environment === 'production'
+    ? 'https://web.squarecdn.com/v1/square.js'
+    : 'https://sandbox.web.squarecdn.com/v1/square.js';
+
+  const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${scriptUrl}"]`);
+  if (existingScript) {
+    return new Promise<void>((resolve, reject) => {
+      if (window.Square) {
+        resolve();
+        return;
+      }
+      existingScript.addEventListener('load', () => resolve(), { once: true });
+      existingScript.addEventListener('error', () => reject(new Error('Square.js failed to load.')), { once: true });
+    });
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = scriptUrl;
+    script.async = true;
+    script.addEventListener('load', () => resolve(), { once: true });
+    script.addEventListener('error', () => reject(new Error('Square.js failed to load.')), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+function SquareBillingModal({
+  activeCompany,
+  profile,
+  onClose,
+  onConnected,
+}: {
+  activeCompany: Company;
+  profile: CompanyOnboardingProfile;
+  onClose: () => void;
+  onConnected: (updates: Partial<CompanyOnboardingProfile>, status: string) => void;
+}) {
+  const cardRef = useRef<SquareCard | null>(null);
+  const [status, setStatus] = useState('Loading Square card form...');
+  const [submitting, setSubmitting] = useState(false);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function setupSquareCard() {
+      try {
+        const config = await startSubscriptionBillingSetup({
+          companyId: activeCompany.id,
+          billingName: profile.subscriptionBillingName || activeCompany.ownerName || activeCompany.name,
+          billingZip: profile.subscriptionBillingZip,
+          email: profile.billingEmail || activeCompany.ownerEmail,
+        });
+
+        await loadSquareScript(config.environment);
+        if (!window.Square) {
+          throw new Error('Square.js is not available.');
+        }
+
+        const payments = window.Square.payments(config.applicationId, config.locationId);
+        const card = await payments.card();
+        if (cancelled) {
+          await card.destroy?.();
+          return;
+        }
+
+        await card.attach('#square-card-container');
+        cardRef.current = card;
+        setReady(true);
+        setStatus('Enter a card to connect automatic billing.');
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : 'Square card form failed to load.');
+      }
+    }
+
+    setupSquareCard();
+
+    return () => {
+      cancelled = true;
+      void cardRef.current?.destroy?.();
+      cardRef.current = null;
+    };
+  }, [activeCompany.id]);
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!cardRef.current || submitting) return;
+
+    setSubmitting(true);
+    setStatus('Saving card in Square...');
+
+    try {
+      const tokenResult = await cardRef.current.tokenize({
+        intent: 'STORE',
+        customerInitiated: true,
+        sellerKeyedIn: false,
+        currencyCode: 'USD',
+        billingContact: {
+          givenName: profile.subscriptionBillingName || activeCompany.ownerName || activeCompany.name,
+          email: profile.billingEmail || activeCompany.ownerEmail,
+          addressLines: profile.serviceAddress ? [profile.serviceAddress] : [],
+          postalCode: profile.subscriptionBillingZip || undefined,
+          countryCode: 'US',
+        },
+      });
+
+      if (tokenResult.status !== 'OK' || !tokenResult.token) {
+        const detail = tokenResult.errors?.map((error) => error.message || error.detail).filter(Boolean).join(' ');
+        throw new Error(detail || 'Square could not tokenize this card.');
+      }
+
+      const result = await confirmSubscriptionBillingSetup({
+        companyId: activeCompany.id,
+        sourceId: tokenResult.token,
+        billingName: profile.subscriptionBillingName || activeCompany.ownerName || activeCompany.name,
+        billingZip: profile.subscriptionBillingZip,
+        email: profile.billingEmail || activeCompany.ownerEmail,
+      });
+
+      onConnected({
+        subscriptionPaymentStatus: 'active',
+        subscriptionCardBrand: result.brand,
+        subscriptionCardLast4: result.last4,
+        subscriptionCardExpMonth: result.expMonth,
+        subscriptionCardExpYear: result.expYear,
+        subscriptionBillingName: result.billingName || profile.subscriptionBillingName,
+        subscriptionBillingZip: result.billingZip || profile.subscriptionBillingZip,
+        autoPayEnabled: true,
+      }, 'Square payment method connected.');
+      onClose();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Square billing setup failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="email-message-modal-backdrop" role="presentation" onClick={onClose}>
+      <section className="email-message-modal square-billing-modal" role="dialog" aria-modal="true" aria-label="Connect Square billing" onClick={(event) => event.stopPropagation()}>
+        <div className="email-message-detail-header">
+          <div>
+            <p className="eyebrow">ServiceScope subscription</p>
+            <h2>Connect Square card</h2>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        <form className="square-billing-form" onSubmit={handleSubmit}>
+          <div className="square-billing-summary">
+            <strong>{activeCompany.plan} plan</strong>
+            <span>ServiceScope will use this card for automatic monthly charges.</span>
+          </div>
+
+          <div id="square-card-container" className="square-card-container" />
+
+          <p className="subscription-safe-note">
+            Card entry is handled by Square. ServiceScope stores only the Square card id and card summary.
+          </p>
+          {status ? <p className="access-status">{status}</p> : null}
+
+          <div className="email-message-modal-actions">
+            <button className="secondary-button" type="button" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="primary-button" type="submit" disabled={!ready || submitting}>
+              {submitting ? 'Saving card...' : 'Save Square card'}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
 
 export function CompanyLogin({
   companies,
@@ -206,7 +426,7 @@ export function CompanyLogin({
 
         <label>
           Owner email
-          <input type="email" value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="owner@company.com" />
+          <input type="email" value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="Owner email" />
         </label>
 
         <div className="login-company-list">
@@ -235,6 +455,52 @@ export function CompanyLogin({
   );
 }
 
+function makeCompanyEmailDomain(company: Company) {
+  const rawDomain = company.domain?.trim();
+  if (rawDomain) {
+    try {
+      const url = new URL(rawDomain.startsWith('http') ? rawDomain : `https://${rawDomain}`);
+      return url.hostname.replace(/^www\./, '');
+    } catch {
+      return rawDomain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+    }
+  }
+
+  return `${company.name.toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/^$/, 'company')}.com`;
+}
+
+function makeDefaultEmailConnection(
+  company: Company,
+  profile: CompanyOnboardingProfile,
+  provider: EmailProvider,
+): EmailConnection {
+  const domain = makeCompanyEmailDomain(company);
+  const address = provider === 'smtp' ? `dispatch@${domain}` : '';
+
+  return {
+    provider,
+    address,
+    status: 'backend_required',
+    oauthClientId: '',
+    oauthClientSecretSaved: false,
+    oauthRedirectUrl: mailboxOAuthRedirectUrl,
+    lastSync: 'Not synced',
+    syncRange: '30',
+    autoLinkJobNumber: true,
+    autoLinkClientEmail: true,
+    createTaskFromUnread: true,
+    senderName: profile.displayName || company.name,
+    replyTo: address,
+    signature: `${profile.displayName || company.name}\n${profile.phone || profile.billingEmail || company.ownerEmail}`,
+    imapHost: provider === 'smtp' ? `imap.${domain}` : '',
+    imapPort: provider === 'smtp' ? '993' : '',
+    smtpHost: provider === 'smtp' ? `smtp.${domain}` : '',
+    smtpPort: provider === 'smtp' ? '587' : '',
+    security: provider === 'smtp' ? 'tls' : 'ssl',
+    username: provider === 'smtp' ? address : '',
+  };
+}
+
 export function CompanyPortal({
   selectedCompany,
   onboardingProfile,
@@ -246,13 +512,13 @@ export function CompanyPortal({
 }: {
   selectedCompany?: Company;
   onboardingProfile?: CompanyOnboardingProfile;
-  signedInUser?: { name: string; role: 'Manager' | 'Admin' | 'Technician' };
+  signedInUser?: { name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
   tickets: SupportTicket[];
   onSignOut: () => void;
   onUpdateOnboardingProfile: (profile: CompanyOnboardingProfile) => void;
   onCreateRequest: (request: Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>) => void;
 }) {
-  const [clientPage, setClientPage] = useState<ClientPage>('jobs');
+  const [clientPage, setClientPage] = useState<ClientPage>(() => readSavedClientPage());
   const [request, setRequest] = useState<Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>>({
     kind: 'change',
     priority: 'normal',
@@ -260,6 +526,11 @@ export function CompanyPortal({
     message: '',
   });
   const [technicianForm, setTechnicianForm] = useState<NewCompanyTechnicianForm>(emptyTechnicianForm);
+  const [technicianAccessStatusById, setTechnicianAccessStatusById] = useState<Record<string, string>>({});
+  const [technicianAccessPasswordById, setTechnicianAccessPasswordById] = useState<Record<string, string>>({});
+  const [ownerAccessPassword, setOwnerAccessPassword] = useState('');
+  const [ownerAccessPasswordConfirm, setOwnerAccessPasswordConfirm] = useState('');
+  const [ownerAccessStatus, setOwnerAccessStatus] = useState('');
   const [jobTypeForm, setJobTypeForm] = useState<NewCompanyJobTypeForm>(emptyJobTypeForm);
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
@@ -289,13 +560,27 @@ export function CompanyPortal({
   const [mapStatusFilter, setMapStatusFilter] = useState('all');
   const [mapSearch, setMapSearch] = useState('');
   const [emailConnection, setEmailConnection] = useState<EmailConnection | null>(null);
+  const [mailboxConnectStatus, setMailboxConnectStatus] = useState('');
+  const [mailboxOAuthSecretDraft, setMailboxOAuthSecretDraft] = useState('');
+  const [mailboxOAuthStatus, setMailboxOAuthStatus] = useState('');
   const [emailFolder, setEmailFolder] = useState<EmailFolder>('inbox');
   const [emailSearch, setEmailSearch] = useState('');
+  const [emailMessages, setEmailMessages] = useState<EmailMessage[]>([]);
+  const [mailboxSyncLimit, setMailboxSyncLimit] = useState(25);
+  const [mailboxSyncing, setMailboxSyncing] = useState(false);
+  const [billingStatus, setBillingStatus] = useState('');
+  const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const mailboxSyncingRef = useRef(false);
+  const onboardingSaveQueueRef = useRef(Promise.resolve());
   const [emailCompose, setEmailCompose] = useState<EmailCompose>({
     to: '',
     subject: '',
     body: '',
     jobNumber: '',
+    includeSignature: true,
+    includePaymentBlock: false,
+    signatureText: '',
+    paymentBlockText: '',
   });
   const [financePeriod, setFinancePeriod] = useState<FinancePeriod>('this_month');
   const [financeTechFilter, setFinanceTechFilter] = useState('all');
@@ -321,12 +606,80 @@ export function CompanyPortal({
     fileName: '',
   });
 
+  const selectedCompanyId = selectedCompany?.id ?? '';
   const defaultTechnicianName = onboardingProfile?.technicians[0]?.name ?? 'No technician';
 
   useEffect(() => {
     if (!selectedCompany) return;
     setJobs(listCompanyJobs(selectedCompany.id, defaultTechnicianName));
   }, [defaultTechnicianName, selectedCompany]);
+
+  useEffect(() => {
+    window.localStorage.setItem(CLIENT_PAGE_STORAGE_KEY, clientPage);
+  }, [clientPage]);
+
+  useEffect(() => {
+    if (!selectedCompany) {
+      setEmailConnection(null);
+      setMailboxOAuthSecretDraft('');
+      setMailboxOAuthStatus('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    const company = selectedCompany;
+    const currentProfile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(company);
+
+    async function loadMailboxSettings() {
+      try {
+        const [savedConnection, oauthSettings] = await Promise.all([
+          loadMailboxEmailConnection(company.id),
+          loadMailboxOAuthSettings(company.id),
+        ]);
+
+        if (cancelled) return;
+
+        const savedOAuth = savedConnection
+          ? savedConnection.provider !== 'smtp'
+            ? oauthSettings.find((settings) => settings.provider === savedConnection.provider)
+            : undefined
+          : oauthSettings[0];
+
+        if (!savedConnection && !savedOAuth) {
+          setEmailConnection(null);
+          setMailboxOAuthSecretDraft('');
+          setMailboxOAuthStatus('');
+          setMailboxConnectStatus('');
+          return;
+        }
+
+        const baseConnection =
+          savedConnection ??
+          makeDefaultEmailConnection(company, currentProfile, savedOAuth?.provider ?? 'google');
+        const nextConnection: EmailConnection = {
+          ...baseConnection,
+          oauthClientId: savedOAuth?.clientId ?? baseConnection.oauthClientId,
+          oauthClientSecretSaved: savedOAuth?.clientSecretSaved ?? baseConnection.oauthClientSecretSaved,
+          oauthRedirectUrl: savedOAuth?.redirectUrl ?? baseConnection.oauthRedirectUrl,
+        };
+
+        setEmailConnection(nextConnection);
+        setMailboxOAuthSecretDraft('');
+        setMailboxOAuthStatus(savedOAuth ? 'OAuth settings loaded.' : '');
+        setMailboxConnectStatus(nextConnection.status === 'connected' ? '' : '');
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load mailbox settings', error);
+        setMailboxOAuthStatus(error instanceof Error ? error.message : 'Mailbox settings could not be loaded.');
+      }
+    }
+
+    void loadMailboxSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCompanyId]);
 
   useEffect(() => {
     if (!resizingJob) return undefined;
@@ -363,6 +716,69 @@ export function CompanyPortal({
     };
   }, [resizingJob]);
 
+  async function syncConnectedMailboxMessages(companyId: string, limit = mailboxSyncLimit) {
+    if (mailboxSyncingRef.current) {
+      setMailboxConnectStatus('Mailbox sync is already running. Wait a moment.');
+      return;
+    }
+
+    mailboxSyncingRef.current = true;
+    setMailboxSyncing(true);
+
+    try {
+      const savedMessages = await loadMailboxMessages(companyId);
+      setEmailMessages(savedMessages);
+      setMailboxConnectStatus('Syncing mailbox...');
+
+      const result = await syncMailboxMessages(companyId, limit);
+      const syncedMessages = await loadMailboxMessages(companyId);
+      setEmailMessages(syncedMessages);
+
+      if (result.count) {
+        setMailboxConnectStatus(`Synced ${result.count} messages (${result.inbox} inbox, ${result.sent} sent).`);
+      } else {
+        setMailboxConnectStatus('Mailbox synced. No messages found.');
+      }
+    } finally {
+      mailboxSyncingRef.current = false;
+      setMailboxSyncing(false);
+    }
+  }
+
+  const loadMoreMailboxMessages = () => {
+    if (!selectedCompanyId || mailboxSyncingRef.current) return;
+    const nextLimit = Math.min(100, mailboxSyncLimit + 25);
+    setMailboxSyncLimit(nextLimit);
+    syncConnectedMailboxMessages(selectedCompanyId, nextLimit).catch((error) => {
+      setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox sync failed.');
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedCompanyId || emailConnection?.status !== 'connected') {
+      setEmailMessages([]);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    async function loadAndSyncMessages() {
+      try {
+        await syncConnectedMailboxMessages(selectedCompanyId);
+        if (cancelled) return;
+      } catch (error) {
+        if (cancelled) return;
+        setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox sync failed.');
+      }
+    }
+
+    void loadAndSyncMessages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [emailConnection?.status, selectedCompanyId]);
+
   if (!selectedCompany) {
     return (
       <div className="empty-state">
@@ -377,10 +793,59 @@ export function CompanyPortal({
   const completedSteps = Object.values(activeCompany.onboarding).filter((step) => step === 'done').length;
   const openTickets = tickets.filter((ticket) => ticket.status !== 'resolved');
   const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(activeCompany);
+  const generatedCompanyEmailSignature = [
+    '--',
+    profile.displayName || activeCompany.name,
+    profile.serviceAddress,
+    profile.phone ? `Phone: ${profile.phone}` : '',
+    profile.website ? `Website: ${profile.website}` : '',
+    'HVAC and Appliance Repair',
+    profile.serviceArea ? `Services Licensed & Insured | Serving ${profile.serviceArea}` : 'Services Licensed & Insured',
+  ].filter(Boolean).join('\n');
+  const companyEmailSignature = emailConnection?.signature.trim() || generatedCompanyEmailSignature;
+  const paymentLines = profile.acceptedPayments.flatMap((method) => {
+    if (method === 'zelle') return [`Zelle: ${profile.zelleContact || profile.billingEmail || emailConnection?.address || activeCompany.ownerEmail}`];
+    if (method === 'ach') {
+      return [
+        'ACH Transfer',
+        profile.achAccountNumber ? `Account number: ${profile.achAccountNumber}` : '',
+        profile.achRoutingNumber ? `Routing number: ${profile.achRoutingNumber}` : '',
+      ].filter(Boolean);
+    }
+    if (method === 'credit_card') return ['Credit Card'];
+    if (method === 'debit_card') return ['Debit Card'];
+    if (method === 'check') return [`Check payable to: ${profile.achAccountName || profile.legalName || activeCompany.name}`];
+    if (method === 'cash') return ['Cash'];
+    if (method === 'paypal') return [`PayPal: ${profile.paypalEmail || profile.billingEmail || emailConnection?.address || activeCompany.ownerEmail}`];
+    if (method === 'venmo') return [`Venmo: ${profile.venmoContact || 'available on request'}`];
+    if (method === 'cash_app') return [`Cash App: ${profile.cashAppCashtag || 'available on request'}`];
+    if (method === 'stripe') return ['Stripe payment link available on request'];
+    if (method === 'square') return ['Square invoice/payment link available on request'];
+    if (method === 'wire_transfer') return ['Wire transfer details available on request'];
+    if (method === 'apple_pay') return ['Apple Pay available'];
+    if (method === 'google_pay') return ['Google Pay available'];
+    if (method === 'financing') return ['Financing options available on request'];
+    return [paymentMethodLabels[method]];
+  });
+  const companyPaymentBlock = [
+    'Payment Options:',
+    ...paymentLines,
+    profile.serviceAddress ? `Mailing address: ${profile.serviceAddress}` : '',
+    profile.paymentNotes,
+  ].filter(Boolean).join('\n');
   function persistOnboardingToBackend(nextProfile: CompanyOnboardingProfile, nextEmailConnection = emailConnection) {
-    saveOnboardingProfileToBackend(activeCompany, nextProfile, nextEmailConnection).catch((error) => {
-      console.error('Failed to save onboarding to backend', error);
-    });
+    onboardingSaveQueueRef.current = onboardingSaveQueueRef.current
+      .catch(() => undefined)
+      .then(() =>
+        saveOnboardingProfileToBackend(activeCompany, nextProfile, nextEmailConnection, {
+          saveCompanyCore: false,
+          saveOnboardingSteps: false,
+          saveSubscriptionPaymentMethod: false,
+        }),
+      )
+      .catch((error) => {
+        console.error('Failed to save onboarding to backend', error);
+      });
   }
 
   const professionTemplates = makeJobTypes();
@@ -394,7 +859,7 @@ export function CompanyPortal({
     return Number.isFinite(numericJobNumber) ? Math.max(highest, numericJobNumber) : highest;
   }, selectedCompany.openJobs);
   const nextJobNumber = String(highestJobNumber + 1).padStart(4, '0');
-  const sampleJobNumber = selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber;
+  const generatedJobNumber = selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber;
   const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
   const allJobsRows = jobs;
   const activeJobsRows = allJobsRows.filter((job) => !isCustomerJobPaid(job));
@@ -404,20 +869,16 @@ export function CompanyPortal({
     technician,
     jobs: visibleAllJobsRows.filter((job) => job.assignee === technician),
   })).filter((group) => group.jobs.length > 0);
-  const technicianLocations = profile.technicians.map((technician, index) => {
-    const samples = [
-      { x: 42, y: 61, lat: '40.72764', lng: '-74.05667', area: 'Hoboken / Jersey City', updatedAt: '11.06.2026, 21:39:58', online: false },
-      { x: 55, y: 38, lat: '40.75892', lng: '-73.98513', area: 'Midtown Manhattan', updatedAt: '11.06.2026, 21:36:14', online: false },
-      { x: 68, y: 70, lat: '40.67818', lng: '-73.94416', area: 'Brooklyn', updatedAt: '11.06.2026, 21:31:08', online: false },
-    ];
-    const sample = samples[index % samples.length];
-
-    return {
-      ...technician,
-      ...sample,
-      lastSeen: sample.updatedAt,
-    };
-  });
+  const technicianLocations = profile.technicians.map((technician) => ({
+    ...technician,
+    online: false,
+    lastSeen: 'No GPS data',
+    area: 'Not reported',
+    lat: '',
+    lng: '',
+    x: null,
+    y: null,
+  }));
   const filteredTechnicianLocations = technicianLocations.filter((technician) => {
     const normalizedSearch = mapSearch.trim().toLowerCase();
     const matchesTech = mapTechFilter === 'all' || technician.name === mapTechFilter;
@@ -430,7 +891,6 @@ export function CompanyPortal({
   });
   const materialStatuses: MaterialRow['status'][] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
   const materialJobMap = new globalThis.Map(allJobsRows.map((job) => [job.jobNumber, job]));
-  const emailMessages: EmailMessage[] = [];
   const visibleEmailMessages = emailMessages.filter((message) => {
     const normalizedSearch = emailSearch.trim().toLowerCase();
     const job = materialJobMap.get(message.jobNumber);
@@ -441,29 +901,11 @@ export function CompanyPortal({
     return message.folder === emailFolder && (!normalizedSearch || haystack.includes(normalizedSearch));
   });
   const connectMailbox = (provider: EmailProvider) => {
-    const domain = selectedCompany.domain?.replace(/^https?:\/\//, '').split('.')[0] || selectedCompany.name.toLowerCase().replace(/\s+/g, '');
-    const address = provider === 'smtp' ? `dispatch@${domain}.com` : selectedCompany.ownerEmail;
-    const nextConnection: EmailConnection = {
-      provider,
-      address,
-      status: 'backend_required',
-      lastSync: 'Not synced',
-      syncRange: '30',
-      autoLinkJobNumber: true,
-      autoLinkClientEmail: true,
-      createTaskFromUnread: true,
-      senderName: profile.displayName || selectedCompany.name,
-      replyTo: address,
-      signature: `${profile.displayName || selectedCompany.name}\n${profile.phone || selectedCompany.ownerEmail}`,
-      imapHost: provider === 'smtp' ? `imap.${domain}.com` : '',
-      imapPort: provider === 'smtp' ? '993' : '',
-      smtpHost: provider === 'smtp' ? `smtp.${domain}.com` : '',
-      smtpPort: provider === 'smtp' ? '587' : '',
-      security: provider === 'smtp' ? 'tls' : 'ssl',
-      username: provider === 'smtp' ? address : '',
-    };
+    const nextConnection = makeDefaultEmailConnection(activeCompany, profile, provider);
 
     setEmailConnection(nextConnection);
+    setMailboxOAuthSecretDraft('');
+    setMailboxOAuthStatus('');
     persistOnboardingToBackend(profile, nextConnection);
   };
   const updateMailbox = (patch: Partial<EmailConnection>) => {
@@ -474,6 +916,87 @@ export function CompanyPortal({
       return nextConnection;
     });
   };
+  const copyMailboxRedirectUrl = async () => {
+    const redirectUrl = emailConnection?.oauthRedirectUrl || mailboxOAuthRedirectUrl;
+    try {
+      await navigator.clipboard.writeText(redirectUrl);
+      setMailboxOAuthStatus('Redirect URL copied.');
+    } catch {
+      setMailboxOAuthStatus(redirectUrl);
+    }
+  };
+  const saveMailboxOAuth = async () => {
+    if (!emailConnection || emailConnection.provider === 'smtp') {
+      setMailboxOAuthStatus('Choose Google Workspace or Microsoft 365 first.');
+      return;
+    }
+
+    if (!emailConnection.oauthClientId.trim()) {
+      setMailboxOAuthStatus('Client ID is required.');
+      return;
+    }
+
+    if (!mailboxOAuthSecretDraft.trim() && !emailConnection.oauthClientSecretSaved) {
+      setMailboxOAuthStatus('Client secret is required.');
+      return;
+    }
+
+    setMailboxOAuthStatus('Saving OAuth settings...');
+
+    try {
+      const result = await saveMailboxOAuthSettings({
+        companyId: activeCompany.id,
+        provider: emailConnection.provider,
+        clientId: emailConnection.oauthClientId.trim(),
+        clientSecret: mailboxOAuthSecretDraft.trim(),
+        redirectUrl: emailConnection.oauthRedirectUrl || mailboxOAuthRedirectUrl,
+      });
+      const nextConnection = {
+        ...emailConnection,
+        oauthRedirectUrl: result.redirectUrl,
+        oauthClientSecretSaved: true,
+      };
+      setEmailConnection(nextConnection);
+      persistOnboardingToBackend(profile, nextConnection);
+      setMailboxOAuthSecretDraft('');
+      setMailboxOAuthStatus('OAuth settings saved. You can connect the mailbox now.');
+    } catch (error) {
+      setMailboxOAuthStatus(error instanceof Error ? error.message : 'OAuth settings could not be saved.');
+    }
+  };
+  const startMailboxConnector = async () => {
+    if (!emailConnection) {
+      setMailboxConnectStatus('Choose a mailbox provider first.');
+      return;
+    }
+
+    if (!emailConnection.address.trim()) {
+      setMailboxConnectStatus('Mailbox address is required.');
+      return;
+    }
+
+    if (emailConnection.status === 'connected') {
+      setMailboxConnectStatus('');
+      return;
+    }
+
+    setMailboxConnectStatus('Checking mailbox connector...');
+
+    try {
+      const result = await startMailboxConnection({
+        companyId: activeCompany.id,
+        provider: emailConnection.provider,
+        mailboxAddress: emailConnection.address,
+      });
+      setMailboxConnectStatus(result.message);
+
+      if (result.authUrl) {
+        window.location.href = result.authUrl;
+      }
+    } catch (error) {
+      setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox connector failed.');
+    }
+  };
   const applyEmailTemplate = (template: EmailTemplate) => {
     setEmailCompose((draft) => ({
       ...draft,
@@ -482,9 +1005,60 @@ export function CompanyPortal({
     }));
     setEmailFolder('inbox');
   };
-  const sendEmailDraft = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setEmailCompose({ to: '', subject: '', body: '', jobNumber: '' });
+  const resetEmailCompose = () => {
+    setEmailCompose({
+      to: '',
+      subject: '',
+      body: '',
+      jobNumber: '',
+      includeSignature: true,
+      includePaymentBlock: false,
+      signatureText: companyEmailSignature,
+      paymentBlockText: companyPaymentBlock,
+    });
+  };
+  const sendEmailDraft = async (attachments: EmailComposeAttachment[]) => {
+    if (!selectedCompanyId) {
+      setMailboxConnectStatus('Choose a company before sending email.');
+      return;
+    }
+
+    if (emailConnection?.status !== 'connected') {
+      setMailboxConnectStatus('Connect the mailbox before sending email.');
+      return;
+    }
+
+    const recipients = emailCompose.to.split(',').map((value) => value.trim()).filter(Boolean);
+    if (!recipients.length) {
+      setMailboxConnectStatus('Recipient email is required.');
+      return;
+    }
+
+    const messageBody = [
+      emailCompose.body.trimEnd(),
+      emailCompose.includeSignature ? emailCompose.signatureText || companyEmailSignature : '',
+      emailCompose.includePaymentBlock ? emailCompose.paymentBlockText || companyPaymentBlock : '',
+    ].filter(Boolean).join('\n\n');
+
+    setMailboxConnectStatus('Sending email...');
+
+    try {
+      await sendMailboxEmail({
+        companyId: selectedCompanyId,
+        to: recipients,
+        subject: emailCompose.subject,
+        body: messageBody,
+        jobNumber: emailCompose.jobNumber,
+        attachments,
+      });
+      resetEmailCompose();
+      setMailboxConnectStatus('Email sent.');
+      const savedMessages = await loadMailboxMessages(selectedCompanyId);
+      setEmailMessages(savedMessages);
+    } catch (error) {
+      setMailboxConnectStatus(error instanceof Error ? error.message : 'Email send failed.');
+      throw error;
+    }
   };
   const materialRowsWithJobs = materials
     .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))
@@ -689,7 +1263,7 @@ export function CompanyPortal({
     const rawJobNumber = String(form.get('jobNumber') ?? '').trim();
     const technicianName = String(form.get('technician') ?? '').trim();
     const jobForm: NewServiceJobForm = {
-      jobNumber: rawJobNumber && rawJobNumber.toLowerCase() !== 'automatic' ? rawJobNumber : sampleJobNumber,
+      jobNumber: rawJobNumber && rawJobNumber.toLowerCase() !== 'automatic' ? rawJobNumber : generatedJobNumber,
       system: selectedJobType?.name ?? String(form.get('system') ?? 'General'),
       clientName: String(form.get('clientName') ?? '').trim() || 'Unknown client',
       organization: String(form.get('organization') ?? '').trim() || 'Unknown company',
@@ -980,6 +1554,12 @@ export function CompanyPortal({
     persistOnboardingToBackend(nextProfile);
   }
 
+  function connectSubscriptionBilling() {
+    setBillingStatus('Opening Square card form...');
+    updateProfile({ subscriptionPaymentStatus: 'pending' });
+    setBillingModalOpen(true);
+  }
+
   function handleLogoUpload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -989,19 +1569,17 @@ export function CompanyPortal({
       updateProfile({ logoUrl: String(reader.result ?? '') });
     });
     reader.readAsDataURL(file);
+
+    uploadCompanyLogo(activeCompany.id, file)
+      .then((logoUrl) => {
+        updateProfile({ logoUrl });
+      })
+      .catch((error) => {
+        console.error('Failed to upload company logo', error);
+      });
   }
 
-  function handleTechnicianSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!technicianForm.name.trim() || !technicianForm.email.trim() || !technicianForm.accessPassword.trim()) return;
-
-    updateProfile({
-      technicians: [createCompanyTechnician(technicianForm), ...profile.technicians],
-    });
-    setTechnicianForm(emptyTechnicianForm);
-  }
-
-  function generateAccessPassword() {
+  function makeAccessPassword() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
     const values = new Uint32Array(12);
     crypto.getRandomValues(values);
@@ -1009,12 +1587,120 @@ export function CompanyPortal({
     return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
   }
 
-  function handleJobTypeSubmit(event: FormEvent<HTMLFormElement>) {
+  function generateOwnerPassword() {
+    const password = makeAccessPassword();
+    setOwnerAccessPassword(password);
+    setOwnerAccessPasswordConfirm(password);
+    setOwnerAccessStatus('Generated. Save it to apply the new owner password.');
+  }
+
+  async function saveOwnerPassword() {
+    const ownerEmail = signedInUser?.email || activeCompany.ownerEmail;
+    const password = ownerAccessPassword.trim();
+
+    if (!ownerEmail.trim()) {
+      setOwnerAccessStatus('Owner email is required.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setOwnerAccessStatus('Password must be at least 6 characters.');
+      return;
+    }
+
+    if (password !== ownerAccessPasswordConfirm.trim()) {
+      setOwnerAccessStatus('Passwords do not match.');
+      return;
+    }
+
+    setOwnerAccessStatus('Saving owner password...');
+
+    try {
+      await saveUserAccess({
+        email: ownerEmail,
+        password,
+        name: signedInUser?.name || activeCompany.ownerName,
+        companyId: activeCompany.id,
+        role: 'admin',
+        mode: 'reset',
+      });
+      setOwnerAccessPassword('');
+      setOwnerAccessPasswordConfirm('');
+      setOwnerAccessStatus('Owner password updated. Use the new password at the next sign in.');
+    } catch (error) {
+      setOwnerAccessStatus(error instanceof Error ? error.message : 'Failed to update owner password.');
+    }
+  }
+
+  function handleTechnicianSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!jobTypeForm.name.trim()) return;
+    if (!technicianForm.name.trim() || !technicianForm.email.trim()) return;
 
     updateProfile({
-      jobTypes: [createCompanyJobType(jobTypeForm), ...profile.jobTypes],
+      technicians: [createCompanyTechnician(technicianForm), ...profile.technicians],
+    });
+    setTechnicianForm(emptyTechnicianForm);
+  }
+
+  async function sendTechnicianAccess(technicianId: string, mode: AccessActionMode, password: string) {
+    const technician = profile.technicians.find((item) => item.id === technicianId);
+    if (!technician) return;
+
+    if (!technician.email.trim()) {
+      setTechnicianAccessStatusById((statuses) => ({ ...statuses, [technicianId]: 'Technician email is required.' }));
+      return;
+    }
+
+    if (password.trim().length < 6) {
+      setTechnicianAccessStatusById((statuses) => ({ ...statuses, [technicianId]: 'Password must be at least 6 characters.' }));
+      return;
+    }
+
+    setTechnicianAccessStatusById((statuses) => ({ ...statuses, [technicianId]: 'Saving access...' }));
+
+    try {
+      const result = await saveUserAccess({
+        email: technician.email,
+        password,
+        name: technician.name,
+        companyId: activeCompany.id,
+        role: technician.role,
+        mode,
+      });
+      const message =
+        result.action === 'access_created'
+          ? 'Access created. Share this email and password with the technician.'
+          : result.action === 'access_updated'
+            ? 'Access already existed. Password was updated.'
+            : 'Password was reset.';
+      setTechnicianAccessStatusById((statuses) => ({ ...statuses, [technicianId]: message }));
+
+      if (mode === 'create' && technician.status !== 'disabled') {
+        updateProfile({
+          technicians: profile.technicians.map((item) =>
+            item.id === technicianId ? { ...item, status: 'active' } : item,
+          ),
+        });
+      }
+    } catch (error) {
+      setTechnicianAccessStatusById((statuses) => ({
+        ...statuses,
+        [technicianId]: error instanceof Error ? error.message : 'Access email failed.',
+      }));
+    }
+  }
+
+  function handleJobTypeSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = jobTypeForm.name.trim();
+    if (!name) return;
+    const jobNumberPrefix =
+      jobTypeForm.jobNumberPrefix.trim() ||
+      name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) ||
+      'JOB';
+
+    updateProfile({
+      jobTypes: [createCompanyJobType({ ...jobTypeForm, name, jobNumberPrefix }), ...profile.jobTypes],
     });
     setJobTypeForm(emptyJobTypeForm);
   }
@@ -1030,6 +1716,9 @@ export function CompanyPortal({
   function removeJobType(jobTypeId: string) {
     const jobTypes = profile.jobTypes.filter((jobType) => jobType.id !== jobTypeId);
     updateProfile({ jobTypes });
+    deleteJobTypeFromBackend(jobTypeId).catch((error) => {
+      console.error('Failed to delete job type from backend', error);
+    });
 
     if (selectedJobTypeId === jobTypeId) {
       setSelectedJobTypeId('');
@@ -1210,7 +1899,27 @@ export function CompanyPortal({
             setTechnicianForm={setTechnicianForm}
             selectedCompany={selectedCompany}
             handleTechnicianSubmit={handleTechnicianSubmit}
-            generateAccessPassword={generateAccessPassword}
+            onSendTechnicianAccess={sendTechnicianAccess}
+            technicianAccessStatusById={technicianAccessStatusById}
+            technicianAccessPasswordById={technicianAccessPasswordById}
+            setTechnicianAccessPasswordById={setTechnicianAccessPasswordById}
+            ownerAccessPassword={ownerAccessPassword}
+            ownerAccessPasswordConfirm={ownerAccessPasswordConfirm}
+            ownerAccessStatus={ownerAccessStatus}
+            setOwnerAccessPassword={setOwnerAccessPassword}
+            setOwnerAccessPasswordConfirm={setOwnerAccessPasswordConfirm}
+            onGenerateOwnerPassword={generateOwnerPassword}
+            onSaveOwnerPassword={saveOwnerPassword}
+            mailboxConnectStatus={mailboxConnectStatus}
+            mailboxOAuthSecretDraft={mailboxOAuthSecretDraft}
+            mailboxOAuthStatus={mailboxOAuthStatus}
+            mailboxOAuthRedirectUrl={mailboxOAuthRedirectUrl}
+            setMailboxOAuthSecretDraft={setMailboxOAuthSecretDraft}
+            onCopyMailboxRedirectUrl={copyMailboxRedirectUrl}
+            onSaveMailboxOAuth={saveMailboxOAuth}
+            onStartMailboxConnection={startMailboxConnector}
+            billingStatus={billingStatus}
+            onConnectSubscriptionBilling={connectSubscriptionBilling}
           />
         ) : clientPage === 'jobs' ? (
           <JobsPage
@@ -1356,6 +2065,10 @@ export function CompanyPortal({
             emailTemplates={initialEmailTemplates}
             emailProviderLabels={emailProviderLabels}
             onOpenOnboarding={() => setClientPage('onboarding')}
+            onStartMailboxConnection={startMailboxConnector}
+            onLoadMoreMailbox={loadMoreMailboxMessages}
+            mailboxSyncing={mailboxSyncing}
+            mailboxConnectStatus={mailboxConnectStatus}
             emailFolder={emailFolder}
             onEmailFolderChange={setEmailFolder}
             emailSearch={emailSearch}
@@ -1366,6 +2079,8 @@ export function CompanyPortal({
             onEmailComposeChange={setEmailCompose}
             emailCompose={emailCompose}
             allJobsRows={allJobsRows}
+            companySignature={companyEmailSignature}
+            companyPaymentBlock={companyPaymentBlock}
             onSendEmailDraft={sendEmailDraft}
           />
         ) : clientPage === 'map' ? (
@@ -1536,6 +2251,17 @@ export function CompanyPortal({
           </section>
         )}
       </main>
+      {billingModalOpen ? (
+        <SquareBillingModal
+          activeCompany={activeCompany}
+          profile={profile}
+          onClose={() => setBillingModalOpen(false)}
+          onConnected={(updates, status) => {
+            updateProfile(updates);
+            setBillingStatus(status);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,5 @@
 import type { Company, NewSupportTicketForm, SupportTicket, SupportTicketStatus } from '../types';
 
-const STORAGE_KEY = 'servicescope.v2.supportTickets';
-
 function normalizeTicket(ticket: Partial<SupportTicket>, companies: Company[]): SupportTicket {
   const company = companies.find((candidate) => candidate.id === ticket.companyId) ?? companies[0];
 
@@ -30,19 +28,13 @@ function normalizeTicket(ticket: Partial<SupportTicket>, companies: Company[]): 
   };
 }
 
-export function listSupportTickets(companies: Company[]) {
-  const saved = window.localStorage.getItem(STORAGE_KEY);
-  if (!saved) return [];
-
-  try {
-    return (JSON.parse(saved) as Partial<SupportTicket>[]).map((ticket) => normalizeTicket(ticket, companies));
-  } catch {
-    return [];
-  }
+export function listSupportTickets(companies: Company[]): SupportTicket[] {
+  void companies;
+  return [];
 }
 
 export function saveSupportTickets(tickets: SupportTicket[]) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tickets));
+  void tickets;
 }
 
 export function createSupportTicket(form: NewSupportTicketForm, companies: Company[]): SupportTicket {

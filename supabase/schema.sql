@@ -135,7 +135,6 @@ create table companies (
   name text not null,
   owner_name text not null default '',
   owner_email citext not null,
-  temporary_password text not null default '',
   domain citext unique,
   market text not null default '',
   status company_status not null default 'setup',
@@ -216,7 +215,6 @@ create table company_technicians (
   name text not null,
   email citext,
   phone text,
-  access_password text not null default '',
   role technician_role not null default 'technician',
   status user_status not null default 'active',
   assigned_jobs_count integer not null default 0,
@@ -319,6 +317,76 @@ as $$
         and role in ('admin', 'manager', 'dispatcher')
     );
 $$;
+
+create or replace function app_current_session()
+returns table (
+  kind text,
+  user_id uuid,
+  name text,
+  email citext,
+  company_id uuid,
+  company_name text,
+  role text,
+  status text
+)
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select
+    'owner'::text as kind,
+    platform_users.id as user_id,
+    platform_users.name,
+    platform_users.email,
+    null::uuid as company_id,
+    null::text as company_name,
+    platform_users.role::text as role,
+    platform_users.status::text as status
+  from public.platform_users
+  where platform_users.status = 'active'
+    and (
+      platform_users.auth_user_id = auth.uid()
+      or lower(platform_users.email::text) = lower(coalesce(auth.email(), ''))
+    )
+
+  union all
+
+  select
+    'company'::text as kind,
+    company_users.id as user_id,
+    company_users.name,
+    company_users.email,
+    company_users.company_id,
+    companies.name as company_name,
+    company_users.role::text as role,
+    company_users.status::text as status
+  from public.company_users
+  join public.companies on companies.id = company_users.company_id
+  where company_users.status = 'active'
+    and (
+      company_users.auth_user_id = auth.uid()
+      or lower(company_users.email::text) = lower(coalesce(auth.email(), ''))
+    )
+
+  union all
+
+  select
+    'company'::text as kind,
+    companies.id as user_id,
+    coalesce(nullif(companies.owner_name, ''), companies.owner_email::text) as name,
+    companies.owner_email as email,
+    companies.id as company_id,
+    companies.name as company_name,
+    'admin'::text as role,
+    'active'::text as status
+  from public.companies
+  where lower(companies.owner_email::text) = lower(coalesce(auth.email(), ''))
+  order by kind desc
+  limit 1;
+$$;
+
+grant execute on function app_current_session() to authenticated;
 
 -- =========================================================
 -- Company settings
@@ -613,6 +681,18 @@ create table email_connections (
   updated_at timestamptz not null default now()
 );
 
+create table mailbox_oauth_settings (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references companies(id) on delete cascade,
+  provider email_provider not null,
+  client_id text not null,
+  client_secret text not null,
+  redirect_url text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (company_id, provider)
+);
+
 create table email_messages (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references companies(id) on delete cascade,
@@ -624,10 +704,25 @@ create table email_messages (
   to_email citext,
   subject text not null default '',
   preview text not null default '',
+  body text not null default '',
+  body_html text not null default '',
   body_storage_path text,
   unread boolean not null default false,
   received_at timestamptz,
   sent_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table email_message_attachments (
+  id uuid primary key default gen_random_uuid(),
+  email_message_id uuid not null references email_messages(id) on delete cascade,
+  company_id uuid not null references companies(id) on delete cascade,
+  file_name text not null,
+  mime_type text not null default 'application/octet-stream',
+  size_bytes integer not null default 0,
+  content_base64 text not null default '',
+  content_id text,
+  is_inline boolean not null default false,
   created_at timestamptz not null default now()
 );
 
@@ -774,6 +869,7 @@ create index idx_payroll_items_technician on payroll_items(company_id, technicia
 create index idx_tasks_company_status on tasks(company_id, status);
 create index idx_technician_locations_latest on technician_locations(technician_id, recorded_at desc);
 create index idx_email_messages_company_folder on email_messages(company_id, folder, created_at desc);
+create index idx_email_message_attachments_message on email_message_attachments(email_message_id);
 create index idx_support_tickets_company_status on owner_support_tickets(company_id, status);
 create index idx_audit_company_created on audit_events(company_id, created_at desc);
 create index idx_library_company_search on library_documents(company_id, category, system, manufacturer);
@@ -803,6 +899,7 @@ create trigger set_payroll_batches_updated_at before update on payroll_batches f
 create trigger set_payroll_items_updated_at before update on payroll_items for each row execute function set_updated_at();
 create trigger set_tasks_updated_at before update on tasks for each row execute function set_updated_at();
 create trigger set_email_connections_updated_at before update on email_connections for each row execute function set_updated_at();
+create trigger set_mailbox_oauth_settings_updated_at before update on mailbox_oauth_settings for each row execute function set_updated_at();
 create trigger set_email_templates_updated_at before update on email_templates for each row execute function set_updated_at();
 create trigger set_subscriptions_updated_at before update on subscriptions for each row execute function set_updated_at();
 create trigger set_subscription_payment_methods_updated_at before update on subscription_payment_methods for each row execute function set_updated_at();
@@ -840,7 +937,9 @@ alter table payroll_items enable row level security;
 alter table tasks enable row level security;
 alter table technician_locations enable row level security;
 alter table email_connections enable row level security;
+alter table mailbox_oauth_settings enable row level security;
 alter table email_messages enable row level security;
+alter table email_message_attachments enable row level security;
 alter table email_templates enable row level security;
 alter table subscriptions enable row level security;
 alter table subscription_payment_methods enable row level security;
@@ -986,9 +1085,19 @@ create policy "email connections readable by company or platform" on email_conne
 create policy "email connections manageable by company managers or platform" on email_connections
   for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
 
+create policy "mailbox oauth settings readable by company managers or platform" on mailbox_oauth_settings
+  for select using (public.can_manage_company(company_id));
+create policy "mailbox oauth settings manageable by company managers or platform" on mailbox_oauth_settings
+  for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
+
 create policy "email messages readable by company or platform" on email_messages
   for select using (public.can_access_company(company_id));
 create policy "email messages manageable by company managers or platform" on email_messages
+  for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
+
+create policy "email attachments readable by company or platform" on email_message_attachments
+  for select using (public.can_access_company(company_id));
+create policy "email attachments manageable by company managers or platform" on email_message_attachments
   for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
 
 create policy "email templates readable by company or platform" on email_templates

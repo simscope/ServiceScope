@@ -840,7 +840,7 @@ export function AccessPage({
           </label>
           <button className="primary-button" type="submit">
             <UserPlus size={18} aria-hidden="true" />
-            Send invite
+            Add user
           </button>
         </form>
       </section>
@@ -1032,7 +1032,7 @@ export function SupportPanel({
           </label>
           <label>
             Reply email
-            <input type="email" value={form.authorEmail} onChange={(event) => onFormChange({ ...form, authorEmail: event.target.value })} placeholder={selectedCompany?.ownerEmail ?? 'owner@company.com'} />
+            <input type="email" value={form.authorEmail} onChange={(event) => onFormChange({ ...form, authorEmail: event.target.value })} placeholder={selectedCompany?.ownerEmail ?? 'Reply email'} />
           </label>
           <label>
             Subject
@@ -1178,34 +1178,24 @@ export function CompanyDetail({
   company,
   onPrepareNext,
   onCompleteStep,
-  onSetTemporaryPassword,
+  onSaveOwnerAccess,
+  ownerInviteStatus,
 }: {
   company: Company;
   onPrepareNext: () => void;
   onCompleteStep: (step: CompanyOnboardingStepKey) => void;
-  onSetTemporaryPassword: (password: string) => void;
+  onSaveOwnerAccess: (mode: 'create' | 'reset', password: string) => void;
+  ownerInviteStatus: string;
 }) {
   const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
   const readyToLaunch = completedSteps === onboardingStepOrder.length;
-  const [temporaryPassword, setTemporaryPassword] = useState(company.temporaryPassword);
-
-  useEffect(() => {
-    setTemporaryPassword(company.temporaryPassword);
-  }, [company.id, company.temporaryPassword]);
+  const [ownerPassword, setOwnerPassword] = useState('');
 
   function generatePassword() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
     const values = new Uint32Array(12);
     crypto.getRandomValues(values);
-
-    return Array.from(values, (value) => alphabet[value % alphabet.length]).join('');
-  }
-
-  function saveTemporaryPassword(password: string) {
-    const nextPassword = password.trim();
-    if (!nextPassword) return;
-    setTemporaryPassword(nextPassword);
-    onSetTemporaryPassword(nextPassword);
+    setOwnerPassword(Array.from(values, (value) => alphabet[value % alphabet.length]).join(''));
   }
 
   return (
@@ -1242,7 +1232,7 @@ export function CompanyDetail({
       <section className="detail-section company-access-panel">
         <div className="section-title">
           <ShieldCheck size={18} aria-hidden="true" />
-          <h3>Company invite</h3>
+          <h3>Company access</h3>
         </div>
         <div className="access-credential-list">
           <div>
@@ -1251,28 +1241,29 @@ export function CompanyDetail({
           </div>
         </div>
         <label className="password-reset-field">
-          Temporary password
-          <div className="password-field-row">
-            <input
-              type="text"
-              value={temporaryPassword}
-              onChange={(event) => setTemporaryPassword(event.target.value)}
-              placeholder="Set new temporary password"
-            />
-            <button className="secondary-button compact" type="button" onClick={() => saveTemporaryPassword(temporaryPassword)}>
-              Save
-            </button>
-          </div>
+          Owner password
+          <input
+            type="text"
+            value={ownerPassword}
+            onChange={(event) => setOwnerPassword(event.target.value)}
+            placeholder="Set or generate password"
+            autoComplete="off"
+          />
         </label>
-        <button
-          className="secondary-button compact"
-          type="button"
-          onClick={() => saveTemporaryPassword(generatePassword())}
-        >
-          Generate new password
-        </button>
+        <div className="access-actions">
+          <button className="secondary-button compact" type="button" onClick={generatePassword}>
+            Generate
+          </button>
+          <button className="secondary-button compact" type="button" onClick={() => onSaveOwnerAccess('create', ownerPassword)}>
+            Create access
+          </button>
+          <button className="secondary-button compact" type="button" onClick={() => onSaveOwnerAccess('reset', ownerPassword)}>
+            Reset password
+          </button>
+        </div>
+        {ownerInviteStatus ? <p className="access-status">{ownerInviteStatus}</p> : null}
         <p className="access-note">
-          The owner console prepares access only. Company users sign in with their own account.
+          Share this email and password with the company owner. Supabase stores the auth account; ServiceScope does not send Supabase invite emails.
         </p>
       </section>
 
