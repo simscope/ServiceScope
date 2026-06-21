@@ -36,8 +36,9 @@ type InvoiceLineDraft = {
 };
 
 type InvoiceDraft = {
-  documentType: 'Invoice' | 'Estimate' | 'Receipt';
+  documentType: 'Invoice' | 'Proposal' | 'Estimate' | 'Receipt';
   invoiceDate: string;
+  balanceDue: number;
   discount: number;
   includeWarranty: boolean;
   warrantyDays: number;
@@ -139,6 +140,11 @@ function makeInvoiceLines(job: JobCardData, rows: MaterialRow[]): InvoiceLineDra
   return lines;
 }
 
+function invoiceLinesTotal(lines: InvoiceLineDraft[], discount = 0) {
+  const subtotal = lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
+  return Math.max(0, subtotal - Math.max(0, Number(discount) || 0));
+}
+
 export function JobDetailPanel({
   job,
   technicians,
@@ -163,6 +169,7 @@ export function JobDetailPanel({
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => ({
     documentType: 'Invoice',
     invoiceDate: todayLocalDate(),
+    balanceDue: invoiceLinesTotal(makeInvoiceLines(job, materials)),
     discount: 0,
     includeWarranty: true,
     warrantyDays: profile.warrantyDays,
@@ -173,7 +180,8 @@ export function JobDetailPanel({
   const scfPaid = Boolean(draft.scfPayment);
   const invoiceSubtotal = invoiceDraft.lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
   const invoiceDiscount = Math.max(0, Number(invoiceDraft.discount) || 0);
-  const invoiceTotal = Math.max(0, invoiceSubtotal - invoiceDiscount);
+  const invoiceComputedTotal = Math.max(0, invoiceSubtotal - invoiceDiscount);
+  const invoiceTotal = Math.max(0, Number(invoiceDraft.balanceDue) || 0);
   const nextInvoiceNumber = `INV-${draft.jobNumber}-${String((draft.invoices?.length ?? 0) + 1).padStart(2, '0')}`;
 
   useEffect(() => {
@@ -182,6 +190,7 @@ export function JobDetailPanel({
     setInvoiceDraft({
       documentType: 'Invoice',
       invoiceDate: todayLocalDate(),
+      balanceDue: invoiceLinesTotal(makeInvoiceLines(job, materials)),
       discount: 0,
       includeWarranty: true,
       warrantyDays: profile.warrantyDays,
@@ -288,13 +297,15 @@ export function JobDetailPanel({
     value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
   function resetInvoiceDraft() {
+    const lines = makeInvoiceLines(draft, materialDrafts);
     setInvoiceDraft({
       documentType: 'Invoice',
       invoiceDate: todayLocalDate(),
+      balanceDue: invoiceLinesTotal(lines),
       discount: 0,
       includeWarranty: true,
       warrantyDays: profile.warrantyDays,
-      lines: makeInvoiceLines(draft, materialDrafts),
+      lines,
     });
   }
 
@@ -308,13 +319,16 @@ export function JobDetailPanel({
     setInvoiceDraft((current) => ({
       ...current,
       lines: current.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
+      balanceDue: invoiceLinesTotal(current.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)), current.discount),
     }));
   }
 
   function addInvoiceLine() {
+    const line = { id: crypto.randomUUID(), type: 'service' as InvoiceLineType, name: '', quantity: 1, price: 0 };
     setInvoiceDraft((current) => ({
       ...current,
-      lines: [...current.lines, { id: crypto.randomUUID(), type: 'service', name: '', quantity: 1, price: 0 }],
+      lines: [...current.lines, line],
+      balanceDue: invoiceLinesTotal([...current.lines, line], current.discount),
     }));
   }
 
@@ -322,11 +336,32 @@ export function JobDetailPanel({
     setInvoiceDraft((current) => ({
       ...current,
       lines: current.lines.length > 1 ? current.lines.filter((line) => line.id !== lineId) : current.lines,
+      balanceDue: invoiceLinesTotal(current.lines.length > 1 ? current.lines.filter((line) => line.id !== lineId) : current.lines, current.discount),
     }));
   }
 
-  function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft) {
+  function writeInvoiceDocument(invoiceWindow: Window, invoiceHtml: string) {
+    invoiceWindow.document.open();
+    invoiceWindow.document.write(invoiceHtml);
+    invoiceWindow.document.close();
+    invoiceWindow.focus();
+    window.setTimeout(() => {
+      invoiceWindow.print();
+    }, 350);
+  }
+
+  function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft, targetWindow?: Window | null) {
     const lines = printableDraft.lines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
+    const serviceLines = lines.filter((line) => line.type !== 'material');
+    const materialLines = lines.filter((line) => line.type === 'material');
+    const makeRows = (items: InvoiceLineDraft[]) => items.map((line) => `
+      <tr>
+        <td>${escapeHtml(line.name.trim() || 'Service')}</td>
+        <td>${line.quantity}</td>
+        <td>${money(line.price)}</td>
+        <td>${money(invoiceLineAmount(line))}</td>
+      </tr>
+    `).join('');
     const rows = lines.map((line) => `
       <tr>
         <td>${escapeHtml(line.type)}</td>
@@ -338,39 +373,48 @@ export function JobDetailPanel({
     `).join('');
     const subtotal = lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
     const discount = Math.max(0, Number(printableDraft.discount) || 0);
-    const total = Math.max(0, subtotal - discount);
+    const total = Math.max(0, Number(printableDraft.balanceDue) || 0);
     const companyName = profile.displayName || profile.legalName || 'Service company';
     const companyLogo = profile.logoUrl ? `<img class="logo" src="${escapeHtml(profile.logoUrl)}" alt="${escapeHtml(companyName)} logo" />` : '<div class="logo placeholder">S</div>';
-    const warranty = printableDraft.includeWarranty ? `<p class="footer">Warranty: ${Number(printableDraft.warrantyDays) || 0} days.</p>` : '';
+    const warrantyDays = Number(printableDraft.warrantyDays) || 0;
+    const warranty = printableDraft.includeWarranty ? `
+      <section class="warranty">
+        <strong>Warranty (${warrantyDays} days):</strong>
+        <p>A ${warrantyDays}-day limited warranty applies ONLY to the work performed and/or parts installed by ${escapeHtml(companyName)}. The warranty does not cover other components or the appliance as a whole, normal wear, consumables, damage caused by external factors, or third-party tampering. The warranty starts on the job completion date and is valid only when the invoice is paid in full.</p>
+      </section>
+    ` : '';
     const invoiceHtml = `
       <!doctype html>
       <html>
         <head>
           <title>${escapeHtml(invoice.invoiceNumber)}</title>
           <style>
-            body { font-family: Georgia, 'Times New Roman', serif; color: #17201b; margin: 32px; background: #fff; }
-            header { display: grid; grid-template-columns: 1fr 320px; gap: 48px; margin-bottom: 28px; }
-            h1 { margin: 4px 0 0; font-size: 34px; letter-spacing: 1px; text-transform: uppercase; text-align: right; }
+            body { font-family: Arial, sans-serif; color: #050b12; margin: 0; background: #333; }
+            .page { width: 816px; min-height: 1056px; margin: 0 auto; background: #fff; padding: 34px 52px; box-sizing: border-box; }
+            header { display: grid; grid-template-columns: 1fr 320px; gap: 64px; margin-bottom: 36px; }
+            h1 { margin: 0 0 14px; font-size: 40px; letter-spacing: 1px; text-transform: uppercase; text-align: right; }
             h2 { margin: 0 0 8px; font-size: 16px; }
             p { margin: 4px 0; }
-            .logo { width: 86px; height: 110px; object-fit: contain; margin-bottom: 12px; }
+            .logo { width: 155px; height: 185px; object-fit: contain; margin-bottom: 20px; }
             .logo.placeholder { display: grid; place-items: center; background: #edf3ff; border-radius: 8px; font: 700 28px Arial; color: #1c408f; }
             .muted { color: #526158; }
             .invoice-meta { text-align: right; }
-            .balance { border: 1px solid #cfd8d1; border-radius: 8px; padding: 12px; margin: 14px 0; display: flex; justify-content: space-between; font-weight: 700; }
+            .balance { border: 1px solid #d7dee8; border-radius: 10px; background: #f7f9fb; padding: 16px; margin: 16px 0 10px; display: flex; justify-content: space-between; font-weight: 700; }
             .bill-to { margin-top: 16px; text-align: left; }
-            table { width: 100%; border-collapse: collapse; margin-top: 18px; }
-            th, td { border-bottom: 1px solid #d7dee8; padding: 10px; text-align: left; vertical-align: top; }
+            table { width: 100%; border-collapse: collapse; margin-top: 22px; }
+            th, td { border: 1px solid #cfd8d1; padding: 8px; text-align: left; vertical-align: top; }
             th { background: #343434; color: #fff; }
-            td:nth-child(3), td:nth-child(4), td:nth-child(5), th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
-            .totals { width: 320px; margin: 28px 0 0 auto; border: 1px solid #cfd8d1; border-radius: 8px; padding: 14px; }
-            .totals div { display: flex; justify-content: space-between; margin: 8px 0; }
-            .totals strong { font-size: 18px; }
-            .footer { margin-top: 28px; color: #526158; font-size: 12px; }
-            @media print { button { display: none; } body { margin: 18px; } }
+            td:nth-child(2), td:nth-child(3), td:nth-child(4), th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: right; }
+            .group { background: #eef3f8; font-weight: 700; }
+            .totals { width: 260px; margin: 0 6px 0 auto; }
+            .totals div { display: flex; justify-content: space-between; margin: 7px 0; font-weight: 700; }
+            .warranty { margin-top: 42px; font-size: 13px; }
+            .footer { margin-top: 22px; color: #526158; font-size: 12px; }
+            @media print { body { background: #fff; } .page { width: auto; min-height: auto; margin: 0; padding: 28px 44px; } }
           </style>
         </head>
         <body>
+        <main class="page">
           <header>
             <div>
               ${companyLogo}
@@ -387,7 +431,7 @@ export function JobDetailPanel({
               <p><strong>Date:</strong> ${escapeHtml(printableDraft.invoiceDate)}</p>
               <div class="balance"><span>Balance Due:</span><span>${money(total)}</span></div>
               <section class="bill-to">
-                <h2>Bill To</h2>
+                <h2>Bill To:</h2>
                 <p><strong>${escapeHtml(draft.organization || draft.clientName || 'Customer')}</strong></p>
                 <p>${escapeHtml(draft.clientName || '')}</p>
                 <p>${escapeHtml(draft.address || '')}</p>
@@ -398,31 +442,36 @@ export function JobDetailPanel({
           </header>
           <table>
             <thead>
-              <tr><th>Type</th><th>Name</th><th>Qty</th><th>Price</th><th>Amount</th></tr>
+              <tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
             </thead>
-            <tbody>${rows}</tbody>
+            <tbody>
+              ${serviceLines.length ? `<tr class="group"><td colspan="4">Services</td></tr>${makeRows(serviceLines)}` : ''}
+              ${materialLines.length ? `<tr class="group"><td colspan="4">Materials</td></tr>${makeRows(materialLines)}` : ''}
+              ${!serviceLines.length && !materialLines.length ? rows : ''}
+            </tbody>
           </table>
           <section class="totals">
             <div><span>Subtotal:</span><span>${money(subtotal)}</span></div>
-            <div><span>Discount:</span><span>- ${money(discount)}</span></div>
             <div><strong>Total:</strong><strong>${money(total)}</strong></div>
           </section>
           ${warranty}
           <p class="footer">${escapeHtml(profile.paymentNotes || 'Thank you for your business.')}</p>
-          <button onclick="window.print()">Print / Save PDF</button>
+        </main>
         </body>
       </html>
     `;
-    const invoiceUrl = URL.createObjectURL(new Blob([invoiceHtml], { type: 'text/html' }));
-    const invoiceWindow = window.open(invoiceUrl, '_blank');
+    const invoiceWindow = targetWindow ?? window.open('', '_blank');
     if (!invoiceWindow) {
-      URL.revokeObjectURL(invoiceUrl);
       return;
     }
-    window.setTimeout(() => URL.revokeObjectURL(invoiceUrl), 60_000);
+    writeInvoiceDocument(invoiceWindow, invoiceHtml);
   }
 
   async function createInvoice() {
+    const invoiceWindow = window.open('', '_blank');
+    if (invoiceWindow) {
+      invoiceWindow.document.write('<p style="font-family: Arial, sans-serif; padding: 24px;">Preparing invoice...</p>');
+    }
     setInvoiceStatus('Creating invoice...');
     try {
       const currentInvoiceDraft = invoiceDraft;
@@ -434,9 +483,12 @@ export function JobDetailPanel({
       setDraft(nextJob);
       setInvoiceEditorOpen(false);
       setInvoiceStatus('Invoice created.');
-      openInvoice(invoice, currentInvoiceDraft);
+      openInvoice(invoice, currentInvoiceDraft, invoiceWindow);
     } catch (error) {
       setInvoiceStatus(error instanceof Error ? error.message : 'Invoice could not be created.');
+      if (invoiceWindow) {
+        invoiceWindow.document.body.innerHTML = `<p style="font-family: Arial, sans-serif; padding: 24px;">${escapeHtml(error instanceof Error ? error.message : 'Invoice could not be created.')}</p>`;
+      }
     }
   }
 
@@ -773,6 +825,7 @@ export function JobDetailPanel({
                     Document type:
                     <select value={invoiceDraft.documentType} onChange={(event) => setInvoiceDraft((current) => ({ ...current, documentType: event.target.value as InvoiceDraft['documentType'] }))}>
                       <option value="Invoice">Invoice</option>
+                      <option value="Proposal">Proposal</option>
                       <option value="Estimate">Estimate</option>
                       <option value="Receipt">Receipt</option>
                     </select>
@@ -785,7 +838,10 @@ export function JobDetailPanel({
                   </label>
                   <div className="invoice-balance">
                     <strong>Balance Due:</strong>
-                    <span>{money(invoiceTotal)}</span>
+                    <label>
+                      $
+                      <input type="number" min={0} step={1} value={invoiceDraft.balanceDue} onChange={(event) => setInvoiceDraft((current) => ({ ...current, balanceDue: Number(event.target.value) || 0 }))} />
+                    </label>
                   </div>
                   <div className="invoice-bill-to">
                     <strong>Bill To</strong>
@@ -836,10 +892,23 @@ export function JobDetailPanel({
                   </div>
                   <label>
                     Discount $
-                    <input type="number" min={0} step={1} value={invoiceDraft.discount} onChange={(event) => setInvoiceDraft((current) => ({ ...current, discount: Number(event.target.value) || 0 }))} />
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={invoiceDraft.discount}
+                      onChange={(event) => {
+                        const discount = Number(event.target.value) || 0;
+                        setInvoiceDraft((current) => ({ ...current, discount, balanceDue: invoiceLinesTotal(current.lines, discount) }));
+                      }}
+                    />
                   </label>
                   <div>
-                    <span>Total:</span>
+                    <span>Line total:</span>
+                    <strong>{money(invoiceComputedTotal)}</strong>
+                  </div>
+                  <div>
+                    <span>Balance due:</span>
                     <strong>{money(invoiceTotal)}</strong>
                   </div>
                 </div>
