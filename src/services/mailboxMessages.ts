@@ -34,6 +34,8 @@ type DbEmailAttachment = {
 const viteEnv = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as ViteEnv;
 const supabaseUrl = viteEnv.VITE_SUPABASE_URL?.replace(/\/$/, '') ?? '';
 const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY ?? '';
+const DEFAULT_MAILBOX_LIMIT = 50;
+const MAX_MAILBOX_LIMIT = 100;
 
 function formatMessageDate(value: string | null) {
   if (!value) return '';
@@ -61,18 +63,28 @@ function inlineCidImages(bodyHtml: string, attachments: EmailMessage['attachment
   }, bodyHtml);
 }
 
-export async function loadMailboxMessages(companyId: string): Promise<EmailMessage[]> {
+function clampMailboxLimit(limit = DEFAULT_MAILBOX_LIMIT) {
+  return Math.min(MAX_MAILBOX_LIMIT, Math.max(1, Math.floor(Number(limit) || DEFAULT_MAILBOX_LIMIT)));
+}
+
+function sqlIn(values: string[]) {
+  return `in.(${values.map((value) => `"${encodeURIComponent(value)}"`).join(',')})`;
+}
+
+export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAILBOX_LIMIT): Promise<EmailMessage[]> {
   if (!isSupabaseConfigured()) {
     return [];
   }
 
+  const safeLimit = clampMailboxLimit(limit);
   const rows = await supabaseRequest<DbEmailMessage[]>(
-    `email_messages?select=id,folder,from_email,to_email,subject,preview,body,body_html,unread,received_at,sent_at&company_id=${sqlEq(companyId)}&order=received_at.desc.nullslast&order=sent_at.desc.nullslast`,
+    `email_messages?select=id,folder,from_email,to_email,subject,preview,body,body_html,unread,received_at,sent_at&company_id=${sqlEq(companyId)}&order=received_at.desc.nullslast&order=sent_at.desc.nullslast&limit=${safeLimit}`,
     { select: true },
   );
-  const attachments = rows.length
+  const messageIds = rows.map((row) => row.id);
+  const attachments = messageIds.length
     ? await supabaseRequest<DbEmailAttachment[]>(
-        `email_message_attachments?select=id,email_message_id,file_name,mime_type,size_bytes,content_base64,content_id,is_inline&company_id=${sqlEq(companyId)}`,
+        `email_message_attachments?select=id,email_message_id,file_name,mime_type,size_bytes,content_base64,content_id,is_inline&company_id=${sqlEq(companyId)}&email_message_id=${sqlIn(messageIds)}&limit=200`,
         { select: true },
       )
     : [];
@@ -128,7 +140,7 @@ export async function syncMailboxMessages(companyId: string, limit = 25) {
       Authorization: `Bearer ${accessToken}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ companyId, limit }),
+    body: JSON.stringify({ companyId, limit: clampMailboxLimit(limit) }),
   });
 
   const result = await response.json().catch(() => ({}));
