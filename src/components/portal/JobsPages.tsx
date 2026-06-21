@@ -39,7 +39,7 @@ export function JobsPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
   onCreateJob: (event: FormEvent<HTMLFormElement>) => void;
   selectedJobPrefix: string;
   nextJobNumber: string;
@@ -170,7 +170,7 @@ export function AllJobsPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
   jobStatusFilters: ServiceJobStatus[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
   allJobsVisibility: 'active' | 'paid' | 'all';

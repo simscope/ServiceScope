@@ -336,8 +336,9 @@ export async function createJobInvoice(
   companyId: string,
   job: ServiceJob,
   materials: MaterialRow[],
+  amountOverride?: number,
 ): Promise<JobInvoice> {
-  const amount = invoiceTotal(job, materials);
+  const amount = Math.max(0, Number(amountOverride ?? invoiceTotal(job, materials)) || 0);
   const invoiceNumber = nextInvoiceNumber(job.jobNumber, job.invoices ?? []);
   const [invoice] = await supabaseRequest<JobInvoiceRow[]>('job_invoices?select=*', {
     method: 'POST',

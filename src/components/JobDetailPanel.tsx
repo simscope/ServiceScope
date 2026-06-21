@@ -22,7 +22,26 @@ type JobDetailPanelProps = {
   onClose: () => void;
   onSave: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[]) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+};
+
+type InvoiceLineType = 'service' | 'material' | 'other';
+
+type InvoiceLineDraft = {
+  id: string;
+  type: InvoiceLineType;
+  name: string;
+  quantity: number;
+  price: number;
+};
+
+type InvoiceDraft = {
+  documentType: 'Invoice' | 'Estimate' | 'Receipt';
+  invoiceDate: string;
+  discount: number;
+  includeWarranty: boolean;
+  warrantyDays: number;
+  lines: InvoiceLineDraft[];
 };
 
 const jobStatuses: ServiceJobStatus[] = [
@@ -86,6 +105,40 @@ function emptyMaterialRow(jobNumber: string): MaterialRow {
   };
 }
 
+function todayLocalDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function invoiceLineAmount(line: InvoiceLineDraft) {
+  return Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.price) || 0);
+}
+
+function makeInvoiceLines(job: JobCardData, rows: MaterialRow[]): InvoiceLineDraft[] {
+  const lines: InvoiceLineDraft[] = [];
+  const labor = Number(job.labor || 0);
+  const serviceCallFee = Number(job.serviceCallFee || 0);
+
+  if (labor > 0) {
+    lines.push({ id: crypto.randomUUID(), type: 'service', name: 'Labor', quantity: 1, price: labor });
+  }
+
+  lines.push({ id: crypto.randomUUID(), type: 'service', name: 'Service Call Fee', quantity: 1, price: serviceCallFee });
+
+  rows
+    .filter((material) => material.name.trim() || Number(material.price) > 0)
+    .forEach((material) => {
+      lines.push({
+        id: crypto.randomUUID(),
+        type: 'material',
+        name: material.name.trim() || 'Material',
+        quantity: Number(material.quantity) || 1,
+        price: Number(material.price) || 0,
+      });
+    });
+
+  return lines;
+}
+
 export function JobDetailPanel({
   job,
   technicians,
@@ -106,17 +159,38 @@ export function JobDetailPanel({
   const [materialsSaved, setMaterialsSaved] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [invoiceStatus, setInvoiceStatus] = useState('');
+  const [invoiceEditorOpen, setInvoiceEditorOpen] = useState(false);
+  const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => ({
+    documentType: 'Invoice',
+    invoiceDate: todayLocalDate(),
+    discount: 0,
+    includeWarranty: true,
+    warrantyDays: profile.warrantyDays,
+    lines: makeInvoiceLines(job, materials),
+  }));
   const jobNumberParts = draft.jobNumber.split('-');
   const jobNumber = jobNumberParts[jobNumberParts.length - 1] ?? draft.jobNumber;
   const scfPaid = Boolean(draft.scfPayment);
+  const invoiceSubtotal = invoiceDraft.lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
+  const invoiceDiscount = Math.max(0, Number(invoiceDraft.discount) || 0);
+  const invoiceTotal = Math.max(0, invoiceSubtotal - invoiceDiscount);
+  const nextInvoiceNumber = `INV-${draft.jobNumber}-${String((draft.invoices?.length ?? 0) + 1).padStart(2, '0')}`;
 
   useEffect(() => {
     setDraft(job);
     setMaterialDrafts(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
+    setInvoiceDraft({
+      documentType: 'Invoice',
+      invoiceDate: todayLocalDate(),
+      discount: 0,
+      includeWarranty: true,
+      warrantyDays: profile.warrantyDays,
+      lines: makeInvoiceLines(job, materials),
+    });
     setSaved(false);
     setMaterialsSaved(false);
     setUploadError('');
-  }, [job, materials]);
+  }, [job, materials, profile.warrantyDays]);
 
   function updateDraft(patch: Partial<JobCardData>) {
     setSaved(false);
@@ -213,49 +287,85 @@ export function JobDetailPanel({
   const escapeHtml = (value: string) =>
     value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
-  function invoiceLines() {
-    return [
-      { label: 'Service call fee', quantity: 1, price: Number(draft.serviceCallFee || 0) },
-      { label: 'Labor', quantity: 1, price: Number(draft.labor || 0) },
-      ...materialDrafts
-        .filter((material) => material.name.trim() || material.price)
-        .map((material) => ({
-          label: material.name.trim() || 'Material',
-          quantity: Number(material.quantity) || 1,
-          price: Number(material.price) || 0,
-        })),
-    ].filter((line) => line.price > 0 || line.label === 'Labor');
+  function resetInvoiceDraft() {
+    setInvoiceDraft({
+      documentType: 'Invoice',
+      invoiceDate: todayLocalDate(),
+      discount: 0,
+      includeWarranty: true,
+      warrantyDays: profile.warrantyDays,
+      lines: makeInvoiceLines(draft, materialDrafts),
+    });
   }
 
-  function openInvoice(invoice: JobInvoice) {
-    const lines = invoiceLines();
+  function openInvoiceEditor() {
+    resetInvoiceDraft();
+    setInvoiceEditorOpen(true);
+    setInvoiceStatus('');
+  }
+
+  function updateInvoiceLine(lineId: string, patch: Partial<InvoiceLineDraft>) {
+    setInvoiceDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) => (line.id === lineId ? { ...line, ...patch } : line)),
+    }));
+  }
+
+  function addInvoiceLine() {
+    setInvoiceDraft((current) => ({
+      ...current,
+      lines: [...current.lines, { id: crypto.randomUUID(), type: 'service', name: '', quantity: 1, price: 0 }],
+    }));
+  }
+
+  function removeInvoiceLine(lineId: string) {
+    setInvoiceDraft((current) => ({
+      ...current,
+      lines: current.lines.length > 1 ? current.lines.filter((line) => line.id !== lineId) : current.lines,
+    }));
+  }
+
+  function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft) {
+    const lines = printableDraft.lines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
     const rows = lines.map((line) => `
       <tr>
-        <td>${escapeHtml(line.label)}</td>
+        <td>${escapeHtml(line.type)}</td>
+        <td>${escapeHtml(line.name.trim() || 'Service')}</td>
         <td>${line.quantity}</td>
         <td>${money(line.price)}</td>
-        <td>${money(line.price * line.quantity)}</td>
+        <td>${money(invoiceLineAmount(line))}</td>
       </tr>
     `).join('');
+    const subtotal = lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
+    const discount = Math.max(0, Number(printableDraft.discount) || 0);
+    const total = Math.max(0, subtotal - discount);
+    const companyName = profile.displayName || profile.legalName || 'Service company';
+    const companyLogo = profile.logoUrl ? `<img class="logo" src="${escapeHtml(profile.logoUrl)}" alt="${escapeHtml(companyName)} logo" />` : '<div class="logo placeholder">S</div>';
+    const warranty = printableDraft.includeWarranty ? `<p class="footer">Warranty: ${Number(printableDraft.warrantyDays) || 0} days.</p>` : '';
     const invoiceHtml = `
       <!doctype html>
       <html>
         <head>
           <title>${escapeHtml(invoice.invoiceNumber)}</title>
           <style>
-            body { font-family: Arial, sans-serif; color: #17201b; margin: 32px; }
-            header { display: flex; justify-content: space-between; gap: 24px; border-bottom: 2px solid #17201b; padding-bottom: 18px; margin-bottom: 24px; }
-            h1 { margin: 0; font-size: 30px; }
+            body { font-family: Georgia, 'Times New Roman', serif; color: #17201b; margin: 32px; background: #fff; }
+            header { display: grid; grid-template-columns: 1fr 320px; gap: 48px; margin-bottom: 28px; }
+            h1 { margin: 4px 0 0; font-size: 34px; letter-spacing: 1px; text-transform: uppercase; text-align: right; }
             h2 { margin: 0 0 8px; font-size: 16px; }
-            p { margin: 3px 0; }
+            p { margin: 4px 0; }
+            .logo { width: 86px; height: 110px; object-fit: contain; margin-bottom: 12px; }
+            .logo.placeholder { display: grid; place-items: center; background: #edf3ff; border-radius: 8px; font: 700 28px Arial; color: #1c408f; }
             .muted { color: #526158; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
-            .box { border: 1px solid #cfd8d1; border-radius: 8px; padding: 14px; }
+            .invoice-meta { text-align: right; }
+            .balance { border: 1px solid #cfd8d1; border-radius: 8px; padding: 12px; margin: 14px 0; display: flex; justify-content: space-between; font-weight: 700; }
+            .bill-to { margin-top: 16px; text-align: left; }
             table { width: 100%; border-collapse: collapse; margin-top: 18px; }
             th, td { border-bottom: 1px solid #d7dee8; padding: 10px; text-align: left; vertical-align: top; }
-            th { background: #f4f6f8; }
-            td:nth-child(2), td:nth-child(3), td:nth-child(4), th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: right; }
-            .total { display: flex; justify-content: flex-end; margin-top: 18px; font-size: 22px; font-weight: 800; }
+            th { background: #343434; color: #fff; }
+            td:nth-child(3), td:nth-child(4), td:nth-child(5), th:nth-child(3), th:nth-child(4), th:nth-child(5) { text-align: right; }
+            .totals { width: 320px; margin: 28px 0 0 auto; border: 1px solid #cfd8d1; border-radius: 8px; padding: 14px; }
+            .totals div { display: flex; justify-content: space-between; margin: 8px 0; }
+            .totals strong { font-size: 18px; }
             .footer { margin-top: 28px; color: #526158; font-size: 12px; }
             @media print { button { display: none; } body { margin: 18px; } }
           </style>
@@ -263,40 +373,41 @@ export function JobDetailPanel({
         <body>
           <header>
             <div>
-              <h1>Invoice</h1>
-              <p><strong>${escapeHtml(invoice.invoiceNumber)}</strong></p>
-              <p class="muted">Created ${escapeHtml(invoice.createdAt)}</p>
-            </div>
-            <div>
-              <h2>${escapeHtml(profile.displayName || profile.legalName || 'Service company')}</h2>
+              ${companyLogo}
+              <h2>${escapeHtml(companyName)}</h2>
               <p>${escapeHtml(profile.serviceAddress || '')}</p>
               <p>${escapeHtml(profile.phone || '')}</p>
+              <p>${escapeHtml(profile.billingEmail || '')}</p>
               <p>${escapeHtml(profile.website || '')}</p>
             </div>
+            <div class="invoice-meta">
+              <p class="muted">Document type: ${escapeHtml(printableDraft.documentType)}</p>
+              <h1>${escapeHtml(printableDraft.documentType)}</h1>
+              <p># ${escapeHtml(invoice.invoiceNumber)}</p>
+              <p><strong>Date:</strong> ${escapeHtml(printableDraft.invoiceDate)}</p>
+              <div class="balance"><span>Balance Due:</span><span>${money(total)}</span></div>
+              <section class="bill-to">
+                <h2>Bill To</h2>
+                <p><strong>${escapeHtml(draft.organization || draft.clientName || 'Customer')}</strong></p>
+                <p>${escapeHtml(draft.clientName || '')}</p>
+                <p>${escapeHtml(draft.address || '')}</p>
+                <p>${escapeHtml(draft.phone || '')}</p>
+                <p>${escapeHtml(draft.email || '')}</p>
+              </section>
+            </div>
           </header>
-          <div class="grid">
-            <section class="box">
-              <h2>Bill to</h2>
-              <p><strong>${escapeHtml(draft.organization || draft.clientName || 'Customer')}</strong></p>
-              <p>${escapeHtml(draft.clientName || '')}</p>
-              <p>${escapeHtml(draft.phone || '')}</p>
-              <p>${escapeHtml(draft.email || '')}</p>
-              <p>${escapeHtml(draft.address || '')}</p>
-            </section>
-            <section class="box">
-              <h2>Job</h2>
-              <p><strong>${escapeHtml(draft.jobNumber)}</strong></p>
-              <p>${escapeHtml(draft.system)}</p>
-              <p>${escapeHtml(draft.issue)}</p>
-            </section>
-          </div>
           <table>
             <thead>
-              <tr><th>Description</th><th>Qty</th><th>Rate</th><th>Amount</th></tr>
+              <tr><th>Type</th><th>Name</th><th>Qty</th><th>Price</th><th>Amount</th></tr>
             </thead>
             <tbody>${rows}</tbody>
           </table>
-          <div class="total">Total: ${money(invoice.amount)}</div>
+          <section class="totals">
+            <div><span>Subtotal:</span><span>${money(subtotal)}</span></div>
+            <div><span>Discount:</span><span>- ${money(discount)}</span></div>
+            <div><strong>Total:</strong><strong>${money(total)}</strong></div>
+          </section>
+          ${warranty}
           <p class="footer">${escapeHtml(profile.paymentNotes || 'Thank you for your business.')}</p>
           <button onclick="window.print()">Print / Save PDF</button>
         </body>
@@ -314,14 +425,16 @@ export function JobDetailPanel({
   async function createInvoice() {
     setInvoiceStatus('Creating invoice...');
     try {
-      const invoice = await onCreateInvoice(draft, materialDrafts);
+      const currentInvoiceDraft = invoiceDraft;
+      const invoice = await onCreateInvoice(draft, materialDrafts, invoiceTotal);
       const nextJob = {
         ...draft,
         invoices: [invoice, ...(draft.invoices ?? [])],
       };
       setDraft(nextJob);
+      setInvoiceEditorOpen(false);
       setInvoiceStatus('Invoice created.');
-      openInvoice(invoice);
+      openInvoice(invoice, currentInvoiceDraft);
     } catch (error) {
       setInvoiceStatus(error instanceof Error ? error.message : 'Invoice could not be created.');
     }
@@ -510,7 +623,7 @@ export function JobDetailPanel({
               <button className="secondary-button compact" type="button" onClick={sendInvoices} disabled={!(draft.invoices ?? []).length || !draft.email}>
                 Send selected
               </button>
-              <button className="primary-button" type="button" onClick={createInvoice}>
+              <button className="primary-button" type="button" onClick={openInvoiceEditor}>
                 + Create invoice
               </button>
             </div>
@@ -627,6 +740,127 @@ export function JobDetailPanel({
           <span>{saved ? 'Saved' : 'Upload files, then save the job'}</span>
         </div>
       </section>
+
+      {invoiceEditorOpen ? (
+        <div className="email-message-modal-backdrop" role="dialog" aria-modal="true">
+          <section className="email-message-modal invoice-editor-modal">
+            <div className="invoice-editor-toolbar">
+              <button className="primary-button" type="button" onClick={createInvoice}>
+                Save and download PDF
+              </button>
+              <button className="secondary-button compact" type="button" onClick={() => setInvoiceEditorOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <div className="invoice-paper">
+              <div className="invoice-top">
+                <div className="invoice-company-block">
+                  {profile.logoUrl ? (
+                    <img className="invoice-logo-preview" src={profile.logoUrl} alt={`${profile.displayName || profile.legalName} logo`} />
+                  ) : (
+                    <div className="invoice-logo-preview invoice-logo-placeholder">{(profile.displayName || profile.legalName || 'S').slice(0, 1)}</div>
+                  )}
+                  <strong>{profile.displayName || profile.legalName || 'Service company'}</strong>
+                  <span>{profile.serviceAddress}</span>
+                  <span>{profile.phone}</span>
+                  <span>{profile.billingEmail}</span>
+                  <span>{profile.website}</span>
+                </div>
+
+                <div className="invoice-document-head">
+                  <label>
+                    Document type:
+                    <select value={invoiceDraft.documentType} onChange={(event) => setInvoiceDraft((current) => ({ ...current, documentType: event.target.value as InvoiceDraft['documentType'] }))}>
+                      <option value="Invoice">Invoice</option>
+                      <option value="Estimate">Estimate</option>
+                      <option value="Receipt">Receipt</option>
+                    </select>
+                  </label>
+                  <h2>{invoiceDraft.documentType}</h2>
+                  <span># {nextInvoiceNumber}</span>
+                  <label>
+                    Date:
+                    <input type="date" value={invoiceDraft.invoiceDate} onChange={(event) => setInvoiceDraft((current) => ({ ...current, invoiceDate: event.target.value }))} />
+                  </label>
+                  <div className="invoice-balance">
+                    <strong>Balance Due:</strong>
+                    <span>{money(invoiceTotal)}</span>
+                  </div>
+                  <div className="invoice-bill-to">
+                    <strong>Bill To</strong>
+                    <span>{draft.organization || draft.clientName || 'Customer'}</span>
+                    {draft.clientName ? <span>{draft.clientName}</span> : null}
+                    {draft.address ? <span>{draft.address}</span> : null}
+                    {draft.phone ? <span>{draft.phone}</span> : null}
+                    {draft.email ? <span>{draft.email}</span> : null}
+                  </div>
+                </div>
+              </div>
+
+              <div className="invoice-line-table">
+                <div className="invoice-line-row invoice-line-head">
+                  <span>Type</span>
+                  <span>Name</span>
+                  <span>Qty</span>
+                  <span>Price</span>
+                  <span>Amount</span>
+                  <span />
+                </div>
+                {invoiceDraft.lines.map((line) => (
+                  <div className="invoice-line-row" key={line.id}>
+                    <select value={line.type} onChange={(event) => updateInvoiceLine(line.id, { type: event.target.value as InvoiceLineType })}>
+                      <option value="service">service</option>
+                      <option value="material">material</option>
+                      <option value="other">other</option>
+                    </select>
+                    <input value={line.name} onChange={(event) => updateInvoiceLine(line.id, { name: event.target.value })} placeholder="Line item" />
+                    <input type="number" min={0} step={1} value={line.quantity} onChange={(event) => updateInvoiceLine(line.id, { quantity: Number(event.target.value) || 0 })} />
+                    <input type="number" min={0} step={1} value={line.price} onChange={(event) => updateInvoiceLine(line.id, { price: Number(event.target.value) || 0 })} />
+                    <strong>{money(invoiceLineAmount(line))}</strong>
+                    <button className="remove-line-button" type="button" onClick={() => removeInvoiceLine(line.id)} aria-label="Remove invoice line">
+                      x
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="invoice-editor-lower">
+                <button className="secondary-button compact" type="button" onClick={addInvoiceLine}>
+                  + Add row
+                </button>
+                <div className="invoice-total-card">
+                  <div>
+                    <span>Subtotal:</span>
+                    <strong>{money(invoiceSubtotal)}</strong>
+                  </div>
+                  <label>
+                    Discount $
+                    <input type="number" min={0} step={1} value={invoiceDraft.discount} onChange={(event) => setInvoiceDraft((current) => ({ ...current, discount: Number(event.target.value) || 0 }))} />
+                  </label>
+                  <div>
+                    <span>Total:</span>
+                    <strong>{money(invoiceTotal)}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="invoice-warranty-row">
+                <label>
+                  <input type="checkbox" checked={invoiceDraft.includeWarranty} onChange={(event) => setInvoiceDraft((current) => ({ ...current, includeWarranty: event.target.checked }))} />
+                  Include warranty
+                </label>
+                <label>
+                  Days:
+                  <input type="number" min={0} step={1} value={invoiceDraft.warrantyDays} onChange={(event) => setInvoiceDraft((current) => ({ ...current, warrantyDays: Number(event.target.value) || 0 }))} />
+                </label>
+              </div>
+
+              {profile.paymentNotes ? <p className="invoice-payment-notes">{profile.paymentNotes}</p> : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
