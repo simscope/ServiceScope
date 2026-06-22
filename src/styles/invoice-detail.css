@@ -1,0 +1,71 @@
+.invoice-card {
+  display: grid;
+  align-items: stretch;
+  justify-content: stretch;
+  gap: 14px;
+}
+
+.invoice-card-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.invoice-card-toolbar h2 {
+  margin: 0;
+}
+
+.invoice-card-toolbar .invoice-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.invoice-card .invoice-list {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 10px;
+  margin-top: 0;
+}
+
+.invoice-card .invoice-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  cursor: default;
+}
+
+.invoice-card .invoice-row > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.invoice-card input[type='checkbox'] {
+  width: 18px;
+  min-height: 18px;
+}
+
+@media (max-width: 760px) {
+  .invoice-card-toolbar,
+  .invoice-card-toolbar .invoice-actions,
+  .invoice-card .invoice-row > div:last-child {
+    justify-content: flex-start;
+  }
+
+  .invoice-card .invoice-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .invoice-card .invoice-row > div:last-child {
+    grid-column: 1 / -1;
+  }
+}
