@@ -94,6 +94,19 @@ function formatCommentTime(value: string) {
   });
 }
 
+function formatInvoiceTime(value: string) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('en-US', {
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 function emptyMaterialRow(jobNumber: string): MaterialRow {
   return {
     id: crypto.randomUUID(),
@@ -166,6 +179,7 @@ export function JobDetailPanel({
   const [uploadError, setUploadError] = useState('');
   const [invoiceStatus, setInvoiceStatus] = useState('');
   const [invoiceEditorOpen, setInvoiceEditorOpen] = useState(false);
+  const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
   const [invoiceDraft, setInvoiceDraft] = useState<InvoiceDraft>(() => ({
     documentType: 'Invoice',
     invoiceDate: todayLocalDate(),
@@ -183,6 +197,9 @@ export function JobDetailPanel({
   const invoiceComputedTotal = Math.max(0, invoiceSubtotal - invoiceDiscount);
   const invoiceTotal = Math.max(0, Number(invoiceDraft.balanceDue) || 0);
   const nextInvoiceNumber = `INV-${draft.jobNumber}-${String((draft.invoices?.length ?? 0) + 1).padStart(2, '0')}`;
+  const invoices = draft.invoices ?? [];
+  const selectedInvoices = invoices.filter((invoice) => selectedInvoiceIds.includes(invoice.id));
+  const allInvoicesSelected = invoices.length > 0 && selectedInvoiceIds.length === invoices.length;
 
   useEffect(() => {
     setDraft(job);
@@ -196,6 +213,7 @@ export function JobDetailPanel({
       warrantyDays: profile.warrantyDays,
       lines: makeInvoiceLines(job, materials),
     });
+    setSelectedInvoiceIds([]);
     setSaved(false);
     setMaterialsSaved(false);
     setUploadError('');
@@ -340,17 +358,7 @@ export function JobDetailPanel({
     }));
   }
 
-  function writeInvoiceDocument(invoiceWindow: Window, invoiceHtml: string) {
-    invoiceWindow.document.open();
-    invoiceWindow.document.write(invoiceHtml);
-    invoiceWindow.document.close();
-    invoiceWindow.focus();
-    window.setTimeout(() => {
-      invoiceWindow.print();
-    }, 350);
-  }
-
-  function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft, targetWindow?: Window | null) {
+  function makeInvoiceHtml(invoice: JobInvoice, printableDraft = invoiceDraft) {
     const lines = printableDraft.lines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
     const serviceLines = lines.filter((line) => line.type !== 'material');
     const materialLines = lines.filter((line) => line.type === 'material');
@@ -372,7 +380,6 @@ export function JobDetailPanel({
       </tr>
     `).join('');
     const subtotal = lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
-    const discount = Math.max(0, Number(printableDraft.discount) || 0);
     const total = Math.max(0, Number(printableDraft.balanceDue) || 0);
     const companyName = profile.displayName || profile.legalName || 'Service company';
     const companyLogo = profile.logoUrl ? `<img class="logo" src="${escapeHtml(profile.logoUrl)}" alt="${escapeHtml(companyName)} logo" />` : '<div class="logo placeholder">S</div>';
@@ -383,7 +390,8 @@ export function JobDetailPanel({
         <p>A ${warrantyDays}-day limited warranty applies ONLY to the work performed and/or parts installed by ${escapeHtml(companyName)}. The warranty does not cover other components or the appliance as a whole, normal wear, consumables, damage caused by external factors, or third-party tampering. The warranty starts on the job completion date and is valid only when the invoice is paid in full.</p>
       </section>
     ` : '';
-    const invoiceHtml = `
+
+    return `
       <!doctype html>
       <html>
         <head>
@@ -460,11 +468,36 @@ export function JobDetailPanel({
         </body>
       </html>
     `;
-    const invoiceWindow = targetWindow ?? window.open('', '_blank');
-    if (!invoiceWindow) {
-      return;
+  }
+
+  function writeInvoiceDocument(invoiceWindow: Window, invoiceHtml: string, print = true) {
+    invoiceWindow.document.open();
+    invoiceWindow.document.write(invoiceHtml);
+    invoiceWindow.document.close();
+    invoiceWindow.focus();
+    if (print) {
+      window.setTimeout(() => {
+        invoiceWindow.print();
+      }, 350);
     }
-    writeInvoiceDocument(invoiceWindow, invoiceHtml);
+  }
+
+  function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft, targetWindow?: Window | null, print = true) {
+    const invoiceWindow = targetWindow ?? window.open('', '_blank');
+    if (!invoiceWindow) return;
+    writeInvoiceDocument(invoiceWindow, makeInvoiceHtml(invoice, printableDraft), print);
+  }
+
+  function downloadInvoice(invoice: JobInvoice) {
+    const blob = new Blob([makeInvoiceHtml(invoice)], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${invoice.invoiceNumber}.html`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
   }
 
   async function createInvoice() {
@@ -481,6 +514,7 @@ export function JobDetailPanel({
         invoices: [invoice, ...(draft.invoices ?? [])],
       };
       setDraft(nextJob);
+      setSelectedInvoiceIds([invoice.id]);
       setInvoiceEditorOpen(false);
       setInvoiceStatus('Invoice created.');
       openInvoice(invoice, currentInvoiceDraft, invoiceWindow);
@@ -492,19 +526,66 @@ export function JobDetailPanel({
     }
   }
 
-  function sendInvoices() {
-    const invoices = draft.invoices ?? [];
-    if (!invoices.length || !draft.email) return;
-    const body = [
+  function makeInvoiceEmailBody(items: JobInvoice[]) {
+    return [
       `Hello ${draft.clientName || ''},`,
       '',
-      'Invoice details:',
-      ...invoices.map((invoice) => `${invoice.invoiceNumber} - ${money(invoice.amount)} - ${invoice.status}`),
+      `Please find invoice details for job ${draft.jobNumber}:`,
+      ...items.map((invoice) => `${invoice.invoiceNumber} - ${money(invoice.amount)} - ${invoice.status}`),
       '',
       profile.paymentNotes || 'Please contact us if you have any questions.',
     ].join('\n');
+  }
 
-    window.location.href = `mailto:${encodeURIComponent(draft.email)}?subject=${encodeURIComponent(`Invoice for job ${draft.jobNumber}`)}&body=${encodeURIComponent(body)}`;
+  function openMail(subject: string, body: string) {
+    if (!draft.email) {
+      setInvoiceStatus('Client email is empty.');
+      return;
+    }
+    window.location.href = `mailto:${encodeURIComponent(draft.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  function writeToClient() {
+    openMail(
+      `Job ${draft.jobNumber}`,
+      [
+        `Hello ${draft.clientName || ''},`,
+        '',
+        `We are contacting you regarding job ${draft.jobNumber}.`,
+        '',
+        profile.paymentNotes || '',
+      ].join('\n'),
+    );
+  }
+
+  function sendInvoices(items = selectedInvoices.length ? selectedInvoices : invoices) {
+    if (!items.length) return;
+    openMail(`Invoice for job ${draft.jobNumber}`, makeInvoiceEmailBody(items));
+  }
+
+  function deleteInvoice(invoiceId: string) {
+    const nextJob = {
+      ...draft,
+      invoices: invoices.filter((invoice) => invoice.id !== invoiceId),
+    };
+    setDraft(nextJob);
+    setSelectedInvoiceIds((ids) => ids.filter((id) => id !== invoiceId));
+    onSave(nextJob);
+    setInvoiceStatus('Invoice removed from this job.');
+  }
+
+  function toggleInvoiceSelection(invoiceId: string, checked: boolean) {
+    setSelectedInvoiceIds((ids) => (checked ? Array.from(new Set([...ids, invoiceId])) : ids.filter((id) => id !== invoiceId)));
+  }
+
+  function toggleAllInvoices(checked: boolean) {
+    setSelectedInvoiceIds(checked ? invoices.map((invoice) => invoice.id) : []);
+  }
+
+  function refreshInvoices() {
+    setDraft(job);
+    setSelectedInvoiceIds([]);
+    setInvoiceStatus('Invoices refreshed.');
   }
 
   return (
@@ -644,41 +725,63 @@ export function JobDetailPanel({
               <button className="primary-button" type="button" onClick={saveDraft}>
                 Save client
               </button>
-              <span>{saved ? 'Saved' : 'No client changes saved yet'}</span>
-              <button className="secondary-button compact" type="button">
+              <span>{saved ? 'Saved' : 'No changes'}</span>
+              <button className="secondary-button compact" type="button" onClick={writeToClient} disabled={!draft.email}>
                 Write to the client
               </button>
             </div>
           </section>
 
           <section className="job-detail-card invoice-card">
-            <div>
-              <h2>Invoices (PDF)</h2>
-              {(draft.invoices ?? []).length ? (
-                <div className="invoice-list">
-                  {(draft.invoices ?? []).map((invoice) => (
-                    <button className="invoice-row" type="button" key={invoice.id} onClick={() => openInvoice(invoice)}>
-                      <span>
-                        <strong>{invoice.invoiceNumber}</strong>
-                        {invoice.status}
-                      </span>
-                      <b>{money(invoice.amount)}</b>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <p>No invoices for this job yet</p>
-              )}
-              {invoiceStatus ? <p>{invoiceStatus}</p> : null}
+            <div className="invoice-card-toolbar" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+              <h2 style={{ margin: 0 }}>Invoices (PDF)</h2>
+              <div className="invoice-actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <input type="checkbox" checked={allInvoicesSelected} onChange={(event) => toggleAllInvoices(event.target.checked)} disabled={!invoices.length} />
+                  Select all
+                </label>
+                <button className="secondary-button compact" type="button" onClick={() => sendInvoices()} disabled={!selectedInvoices.length || !draft.email}>
+                  Send selected
+                </button>
+                <button className="secondary-button compact" type="button" onClick={refreshInvoices}>
+                  Refresh
+                </button>
+                <button className="primary-button" type="button" onClick={openInvoiceEditor}>
+                  + Create invoice
+                </button>
+              </div>
             </div>
-            <div className="invoice-actions">
-              <button className="secondary-button compact" type="button" onClick={sendInvoices} disabled={!(draft.invoices ?? []).length || !draft.email}>
-                Send selected
-              </button>
-              <button className="primary-button" type="button" onClick={openInvoiceEditor}>
-                + Create invoice
-              </button>
-            </div>
+
+            {invoices.length ? (
+              <div className="invoice-list" style={{ display: 'grid', gap: 10, marginTop: 14 }}>
+                {invoices.map((invoice) => (
+                  <div className="invoice-row" key={invoice.id} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 12, alignItems: 'center' }}>
+                    <input type="checkbox" checked={selectedInvoiceIds.includes(invoice.id)} onChange={(event) => toggleInvoiceSelection(invoice.id, event.target.checked)} aria-label={`Select ${invoice.invoiceNumber}`} />
+                    <div>
+                      <strong>{invoice.invoiceNumber}</strong>
+                      <div style={{ fontSize: 12, opacity: 0.75 }}>{formatInvoiceTime(invoice.createdAt)}</div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button className="secondary-button compact" type="button" onClick={() => openInvoice(invoice, invoiceDraft, undefined, false)}>
+                        Open PDF
+                      </button>
+                      <button className="secondary-button compact" type="button" onClick={() => downloadInvoice(invoice)}>
+                        Download
+                      </button>
+                      <button className="danger-button compact" type="button" onClick={() => deleteInvoice(invoice.id)}>
+                        Delete
+                      </button>
+                      <button className="primary-button compact" type="button" onClick={() => sendInvoices([invoice])} disabled={!draft.email}>
+                        Send email
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p>No invoices for this job yet</p>
+            )}
+            {invoiceStatus ? <p>{invoiceStatus}</p> : null}
           </section>
         </div>
       </div>
