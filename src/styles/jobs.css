@@ -664,26 +664,27 @@
   resize: vertical;
 }
 
-.email-compose-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.email-compose-options label {
-  display: flex;
+.email-compose-modal .email-compose-option-toggle {
+  display: inline-flex;
   align-items: center;
   justify-content: flex-start;
   gap: 8px;
   border: 1px solid #e3e9e4;
   border-radius: 8px;
   background: #fbfcfd;
-  padding: 8px 10px;
+  width: fit-content;
+  min-height: 36px;
+  padding: 6px 10px;
   font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
 }
 
-.email-compose-options input {
+.email-compose-modal .email-compose-option-toggle input[type='checkbox'] {
+  flex: 0 0 auto;
   min-height: auto;
+  width: auto;
+  margin: 0;
 }
 
 .email-compose-preview-grid {

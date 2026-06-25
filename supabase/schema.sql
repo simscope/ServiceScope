@@ -571,6 +571,7 @@ create table job_invoices (
   company_id uuid not null references companies(id) on delete cascade,
   job_id uuid not null references jobs(id) on delete cascade,
   invoice_number text not null,
+  document_type text not null default 'Invoice' check (document_type in ('Invoice', 'Proposal', 'Estimate', 'Receipt')),
   status invoice_status not null default 'draft',
   amount_cents integer not null default 0,
   pdf_storage_path text,

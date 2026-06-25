@@ -689,19 +689,19 @@ button {
 
 .invoice-paper {
   display: grid;
-  gap: 18px;
+  gap: 12px;
   border: 1px solid #d7dee8;
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
-  padding: 22px;
+  padding: 16px 20px 18px;
   font-family: Georgia, 'Times New Roman', serif;
 }
 
 .invoice-top {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(280px, 340px);
-  gap: 36px;
+  gap: 28px;
 }
 
 .invoice-company-block,
@@ -719,11 +719,11 @@ button {
 }
 
 .invoice-logo-preview {
-  width: 92px;
-  height: 112px;
+  width: 86px;
+  height: 104px;
   object-fit: contain;
   border-radius: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .invoice-logo-placeholder {
@@ -740,7 +740,7 @@ button {
 .invoice-document-head {
   display: grid;
   justify-items: end;
-  gap: 8px;
+  gap: 6px;
   text-align: right;
 }
 
@@ -755,7 +755,7 @@ button {
 
 .invoice-document-head h2 {
   margin: 0;
-  font-size: 34px;
+  font-size: 32px;
   line-height: 1;
   text-transform: uppercase;
 }
@@ -775,7 +775,7 @@ button {
   border: 1px solid #d7dee8;
   border-radius: 8px;
   background: #f7f9fb;
-  padding: 12px;
+  padding: 9px 12px;
 }
 
 .invoice-balance label {
@@ -806,11 +806,11 @@ button {
 
 .invoice-line-row {
   display: grid;
-  grid-template-columns: 92px minmax(120px, 1fr) 62px 82px 86px 28px;
-  gap: 7px;
+  grid-template-columns: 88px minmax(160px, 1fr) 52px 78px 78px 26px;
+  gap: 6px;
   align-items: center;
   border-bottom: 1px solid #d7dee8;
-  padding: 8px;
+  padding: 6px;
 }
 
 .invoice-line-row:last-child {
@@ -880,6 +880,13 @@ button {
   justify-content: flex-start;
   margin-top: 12px;
   font-family: var(--font-body);
+}
+
+.invoice-warranty-row input[type='checkbox'] {
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
 }
 
 .invoice-warranty-row input[type='number'] {
@@ -1224,6 +1231,11 @@ button {
   cursor: pointer;
 }
 
+.job-status-tab.active {
+  box-shadow: 0 0 0 2px rgba(31, 107, 199, 0.16);
+  filter: saturate(1.15);
+}
+
 .job-status-tab.recall {
   border-color: #ffc4c4;
   background: #ffe8e8;
@@ -1308,6 +1320,48 @@ button {
   vertical-align: top;
 }
 
+.all-jobs-table tbody tr.new td {
+  background: #f4f8ff;
+  color: #173c70;
+}
+
+.all-jobs-table tbody tr.recall td {
+  background: #ffe8e8;
+  color: #6f1b1b;
+}
+
+.all-jobs-table tbody tr.diagnosis td {
+  background: #fff9bf;
+  color: #593900;
+}
+
+.all-jobs-table tbody tr.in-progress td {
+  background: #eef4ff;
+  color: #173c70;
+}
+
+.all-jobs-table tbody tr.parts-ordered td,
+.all-jobs-table tbody tr.waiting-for-parts td {
+  background: #f1e9ff;
+  color: #472276;
+}
+
+.all-jobs-table tbody tr.to-finish td {
+  background: #fff0e3;
+  color: #6c3600;
+}
+
+.all-jobs-table tbody tr.completed td,
+.all-jobs-table tbody tr.warranty td {
+  background: #e6f8ed;
+  color: #0d5028;
+}
+
+.all-jobs-table tbody tr.cancelled td {
+  background: #eef1f4;
+  color: #3f4b57;
+}
+
 .all-jobs-table tr:last-child td {
   border-bottom: 0;
 }
@@ -1336,7 +1390,8 @@ button {
 
 .all-jobs-table td span {
   margin-top: 2px;
-  color: #6e5b36;
+  color: inherit;
+  opacity: 0.78;
   font-size: 12px;
 }
 

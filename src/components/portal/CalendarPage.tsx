@@ -1,7 +1,8 @@
 import type { DragEvent, PointerEvent } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
-import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobInvoice, MaterialRow, ServiceJobStatus } from '../../types';
+import type { EmailCompose, EmailComposeAttachment } from '../../appTypes';
+import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobDocumentType, JobInvoice, MaterialRow, ServiceJobStatus } from '../../types';
 import { googleRouteUrl, statusClassName } from '../../utils/format';
 
 type CalendarDay = {
@@ -44,6 +45,8 @@ export function CalendarPage({
   onSaveJob,
   onSaveMaterials,
   onCreateInvoice,
+  onDeleteInvoice,
+  onComposeEmail,
   calendarRangeTitle,
   onMoveCalendar,
   onShowToday,
@@ -77,7 +80,9 @@ export function CalendarPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
+  onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
+  onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
   calendarRangeTitle: string;
   onMoveCalendar: (direction: -1 | 1) => void;
   onShowToday: () => void;
@@ -96,7 +101,7 @@ export function CalendarPage({
   calendarSlots: string[];
   calendarDropSlots: CalendarSlot[];
   onCalendarDrop: (event: DragEvent<HTMLDivElement>, dayKey: string, slotKey: string) => void;
-  onCalendarResizeStart: (event: PointerEvent<HTMLElement>, job: CalendarJob) => void;
+  onCalendarResizeStart: (event: PointerEvent<HTMLElement>, job: CalendarJob, edge: 'start' | 'end') => void;
   jobStatusFilters: ServiceJobStatus[];
   monthDropRequest: MonthDropRequest | null;
   allCalendarDays: CalendarDay[];
@@ -118,6 +123,8 @@ export function CalendarPage({
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
           onCreateInvoice={onCreateInvoice}
+          onDeleteInvoice={onDeleteInvoice}
+          onComposeEmail={onComposeEmail}
         />
       </section>
     );
@@ -298,9 +305,14 @@ export function CalendarPage({
                       <small>{job.address}</small>
                       <em>{job.technician}</em>
                       <span
-                        className="calendar-resize-handle"
-                        onPointerDown={(event) => onCalendarResizeStart(event, job)}
-                        aria-label={`Resize job ${job.jobNumber}`}
+                        className="calendar-resize-handle start"
+                        onPointerDown={(event) => onCalendarResizeStart(event, job, 'start')}
+                        aria-label={`Resize start of job ${job.jobNumber}`}
+                      />
+                      <span
+                        className="calendar-resize-handle end"
+                        onPointerDown={(event) => onCalendarResizeStart(event, job, 'end')}
+                        aria-label={`Resize end of job ${job.jobNumber}`}
                       />
                     </button>
                   );

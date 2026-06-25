@@ -1,9 +1,11 @@
-import type { FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { ClipboardList, Plus } from 'lucide-react';
 import type { JobCardData } from '../JobCard';
 import { JobDetailPanel } from '../JobDetailPanel';
+import type { EmailCompose, EmailComposeAttachment } from '../../appTypes';
 import type {
   CompanyJobType,
+  JobDocumentType,
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
   JobInvoice,
@@ -13,6 +15,136 @@ import type {
 } from '../../types';
 import { paymentMethodLabels } from '../../appLabels';
 import { statusClassName } from '../../utils/format';
+
+const allJobsExportColumns = [
+  'Job #',
+  'Technician',
+  'Status',
+  'Company',
+  'Client name',
+  'Phone',
+  'Email',
+  'Address',
+  'System',
+  'Issue',
+  'SCF',
+  'SCF payment',
+  'Labor',
+  'Labor payment',
+  'Invoices',
+  'Invoice total',
+  'Notes',
+  'Created',
+];
+
+function normalizeSearch(value: string | number | null | undefined) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function paymentLabel(value: string) {
+  return paymentMethodLabels[value as CompanyPaymentMethod] ?? value;
+}
+
+function jobSearchText(job: ServiceJob) {
+  return [
+    job.jobNumber,
+    job.status,
+    job.organization,
+    job.clientName,
+    job.phone,
+    job.email,
+    job.address,
+    job.system,
+    job.issue,
+    job.serviceCallFee,
+    paymentLabel(job.scfPayment),
+    job.labor,
+    paymentLabel(job.laborPayment),
+    job.technician,
+    job.assignee,
+    job.notes,
+    job.createdAt,
+    ...(job.invoices ?? []).flatMap((invoice) => [
+      invoice.invoiceNumber,
+      invoice.documentType,
+      invoice.status,
+      invoice.amount,
+      invoice.createdAt,
+      invoice.sentAt,
+      invoice.paidAt,
+    ]),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function jobNumberText(job: ServiceJob) {
+  return [
+    job.jobNumber,
+    ...(job.invoices ?? []).map((invoice) => invoice.invoiceNumber),
+  ]
+    .join(' ')
+    .toLowerCase();
+}
+
+function escapeExcelCell(value: string | number | null | undefined) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function downloadExcelFile(rows: ServiceJob[]) {
+  const tableRows = rows.map((job) => {
+    const invoiceTotal = (job.invoices ?? []).reduce((sum, invoice) => sum + (Number(invoice.amount) || 0), 0);
+    const invoices = (job.invoices ?? [])
+      .map((invoice) => `${invoice.invoiceNumber} ${invoice.documentType} ${invoice.status} $${invoice.amount}`)
+      .join('; ');
+    const values = [
+      job.jobNumber,
+      job.assignee || 'No technician',
+      job.status,
+      job.organization,
+      job.clientName,
+      job.phone,
+      job.email,
+      job.address,
+      job.system,
+      job.issue,
+      job.serviceCallFee,
+      paymentLabel(job.scfPayment),
+      job.labor,
+      paymentLabel(job.laborPayment),
+      invoices,
+      invoiceTotal,
+      job.notes,
+      job.createdAt,
+    ];
+
+    return `<tr>${values.map((value) => `<td>${escapeExcelCell(value)}</td>`).join('')}</tr>`;
+  });
+  const html = `
+    <html>
+      <head><meta charset="utf-8" /></head>
+      <body>
+        <table>
+          <thead><tr>${allJobsExportColumns.map((column) => `<th>${escapeExcelCell(column)}</th>`).join('')}</tr></thead>
+          <tbody>${tableRows.join('')}</tbody>
+        </table>
+      </body>
+    </html>
+  `;
+  const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `all-jobs-${new Date().toISOString().slice(0, 10)}.xls`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
 
 export function JobsPage({
   openedJob,
@@ -24,6 +156,8 @@ export function JobsPage({
   onSaveJob,
   onSaveMaterials,
   onCreateInvoice,
+  onDeleteInvoice,
+  onComposeEmail,
   onCreateJob,
   selectedJobPrefix,
   nextJobNumber,
@@ -39,7 +173,9 @@ export function JobsPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
+  onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
+  onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
   onCreateJob: (event: FormEvent<HTMLFormElement>) => void;
   selectedJobPrefix: string;
   nextJobNumber: string;
@@ -62,6 +198,8 @@ export function JobsPage({
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
           onCreateInvoice={onCreateInvoice}
+          onDeleteInvoice={onDeleteInvoice}
+          onComposeEmail={onComposeEmail}
         />
       </section>
     );
@@ -150,6 +288,8 @@ export function AllJobsPage({
   onSaveJob,
   onSaveMaterials,
   onCreateInvoice,
+  onDeleteInvoice,
+  onComposeEmail,
   jobStatusFilters,
   allJobsGroups,
   allJobsVisibility,
@@ -170,7 +310,9 @@ export function AllJobsPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
+  onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
+  onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
   jobStatusFilters: ServiceJobStatus[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
   allJobsVisibility: 'active' | 'paid' | 'all';
@@ -183,6 +325,56 @@ export function AllJobsPage({
   onSaveInlineJob: (job: ServiceJob) => void;
   onOpenJob: (job: ServiceJob) => void;
 }) {
+  const [statusFilter, setStatusFilter] = useState<'all' | ServiceJobStatus>('all');
+  const [technicianFilter, setTechnicianFilter] = useState('all');
+  const [generalSearch, setGeneralSearch] = useState('');
+  const [numberSearch, setNumberSearch] = useState('');
+  const [sortMode, setSortMode] = useState<'job-desc' | 'client' | 'status'>('job-desc');
+  const allVisibleJobs = useMemo(() => allJobsGroups.flatMap((group) => group.jobs), [allJobsGroups]);
+  const technicianOptions = useMemo(() => {
+    const names = Array.from(new Set(allVisibleJobs.map((job) => job.assignee || 'No technician')));
+    return ['all', ...names.sort((first, second) => first.localeCompare(second))];
+  }, [allVisibleJobs]);
+  const filteredAllJobs = useMemo(() => {
+    const normalizedGeneralSearch = normalizeSearch(generalSearch);
+    const normalizedNumberSearch = normalizeSearch(numberSearch);
+    const statusOrder = new Map(jobStatusFilters.map((status, index) => [status, index]));
+
+    return allVisibleJobs
+      .filter((job) => {
+        const assignee = job.assignee || 'No technician';
+        const matchesStatus = statusFilter === 'all' || job.status === statusFilter;
+        const matchesTechnician = technicianFilter === 'all' || assignee === technicianFilter;
+        const matchesGeneralSearch = !normalizedGeneralSearch || jobSearchText(job).includes(normalizedGeneralSearch);
+        const matchesNumberSearch = !normalizedNumberSearch || jobNumberText(job).includes(normalizedNumberSearch);
+        return matchesStatus && matchesTechnician && matchesGeneralSearch && matchesNumberSearch;
+      })
+      .sort((first, second) => {
+        if (sortMode === 'client') {
+          return `${first.organization} ${first.clientName}`.localeCompare(`${second.organization} ${second.clientName}`, undefined, { numeric: true });
+        }
+        if (sortMode === 'status') {
+          return (statusOrder.get(first.status) ?? 999) - (statusOrder.get(second.status) ?? 999)
+            || first.jobNumber.localeCompare(second.jobNumber, undefined, { numeric: true });
+        }
+        return second.jobNumber.localeCompare(first.jobNumber, undefined, { numeric: true });
+      });
+  }, [allVisibleJobs, generalSearch, jobStatusFilters, numberSearch, sortMode, statusFilter, technicianFilter]);
+  const filteredAllJobsGroups = useMemo(() => {
+    const groupNames = Array.from(new Set(filteredAllJobs.map((job) => job.assignee || 'No technician')));
+    return groupNames.map((technician) => ({
+      technician,
+      jobs: filteredAllJobs.filter((job) => (job.assignee || 'No technician') === technician),
+    }));
+  }, [filteredAllJobs]);
+  const resetAllJobsFilters = () => {
+    setStatusFilter('all');
+    setTechnicianFilter('all');
+    setGeneralSearch('');
+    setNumberSearch('');
+    setSortMode('job-desc');
+  };
+
   if (openedJob) {
     return (
       <section className="all-jobs-page">
@@ -198,6 +390,8 @@ export function AllJobsPage({
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
           onCreateInvoice={onCreateInvoice}
+          onDeleteInvoice={onDeleteInvoice}
+          onComposeEmail={onComposeEmail}
         />
       </section>
     );
@@ -211,7 +405,7 @@ export function AllJobsPage({
       </div>
 
       <div className="all-jobs-toolbar">
-        <select defaultValue="all">
+        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | ServiceJobStatus)} aria-label="Filter by status">
           <option value="all">All statuses</option>
           {jobStatusFilters.map((status) => (
             <option value={status} key={status}>
@@ -219,11 +413,11 @@ export function AllJobsPage({
             </option>
           ))}
         </select>
-        <select defaultValue="all">
+        <select value={technicianFilter} onChange={(event) => setTechnicianFilter(event.target.value)} aria-label="Filter by technician">
           <option value="all">All technicians</option>
-          {profile.technicians.map((technician) => (
-            <option value={technician.id} key={technician.id}>
-              {technician.name}
+          {technicianOptions.filter((technician) => technician !== 'all').map((technician) => (
+            <option value={technician} key={technician}>
+              {technician}
             </option>
           ))}
         </select>
@@ -232,15 +426,15 @@ export function AllJobsPage({
           <option value="paid">Paid ({paidJobsCount})</option>
           <option value="all">All jobs ({totalJobsCount})</option>
         </select>
-        <input placeholder="Company, name, phone or address" />
-        <input placeholder="Invoice # or Job #" />
-        <button className="secondary-button compact" type="button">
+        <input value={generalSearch} onChange={(event) => setGeneralSearch(event.target.value)} placeholder="Search all job fields" />
+        <input value={numberSearch} onChange={(event) => setNumberSearch(event.target.value)} placeholder="Invoice # or Job #" />
+        <button className="secondary-button compact" type="button" onClick={resetAllJobsFilters}>
           Reset
         </button>
-        <button className="secondary-button compact" type="button">
+        <button className="secondary-button compact" type="button" onClick={() => downloadExcelFile(filteredAllJobs)} disabled={filteredAllJobs.length === 0}>
           Export to Excel
         </button>
-        <select defaultValue="job-desc">
+        <select value={sortMode} onChange={(event) => setSortMode(event.target.value as 'job-desc' | 'client' | 'status')} aria-label="Sort jobs">
           <option value="job-desc">Sort by Job #</option>
           <option value="client">Sort by client</option>
           <option value="status">Sort by status</option>
@@ -252,20 +446,27 @@ export function AllJobsPage({
       </p>
 
       <div className="all-jobs-groups">
-        {allJobsGroups.map((group) => (
+        {!filteredAllJobsGroups.length ? <p className="empty-inline">No jobs match the current filters.</p> : null}
+        {filteredAllJobsGroups.map((group) => (
           <section className="job-group" key={group.technician}>
             <div className="job-group-title">
               <h2>{group.technician}</h2>
             </div>
             <div className="job-status-tabs">
               {jobStatusFilters.map((status) => (
-                <button className={`job-status-tab ${statusClassName(status)}`} type="button" key={status}>
+                <button
+                  className={`job-status-tab ${statusClassName(status)} ${statusFilter === status ? 'active' : ''}`}
+                  type="button"
+                  key={status}
+                  onClick={() => setStatusFilter((current) => current === status ? 'all' : status)}
+                  aria-pressed={statusFilter === status}
+                >
                   {status}
                 </button>
               ))}
             </div>
             <div className="job-status-count">
-              <strong>Diagnosis</strong>
+              <strong>{statusFilter === 'all' ? 'Shown' : statusFilter}</strong>
               <span>{group.jobs.length}</span>
             </div>
             <div className="all-jobs-table-wrap">
@@ -287,8 +488,11 @@ export function AllJobsPage({
                   </tr>
                 </thead>
                 <tbody>
-                  {group.jobs.map((job) => (
-                    <tr key={job.jobNumber}>
+                  {group.jobs.map((job) => {
+                    const visibleStatus = inlineJobDrafts[job.id]?.status ?? job.status;
+
+                    return (
+                    <tr className={`all-jobs-row ${statusClassName(visibleStatus)}`} key={job.jobNumber}>
                       <td>
                         <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
                           {job.jobNumber}
@@ -359,12 +563,21 @@ export function AllJobsPage({
                         </select>
                       </td>
                       <td>
-                        <button className="save-row-button" type="button" onClick={() => onSaveInlineJob(job)} aria-label={`Save job ${job.jobNumber}`}>
+                        <button
+                          className="save-row-button"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onSaveInlineJob(job);
+                          }}
+                          aria-label={`Save job ${job.jobNumber}`}
+                        >
                           {inlineJobDrafts[job.id] ? 'Save' : 'Saved'}
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

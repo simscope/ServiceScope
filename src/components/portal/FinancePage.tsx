@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
-import type { FinancePeriod, PayrollRules } from '../../appTypes';
-import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobInvoice, MaterialRow, ServiceJob } from '../../types';
+import type { EmailCompose, EmailComposeAttachment, FinancePeriod, PayrollRules } from '../../appTypes';
+import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobDocumentType, JobInvoice, MaterialRow, ServiceJob } from '../../types';
 import { money } from '../../utils/format';
 
 export type FinanceJobRow = ServiceJob & {
@@ -39,6 +39,8 @@ export function FinancePage({
   onSaveJob,
   onSaveMaterials,
   onCreateInvoice,
+  onDeleteInvoice,
+  onComposeEmail,
   financeSummary,
   financePeriod,
   onFinancePeriodChange,
@@ -60,7 +62,9 @@ export function FinancePage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
+  onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
+  onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
   financeSummary: { paidRevenue: number; materials: number; salary: number; unpaidSalary: number };
   financePeriod: FinancePeriod;
   onFinancePeriodChange: (period: FinancePeriod) => void;
@@ -264,6 +268,8 @@ export function FinancePage({
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
           onCreateInvoice={onCreateInvoice}
+          onDeleteInvoice={onDeleteInvoice}
+          onComposeEmail={onComposeEmail}
         />
       </section>
     );

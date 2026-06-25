@@ -25,6 +25,8 @@ export function EmailPage({
   allJobsRows,
   companySignature,
   companyPaymentBlock,
+  composeRequestId,
+  composeAttachmentRequest,
   onSendEmailDraft,
 }: {
   emailConnection: EmailConnection | null;
@@ -48,6 +50,8 @@ export function EmailPage({
   allJobsRows: ServiceJob[];
   companySignature: string;
   companyPaymentBlock: string;
+  composeRequestId: number;
+  composeAttachmentRequest: EmailComposeAttachment[];
   onSendEmailDraft: (attachments: EmailComposeAttachment[]) => Promise<void> | void;
 }) {
   const [openedMessageId, setOpenedMessageId] = useState('');
@@ -108,6 +112,7 @@ export function EmailPage({
   };
 
   const closeCompose = () => {
+    clearComposeAttachments();
     setComposeOpen(false);
   };
 
@@ -115,6 +120,13 @@ export function EmailPage({
     setComposeAttachments([]);
     setFileInputKey((key) => key + 1);
   };
+
+  useEffect(() => {
+    if (!composeRequestId) return;
+    setComposeAttachments(composeAttachmentRequest);
+    setFileInputKey((key) => key + 1);
+    openCompose();
+  }, [composeRequestId]);
 
   const readAttachmentFile = (file: File) =>
     new Promise<EmailComposeAttachment>((resolve, reject) => {
@@ -440,34 +452,20 @@ export function EmailPage({
               Text
               <textarea value={emailCompose.body} onChange={(event) => onEmailComposeChange({ ...emailCompose, body: event.target.value })} placeholder="Write a message to the client." />
             </label>
-            <div className="email-compose-options">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={emailCompose.includeSignature}
-                  onChange={(event) => onEmailComposeChange({
-                    ...emailCompose,
-                    includeSignature: event.target.checked,
-                    signatureText: event.target.checked ? (emailCompose.signatureText || companySignature) : emailCompose.signatureText,
-                  })}
-                />
-                Add company signature
-              </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={emailCompose.includePaymentBlock}
-                  onChange={(event) => onEmailComposeChange({
-                    ...emailCompose,
-                    includePaymentBlock: event.target.checked,
-                    paymentBlockText: event.target.checked ? (emailCompose.paymentBlockText || companyPaymentBlock) : emailCompose.paymentBlockText,
-                  })}
-                />
-                Add payment options
-              </label>
-            </div>
             <div className="email-compose-preview-grid">
               <div>
+                <label className="email-compose-option-toggle">
+                  <input
+                    type="checkbox"
+                    checked={emailCompose.includeSignature}
+                    onChange={(event) => onEmailComposeChange({
+                      ...emailCompose,
+                      includeSignature: event.target.checked,
+                      signatureText: event.target.checked ? (emailCompose.signatureText || companySignature) : emailCompose.signatureText,
+                    })}
+                  />
+                  Add company signature
+                </label>
                 <label>
                   Signature block
                   <textarea
@@ -479,6 +477,18 @@ export function EmailPage({
                 </label>
               </div>
               <div>
+                <label className="email-compose-option-toggle">
+                  <input
+                    type="checkbox"
+                    checked={emailCompose.includePaymentBlock}
+                    onChange={(event) => onEmailComposeChange({
+                      ...emailCompose,
+                      includePaymentBlock: event.target.checked,
+                      paymentBlockText: event.target.checked ? (emailCompose.paymentBlockText || companyPaymentBlock) : emailCompose.paymentBlockText,
+                    })}
+                  />
+                  Add payment options
+                </label>
                 <label>
                   Payment block
                   <textarea

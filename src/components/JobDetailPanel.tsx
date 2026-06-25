@@ -1,5 +1,6 @@
 import { ChangeEvent, useEffect, useState } from 'react';
-import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobInvoice, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
+import type { EmailCompose, EmailComposeAttachment } from '../appTypes';
+import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobDocumentType, JobInvoice, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
 import { money } from '../utils/format';
 
@@ -22,7 +23,9 @@ type JobDetailPanelProps = {
   onClose: () => void;
   onSave: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
+  onDeleteInvoice?: (job: JobCardData, invoiceId: string) => Promise<void>;
+  onComposeEmail?: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
 };
 
 type InvoiceLineType = 'service' | 'material' | 'other';
@@ -36,7 +39,7 @@ type InvoiceLineDraft = {
 };
 
 type InvoiceDraft = {
-  documentType: 'Invoice' | 'Proposal' | 'Estimate' | 'Receipt';
+  documentType: JobDocumentType;
   invoiceDate: string;
   balanceDue: number;
   discount: number;
@@ -127,6 +130,16 @@ function invoiceLineAmount(line: InvoiceLineDraft) {
   return Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.price) || 0);
 }
 
+function fallbackInvoiceLine(job: JobCardData): InvoiceLineDraft {
+  return {
+    id: crypto.randomUUID(),
+    type: 'service',
+    name: 'Service Call Fee',
+    quantity: 1,
+    price: Number(job.serviceCallFee || 0),
+  };
+}
+
 function makeInvoiceLines(job: JobCardData, rows: MaterialRow[]): InvoiceLineDraft[] {
   const lines: InvoiceLineDraft[] = [];
   const labor = Number(job.labor || 0);
@@ -150,12 +163,43 @@ function makeInvoiceLines(job: JobCardData, rows: MaterialRow[]): InvoiceLineDra
       });
     });
 
-  return lines;
+  return lines.length ? lines : [fallbackInvoiceLine(job)];
 }
 
 function invoiceLinesTotal(lines: InvoiceLineDraft[], discount = 0) {
   const subtotal = lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
   return Math.max(0, subtotal - Math.max(0, Number(discount) || 0));
+}
+
+function nextInvoiceNumberPreview(jobNumber: string, invoices: JobInvoice[]) {
+  const prefix = `INV-${jobNumber}-`;
+  const nextIndex = invoices.reduce((maxIndex, invoice) => {
+    if (!invoice.invoiceNumber.startsWith(prefix)) return maxIndex;
+    const suffix = Number.parseInt(invoice.invoiceNumber.slice(prefix.length), 10);
+    return Number.isFinite(suffix) ? Math.max(maxIndex, suffix) : maxIndex;
+  }, 0) + 1;
+
+  return `INV-${jobNumber}-${String(nextIndex).padStart(2, '0')}`;
+}
+
+function textToBase64(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary);
+}
+
+function invoiceErrorMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes('23505') || message.includes('duplicate key')) {
+    return 'Invoice number was already used. Reload jobs and create the invoice again.';
+  }
+  if (message.includes('document_type')) {
+    return 'Database needs the job_invoices.document_type column. Run the Supabase SQL update, then try again.';
+  }
+  return message || 'Invoice could not be created.';
 }
 
 export function JobDetailPanel({
@@ -170,6 +214,8 @@ export function JobDetailPanel({
   onSave,
   onSaveMaterials,
   onCreateInvoice,
+  onDeleteInvoice,
+  onComposeEmail,
 }: JobDetailPanelProps) {
   const [draft, setDraft] = useState<JobCardData>(job);
   const [materialDrafts, setMaterialDrafts] = useState<MaterialRow[]>(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
@@ -196,7 +242,7 @@ export function JobDetailPanel({
   const invoiceDiscount = Math.max(0, Number(invoiceDraft.discount) || 0);
   const invoiceComputedTotal = Math.max(0, invoiceSubtotal - invoiceDiscount);
   const invoiceTotal = Math.max(0, Number(invoiceDraft.balanceDue) || 0);
-  const nextInvoiceNumber = `INV-${draft.jobNumber}-${String((draft.invoices?.length ?? 0) + 1).padStart(2, '0')}`;
+  const nextInvoiceNumber = nextInvoiceNumberPreview(draft.jobNumber, draft.invoices ?? []);
   const invoices = draft.invoices ?? [];
   const selectedInvoices = invoices.filter((invoice) => selectedInvoiceIds.includes(invoice.id));
   const allInvoicesSelected = invoices.length > 0 && selectedInvoiceIds.length === invoices.length;
@@ -218,6 +264,16 @@ export function JobDetailPanel({
     setMaterialsSaved(false);
     setUploadError('');
   }, [job, materials, profile.warrantyDays]);
+
+  useEffect(() => {
+    if (!invoiceEditorOpen || invoiceDraft.lines.length > 0) return;
+    const lines = makeInvoiceLines(draft, materialDrafts);
+    setInvoiceDraft((current) => ({
+      ...current,
+      lines,
+      balanceDue: invoiceLinesTotal(lines, current.discount),
+    }));
+  }, [draft, invoiceDraft.lines.length, invoiceEditorOpen, materialDrafts]);
 
   function updateDraft(patch: Partial<JobCardData>) {
     setSaved(false);
@@ -328,7 +384,16 @@ export function JobDetailPanel({
   }
 
   function openInvoiceEditor() {
-    resetInvoiceDraft();
+    const lines = makeInvoiceLines(draft, materialDrafts);
+    setInvoiceDraft({
+      documentType: 'Invoice',
+      invoiceDate: todayLocalDate(),
+      balanceDue: invoiceLinesTotal(lines),
+      discount: 0,
+      includeWarranty: true,
+      warrantyDays: profile.warrantyDays,
+      lines,
+    });
     setInvoiceEditorOpen(true);
     setInvoiceStatus('');
   }
@@ -359,6 +424,7 @@ export function JobDetailPanel({
   }
 
   function makeInvoiceHtml(invoice: JobInvoice, printableDraft = invoiceDraft) {
+    const documentType = invoice.documentType || printableDraft.documentType;
     const lines = printableDraft.lines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
     const serviceLines = lines.filter((line) => line.type !== 'material');
     const materialLines = lines.filter((line) => line.type === 'material');
@@ -397,28 +463,43 @@ export function JobDetailPanel({
         <head>
           <title>${escapeHtml(invoice.invoiceNumber)}</title>
           <style>
+            * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
             body { font-family: Arial, sans-serif; color: #050b12; margin: 0; background: #333; }
-            .page { width: 816px; min-height: 1056px; margin: 0 auto; background: #fff; padding: 34px 52px; box-sizing: border-box; }
-            header { display: grid; grid-template-columns: 1fr 320px; gap: 64px; margin-bottom: 36px; }
-            h1 { margin: 0 0 14px; font-size: 40px; letter-spacing: 1px; text-transform: uppercase; text-align: right; }
-            h2 { margin: 0 0 8px; font-size: 16px; }
-            p { margin: 4px 0; }
-            .logo { width: 155px; height: 185px; object-fit: contain; margin-bottom: 20px; }
+            .page { width: 816px; min-height: 1056px; margin: 0 auto; background: #fff; padding: 22px 44px 26px; box-sizing: border-box; }
+            header { display: grid; grid-template-columns: 1fr 300px; gap: 42px; margin-bottom: 8px; }
+            h1 { margin: 0 0 8px; font-size: 38px; letter-spacing: 1px; text-transform: uppercase; text-align: right; }
+            h2 { margin: 0 0 5px; font-size: 16px; }
+            p { margin: 2px 0; }
+            .logo { width: 135px; height: 160px; object-fit: contain; margin-bottom: 12px; }
             .logo.placeholder { display: grid; place-items: center; background: #edf3ff; border-radius: 8px; font: 700 28px Arial; color: #1c408f; }
             .muted { color: #526158; }
             .invoice-meta { text-align: right; }
-            .balance { border: 1px solid #d7dee8; border-radius: 10px; background: #f7f9fb; padding: 16px; margin: 16px 0 10px; display: flex; justify-content: space-between; font-weight: 700; }
-            .bill-to { margin-top: 16px; text-align: left; }
-            table { width: 100%; border-collapse: collapse; margin-top: 22px; }
+            .balance { border: 1px solid #d7dee8; border-radius: 10px; background: #f7f9fb; padding: 10px 14px; margin: 8px 0 8px; display: flex; justify-content: space-between; font-weight: 700; }
+            .bill-to { margin-top: 8px; text-align: left; }
+            table { width: 100%; border-collapse: collapse; margin-top: 0; table-layout: auto; }
+            .description-col { width: auto; }
+            .qty-col { width: 58px; }
+            .unit-price-col { width: 102px; }
+            .amount-col { width: 94px; }
             th, td { border: 1px solid #cfd8d1; padding: 8px; text-align: left; vertical-align: top; }
             th { background: #343434; color: #fff; }
-            td:nth-child(2), td:nth-child(3), td:nth-child(4), th:nth-child(2), th:nth-child(3), th:nth-child(4) { text-align: right; }
+            th:first-child, td:first-child { width: auto; }
+            th:nth-child(2), td:nth-child(2) { width: 58px; white-space: nowrap; text-align: right; }
+            th:nth-child(3), td:nth-child(3) { width: 102px; white-space: nowrap; text-align: right; }
+            th:nth-child(4), td:nth-child(4) { width: 94px; white-space: nowrap; text-align: right; }
             .group { background: #eef3f8; font-weight: 700; }
             .totals { width: 260px; margin: 0 6px 0 auto; }
             .totals div { display: flex; justify-content: space-between; margin: 7px 0; font-weight: 700; }
-            .warranty { margin-top: 42px; font-size: 13px; }
-            .footer { margin-top: 22px; color: #526158; font-size: 12px; }
-            @media print { body { background: #fff; } .page { width: auto; min-height: auto; margin: 0; padding: 28px 44px; } }
+            .warranty { margin-top: 22px; font-size: 13px; }
+            .footer { margin-top: 14px; color: #526158; font-size: 12px; }
+            @page { size: letter; margin: 0; }
+            @media print {
+              body { background: #fff; }
+              .page { width: 816px; min-height: 1056px; margin: 0 auto; padding: 22px 44px 26px; }
+              th { background: #343434 !important; color: #fff !important; }
+              .group { background: #eef3f8 !important; }
+              .balance { background: #f7f9fb !important; }
+            }
           </style>
         </head>
         <body>
@@ -433,8 +514,7 @@ export function JobDetailPanel({
               <p>${escapeHtml(profile.website || '')}</p>
             </div>
             <div class="invoice-meta">
-              <p class="muted">Document type: ${escapeHtml(printableDraft.documentType)}</p>
-              <h1>${escapeHtml(printableDraft.documentType)}</h1>
+              <h1>${escapeHtml(documentType)}</h1>
               <p># ${escapeHtml(invoice.invoiceNumber)}</p>
               <p><strong>Date:</strong> ${escapeHtml(printableDraft.invoiceDate)}</p>
               <div class="balance"><span>Balance Due:</span><span>${money(total)}</span></div>
@@ -449,6 +529,12 @@ export function JobDetailPanel({
             </div>
           </header>
           <table>
+            <colgroup>
+              <col class="description-col" />
+              <col class="qty-col" />
+              <col class="unit-price-col" />
+              <col class="amount-col" />
+            </colgroup>
             <thead>
               <tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Amount</th></tr>
             </thead>
@@ -508,7 +594,7 @@ export function JobDetailPanel({
     setInvoiceStatus('Creating invoice...');
     try {
       const currentInvoiceDraft = invoiceDraft;
-      const invoice = await onCreateInvoice(draft, materialDrafts, invoiceTotal);
+      const invoice = await onCreateInvoice(draft, materialDrafts, invoiceTotal, currentInvoiceDraft.documentType);
       const nextJob = {
         ...draft,
         invoices: [invoice, ...(draft.invoices ?? [])],
@@ -519,9 +605,10 @@ export function JobDetailPanel({
       setInvoiceStatus('Invoice created.');
       openInvoice(invoice, currentInvoiceDraft, invoiceWindow);
     } catch (error) {
-      setInvoiceStatus(error instanceof Error ? error.message : 'Invoice could not be created.');
+      const message = invoiceErrorMessage(error);
+      setInvoiceStatus(message);
       if (invoiceWindow) {
-        invoiceWindow.document.body.innerHTML = `<p style="font-family: Arial, sans-serif; padding: 24px;">${escapeHtml(error instanceof Error ? error.message : 'Invoice could not be created.')}</p>`;
+        invoiceWindow.document.body.innerHTML = `<p style="font-family: Arial, sans-serif; padding: 24px;">${escapeHtml(message)}</p>`;
       }
     }
   }
@@ -530,23 +617,55 @@ export function JobDetailPanel({
     return [
       `Hello ${draft.clientName || ''},`,
       '',
-      `Please find invoice details for job ${draft.jobNumber}:`,
+      `Please find the attached invoice document${items.length > 1 ? 's' : ''} for job ${draft.jobNumber}.`,
+      '',
+      'Invoice summary:',
       ...items.map((invoice) => `${invoice.invoiceNumber} - ${money(invoice.amount)} - ${invoice.status}`),
       '',
       profile.paymentNotes || 'Please contact us if you have any questions.',
     ].join('\n');
   }
 
-  function openMail(subject: string, body: string) {
+  function makeInvoiceEmailAttachment(invoice: JobInvoice): EmailComposeAttachment {
+    const html = makeInvoiceHtml(invoice);
+    return {
+      id: `invoice-email-${invoice.id}`,
+      fileName: `${invoice.invoiceNumber}.html`,
+      mimeType: 'text/html',
+      sizeBytes: new Blob([html]).size,
+      contentBase64: textToBase64(html),
+    };
+  }
+
+  function composeEmail(subject: string, body: string, attachments: EmailComposeAttachment[] = []) {
     if (!draft.email) {
       setInvoiceStatus('Client email is empty.');
       return;
     }
-    window.location.href = `mailto:${encodeURIComponent(draft.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+    if (!onComposeEmail) {
+      window.location.href = `mailto:${encodeURIComponent(draft.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      return;
+    }
+
+    onComposeEmail(
+      {
+        to: draft.email,
+        subject,
+        body,
+        jobNumber: draft.jobNumber,
+        includeSignature: true,
+        includePaymentBlock: attachments.length > 0,
+        signatureText: '',
+        paymentBlockText: '',
+      },
+      attachments,
+    );
+    setInvoiceStatus(attachments.length ? 'Email draft opened with invoice attached.' : 'Email draft opened.');
   }
 
   function writeToClient() {
-    openMail(
+    composeEmail(
       `Job ${draft.jobNumber}`,
       [
         `Hello ${draft.clientName || ''},`,
@@ -560,18 +679,31 @@ export function JobDetailPanel({
 
   function sendInvoices(items = selectedInvoices.length ? selectedInvoices : invoices) {
     if (!items.length) return;
-    openMail(`Invoice for job ${draft.jobNumber}`, makeInvoiceEmailBody(items));
+    composeEmail(`Invoice for job ${draft.jobNumber}`, makeInvoiceEmailBody(items), items.map(makeInvoiceEmailAttachment));
   }
 
-  function deleteInvoice(invoiceId: string) {
+  async function deleteInvoice(invoiceId: string) {
+    const previousJob = draft;
     const nextJob = {
       ...draft,
       invoices: invoices.filter((invoice) => invoice.id !== invoiceId),
     };
+
     setDraft(nextJob);
     setSelectedInvoiceIds((ids) => ids.filter((id) => id !== invoiceId));
-    onSave(nextJob);
-    setInvoiceStatus('Invoice removed from this job.');
+    setInvoiceStatus('Deleting invoice...');
+
+    try {
+      if (onDeleteInvoice) {
+        await onDeleteInvoice(draft, invoiceId);
+      } else {
+        onSave(nextJob);
+      }
+      setInvoiceStatus('Invoice removed from this job.');
+    } catch (error) {
+      setDraft(previousJob);
+      setInvoiceStatus(error instanceof Error ? error.message : 'Invoice could not be deleted.');
+    }
   }
 
   function toggleInvoiceSelection(invoiceId: string, checked: boolean) {
@@ -926,7 +1058,7 @@ export function JobDetailPanel({
                 <div className="invoice-document-head">
                   <label>
                     Document type:
-                    <select value={invoiceDraft.documentType} onChange={(event) => setInvoiceDraft((current) => ({ ...current, documentType: event.target.value as InvoiceDraft['documentType'] }))}>
+                    <select value={invoiceDraft.documentType} onChange={(event) => setInvoiceDraft((current) => ({ ...current, documentType: event.target.value as JobDocumentType }))}>
                       <option value="Invoice">Invoice</option>
                       <option value="Proposal">Proposal</option>
                       <option value="Estimate">Estimate</option>

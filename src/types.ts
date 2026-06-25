@@ -195,12 +195,14 @@ export type JobComment = {
 };
 
 export type JobInvoiceStatus = 'draft' | 'open' | 'paid' | 'void' | 'uncollectible';
+export type JobDocumentType = 'Invoice' | 'Proposal' | 'Estimate' | 'Receipt';
 
 export type JobInvoice = {
   id: string;
   companyId: string;
   jobId: string;
   invoiceNumber: string;
+  documentType: JobDocumentType;
   status: JobInvoiceStatus;
   amount: number;
   createdAt: string;
@@ -231,6 +233,7 @@ export type ServiceJob = {
   comments: JobComment[];
   invoices: JobInvoice[];
   appointment?: string;
+  calendarDurationMinutes?: number;
   createdAt: string;
 };
 

@@ -2,8 +2,8 @@ import type { FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
-import type { TaskForm, TaskPriority, TaskRow, TaskStatus } from '../../appTypes';
-import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobInvoice, MaterialRow, ServiceJob } from '../../types';
+import type { EmailCompose, EmailComposeAttachment, TaskForm, TaskPriority, TaskRow, TaskStatus } from '../../appTypes';
+import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobDocumentType, JobInvoice, MaterialRow, ServiceJob } from '../../types';
 import { statusClassName } from '../../utils/format';
 
 export function TasksPage({
@@ -16,6 +16,8 @@ export function TasksPage({
   onSaveJob,
   onSaveMaterials,
   onCreateInvoice,
+  onDeleteInvoice,
+  onComposeEmail,
   openTaskCount,
   autoTaskCount,
   urgentTaskCount,
@@ -44,7 +46,9 @@ export function TasksPage({
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
-  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number) => Promise<JobInvoice>;
+  onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
+  onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
+  onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
   openTaskCount: number;
   autoTaskCount: number;
   urgentTaskCount: number;
@@ -80,6 +84,8 @@ export function TasksPage({
           onSave={onSaveJob}
           onSaveMaterials={onSaveMaterials}
           onCreateInvoice={onCreateInvoice}
+          onDeleteInvoice={onDeleteInvoice}
+          onComposeEmail={onComposeEmail}
         />
       </section>
     );

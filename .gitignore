@@ -7,3 +7,5 @@ npm-debug.log*
 dev-server*.log
 vite.config.js
 vite.config.d.ts
+supabase/.temp/
+work/tools/

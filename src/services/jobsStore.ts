@@ -1,4 +1,4 @@
-import type { Customer, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
+import type { Customer, JobDocumentType, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
 import { sqlEq, supabaseRequest } from './supabaseRest';
 
 type CustomerRow = {
@@ -56,11 +56,22 @@ type JobInvoiceRow = {
   company_id: string;
   job_id: string;
   invoice_number: string;
+  document_type?: JobDocumentType | null;
   status: JobInvoiceStatus;
   amount_cents: number;
   sent_at: string | null;
   paid_at: string | null;
   created_at: string;
+};
+
+type AppointmentRow = {
+  id: string;
+  company_id: string;
+  job_id: string;
+  technician_id: string | null;
+  starts_at: string;
+  ends_at: string;
+  timezone: string;
 };
 
 const DEFAULT_LIMIT = 200;
@@ -77,6 +88,28 @@ function centsToDollars(cents: number | null | undefined) {
 
 function dollarsToCents(value: string) {
   return Math.round((Number(value) || 0) * 100);
+}
+
+function toLocalAppointment(value: string | null | undefined) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+function appointmentDurationMinutes(appointment: AppointmentRow | undefined) {
+  if (!appointment) return undefined;
+  const startsAt = new Date(appointment.starts_at).getTime();
+  const endsAt = new Date(appointment.ends_at).getTime();
+  if (!Number.isFinite(startsAt) || !Number.isFinite(endsAt) || endsAt <= startsAt) return undefined;
+  return Math.round((endsAt - startsAt) / 60000);
 }
 
 function mapCustomer(row: CustomerRow, locations: CustomerLocationRow[], jobs: JobRow[]): Customer {
@@ -106,13 +139,16 @@ function mapJob(
   technicians: TechnicianRow[],
   payments: JobPaymentRow[],
   invoices: JobInvoiceRow[],
+  appointments: AppointmentRow[] = [],
 ): ServiceJob {
   const customer = customers.find((item) => item.id === row.customer_id);
   const location = locations.find((item) => item.id === row.customer_location_id);
   const technician = technicians.find((item) => item.id === row.technician_id);
   const scfPayment = payments.find((payment) => payment.job_id === row.id && payment.scope === 'scf');
   const laborPayment = payments.find((payment) => payment.job_id === row.id && payment.scope === 'labor');
-  const assignee = technician?.name || 'No technician';
+  const appointment = appointments.find((item) => item.job_id === row.id);
+  const appointmentTechnician = technicians.find((item) => item.id === appointment?.technician_id);
+  const assignee = appointmentTechnician?.name || technician?.name || 'No technician';
 
   return {
     id: row.id,
@@ -138,6 +174,8 @@ function mapJob(
     invoices: invoices
       .filter((invoice) => invoice.job_id === row.id)
       .map((invoice) => mapInvoice(invoice)),
+    appointment: toLocalAppointment(appointment?.starts_at),
+    calendarDurationMinutes: appointmentDurationMinutes(appointment),
     createdAt: row.created_at?.slice(0, 10) ?? todayIso(),
   };
 }
@@ -148,6 +186,7 @@ function mapInvoice(row: JobInvoiceRow): JobInvoice {
     companyId: row.company_id,
     jobId: row.job_id,
     invoiceNumber: row.invoice_number,
+    documentType: row.document_type ?? 'Invoice',
     status: row.status,
     amount: (Number(row.amount_cents) || 0) / 100,
     createdAt: row.created_at?.slice(0, 10) ?? todayIso(),
@@ -157,32 +196,34 @@ function mapInvoice(row: JobInvoiceRow): JobInvoice {
 }
 
 async function loadCompanyJobTables(companyId: string) {
-  const [customers, locations, technicians, jobs, payments, invoices] = await Promise.all([
+  const [customers, locations, technicians, jobs, payments, invoices, appointments] = await Promise.all([
     supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&order=starts_at.asc&limit=${DEFAULT_LIMIT}`),
   ]);
 
-  return { customers, locations, technicians, jobs, payments, invoices };
+  return { customers, locations, technicians, jobs, payments, invoices, appointments };
 }
 
 async function loadSingleJob(companyId: string, jobId: string): Promise<ServiceJob | null> {
-  const [jobs, customers, locations, technicians, payments, invoices] = await Promise.all([
+  const [jobs, customers, locations, technicians, payments, invoices, appointments] = await Promise.all([
     supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&id=${sqlEq(jobId)}&limit=1`),
     supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&limit=${RECENT_LOOKUP_LIMIT}`),
     supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&limit=${RECENT_LOOKUP_LIMIT}`),
     supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&limit=10`),
     supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=created_at.desc&limit=20`),
+    supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=starts_at.asc&limit=1`),
   ]);
 
   const job = jobs[0];
   if (!job) return null;
 
-  return mapJob(job, customers, locations, technicians, payments, invoices);
+  return mapJob(job, customers, locations, technicians, payments, invoices, appointments);
 }
 
 export async function listCompanyCustomers(companyId: string): Promise<Customer[]> {
@@ -197,7 +238,7 @@ export async function listCompanyCustomers(companyId: string): Promise<Customer[
 
 export async function listCompanyJobs(companyId: string): Promise<ServiceJob[]> {
   const tables = await loadCompanyJobTables(companyId);
-  return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments, tables.invoices));
+  return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments, tables.invoices, tables.appointments));
 }
 
 export async function createCompanyCustomer(companyId: string, form: NewCustomerForm): Promise<Customer> {
@@ -346,6 +387,39 @@ export async function saveServiceJob(companyId: string, job: ServiceJob): Promis
   );
 }
 
+export async function saveJobAppointment(companyId: string, job: ServiceJob, appointment: string, durationMinutes: number): Promise<ServiceJob> {
+  const technicianId = await findTechnicianId(companyId, job.technician || job.assignee);
+  const startsAt = new Date(appointment);
+  const safeDuration = Math.max(30, Math.min(720, Number(durationMinutes) || 120));
+  const endsAt = new Date(startsAt.getTime() + safeDuration * 60000);
+
+  if (Number.isNaN(startsAt.getTime())) {
+    throw new Error('Appointment time is invalid.');
+  }
+
+  const body = {
+    company_id: companyId,
+    job_id: job.id,
+    technician_id: technicianId,
+    starts_at: startsAt.toISOString(),
+    ends_at: endsAt.toISOString(),
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
+  };
+  const existing = await supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&select=id&limit=1`);
+
+  if (existing[0]) {
+    await supabaseRequest(`appointments?id=${sqlEq(existing[0].id)}`, { method: 'PATCH', body });
+  } else {
+    await supabaseRequest('appointments', { method: 'POST', body: [body] });
+  }
+
+  return (await loadSingleJob(companyId, job.id)) ?? {
+    ...job,
+    appointment,
+    calendarDurationMinutes: safeDuration,
+  };
+}
+
 export async function saveCompanyJobs(companyId: string, companyJobs: ServiceJob[]): Promise<ServiceJob[]> {
   const savedJobs: ServiceJob[] = [];
 
@@ -356,9 +430,33 @@ export async function saveCompanyJobs(companyId: string, companyJobs: ServiceJob
   return savedJobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-function nextInvoiceNumber(jobNumber: string, existingInvoices: JobInvoice[]) {
-  const nextIndex = existingInvoices.length + 1;
+function nextInvoiceNumber(jobNumber: string, existingInvoiceNumbers: string[]) {
+  const prefix = `INV-${jobNumber}-`;
+  const nextIndex = existingInvoiceNumbers.reduce((maxIndex, invoiceNumber) => {
+    if (!invoiceNumber.startsWith(prefix)) return maxIndex;
+    const suffix = Number.parseInt(invoiceNumber.slice(prefix.length), 10);
+    return Number.isFinite(suffix) ? Math.max(maxIndex, suffix) : maxIndex;
+  }, 0) + 1;
+
   return `INV-${jobNumber}-${String(nextIndex).padStart(2, '0')}`;
+}
+
+function isInvoiceNumberConflict(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('23505') || message.includes('duplicate key');
+}
+
+async function loadExistingInvoiceNumbers(companyId: string, job: ServiceJob) {
+  const rows = await supabaseRequest<Pick<JobInvoiceRow, 'invoice_number'>[]>(
+    `job_invoices?company_id=${sqlEq(companyId)}&select=invoice_number&limit=1000`,
+  );
+
+  return [
+    ...new Set([
+      ...(job.invoices ?? []).map((invoice) => invoice.invoiceNumber),
+      ...rows.map((invoice) => invoice.invoice_number),
+    ]),
+  ];
 }
 
 function invoiceTotal(job: ServiceJob, materials: MaterialRow[]) {
@@ -373,22 +471,48 @@ export async function createJobInvoice(
   job: ServiceJob,
   materials: MaterialRow[],
   amountOverride?: number,
+  documentType: JobDocumentType = 'Invoice',
 ): Promise<JobInvoice> {
   const amount = Math.max(0, Number(amountOverride ?? invoiceTotal(job, materials)) || 0);
-  const invoiceNumber = nextInvoiceNumber(job.jobNumber, job.invoices ?? []);
-  const [invoice] = await supabaseRequest<JobInvoiceRow[]>('job_invoices?select=*', {
-    method: 'POST',
-    select: true,
-    body: [{
-      company_id: companyId,
-      job_id: job.id,
-      invoice_number: invoiceNumber,
-      status: 'open',
-      amount_cents: dollarsToCents(String(amount)),
-    }],
-  });
+  const skippedInvoiceNumbers: string[] = [];
 
-  return mapInvoice(invoice);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const invoiceNumber = nextInvoiceNumber(job.jobNumber, [
+      ...(await loadExistingInvoiceNumbers(companyId, job)),
+      ...skippedInvoiceNumbers,
+    ]);
+
+    try {
+      const [invoice] = await supabaseRequest<JobInvoiceRow[]>('job_invoices?select=*', {
+        method: 'POST',
+        select: true,
+        body: [{
+          company_id: companyId,
+          job_id: job.id,
+          invoice_number: invoiceNumber,
+          document_type: documentType,
+          status: 'open',
+          amount_cents: dollarsToCents(String(amount)),
+        }],
+      });
+
+      return mapInvoice(invoice);
+    } catch (error) {
+      if (!isInvoiceNumberConflict(error)) {
+        throw error;
+      }
+      skippedInvoiceNumbers.push(invoiceNumber);
+    }
+  }
+
+  throw new Error('Invoice number is already used. Reload jobs and try again.');
+}
+
+export async function deleteJobInvoice(companyId: string, jobId: string, invoiceId: string): Promise<void> {
+  await supabaseRequest<void>(
+    `job_invoices?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&id=${sqlEq(invoiceId)}`,
+    { method: 'DELETE' },
+  );
 }
 
 export function createServiceJob(companyId: string, form: NewServiceJobForm): ServiceJob {

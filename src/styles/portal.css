@@ -667,12 +667,20 @@
 .calendar-resize-handle {
   position: absolute;
   right: 10px;
-  bottom: 3px;
   left: 10px;
   height: 8px;
   border-radius: 999px;
   background: rgba(31, 107, 199, 0.32);
   cursor: ns-resize;
+  touch-action: none;
+}
+
+.calendar-resize-handle.start {
+  top: 3px;
+}
+
+.calendar-resize-handle.end {
+  bottom: 3px;
 }
 
 .calendar-resize-handle:hover {

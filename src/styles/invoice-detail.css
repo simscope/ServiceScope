@@ -54,6 +54,77 @@
   min-height: 18px;
 }
 
+.invoice-editor-modal.email-message-modal {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(940px, calc(100vw - 20px));
+  max-height: calc(100vh - 20px);
+  overflow: auto;
+}
+
+.invoice-editor-modal .invoice-paper {
+  min-width: 0;
+  overflow: visible;
+}
+
+.invoice-editor-modal .invoice-line-table {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.invoice-editor-modal .invoice-line-row {
+  grid-template-columns: 88px minmax(190px, 1fr) 52px 78px 78px 26px;
+  min-width: 620px;
+  min-height: 42px;
+  align-items: center;
+}
+
+.invoice-editor-modal .invoice-line-head {
+  min-height: 34px;
+}
+
+.invoice-editor-modal .invoice-line-row input,
+.invoice-editor-modal .invoice-line-row select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  box-sizing: border-box;
+}
+
+.invoice-editor-modal .invoice-line-row strong {
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.invoice-editor-modal .invoice-warranty-row {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 22px;
+}
+
+.invoice-editor-modal .invoice-warranty-row label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.invoice-editor-modal .invoice-warranty-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  min-height: 18px;
+  margin: 0;
+}
+
+.invoice-editor-modal .invoice-warranty-row input[type='number'] {
+  width: 82px;
+  min-height: 34px;
+}
+
 @media (max-width: 760px) {
   .invoice-card-toolbar,
   .invoice-card-toolbar .invoice-actions,

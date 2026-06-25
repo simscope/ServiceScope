@@ -101,7 +101,7 @@ import {
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { createJobInvoice, createServiceJob, listCompanyJobs, saveServiceJob } from './services/jobsStore';
+import { createJobInvoice, createServiceJob, deleteJobInvoice, listCompanyJobs, saveJobAppointment, saveServiceJob } from './services/jobsStore';
 import type {
   AuditEvent,
   AuditEventCategory,
@@ -125,6 +125,7 @@ import type {
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
   CompanyTechnicianRole,
+  JobDocumentType,
   JobInvoice,
   MaterialRow,
   NewServiceJobForm,
@@ -544,7 +545,16 @@ export function CompanyPortal({
   const [activeCalendarTech, setActiveCalendarTech] = useState('all');
   const [calendarAssignments, setCalendarAssignments] = useState<Record<string, { assignee: string; dayKey: string; time: string; durationMinutes: number }>>({});
   const [draggingJobNumber, setDraggingJobNumber] = useState('');
-  const [resizingJob, setResizingJob] = useState<{ jobNumber: string; startY: number; startDuration: number } | null>(null);
+  const [resizingJob, setResizingJob] = useState<{
+    jobNumber: string;
+    assignee: string;
+    dayKey: string;
+    time: string;
+    edge: 'start' | 'end';
+    startY: number;
+    startDuration: number;
+    startSlotIndex: number;
+  } | null>(null);
   const [monthDropRequest, setMonthDropRequest] = useState<{ jobNumber: string; assignee: string; dayKey: string; durationMinutes: number; time: string } | null>(null);
   const [materials, setMaterials] = useState<MaterialRow[]>(initialMaterialRows);
   const [materialStatusFilter, setMaterialStatusFilter] = useState<'all' | MaterialRow['status']>('all');
@@ -584,6 +594,8 @@ export function CompanyPortal({
     signatureText: '',
     paymentBlockText: '',
   });
+  const [emailComposeRequestId, setEmailComposeRequestId] = useState(0);
+  const [emailComposeAttachments, setEmailComposeAttachments] = useState<EmailComposeAttachment[]>([]);
   const [financePeriod, setFinancePeriod] = useState<FinancePeriod>('this_month');
   const [financeTechFilter, setFinanceTechFilter] = useState('all');
   const [payrollRules, setPayrollRules] = useState<PayrollRules>({
@@ -713,25 +725,54 @@ export function CompanyPortal({
     if (!resizingJob) return undefined;
     const activeResize = resizingJob;
 
+    function getResizedAssignment(clientY: number) {
+      const deltaSlots = Math.round((clientY - activeResize.startY) / 32);
+      const startDurationSlots = Math.max(1, Math.round(activeResize.startDuration / 30));
+      const lastStartSlot = Math.max(0, activeResize.startSlotIndex + startDurationSlots - 1);
+      const maxDurationSlots = Math.max(1, calendarDropSlots.length - activeResize.startSlotIndex);
+      let nextSlotIndex = activeResize.startSlotIndex;
+      let durationSlots = startDurationSlots;
+
+      if (activeResize.edge === 'start') {
+        nextSlotIndex = Math.min(lastStartSlot, Math.max(0, activeResize.startSlotIndex + deltaSlots));
+        durationSlots = startDurationSlots + (activeResize.startSlotIndex - nextSlotIndex);
+      } else {
+        durationSlots = Math.min(maxDurationSlots, Math.max(1, startDurationSlots + deltaSlots));
+      }
+
+      const nextSlot = calendarDropSlots[nextSlotIndex];
+
+      return {
+        durationMinutes: durationSlots * 30,
+        time: nextSlot?.key ?? activeResize.time,
+      };
+    }
+
     function handlePointerMove(event: globalThis.PointerEvent) {
-      const deltaMinutes = Math.round((event.clientY - activeResize.startY) / 32) * 30;
-      const durationMinutes = Math.min(720, Math.max(30, activeResize.startDuration + deltaMinutes));
+      const resized = getResizedAssignment(event.clientY);
 
       setCalendarAssignments((assignments) => {
-        const assignment = assignments[activeResize.jobNumber];
-        if (!assignment) return assignments;
+        const assignment = assignments[activeResize.jobNumber] ?? {
+          assignee: activeResize.assignee,
+          dayKey: activeResize.dayKey,
+          time: activeResize.time,
+          durationMinutes: activeResize.startDuration,
+        };
 
         return {
           ...assignments,
           [activeResize.jobNumber]: {
             ...assignment,
-            durationMinutes,
+            time: resized.time,
+            durationMinutes: resized.durationMinutes,
           },
         };
       });
     }
 
-    function handlePointerUp() {
+    function handlePointerUp(event: globalThis.PointerEvent) {
+      const resized = getResizedAssignment(event.clientY);
+      persistCalendarAssignment(activeResize.jobNumber, activeResize.assignee, activeResize.dayKey, resized.time, resized.durationMinutes);
       setResizingJob(null);
     }
 
@@ -1045,6 +1086,16 @@ export function CompanyPortal({
       paymentBlockText: companyPaymentBlock,
     });
   };
+  const openEmailCompose = (compose: EmailCompose, attachments: EmailComposeAttachment[] = []) => {
+    setEmailCompose({
+      ...compose,
+      signatureText: compose.signatureText || companyEmailSignature,
+      paymentBlockText: compose.paymentBlockText || companyPaymentBlock,
+    });
+    setEmailComposeAttachments(attachments);
+    setEmailComposeRequestId((requestId) => requestId + 1);
+    setClientPage('email');
+  };
   const sendEmailDraft = async (attachments: EmailComposeAttachment[]) => {
     if (!selectedCompanyId) {
       setMailboxConnectStatus('Choose a company before sending email.');
@@ -1262,18 +1313,26 @@ export function CompanyPortal({
       },
     }));
   };
-  const handleSaveJob = (updatedJob: JobCardData) => {
+  const handleSaveJob = (updatedJob: JobCardData, openJobAfterSave = true) => {
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
       return nextJobs;
     });
-    setOpenedJob(updatedJob);
+    if (openJobAfterSave) {
+      setOpenedJob(updatedJob);
+    } else {
+      setOpenedJob((currentJob) => (currentJob?.id === updatedJob.id ? updatedJob : currentJob));
+    }
     setJobsStatus('Saving job...');
 
     saveServiceJob(selectedCompany.id, updatedJob)
       .then((savedJob) => {
         setJobs((currentJobs) => currentJobs.map((job) => (job.id === updatedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job)));
-        setOpenedJob(savedJob);
+        if (openJobAfterSave) {
+          setOpenedJob(savedJob);
+        } else {
+          setOpenedJob((currentJob) => (currentJob?.id === savedJob.id ? savedJob : currentJob));
+        }
         setJobsStatus('Job saved.');
       })
       .catch((error) => {
@@ -1288,7 +1347,7 @@ export function CompanyPortal({
       assignee: draft.technician ?? job.technician,
     };
 
-    handleSaveJob(updatedJob);
+    handleSaveJob(updatedJob, false);
     setInlineJobDrafts((drafts) => {
       const nextDrafts = { ...drafts };
       delete nextDrafts[job.id];
@@ -1334,8 +1393,8 @@ export function CompanyPortal({
         setJobsStatus(error instanceof Error ? error.message : 'Job could not be created.');
       });
   };
-  const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number) => {
-    const invoice = await createJobInvoice(selectedCompany.id, job, invoiceMaterials, amount);
+  const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number, documentType: JobDocumentType) => {
+    const invoice = await createJobInvoice(selectedCompany.id, job, invoiceMaterials, amount, documentType);
     setJobs((currentJobs) => currentJobs.map((currentJob) => (
       currentJob.id === job.id
         ? { ...currentJob, invoices: [invoice, ...(currentJob.invoices ?? [])] }
@@ -1343,6 +1402,17 @@ export function CompanyPortal({
     )));
     setOpenedJob((currentJob) => currentJob?.id === job.id ? { ...currentJob, invoices: [invoice, ...(currentJob.invoices ?? [])] } : currentJob);
     return invoice;
+  };
+  const handleDeleteInvoice = async (job: JobCardData, invoiceId: string) => {
+    await deleteJobInvoice(selectedCompany.id, job.id, invoiceId);
+    const removeInvoice = (currentJob: ServiceJob) => (
+      currentJob.id === job.id
+        ? { ...currentJob, invoices: (currentJob.invoices ?? []).filter((invoice) => invoice.id !== invoiceId) }
+        : currentJob
+    );
+
+    setJobs((currentJobs) => currentJobs.map(removeInvoice));
+    setOpenedJob((currentJob) => (currentJob?.id === job.id ? removeInvoice(currentJob) : currentJob));
   };
   const librarySystems = Array.from(new Set([...profile.jobTypes.map((jobType) => jobType.name), ...libraryDocuments.map((document) => document.system)])).filter(Boolean);
   const filteredLibraryDocuments = libraryDocuments.filter((document) => {
@@ -1549,23 +1619,24 @@ export function CompanyPortal({
     { key: `${slot}:00`, label: slot, hour: calendarSlotHours[slot], minute: 0 },
     { key: `${slot}:30`, label: slot.replace(/\s/, ':30 '), hour: calendarSlotHours[slot], minute: 30 },
   ]);
-  const calendarDurations = [60, 120, 240, 90, 360, 180];
-  const defaultScheduledAssignments = Object.fromEntries(
-    activeJobsRows.slice(1).map((job, index) => [
-      job.jobNumber,
-      {
-        assignee: job.assignee,
-        dayKey: calendarDays[index % calendarDays.length].key,
-        time: calendarDropSlots[(index * 3 + 2) % calendarDropSlots.length].key,
-        durationMinutes: calendarDurations[index % calendarDurations.length],
-      },
-    ]),
-  );
+  const calendarAssignmentFromJob = (job: ServiceJob) => {
+    if (!job.appointment) return undefined;
+    const appointmentDate = new Date(job.appointment);
+    if (Number.isNaN(appointmentDate.getTime())) return undefined;
+    const slot = calendarDropSlots.find((dropSlot) => dropSlot.hour === appointmentDate.getHours() && dropSlot.minute === appointmentDate.getMinutes());
+
+    return {
+      assignee: job.assignee,
+      dayKey: toLocalIsoDate(appointmentDate),
+      time: slot?.key ?? `${appointmentDate.getHours()}:00`,
+      durationMinutes: job.calendarDurationMinutes ?? 120,
+    };
+  };
   const calendarJobs = activeJobsRows.map((job) => {
-    const assignment = calendarAssignments[job.jobNumber] ?? defaultScheduledAssignments[job.jobNumber];
+    const assignment = calendarAssignments[job.jobNumber] ?? calendarAssignmentFromJob(job);
     const appointmentDay = allCalendarDays.find((day) => day.key === assignment?.dayKey);
     const appointmentSlot = calendarDropSlots.find((slot) => slot.key === assignment?.time);
-    const appointment = appointmentDay && appointmentSlot ? `${appointmentDay.isoDate}T${String(appointmentSlot.hour).padStart(2, '0')}:${String(appointmentSlot.minute).padStart(2, '0')}` : undefined;
+    const appointment = appointmentDay && appointmentSlot ? `${appointmentDay.isoDate}T${String(appointmentSlot.hour).padStart(2, '0')}:${String(appointmentSlot.minute).padStart(2, '0')}` : job.appointment;
 
     return {
       ...job,
@@ -1573,7 +1644,7 @@ export function CompanyPortal({
       assignee: assignment?.assignee ?? job.assignee,
       dayKey: assignment?.dayKey,
       time: assignment?.time,
-      durationMinutes: assignment?.durationMinutes ?? 120,
+      durationMinutes: assignment?.durationMinutes ?? job.calendarDurationMinutes ?? 120,
       appointment,
     };
   });
@@ -1806,6 +1877,49 @@ export function CompanyPortal({
     setCalendarAnchorDate(toLocalIsoDate(new Date()));
   }
 
+  function calendarAppointmentFromParts(dayKey: string, slotKey: string) {
+    const appointmentSlot = calendarDropSlots.find((slot) => slot.key === slotKey);
+    if (!appointmentSlot) return '';
+    return `${dayKey}T${String(appointmentSlot.hour).padStart(2, '0')}:${String(appointmentSlot.minute).padStart(2, '0')}`;
+  }
+
+  function persistCalendarAssignment(jobNumber: string, assignee: string, dayKey: string, slotKey: string, durationMinutes: number) {
+    const baseJob = jobs.find((job) => job.jobNumber === jobNumber);
+    const appointment = calendarAppointmentFromParts(dayKey, slotKey);
+    if (!baseJob || !appointment) return;
+
+    const nextJob = {
+      ...baseJob,
+      technician: assignee,
+      assignee,
+      appointment,
+      calendarDurationMinutes: durationMinutes,
+    };
+
+    setJobs((currentJobs) => currentJobs.map((job) => (job.id === nextJob.id ? nextJob : job)));
+    setOpenedJob((job) => job?.id === nextJob.id ? { ...job, ...nextJob } : job);
+    setJobsStatus('Saving calendar appointment...');
+
+    saveJobAppointment(activeCompany.id, nextJob, appointment, durationMinutes)
+      .then((savedJob) => {
+        setJobs((currentJobs) => currentJobs.map((job) => (job.id === savedJob.id ? savedJob : job)));
+        setOpenedJob((job) => job?.id === savedJob.id ? { ...job, ...savedJob } : job);
+        setCalendarAssignments((assignments) => ({
+          ...assignments,
+          [savedJob.jobNumber]: {
+            assignee: savedJob.assignee,
+            dayKey,
+            time: slotKey,
+            durationMinutes: savedJob.calendarDurationMinutes ?? durationMinutes,
+          },
+        }));
+        setJobsStatus('Calendar appointment saved.');
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Calendar appointment could not be saved.');
+      });
+  }
+
   function handleCalendarDrop(event: DragEvent<HTMLDivElement>, dayKey: string, slotKey: string) {
     event.preventDefault();
     const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
@@ -1813,9 +1927,8 @@ export function CompanyPortal({
     const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
     const assignee = activeCalendarTech !== 'all' ? activeCalendarTech : movedJob?.assignee;
     if (!assignee || assignee === 'No technician') return;
-    const appointmentDay = allCalendarDays.find((day) => day.key === dayKey);
-    const appointmentSlot = calendarDropSlots.find((slot) => slot.key === slotKey);
-    const appointment = appointmentDay && appointmentSlot ? `${appointmentDay.isoDate}T${String(appointmentSlot.hour).padStart(2, '0')}:${String(appointmentSlot.minute).padStart(2, '0')}` : undefined;
+    const appointment = calendarAppointmentFromParts(dayKey, slotKey);
+    const durationMinutes = calendarAssignments[jobNumber]?.durationMinutes ?? movedJob?.durationMinutes ?? 120;
 
     setCalendarAssignments((assignments) => ({
       ...assignments,
@@ -1823,10 +1936,11 @@ export function CompanyPortal({
         assignee,
         dayKey,
         time: slotKey,
-        durationMinutes: assignments[jobNumber]?.durationMinutes ?? movedJob?.durationMinutes ?? 120,
+        durationMinutes,
       },
     }));
     setOpenedJob((job) => job?.jobNumber === jobNumber ? { ...job, technician: assignee, appointment } : job);
+    persistCalendarAssignment(jobNumber, assignee, dayKey, slotKey, durationMinutes);
     setDraggingJobNumber('');
   }
 
@@ -1850,9 +1964,7 @@ export function CompanyPortal({
 
   function confirmCalendarMonthDrop() {
     if (!monthDropRequest) return;
-    const appointmentDay = allCalendarDays.find((day) => day.key === monthDropRequest.dayKey);
-    const appointmentSlot = calendarDropSlots.find((slot) => slot.key === monthDropRequest.time);
-    const appointment = appointmentDay && appointmentSlot ? `${appointmentDay.isoDate}T${String(appointmentSlot.hour).padStart(2, '0')}:${String(appointmentSlot.minute).padStart(2, '0')}` : undefined;
+    const appointment = calendarAppointmentFromParts(monthDropRequest.dayKey, monthDropRequest.time);
 
     setCalendarAssignments((assignments) => ({
       ...assignments,
@@ -1864,17 +1976,21 @@ export function CompanyPortal({
       },
     }));
     setOpenedJob((job) => job?.jobNumber === monthDropRequest.jobNumber ? { ...job, technician: monthDropRequest.assignee, appointment } : job);
+    persistCalendarAssignment(monthDropRequest.jobNumber, monthDropRequest.assignee, monthDropRequest.dayKey, monthDropRequest.time, monthDropRequest.durationMinutes);
     setMonthDropRequest(null);
   }
 
   function handleCalendarResizeStart(
     event: PointerEvent<HTMLSpanElement>,
     job: { jobNumber: string; assignee: string; dayKey?: string; time?: string; durationMinutes: number },
+    edge: 'start' | 'end',
   ) {
     event.preventDefault();
     event.stopPropagation();
 
     if (!job.dayKey || !job.time) return;
+    const startSlotIndex = calendarDropSlots.findIndex((slot) => slot.key === job.time);
+    if (startSlotIndex < 0) return;
 
     setCalendarAssignments((assignments) => ({
       ...assignments,
@@ -1887,8 +2003,13 @@ export function CompanyPortal({
     }));
     setResizingJob({
       jobNumber: job.jobNumber,
+      assignee: job.assignee,
+      dayKey: job.dayKey,
+      time: job.time,
+      edge,
       startY: event.clientY,
       startDuration: job.durationMinutes,
+      startSlotIndex,
     });
   }
 
@@ -1994,6 +2115,8 @@ export function CompanyPortal({
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={handleCreateInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            onComposeEmail={openEmailCompose}
             onCreateJob={handleCreateJob}
             selectedJobPrefix={selectedJobPrefix}
             nextJobNumber={nextJobNumber}
@@ -2012,6 +2135,8 @@ export function CompanyPortal({
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={handleCreateInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            onComposeEmail={openEmailCompose}
             jobStatusFilters={jobStatusFilters}
             allJobsGroups={allJobsGroups}
             allJobsVisibility={allJobsVisibility}
@@ -2035,6 +2160,8 @@ export function CompanyPortal({
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={handleCreateInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            onComposeEmail={openEmailCompose}
             calendarRangeTitle={calendarRangeTitle}
             onMoveCalendar={moveCalendar}
             onShowToday={showTodayInCalendar}
@@ -2100,6 +2227,8 @@ export function CompanyPortal({
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={handleCreateInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            onComposeEmail={openEmailCompose}
             openTaskCount={openTaskCount}
             autoTaskCount={autoTaskCount}
             urgentTaskCount={urgentTaskCount}
@@ -2147,6 +2276,8 @@ export function CompanyPortal({
             allJobsRows={allJobsRows}
             companySignature={companyEmailSignature}
             companyPaymentBlock={companyPaymentBlock}
+            composeRequestId={emailComposeRequestId}
+            composeAttachmentRequest={emailComposeAttachments}
             onSendEmailDraft={sendEmailDraft}
           />
         ) : clientPage === 'map' ? (
@@ -2176,6 +2307,8 @@ export function CompanyPortal({
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={handleCreateInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            onComposeEmail={openEmailCompose}
             financeSummary={financeSummary}
             financePeriod={financePeriod}
             onFinancePeriodChange={setFinancePeriod}
