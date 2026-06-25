@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Plus, PackageCheck } from 'lucide-react';
 import type { CompanyOnboardingProfile, MaterialRow, ServiceJob } from '../../types';
 import { money, statusClassName } from '../../utils/format';
+import { saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
 
 type MaterialRowWithJob = {
   material: MaterialRow;
@@ -54,12 +56,38 @@ export function MaterialsPage({
   onAddMaterialDraftRow: () => void;
   onSaveMaterialDraftRows: () => void;
 }) {
+  const [statusOverrides, setStatusOverrides] = useState<Record<string, MaterialRow['status']>>({});
+  const [savingStatusId, setSavingStatusId] = useState('');
+  const [inlineStatusMessage, setInlineStatusMessage] = useState('');
+
+  async function updateInlineMaterialStatus(material: MaterialRow, job: ServiceJob, nextStatus: MaterialRow['status']) {
+    const previousStatus = statusOverrides[material.id] ?? material.status;
+    setStatusOverrides((statuses) => ({ ...statuses, [material.id]: nextStatus }));
+    setSavingStatusId(material.id);
+    setInlineStatusMessage('Saving material status...');
+
+    const rowsForJob = materials
+      .filter((row) => row.jobNumber === job.jobNumber)
+      .map((row) => (row.id === material.id ? { ...row, status: nextStatus } : row));
+
+    try {
+      await saveJobMaterialsToBackend(job.companyId, job.jobNumber, rowsForJob);
+      setInlineStatusMessage('Material status saved.');
+    } catch (error) {
+      setStatusOverrides((statuses) => ({ ...statuses, [material.id]: previousStatus }));
+      setInlineStatusMessage(error instanceof Error ? error.message : 'Material status could not be saved.');
+    } finally {
+      setSavingStatusId('');
+    }
+  }
+
   return (
     <section className="materials-page">
       <div className="materials-header">
         <div>
           <p className="eyebrow">Parts and purchases</p>
           <h1>Materials</h1>
+          {inlineStatusMessage ? <p className="access-status">{inlineStatusMessage}</p> : null}
         </div>
         <div className="materials-summary">
           <span>
@@ -142,31 +170,48 @@ export function MaterialsPage({
             </tr>
           </thead>
           <tbody>
-            {filteredMaterialRows.map(({ material, job }) => (
-              <tr key={material.id}>
-                <td>
-                  <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
-                    #{job.jobNumber}
-                  </button>
-                  <strong>{job.organization}</strong>
-                  <span>{job.clientName} - {job.system} - {job.issue}</span>
-                </td>
-                <td>{job.assignee}</td>
-                <td>{material.name || '-'}</td>
-                <td>{material.quantity}</td>
-                <td>{money(material.price)}</td>
-                <td>{money(material.quantity * material.price)}</td>
-                <td>{material.supplier || '-'}</td>
-                <td>
-                  <span className={`material-status ${statusClassName(material.status)}`}>{material.status}</span>
-                </td>
-                <td>
-                  <button className="secondary-button compact" type="button" onClick={() => onOpenMaterialEditor(job.jobNumber)}>
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {filteredMaterialRows.map(({ material, job }) => {
+              const currentStatus = statusOverrides[material.id] ?? material.status;
+              const savingThisStatus = savingStatusId === material.id;
+
+              return (
+                <tr key={material.id}>
+                  <td>
+                    <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
+                      #{job.jobNumber}
+                    </button>
+                    <strong>{job.organization}</strong>
+                    <span>{job.clientName} - {job.system} - {job.issue}</span>
+                  </td>
+                  <td>{job.assignee}</td>
+                  <td>{material.name || '-'}</td>
+                  <td>{material.quantity}</td>
+                  <td>{money(material.price)}</td>
+                  <td>{money(material.quantity * material.price)}</td>
+                  <td>{material.supplier || '-'}</td>
+                  <td>
+                    <select
+                      className={`material-status-select ${statusClassName(currentStatus)}`}
+                      value={currentStatus}
+                      disabled={savingThisStatus}
+                      onChange={(event) => updateInlineMaterialStatus(material, job, event.target.value as MaterialRow['status'])}
+                      aria-label={`Material status for job ${job.jobNumber}`}
+                    >
+                      {materialStatuses.map((status) => (
+                        <option value={status} key={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <button className="secondary-button compact" type="button" onClick={() => onOpenMaterialEditor(job.jobNumber)}>
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
             {!filteredMaterialRows.length ? (
               <tr>
                 <td colSpan={9}>
