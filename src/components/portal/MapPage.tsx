@@ -1,4 +1,7 @@
-import { Map } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { Map as MapIcon } from 'lucide-react';
+import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet';
+import L from 'leaflet';
 import type { CompanyOnboardingProfile } from '../../types';
 
 type TechnicianLocation = {
@@ -14,6 +17,60 @@ type TechnicianLocation = {
   x: number | null;
   y: number | null;
 };
+
+type TechnicianMapPoint = TechnicianLocation & {
+  latNumber: number;
+  lngNumber: number;
+};
+
+const NYC_CENTER: [number, number] = [40.7128, -74.006];
+
+function parseCoordinate(value: string) {
+  const coordinate = Number(value.trim());
+  return Number.isFinite(coordinate) ? coordinate : null;
+}
+
+function technicianIcon(technician: TechnicianMapPoint) {
+  const initial = technician.name.trim().slice(0, 1).toUpperCase() || 'T';
+
+  return L.divIcon({
+    className: `technician-leaflet-marker ${technician.online ? 'online' : 'offline'}`,
+    html: `<span>${initial}</span>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -18],
+  });
+}
+
+function MapFocus({ selectedTechnician, mapPoints }: { selectedTechnician?: TechnicianMapPoint; mapPoints: TechnicianMapPoint[] }) {
+  const map = useMap();
+
+  useEffect(() => {
+    window.setTimeout(() => map.invalidateSize(), 0);
+  }, [map]);
+
+  useEffect(() => {
+    if (selectedTechnician) {
+      map.flyTo([selectedTechnician.latNumber, selectedTechnician.lngNumber], 13, { duration: 0.8 });
+      return;
+    }
+
+    if (mapPoints.length === 1) {
+      map.setView([mapPoints[0].latNumber, mapPoints[0].lngNumber], 12);
+      return;
+    }
+
+    if (mapPoints.length > 1) {
+      const bounds = L.latLngBounds(mapPoints.map((technician) => [technician.latNumber, technician.lngNumber]));
+      map.fitBounds(bounds.pad(0.2), { maxZoom: 12 });
+      return;
+    }
+
+    map.setView(NYC_CENTER, 10);
+  }, [map, mapPoints, selectedTechnician]);
+
+  return null;
+}
 
 export function MapPage({
   filteredTechnicianLocations,
@@ -36,6 +93,26 @@ export function MapPage({
   onResetFilters: () => void;
   profile: CompanyOnboardingProfile;
 }) {
+  const [selectedTechnicianId, setSelectedTechnicianId] = useState('');
+
+  const mapPoints = useMemo<TechnicianMapPoint[]>(() => {
+    return filteredTechnicianLocations.flatMap((technician) => {
+      const latNumber = parseCoordinate(technician.lat);
+      const lngNumber = parseCoordinate(technician.lng);
+
+      if (latNumber === null || lngNumber === null) return [];
+      return [{ ...technician, latNumber, lngNumber }];
+    });
+  }, [filteredTechnicianLocations]);
+
+  const mapPointById = useMemo(() => new globalThis.Map(mapPoints.map((technician) => [technician.id, technician])), [mapPoints]);
+  const selectedTechnician = selectedTechnicianId ? mapPointById.get(selectedTechnicianId) : undefined;
+
+  useEffect(() => {
+    if (!selectedTechnicianId || mapPointById.has(selectedTechnicianId)) return;
+    setSelectedTechnicianId('');
+  }, [mapPointById, selectedTechnicianId]);
+
   return (
     <section className="map-page">
       <div className="map-header">
@@ -80,36 +157,52 @@ export function MapPage({
       </div>
 
       <div className="map-layout technician-map-layout">
-        <div className="technician-map-canvas" aria-label="Technician location map">
-          <div className="osm-tile tile-a" />
-          <div className="osm-tile tile-b" />
-          <div className="osm-tile tile-c" />
-          <div className="osm-tile tile-d" />
-          <div className="map-water east-river">Hudson River</div>
-          <div className="map-water hudson-river">East River</div>
-          <div className="map-borough manhattan">Manhattan</div>
-          <div className="map-borough brooklyn">Brooklyn</div>
-          <div className="map-borough new-jersey">New Jersey</div>
-          <div className="map-road horizontal road-one" />
-          <div className="map-road horizontal road-two" />
-          <div className="map-road vertical road-three" />
-          <div className="map-road vertical road-four" />
-          <div className="map-zoom-control">
-            <button type="button">+</button>
-            <button type="button">-</button>
-          </div>
-
-          {filteredTechnicianLocations.filter((technician) => technician.x !== null && technician.y !== null).map((technician) => (
-            <button
-              className={`technician-location-pin ${technician.online ? 'online' : 'offline'}`}
-              style={{ left: `${technician.x}%`, top: `${technician.y}%` }}
-              type="button"
-              title={`${technician.name} - ${technician.lastSeen}`}
-              key={technician.id}
-            >
-              <span>{technician.name.slice(0, 1).toUpperCase()}</span>
-            </button>
-          ))}
+        <div className="technician-leaflet-shell">
+          <MapContainer center={NYC_CENTER} zoom={10} minZoom={4} maxZoom={19} scrollWheelZoom className="technician-leaflet-map">
+            <TileLayer attribution="&copy; OpenStreetMap contributors" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+            {mapPoints.map((technician) => (
+              <Marker
+                key={technician.id}
+                position={[technician.latNumber, technician.lngNumber]}
+                icon={technicianIcon(technician)}
+                eventHandlers={{ click: () => setSelectedTechnicianId(technician.id) }}
+              >
+                <Popup>
+                  <div className="technician-map-popup">
+                    <strong>{technician.name}</strong>
+                    <dl>
+                      <div>
+                        <dt>GPS</dt>
+                        <dd className={technician.online ? 'gps-online' : 'gps-offline'}>{technician.online ? 'online' : 'offline'}</dd>
+                      </div>
+                      <div>
+                        <dt>Updated</dt>
+                        <dd>{technician.lastSeen || '-'}</dd>
+                      </div>
+                      <div>
+                        <dt>Area</dt>
+                        <dd>{technician.area || '-'}</dd>
+                      </div>
+                      <div>
+                        <dt>Phone</dt>
+                        <dd>{technician.phone || '-'}</dd>
+                      </div>
+                      <div>
+                        <dt>Email</dt>
+                        <dd>{technician.email || '-'}</dd>
+                      </div>
+                    </dl>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+            <MapFocus selectedTechnician={selectedTechnician} mapPoints={mapPoints} />
+          </MapContainer>
+          {!mapPoints.length ? (
+            <div className="leaflet-map-status notice">
+              No GPS coordinates yet. The map will show markers as soon as technician GPS data appears.
+            </div>
+          ) : null}
         </div>
 
         <aside className="technician-map-list">
@@ -117,46 +210,51 @@ export function MapPage({
             <strong>Technicians</strong>
             <span>{filteredTechnicianLocations.length} rows</span>
           </div>
-          {filteredTechnicianLocations.map((technician) => (
-            <article className="technician-map-row" key={technician.id}>
-              <div className="technician-map-row-top">
-                <h3>{technician.name}</h3>
-                <span className="tech-role-pill">technician</span>
-              </div>
-              <dl>
-                <div>
-                  <dt>GPS</dt>
-                  <dd className={technician.online ? 'gps-online' : 'gps-offline'}>{technician.online ? 'online' : 'offline'}</dd>
+          {filteredTechnicianLocations.map((technician) => {
+            const technicianMapPoint = mapPointById.get(technician.id);
+            const hasCoordinates = Boolean(technicianMapPoint);
+
+            return (
+              <article className={`technician-map-row ${selectedTechnicianId === technician.id ? 'selected' : ''}`} key={technician.id}>
+                <div className="technician-map-row-top">
+                  <h3>{technician.name}</h3>
+                  <span className="tech-role-pill">technician</span>
                 </div>
-                <div>
-                  <dt>Updated</dt>
-                  <dd>{technician.lastSeen}</dd>
-                </div>
-                <div>
-                  <dt>Area</dt>
-                  <dd>{technician.area}</dd>
-                </div>
-                <div>
-                  <dt>Coords</dt>
-                  <dd>{technician.lat && technician.lng ? `${technician.lat}, ${technician.lng}` : '-'}</dd>
-                </div>
-                <div>
-                  <dt>Phone</dt>
-                  <dd>{technician.phone || '-'}</dd>
-                </div>
-                <div>
-                  <dt>Email</dt>
-                  <dd>{technician.email || '-'}</dd>
-                </div>
-              </dl>
-              <button className="secondary-button compact" type="button" disabled={technician.x === null || technician.y === null}>
-                Show on map
-              </button>
-            </article>
-          ))}
+                <dl>
+                  <div>
+                    <dt>GPS</dt>
+                    <dd className={technician.online ? 'gps-online' : 'gps-offline'}>{technician.online ? 'online' : 'offline'}</dd>
+                  </div>
+                  <div>
+                    <dt>Updated</dt>
+                    <dd>{technician.lastSeen}</dd>
+                  </div>
+                  <div>
+                    <dt>Area</dt>
+                    <dd>{technician.area}</dd>
+                  </div>
+                  <div>
+                    <dt>Coords</dt>
+                    <dd>{hasCoordinates ? `${technicianMapPoint!.latNumber.toFixed(5)}, ${technicianMapPoint!.lngNumber.toFixed(5)}` : '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>Phone</dt>
+                    <dd>{technician.phone || '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>Email</dt>
+                    <dd>{technician.email || '-'}</dd>
+                  </div>
+                </dl>
+                <button className="secondary-button compact" type="button" disabled={!hasCoordinates} onClick={() => setSelectedTechnicianId(technician.id)}>
+                  Show on map
+                </button>
+              </article>
+            );
+          })}
           {!filteredTechnicianLocations.length ? (
             <div className="empty-state compact-empty">
-              <Map size={24} aria-hidden="true" />
+              <MapIcon size={24} aria-hidden="true" />
               <h3>No technicians found</h3>
               <p>Change filters or search another technician.</p>
             </div>
