@@ -74,6 +74,18 @@ type AppointmentRow = {
   timezone: string;
 };
 
+type JobMaterialRow = {
+  id: string;
+  company_id: string;
+  job_id: string;
+  name: string;
+  quantity: number;
+  unit_price_cents: number;
+  supplier: string;
+  status: MaterialRow['status'];
+  created_at: string;
+};
+
 const DEFAULT_LIMIT = 200;
 const RECENT_LOOKUP_LIMIT = 50;
 
@@ -88,6 +100,10 @@ function centsToDollars(cents: number | null | undefined) {
 
 function dollarsToCents(value: string) {
   return Math.round((Number(value) || 0) * 100);
+}
+
+function centsToNumber(cents: number | null | undefined) {
+  return (Number(cents) || 0) / 100;
 }
 
 function toLocalAppointment(value: string | null | undefined) {
@@ -195,6 +211,18 @@ function mapInvoice(row: JobInvoiceRow): JobInvoice {
   };
 }
 
+function mapMaterial(row: JobMaterialRow, jobNumber: string): MaterialRow {
+  return {
+    id: row.id,
+    jobNumber,
+    name: row.name ?? '',
+    quantity: Number(row.quantity) || 1,
+    price: centsToNumber(row.unit_price_cents),
+    supplier: row.supplier ?? '',
+    status: row.status ?? 'Needed',
+  };
+}
+
 async function loadCompanyJobTables(companyId: string) {
   const [customers, locations, technicians, jobs, payments, invoices, appointments] = await Promise.all([
     supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
@@ -239,6 +267,21 @@ export async function listCompanyCustomers(companyId: string): Promise<Customer[
 export async function listCompanyJobs(companyId: string): Promise<ServiceJob[]> {
   const tables = await loadCompanyJobTables(companyId);
   return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments, tables.invoices, tables.appointments));
+}
+
+export async function listCompanyJobMaterials(companyId: string): Promise<MaterialRow[]> {
+  const [jobs, materials] = await Promise.all([
+    supabaseRequest<Pick<JobRow, 'id' | 'job_number'>[]>(`jobs?company_id=${sqlEq(companyId)}&select=id,job_number&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobMaterialRow[]>(`job_materials?company_id=${sqlEq(companyId)}&order=created_at.asc&limit=${DEFAULT_LIMIT}`),
+  ]);
+  const jobNumberById = new Map(jobs.map((job) => [job.id, job.job_number]));
+
+  return materials
+    .map((material) => {
+      const jobNumber = jobNumberById.get(material.job_id);
+      return jobNumber ? mapMaterial(material, jobNumber) : null;
+    })
+    .filter((material): material is MaterialRow => Boolean(material));
 }
 
 export async function createCompanyCustomer(companyId: string, form: NewCustomerForm): Promise<Customer> {
@@ -418,6 +461,41 @@ export async function saveJobAppointment(companyId: string, job: ServiceJob, app
     appointment,
     calendarDurationMinutes: safeDuration,
   };
+}
+
+export async function saveJobMaterials(companyId: string, jobNumber: string, rows: MaterialRow[]): Promise<MaterialRow[]> {
+  const [job] = await supabaseRequest<Pick<JobRow, 'id' | 'job_number'>[]>(
+    `jobs?company_id=${sqlEq(companyId)}&job_number=${sqlEq(jobNumber)}&select=id,job_number&limit=1`,
+  );
+
+  if (!job) {
+    throw new Error('Job was not found. Reload jobs and try again.');
+  }
+
+  await supabaseRequest(`job_materials?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}`, { method: 'DELETE' });
+
+  const cleanRows = rows
+    .filter((row) => row.name.trim() || row.supplier.trim())
+    .map((row) => ({
+      id: row.id,
+      company_id: companyId,
+      job_id: job.id,
+      name: row.name.trim(),
+      quantity: Math.max(1, Number(row.quantity) || 1),
+      unit_price_cents: dollarsToCents(String(Math.max(0, Number(row.price) || 0))),
+      supplier: row.supplier.trim(),
+      status: row.status,
+    }));
+
+  if (cleanRows.length) {
+    await supabaseRequest<JobMaterialRow[]>('job_materials?select=*', {
+      method: 'POST',
+      select: true,
+      body: cleanRows,
+    });
+  }
+
+  return listCompanyJobMaterials(companyId);
 }
 
 export async function saveCompanyJobs(companyId: string, companyJobs: ServiceJob[]): Promise<ServiceJob[]> {

@@ -22,7 +22,7 @@ type JobDetailPanelProps = {
   };
   onClose: () => void;
   onSave: (job: JobCardData) => void;
-  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void | Promise<void>;
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice?: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail?: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
@@ -342,8 +342,13 @@ export function JobDetailPanel({
   }
 
   function saveMaterials() {
-    onSaveMaterials(draft.jobNumber, materialDrafts);
-    setMaterialsSaved(true);
+    Promise.resolve(onSaveMaterials(draft.jobNumber, materialDrafts))
+      .then(() => {
+        setMaterialsSaved(true);
+      })
+      .catch(() => {
+        setMaterialsSaved(false);
+      });
   }
 
   function addComment() {

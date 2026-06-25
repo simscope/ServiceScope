@@ -101,7 +101,16 @@ import {
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { createJobInvoice, createServiceJob, deleteJobInvoice, listCompanyJobs, saveJobAppointment, saveServiceJob } from './services/jobsStore';
+import {
+  createJobInvoice,
+  createServiceJob,
+  deleteJobInvoice,
+  listCompanyJobMaterials,
+  listCompanyJobs,
+  saveJobAppointment,
+  saveJobMaterials as saveJobMaterialsToBackend,
+  saveServiceJob,
+} from './services/jobsStore';
 import type {
   AuditEvent,
   AuditEventCategory,
@@ -625,6 +634,7 @@ export function CompanyPortal({
   useEffect(() => {
     if (!selectedCompany) {
       setJobs([]);
+      setMaterials([]);
       setJobsStatus('');
       return undefined;
     }
@@ -635,14 +645,19 @@ export function CompanyPortal({
 
     async function loadJobsAndCustomers() {
       try {
-        const savedJobs = await listCompanyJobs(company.id);
+        const [savedJobs, savedMaterials] = await Promise.all([
+          listCompanyJobs(company.id),
+          listCompanyJobMaterials(company.id),
+        ]);
 
         if (cancelled) return;
         setJobs(savedJobs);
+        setMaterials(savedMaterials);
         setJobsStatus('');
       } catch (error) {
         if (cancelled) return;
         setJobs([]);
+        setMaterials([]);
         setJobsStatus(error instanceof Error ? error.message : 'Jobs could not be loaded.');
       }
     }
@@ -1142,17 +1157,24 @@ export function CompanyPortal({
   const materialRowsWithJobs = materials
     .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))
     .filter((row): row is { material: MaterialRow; job: typeof allJobsRows[number] } => Boolean(row.job));
-  const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
-    const normalizedSearch = materialSearch.trim().toLowerCase();
-    const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
-    const matchesTech = materialTechFilter === 'all' || job.assignee === materialTechFilter;
-    const haystack = [job.jobNumber, job.organization, job.clientName, job.phone, job.address, job.system, job.issue, material.name, material.supplier]
+  const normalizedMaterialSearch = materialSearch.trim().toLowerCase();
+  const materialJobMatchesSearch = (job: ServiceJob, extras: string[] = []) => {
+    if (!normalizedMaterialSearch) return true;
+    return [job.jobNumber, job.organization, job.clientName, job.phone, job.email, job.address, job.system, job.issue, job.notes, ...extras]
       .join(' ')
-      .toLowerCase();
+      .toLowerCase()
+      .includes(normalizedMaterialSearch);
+  };
+  const materialJobMatchesTechnician = (job: ServiceJob) => materialTechFilter === 'all' || job.assignee === materialTechFilter;
+  const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
+    const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
 
-    return matchesStatus && matchesTech && (!normalizedSearch || haystack.includes(normalizedSearch));
+    return matchesStatus && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
   const jobsWithoutMaterials = activeJobsRows.filter((job) => !materials.some((material) => material.jobNumber === job.jobNumber));
+  const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
+    materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
+  ));
   const selectedMaterialsJob = materialJobMap.get(editingMaterialsJobNumber);
   const materialsTotal = filteredMaterialRows.reduce((sum, { material }) => sum + material.quantity * material.price, 0);
   const openMaterialEditor = (jobNumber: string) => {
@@ -1170,28 +1192,7 @@ export function CompanyPortal({
   const removeMaterialDraftRow = (rowId: string) => {
     setMaterialDraftRows((rows) => rows.filter((row) => row.id !== rowId));
   };
-  const saveMaterialDraftRows = () => {
-    if (!editingMaterialsJobNumber) return;
-    const cleanRows = materialDraftRows
-      .filter((row) => row.name.trim() || row.supplier.trim())
-      .map((row) => ({
-        ...row,
-        jobNumber: editingMaterialsJobNumber,
-        name: row.name.trim(),
-        supplier: row.supplier.trim(),
-        quantity: Math.max(1, Number(row.quantity) || 1),
-        price: Math.max(0, Number(row.price) || 0),
-      }));
-
-    setMaterials((rows) => [
-      ...rows.filter((row) => row.jobNumber !== editingMaterialsJobNumber),
-      ...cleanRows,
-    ]);
-    setEditingMaterialsJobNumber('');
-    setMaterialDraftRows([]);
-  };
-  const saveJobMaterials = (jobNumber: string, rows: MaterialRow[]) => {
-    const cleanRows = rows
+  const normalizeMaterialRows = (jobNumber: string, rows: MaterialRow[]) => rows
       .filter((row) => row.name.trim() || row.supplier.trim())
       .map((row) => ({
         ...row,
@@ -1202,10 +1203,48 @@ export function CompanyPortal({
         price: Math.max(0, Number(row.price) || 0),
       }));
 
+  const saveMaterialDraftRows = () => {
+    if (!editingMaterialsJobNumber) return;
+    const jobNumber = editingMaterialsJobNumber;
+    const cleanRows = normalizeMaterialRows(jobNumber, materialDraftRows);
+
+    setMaterials((rows) => [
+      ...rows.filter((row) => row.jobNumber !== jobNumber),
+      ...cleanRows,
+    ]);
+    setEditingMaterialsJobNumber('');
+    setMaterialDraftRows([]);
+
+    if (!selectedCompanyId) return;
+    setJobsStatus('Saving materials...');
+    saveJobMaterialsToBackend(selectedCompanyId, jobNumber, cleanRows)
+      .then((savedMaterials) => {
+        setMaterials(savedMaterials);
+        setJobsStatus('Materials saved.');
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Materials could not be saved.');
+      });
+  };
+  const saveJobMaterials = (jobNumber: string, rows: MaterialRow[]) => {
+    const cleanRows = normalizeMaterialRows(jobNumber, rows);
+
     setMaterials((currentRows) => [
       ...currentRows.filter((row) => row.jobNumber !== jobNumber),
       ...cleanRows,
     ]);
+
+    if (!selectedCompanyId) return Promise.resolve();
+    setJobsStatus('Saving materials...');
+    return saveJobMaterialsToBackend(selectedCompanyId, jobNumber, cleanRows)
+      .then((savedMaterials) => {
+        setMaterials(savedMaterials);
+        setJobsStatus('Materials saved.');
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Materials could not be saved.');
+        throw error;
+      });
   };
   const financeRows = allJobsRows.map((job) => {
     const materialsCost = materials
@@ -2190,7 +2229,7 @@ export function CompanyPortal({
         ) : clientPage === 'materials' ? (
           <MaterialsPage
             materials={materials}
-            jobsWithoutMaterials={jobsWithoutMaterials}
+            jobsWithoutMaterials={filteredJobsWithoutMaterials}
             materialsTotal={materialsTotal}
             materialStatusFilter={materialStatusFilter}
             onMaterialStatusFilterChange={setMaterialStatusFilter}
