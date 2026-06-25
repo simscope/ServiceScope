@@ -1,0 +1,145 @@
+.map-page {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+}
+
+.map-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.map-header h1 {
+  margin-bottom: 0;
+  font-size: 30px;
+}
+
+.map-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.map-summary span {
+  display: grid;
+  min-width: 116px;
+  gap: 2px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 12px;
+  color: #667269;
+  font-size: 12px;
+}
+
+.map-summary strong {
+  color: #17201b;
+  font-size: 18px;
+}
+
+.map-toolbar {
+  display: grid;
+  grid-template-columns: 170px 170px minmax(260px, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.map-toolbar input,
+.map-toolbar select {
+  min-height: 36px;
+  background: #ffffff;
+  font-size: 13px;
+}
+
+.technician-map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: stretch;
+  gap: 12px;
+  min-height: calc(100vh - 190px);
+}
+
+.technician-leaflet-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 640px;
+  overflow: hidden;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #dbe7d8;
+}
+
+.technician-leaflet-map {
+  width: 100%;
+  height: 100%;
+  min-height: 640px;
+  z-index: 1;
+}
+
+.technician-leaflet-marker {
+  display: grid;
+  width: 34px !important;
+  height: 34px !important;
+  place-items: center;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  background: #2563eb;
+  color: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.28);
+}
+
+.technician-leaflet-marker.online {
+  background: #16a34a;
+}
+
+.technician-leaflet-marker span {
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.leaflet-map-status {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 18px;
+  max-width: min(520px, calc(100% - 36px));
+  transform: translateX(-50%);
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 800;
+  text-align: center;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.15);
+}
+
+.technician-map-layout .technician-map-list {
+  height: 100%;
+  max-height: none;
+}
+
+.technician-map-row.selected {
+  border-color: rgba(59, 130, 246, 0.75);
+  background: rgba(37, 99, 235, 0.13);
+}
+
+.technician-map-row button {
+  width: 100%;
+}
+
+@media (max-width: 1040px) {
+  .map-toolbar,
+  .technician-map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .technician-leaflet-shell,
+  .technician-leaflet-map {
+    min-height: 520px;
+  }
+}
