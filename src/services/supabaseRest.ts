@@ -8,6 +8,11 @@ type SupabaseRequestOptions = {
   timeoutMs?: number;
 };
 
+type ViteEnv = {
+  VITE_SUPABASE_URL?: string;
+  VITE_SUPABASE_ANON_KEY?: string;
+};
+
 type SupabaseAuthResponse = {
   access_token: string;
   token_type: string;
@@ -17,11 +22,6 @@ type SupabaseAuthResponse = {
     id: string;
     email?: string;
   };
-};
-
-type ViteEnv = {
-  VITE_SUPABASE_URL?: string;
-  VITE_SUPABASE_ANON_KEY?: string;
 };
 
 const viteEnv = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as ViteEnv;
@@ -35,6 +35,11 @@ export function isSupabaseConfigured() {
   return Boolean(supabaseUrl && supabaseAnonKey);
 }
 
+export function getSupabasePublicStorageUrl(bucket: string, path: string) {
+  if (!supabaseUrl || !bucket || !path) return '';
+  return `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(bucket)}/${path.split('/').map(encodeURIComponent).join('/')}`;
+}
+
 export function setSupabaseAccessToken(token: string | null) {
   if (!token) {
     window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
@@ -46,6 +51,32 @@ export function setSupabaseAccessToken(token: string | null) {
 
 export function getSupabaseAccessToken() {
   return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+}
+
+function makeSupabaseHeaders(contentType?: string) {
+  const accessToken = getSupabaseAccessToken();
+  return {
+    apikey: supabaseAnonKey,
+    Authorization: `Bearer ${accessToken || supabaseAnonKey}`,
+    ...(contentType ? { 'Content-Type': contentType } : {}),
+  };
+}
+
+async function readSupabaseError(response: Response) {
+  const message = await response.text();
+  const tokenExpired =
+    response.status === 401 ||
+    message.toLowerCase().includes('jwt expired') ||
+    message.toLowerCase().includes('invalid jwt');
+
+  if (tokenExpired) {
+    setSupabaseAccessToken(null);
+    const error = new Error('Your session expired. Sign in again.');
+    error.name = SUPABASE_AUTH_EXPIRED_CODE;
+    throw error;
+  }
+
+  throw new Error(message || `Supabase request failed with ${response.status}`);
 }
 
 export async function signInWithSupabasePassword(email: string, password: string) {
@@ -77,7 +108,6 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
     throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
   }
 
-  const accessToken = getSupabaseAccessToken();
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
 
@@ -87,9 +117,7 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
       method: options.method ?? 'GET',
       signal: controller.signal,
       headers: {
-        apikey: supabaseAnonKey,
-        Authorization: `Bearer ${accessToken || supabaseAnonKey}`,
-        'Content-Type': 'application/json',
+        ...makeSupabaseHeaders('application/json'),
         Prefer: options.prefer ?? (options.select ? 'return=representation' : 'return=minimal'),
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -104,20 +132,7 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
   }
 
   if (!response.ok) {
-    const message = await response.text();
-    const tokenExpired =
-      response.status === 401 ||
-      message.toLowerCase().includes('jwt expired') ||
-      message.toLowerCase().includes('invalid jwt');
-
-    if (tokenExpired) {
-      setSupabaseAccessToken(null);
-      const error = new Error('Your session expired. Sign in again.');
-      error.name = SUPABASE_AUTH_EXPIRED_CODE;
-      throw error;
-    }
-
-    throw new Error(message || `Supabase request failed with ${response.status}`);
+    await readSupabaseError(response);
   }
 
   if (response.status === 204) {
@@ -130,6 +145,40 @@ export async function supabaseRequest<T>(path: string, options: SupabaseRequestO
   }
 
   return JSON.parse(text) as T;
+}
+
+export async function uploadSupabaseStorageFile(bucket: string, path: string, file: Blob, contentType = 'application/octet-stream') {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  }
+
+  const response = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+    method: 'POST',
+    headers: {
+      ...makeSupabaseHeaders(contentType),
+      'x-upsert': 'true',
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    await readSupabaseError(response);
+  }
+}
+
+export async function deleteSupabaseStorageFiles(bucket: string, paths: string[]) {
+  const cleanPaths = paths.filter(Boolean);
+  if (!cleanPaths.length) return;
+
+  const response = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}`, {
+    method: 'DELETE',
+    headers: makeSupabaseHeaders('application/json'),
+    body: JSON.stringify({ prefixes: cleanPaths }),
+  });
+
+  if (!response.ok) {
+    await readSupabaseError(response);
+  }
 }
 
 export function sqlEq(value: string) {
