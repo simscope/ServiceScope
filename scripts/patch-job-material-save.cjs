@@ -175,4 +175,154 @@ replaceOnce(
   'const saveJobMaterials = (jobOrJobNumber: ServiceJob | string, rows: MaterialRow[])',
 );
 
-console.log('Job material save patch applied.');
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  `}) {
+  if (openedJob) {
+`,
+  `}) {
+  const createAttentionFields = ['organization', 'issue', 'clientName', 'phone', 'address', 'technician'];
+  const [createTouchedFields, setCreateTouchedFields] = useState<Record<string, boolean>>({});
+  const [createFieldValues, setCreateFieldValues] = useState<Record<string, string>>({});
+
+  const updateCreateField = (field: string, value: string) => {
+    setCreateFieldValues((values) => ({ ...values, [field]: value }));
+  };
+  const touchCreateField = (field: string, value: string) => {
+    updateCreateField(field, value);
+    setCreateTouchedFields((fields) => ({ ...fields, [field]: true }));
+  };
+  const createFieldNeedsAttention = (field: string) => Boolean(createTouchedFields[field]) && !String(createFieldValues[field] ?? '').trim();
+  const createFieldClass = (field: string) => (createFieldNeedsAttention(field) ? 'create-field-missing' : undefined);
+  const createFieldHint = (field: string, label: string) => createFieldNeedsAttention(field)
+    ? <span className="create-field-warning">{label} is empty. The job can still be created.</span>
+    : null;
+  const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
+    const form = new FormData(event.currentTarget);
+    const nextValues = Object.fromEntries(createAttentionFields.map((field) => [field, String(form.get(field) ?? '')]));
+
+    setCreateFieldValues((values) => ({ ...values, ...nextValues }));
+    setCreateTouchedFields((fields) => ({
+      ...fields,
+      ...Object.fromEntries(createAttentionFields.map((field) => [field, true])),
+    }));
+    onCreateJob(event);
+  };
+
+  if (openedJob) {
+`,
+  'const createAttentionFields = [',
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  '<form className="job-form" onSubmit={onCreateJob}>',
+  '<form className="job-form" onSubmit={handleCreateSubmit}>',
+  'onSubmit={handleCreateSubmit}',
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  '<input name="organization" placeholder="Organization / Company" />',
+  `<div className="create-field-control">
+            <input name="organization" placeholder="Organization / Company" className={createFieldClass('organization')} onChange={(event) => updateCreateField('organization', event.target.value)} onBlur={(event) => touchCreateField('organization', event.target.value)} />
+            {createFieldHint('organization', 'Company')}
+          </div>`,
+  "createFieldClass('organization')",
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  '<input name="issue" placeholder="Describe the issue" />',
+  `<div className="create-field-control">
+            <input name="issue" placeholder="Describe the issue" className={createFieldClass('issue')} onChange={(event) => updateCreateField('issue', event.target.value)} onBlur={(event) => touchCreateField('issue', event.target.value)} />
+            {createFieldHint('issue', 'Issue description')}
+          </div>`,
+  "createFieldClass('issue')",
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  '<input name="clientName" placeholder="Client name" />',
+  `<div className="create-field-control">
+            <input name="clientName" placeholder="Client name" className={createFieldClass('clientName')} onChange={(event) => updateCreateField('clientName', event.target.value)} onBlur={(event) => touchCreateField('clientName', event.target.value)} />
+            {createFieldHint('clientName', 'Client name')}
+          </div>`,
+  "createFieldClass('clientName')",
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  '<input name="phone" placeholder="Phone" />',
+  `<div className="create-field-control">
+            <input name="phone" placeholder="Phone" className={createFieldClass('phone')} onChange={(event) => updateCreateField('phone', event.target.value)} onBlur={(event) => touchCreateField('phone', event.target.value)} />
+            {createFieldHint('phone', 'Phone')}
+          </div>`,
+  "createFieldClass('phone')",
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  `<select name="technician" defaultValue="">
+            <option value="">--</option>
+            {profile.technicians.map((technician) => (
+              <option value={technician.name} key={technician.id}>
+                {technician.name}
+              </option>
+            ))}
+          </select>`,
+  `<div className="create-field-control">
+            <select name="technician" defaultValue="" className={createFieldClass('technician')} onChange={(event) => updateCreateField('technician', event.target.value)} onBlur={(event) => touchCreateField('technician', event.target.value)}>
+              <option value="">--</option>
+              {profile.technicians.map((technician) => (
+                <option value={technician.name} key={technician.id}>
+                  {technician.name}
+                </option>
+              ))}
+            </select>
+            {createFieldHint('technician', 'Technician')}
+          </div>`,
+  "createFieldClass('technician')",
+);
+
+replaceOnce(
+  'src/components/portal/JobsPages.tsx',
+  '<input name="address" placeholder="Address" />',
+  `<div className="create-field-control">
+            <input name="address" placeholder="Address" className={createFieldClass('address')} onChange={(event) => updateCreateField('address', event.target.value)} onBlur={(event) => touchCreateField('address', event.target.value)} />
+            {createFieldHint('address', 'Address')}
+          </div>`,
+  "createFieldClass('address')",
+);
+
+const createJobAttentionCss = `
+
+.create-field-control {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.job-form input.create-field-missing,
+.job-form select.create-field-missing,
+.job-form textarea.create-field-missing {
+  border-color: #f59e0b;
+  background: #fff7ed;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+.create-field-warning {
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+`;
+
+const baseCssPath = path.join(root, 'src/styles/base.css');
+const baseCss = fs.readFileSync(baseCssPath, 'utf8');
+if (!baseCss.includes('.create-field-control')) {
+  fs.writeFileSync(baseCssPath, `${baseCss}${createJobAttentionCss}`);
+}
+
+console.log('Job material save and create form attention patches applied.');
