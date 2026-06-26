@@ -297,7 +297,7 @@ const createFormLogic = `}) {
   const [createFieldValues, setCreateFieldValues] = useState<Record<string, string>>({});
 
   const normalizeCreateText = (value: string) => value.trim().toLowerCase();
-  const createDigits = (value: string) => value.replace(/\D/g, '');
+  const createDigits = (value: string) => value.replace(/\\D/g, '');
   const updateCreateField = (field: string, value: string) => {
     setCreateFieldValues((values) => ({ ...values, [field]: value }));
   };
@@ -312,7 +312,7 @@ const createFormLogic = `}) {
     : null;
   const createCustomerMatches = useMemo(() => {
     const tokens = createSearchFields
-      .flatMap((field) => normalizeCreateText(createFieldValues[field] ?? '').split(/\s+/))
+      .flatMap((field) => normalizeCreateText(createFieldValues[field] ?? '').split(/\\s+/))
       .filter((token) => token.length >= 2);
     const digitTokens = createSearchFields
       .map((field) => createDigits(createFieldValues[field] ?? ''))
@@ -329,7 +329,7 @@ const createFormLogic = `}) {
           customer.primaryPhone,
           customer.address,
         ].join(' '));
-        const digitHaystack = createDigits(`${customer.primaryPhone} ${customer.address}`);
+        const digitHaystack = createDigits([customer.primaryPhone, customer.address].join(' '));
 
         return tokens.some((token) => textHaystack.includes(token)) || digitTokens.some((token) => digitHaystack.includes(token));
       })
