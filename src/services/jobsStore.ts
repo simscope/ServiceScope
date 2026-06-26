@@ -1,5 +1,5 @@
-import type { Customer, JobDocumentType, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
-import { sqlEq, supabaseRequest } from './supabaseRest';
+import type { Customer, JobAttachment, JobComment, JobDocumentType, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
+import { deleteSupabaseStorageFiles, getSupabasePublicStorageUrl, sqlEq, supabaseRequest, uploadSupabaseStorageFile } from './supabaseRest';
 
 type CustomerRow = {
   id: string;
@@ -86,8 +86,34 @@ type JobMaterialRow = {
   created_at: string;
 };
 
+type JobCommentRow = {
+  id: string;
+  company_id: string;
+  job_id: string;
+  author_user_id: string | null;
+  author_name: string;
+  author_role: string;
+  message: string;
+  created_at: string;
+};
+
+type JobAttachmentRow = {
+  id: string;
+  company_id: string;
+  job_id: string;
+  uploaded_by_user_id: string | null;
+  name: string;
+  mime_type: string;
+  size_bytes: number;
+  kind: JobAttachment['kind'];
+  storage_bucket: string;
+  storage_path: string;
+  created_at: string;
+};
+
 const DEFAULT_LIMIT = 200;
 const RECENT_LOOKUP_LIMIT = 50;
+const JOB_FILES_BUCKET = 'job-files';
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -148,6 +174,37 @@ function mapCustomer(row: CustomerRow, locations: CustomerLocationRow[], jobs: J
   };
 }
 
+function normalizeAuthorRole(role: string): JobComment['authorRole'] {
+  if (role === 'Manager' || role === 'Technician') return role;
+  return 'Admin';
+}
+
+function mapComment(row: JobCommentRow): JobComment {
+  return {
+    id: row.id,
+    authorName: row.author_name,
+    authorRole: normalizeAuthorRole(row.author_role),
+    message: row.message,
+    createdAt: row.created_at,
+  };
+}
+
+function mapAttachment(row: JobAttachmentRow): JobAttachment {
+  const publicUrl = getSupabasePublicStorageUrl(row.storage_bucket, row.storage_path);
+
+  return {
+    id: row.id,
+    name: row.name,
+    mimeType: row.mime_type,
+    sizeBytes: Number(row.size_bytes) || 0,
+    kind: row.kind,
+    uploadedAt: row.created_at,
+    storageBucket: row.storage_bucket,
+    storagePath: row.storage_path,
+    dataUrl: publicUrl,
+  };
+}
+
 function mapJob(
   row: JobRow,
   customers: CustomerRow[],
@@ -156,6 +213,8 @@ function mapJob(
   payments: JobPaymentRow[],
   invoices: JobInvoiceRow[],
   appointments: AppointmentRow[] = [],
+  comments: JobCommentRow[] = [],
+  attachments: JobAttachmentRow[] = [],
 ): ServiceJob {
   const customer = customers.find((item) => item.id === row.customer_id);
   const location = locations.find((item) => item.id === row.customer_location_id);
@@ -185,8 +244,12 @@ function mapJob(
     laborPayment: laborPayment?.method ?? '',
     issue: row.issue ?? '',
     notes: row.notes ?? '',
-    attachments: [],
-    comments: [],
+    attachments: attachments
+      .filter((attachment) => attachment.job_id === row.id)
+      .map((attachment) => mapAttachment(attachment)),
+    comments: comments
+      .filter((comment) => comment.job_id === row.id)
+      .map((comment) => mapComment(comment)),
     invoices: invoices
       .filter((invoice) => invoice.job_id === row.id)
       .map((invoice) => mapInvoice(invoice)),
@@ -224,7 +287,7 @@ function mapMaterial(row: JobMaterialRow, jobNumber: string): MaterialRow {
 }
 
 async function loadCompanyJobTables(companyId: string) {
-  const [customers, locations, technicians, jobs, payments, invoices, appointments] = await Promise.all([
+  const [customers, locations, technicians, jobs, payments, invoices, appointments, comments, attachments] = await Promise.all([
     supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<TechnicianRow[]>(`company_technicians?company_id=${sqlEq(companyId)}&select=id,name&limit=${DEFAULT_LIMIT}`),
@@ -232,13 +295,15 @@ async function loadCompanyJobTables(companyId: string) {
     supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&order=starts_at.asc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobCommentRow[]>(`job_comments?company_id=${sqlEq(companyId)}&order=created_at.asc&limit=1000`),
+    supabaseRequest<JobAttachmentRow[]>(`job_attachments?company_id=${sqlEq(companyId)}&order=created_at.asc&limit=1000`),
   ]);
 
-  return { customers, locations, technicians, jobs, payments, invoices, appointments };
+  return { customers, locations, technicians, jobs, payments, invoices, appointments, comments, attachments };
 }
 
 async function loadSingleJob(companyId: string, jobId: string): Promise<ServiceJob | null> {
-  const [jobs, customers, locations, technicians, payments, invoices, appointments] = await Promise.all([
+  const [jobs, customers, locations, technicians, payments, invoices, appointments, comments, attachments] = await Promise.all([
     supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&id=${sqlEq(jobId)}&limit=1`),
     supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&limit=${RECENT_LOOKUP_LIMIT}`),
     supabaseRequest<CustomerLocationRow[]>(`customer_locations?company_id=${sqlEq(companyId)}&limit=${RECENT_LOOKUP_LIMIT}`),
@@ -246,12 +311,14 @@ async function loadSingleJob(companyId: string, jobId: string): Promise<ServiceJ
     supabaseRequest<JobPaymentRow[]>(`job_payments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&limit=10`),
     supabaseRequest<JobInvoiceRow[]>(`job_invoices?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=created_at.desc&limit=20`),
     supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=starts_at.asc&limit=1`),
+    supabaseRequest<JobCommentRow[]>(`job_comments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=created_at.asc&limit=200`),
+    supabaseRequest<JobAttachmentRow[]>(`job_attachments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(jobId)}&order=created_at.asc&limit=200`),
   ]);
 
   const job = jobs[0];
   if (!job) return null;
 
-  return mapJob(job, customers, locations, technicians, payments, invoices, appointments);
+  return mapJob(job, customers, locations, technicians, payments, invoices, appointments, comments, attachments);
 }
 
 export async function listCompanyCustomers(companyId: string): Promise<Customer[]> {
@@ -266,7 +333,7 @@ export async function listCompanyCustomers(companyId: string): Promise<Customer[
 
 export async function listCompanyJobs(companyId: string): Promise<ServiceJob[]> {
   const tables = await loadCompanyJobTables(companyId);
-  return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments, tables.invoices, tables.appointments));
+  return tables.jobs.map((job) => mapJob(job, tables.customers, tables.locations, tables.technicians, tables.payments, tables.invoices, tables.appointments, tables.comments, tables.attachments));
 }
 
 export async function listCompanyJobMaterials(companyId: string): Promise<MaterialRow[]> {
@@ -438,6 +505,75 @@ async function syncJobAppointment(companyId: string, job: ServiceJob, technician
   }
 }
 
+async function syncJobComments(companyId: string, job: ServiceJob) {
+  await supabaseRequest(`job_comments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}`, { method: 'DELETE' });
+
+  const rows = (job.comments ?? [])
+    .filter((comment) => comment.message.trim())
+    .map((comment) => ({
+      id: comment.id,
+      company_id: companyId,
+      job_id: job.id,
+      author_name: comment.authorName || 'User',
+      author_role: comment.authorRole || 'Admin',
+      message: comment.message.trim(),
+      created_at: comment.createdAt || new Date().toISOString(),
+    }));
+
+  if (rows.length) {
+    await supabaseRequest<JobCommentRow[]>('job_comments?select=*', { method: 'POST', select: true, body: rows });
+  }
+}
+
+function sanitizeStorageName(name: string) {
+  return name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'file';
+}
+
+async function prepareAttachmentRow(companyId: string, jobId: string, attachment: JobAttachment) {
+  const bucket = attachment.storageBucket || JOB_FILES_BUCKET;
+  let storagePath = attachment.storagePath || '';
+
+  if (!storagePath && attachment.file) {
+    storagePath = `${companyId}/${jobId}/${attachment.id}-${sanitizeStorageName(attachment.name)}`;
+    await uploadSupabaseStorageFile(bucket, storagePath, attachment.file, attachment.mimeType || 'application/octet-stream');
+  }
+
+  if (!storagePath) return null;
+
+  return {
+    id: attachment.id,
+    company_id: companyId,
+    job_id: jobId,
+    name: attachment.name || 'File',
+    mime_type: attachment.mimeType || 'application/octet-stream',
+    size_bytes: Number(attachment.sizeBytes) || 0,
+    kind: attachment.kind || 'file',
+    storage_bucket: bucket,
+    storage_path: storagePath,
+  };
+}
+
+async function syncJobAttachments(companyId: string, job: ServiceJob) {
+  const existingRows = await supabaseRequest<JobAttachmentRow[]>(`job_attachments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&limit=500`);
+  const rows = (await Promise.all((job.attachments ?? []).map((attachment) => prepareAttachmentRow(companyId, job.id, attachment))))
+    .filter((row): row is NonNullable<typeof row> => Boolean(row));
+  const keptStorageKeys = new Set(rows.map((row) => `${row.storage_bucket}/${row.storage_path}`));
+  const removedByBucket = existingRows.reduce<Record<string, string[]>>((groups, row) => {
+    const key = `${row.storage_bucket}/${row.storage_path}`;
+    if (keptStorageKeys.has(key)) return groups;
+    groups[row.storage_bucket] = [...(groups[row.storage_bucket] ?? []), row.storage_path];
+    return groups;
+  }, {});
+
+  await supabaseRequest(`job_attachments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}`, { method: 'DELETE' });
+
+  if (rows.length) {
+    await supabaseRequest<JobAttachmentRow[]>('job_attachments?select=*', { method: 'POST', select: true, body: rows });
+  }
+
+  await Promise.all(Object.entries(removedByBucket).map(([bucket, paths]) => deleteSupabaseStorageFiles(bucket, paths).catch(() => undefined)));
+}
+
 export async function saveServiceJob(companyId: string, job: ServiceJob): Promise<ServiceJob> {
   const existing = await findExistingJob(companyId, job);
   const { customer, location } = await findOrCreateCustomer(companyId, job, existing?.customer_id);
@@ -460,7 +596,7 @@ export async function saveServiceJob(companyId: string, job: ServiceJob): Promis
     ? await supabaseRequest<JobRow[]>(`jobs?id=${sqlEq(existing.id)}&select=*`, { method: 'PATCH', select: true, body })
     : await supabaseRequest<JobRow[]>('jobs?select=*', { method: 'POST', select: true, body: [body] });
 
-  const persistedJobForAppointment = {
+  const persistedJob = {
     ...job,
     id: savedJob.id,
     companyId: savedJob.company_id,
@@ -471,7 +607,9 @@ export async function saveServiceJob(companyId: string, job: ServiceJob): Promis
   await Promise.all([
     savePayment(companyId, savedJob.id, 'scf', job.scfPayment, job.serviceCallFee),
     savePayment(companyId, savedJob.id, 'labor', job.laborPayment, job.labor),
-    syncJobAppointment(companyId, persistedJobForAppointment, technicianId),
+    syncJobAppointment(companyId, persistedJob, technicianId),
+    syncJobComments(companyId, persistedJob),
+    syncJobAttachments(companyId, persistedJob),
   ]);
 
   return (await loadSingleJob(companyId, savedJob.id)) ?? mapJob(
