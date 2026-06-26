@@ -4,9 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/patch-job-material-save.cjs && node scripts/patch-owner-routing-ux.cjs",
-    "dev": "node scripts/patch-job-material-save.cjs && node scripts/patch-owner-routing-ux.cjs && vite --host 127.0.0.1",
-    "build": "node scripts/patch-job-material-save.cjs && node scripts/patch-owner-routing-ux.cjs && tsc -b && vite build",
+    "postinstall": "node scripts/patch-job-material-save.cjs && node scripts/patch-owner-routing-ux-v2.cjs",
+    "dev": "node scripts/patch-job-material-save.cjs && node scripts/patch-owner-routing-ux-v2.cjs && vite --host 127.0.0.1",
+    "build": "node scripts/patch-job-material-save.cjs && node scripts/patch-owner-routing-ux-v2.cjs && tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
