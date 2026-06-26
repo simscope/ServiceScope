@@ -184,6 +184,9 @@ export type JobAttachment = {
   kind: 'photo' | 'file';
   uploadedAt: string;
   dataUrl?: string;
+  storageBucket?: string;
+  storagePath?: string;
+  file?: File;
 };
 
 export type JobComment = {
@@ -257,47 +260,3 @@ export type NewServiceJobForm = Pick<
   ServiceJob,
   'jobNumber' | 'system' | 'clientName' | 'organization' | 'phone' | 'email' | 'address' | 'technician' | 'serviceCallFee' | 'issue' | 'notes'
 >;
-
-export type CompanyOnboardingProfile = {
-  companyId: string;
-  legalName: string;
-  displayName: string;
-  logoUrl: string;
-  website: string;
-  phone: string;
-  billingEmail: string;
-  serviceAddress: string;
-  serviceArea: string;
-  timezone: string;
-  emergencyContact: string;
-  jobAssignmentMode: 'manual' | 'round_robin' | 'skill_based';
-  acceptedPayments: CompanyPaymentMethod[];
-  achRoutingNumber: string;
-  achAccountNumber: string;
-  achAccountName: string;
-  zelleContact: string;
-  venmoContact: string;
-  cashAppCashtag: string;
-  paypalEmail: string;
-  paymentNotes: string;
-  subscriptionPaymentStatus: 'not_connected' | 'pending' | 'active' | 'failed';
-  subscriptionCardBrand: string;
-  subscriptionCardLast4: string;
-  subscriptionCardExpMonth: string;
-  subscriptionCardExpYear: string;
-  subscriptionBillingName: string;
-  subscriptionBillingZip: string;
-  autoPayEnabled: boolean;
-  jobNumberPrefix: string;
-  useJobNumberPrefixes: boolean;
-  serviceCallFee: number;
-  defaultJobPriority: CompanyJobPriority;
-  warrantyDays: number;
-  autoArchiveCompletedAfterDays: number;
-  autoArchiveCancelledAfterDays: number;
-  requireCompletionNote: boolean;
-  requireCompletionPhoto: boolean;
-  allowWarrantyReopen: boolean;
-  jobTypes: CompanyJobType[];
-  technicians: CompanyTechnician[];
-};
