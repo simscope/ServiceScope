@@ -314,30 +314,41 @@ export async function createCompanyCustomer(companyId: string, form: NewCustomer
   return mapCustomer(customer, location ? [location] : [], []);
 }
 
-async function findOrCreateCustomer(companyId: string, job: ServiceJob) {
+async function findExistingJob(companyId: string, job: ServiceJob) {
+  if (job.id) {
+    const existingById = await supabaseRequest<Pick<JobRow, 'id' | 'customer_id'>[]>(`jobs?company_id=${sqlEq(companyId)}&id=${sqlEq(job.id)}&select=id,customer_id&limit=1`);
+    if (existingById[0]) return existingById[0];
+  }
+
+  const existingByNumber = await supabaseRequest<Pick<JobRow, 'id' | 'customer_id'>[]>(`jobs?company_id=${sqlEq(companyId)}&job_number=${sqlEq(job.jobNumber)}&select=id,customer_id&limit=1`);
+  return existingByNumber[0];
+}
+
+async function findOrCreateCustomer(companyId: string, job: ServiceJob, preferredCustomerId?: string | null) {
   const email = job.email.trim().toLowerCase();
   const phone = job.phone.trim();
   const customerName = job.clientName.trim();
   const organization = job.organization.trim();
   const customers = await supabaseRequest<CustomerRow[]>(`customers?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=${DEFAULT_LIMIT}`);
-  const existingCustomer = customers.find((customer) => (
+  const preferredCustomer = preferredCustomerId ? customers.find((customer) => customer.id === preferredCustomerId) : undefined;
+  const matchingCustomer = preferredCustomer ?? customers.find((customer) => (
     (email && customer.primary_email?.toLowerCase() === email) ||
     (phone && customer.primary_phone === phone) ||
     (customerName && customer.primary_name?.toLowerCase() === customerName.toLowerCase() && customer.organization?.toLowerCase() === organization.toLowerCase())
   ));
 
-  const customer = existingCustomer ?? (await supabaseRequest<CustomerRow[]>('customers?select=*', {
-    method: 'POST',
-    select: true,
-    body: [{
-      company_id: companyId,
-      organization,
-      primary_name: customerName,
-      primary_email: email || null,
-      primary_phone: phone,
-      notes: '',
-    }],
-  }))[0];
+  const customerBody = {
+    company_id: companyId,
+    organization,
+    primary_name: customerName,
+    primary_email: email || null,
+    primary_phone: phone,
+    notes: matchingCustomer?.notes ?? '',
+  };
+
+  const customer = matchingCustomer
+    ? (await supabaseRequest<CustomerRow[]>(`customers?id=${sqlEq(matchingCustomer.id)}&select=*`, { method: 'PATCH', select: true, body: customerBody }))[0]
+    : (await supabaseRequest<CustomerRow[]>('customers?select=*', { method: 'POST', select: true, body: [customerBody] }))[0];
 
   let location: CustomerLocationRow | undefined;
   if (job.address.trim()) {
@@ -393,47 +404,18 @@ async function savePayment(companyId: string, jobId: string, scope: 'scf' | 'lab
   await supabaseRequest('job_payments', { method: 'POST', body: [body] });
 }
 
-export async function saveServiceJob(companyId: string, job: ServiceJob): Promise<ServiceJob> {
-  const { customer, location } = await findOrCreateCustomer(companyId, job);
-  const technicianId = await findTechnicianId(companyId, job.technician || job.assignee);
-  const existing = await supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&job_number=${sqlEq(job.jobNumber)}&select=id&limit=1`);
-  const body = {
-    company_id: companyId,
-    customer_id: customer.id,
-    customer_location_id: location?.id ?? null,
-    technician_id: technicianId,
-    job_number: job.jobNumber,
-    status: job.status,
-    system: job.system,
-    issue: job.issue,
-    notes: job.notes,
-    service_call_fee_cents: dollarsToCents(job.serviceCallFee),
-    labor_cents: dollarsToCents(job.labor),
-  };
+async function syncJobAppointment(companyId: string, job: ServiceJob, technicianId: string | null) {
+  const existing = await supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&select=id&limit=1`);
 
-  const [savedJob] = existing[0]
-    ? await supabaseRequest<JobRow[]>(`jobs?id=${sqlEq(existing[0].id)}&select=*`, { method: 'PATCH', select: true, body })
-    : await supabaseRequest<JobRow[]>('jobs?select=*', { method: 'POST', select: true, body: [body] });
+  if (!job.appointment) {
+    if (existing[0]) {
+      await supabaseRequest(`appointments?id=${sqlEq(existing[0].id)}`, { method: 'DELETE' });
+    }
+    return;
+  }
 
-  await Promise.all([
-    savePayment(companyId, savedJob.id, 'scf', job.scfPayment, job.serviceCallFee),
-    savePayment(companyId, savedJob.id, 'labor', job.laborPayment, job.labor),
-  ]);
-
-  return (await loadSingleJob(companyId, savedJob.id)) ?? mapJob(
-    savedJob,
-    [customer],
-    location ? [location] : [],
-    [],
-    [],
-    [],
-  );
-}
-
-export async function saveJobAppointment(companyId: string, job: ServiceJob, appointment: string, durationMinutes: number): Promise<ServiceJob> {
-  const technicianId = await findTechnicianId(companyId, job.technician || job.assignee);
-  const startsAt = new Date(appointment);
-  const safeDuration = Math.max(30, Math.min(720, Number(durationMinutes) || 120));
+  const startsAt = new Date(job.appointment);
+  const safeDuration = Math.max(30, Math.min(720, Number(job.calendarDurationMinutes) || 120));
   const endsAt = new Date(startsAt.getTime() + safeDuration * 60000);
 
   if (Number.isNaN(startsAt.getTime())) {
@@ -448,18 +430,68 @@ export async function saveJobAppointment(companyId: string, job: ServiceJob, app
     ends_at: endsAt.toISOString(),
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/New_York',
   };
-  const existing = await supabaseRequest<AppointmentRow[]>(`appointments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&select=id&limit=1`);
 
   if (existing[0]) {
     await supabaseRequest(`appointments?id=${sqlEq(existing[0].id)}`, { method: 'PATCH', body });
   } else {
     await supabaseRequest('appointments', { method: 'POST', body: [body] });
   }
+}
+
+export async function saveServiceJob(companyId: string, job: ServiceJob): Promise<ServiceJob> {
+  const existing = await findExistingJob(companyId, job);
+  const { customer, location } = await findOrCreateCustomer(companyId, job, existing?.customer_id);
+  const technicianId = await findTechnicianId(companyId, job.technician || job.assignee);
+  const body = {
+    company_id: companyId,
+    customer_id: customer.id,
+    customer_location_id: location?.id ?? null,
+    technician_id: technicianId,
+    job_number: job.jobNumber,
+    status: job.status,
+    system: job.system,
+    issue: job.issue,
+    notes: job.notes,
+    service_call_fee_cents: dollarsToCents(job.serviceCallFee),
+    labor_cents: dollarsToCents(job.labor),
+  };
+
+  const [savedJob] = existing
+    ? await supabaseRequest<JobRow[]>(`jobs?id=${sqlEq(existing.id)}&select=*`, { method: 'PATCH', select: true, body })
+    : await supabaseRequest<JobRow[]>('jobs?select=*', { method: 'POST', select: true, body: [body] });
+
+  const persistedJobForAppointment = {
+    ...job,
+    id: savedJob.id,
+    companyId: savedJob.company_id,
+    technician: job.technician || job.assignee || 'No technician',
+    assignee: job.assignee || job.technician || 'No technician',
+  };
+
+  await Promise.all([
+    savePayment(companyId, savedJob.id, 'scf', job.scfPayment, job.serviceCallFee),
+    savePayment(companyId, savedJob.id, 'labor', job.laborPayment, job.labor),
+    syncJobAppointment(companyId, persistedJobForAppointment, technicianId),
+  ]);
+
+  return (await loadSingleJob(companyId, savedJob.id)) ?? mapJob(
+    savedJob,
+    [customer],
+    location ? [location] : [],
+    [],
+    [],
+    [],
+  );
+}
+
+export async function saveJobAppointment(companyId: string, job: ServiceJob, appointment: string, durationMinutes: number): Promise<ServiceJob> {
+  const technicianId = await findTechnicianId(companyId, job.technician || job.assignee);
+  await syncJobAppointment(companyId, { ...job, appointment, calendarDurationMinutes: durationMinutes }, technicianId);
 
   return (await loadSingleJob(companyId, job.id)) ?? {
     ...job,
     appointment,
-    calendarDurationMinutes: safeDuration,
+    calendarDurationMinutes: Math.max(30, Math.min(720, Number(durationMinutes) || 120)),
   };
 }
 
