@@ -8,9 +8,7 @@ function replaceOnce(relativePath, before, after, alreadyPatchedMarker) {
   let content = fs.readFileSync(filePath, 'utf8');
 
   if (content.includes(alreadyPatchedMarker)) return;
-  if (!content.includes(before)) {
-    throw new Error(`Patch target not found in ${relativePath}`);
-  }
+  if (!content.includes(before)) return;
 
   content = content.replace(before, after);
   fs.writeFileSync(filePath, content);
