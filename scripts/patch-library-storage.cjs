@@ -8,7 +8,12 @@ let content = fs.readFileSync(portalPath, 'utf8');
 if (!content.includes("from './services/libraryStore'")) {
   content = content.replace(
     "import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';\nimport { sendMailboxEmail } from './services/mailboxSend';",
-    "import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';\nimport { sendMailboxEmail } from './services/mailboxSend';\nimport { listLibraryDocuments, openLibraryDocument, uploadLibraryDocument } from './services/libraryStore';",
+    "import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';\nimport { sendMailboxEmail } from './services/mailboxSend';\nimport { deleteLibraryDocument, listLibraryDocuments, openLibraryDocument, uploadLibraryDocument } from './services/libraryStore';",
+  );
+} else if (!content.includes('deleteLibraryDocument')) {
+  content = content.replace(
+    "import { listLibraryDocuments, openLibraryDocument, uploadLibraryDocument } from './services/libraryStore';",
+    "import { deleteLibraryDocument, listLibraryDocuments, openLibraryDocument, uploadLibraryDocument } from './services/libraryStore';",
   );
 }
 
@@ -109,16 +114,60 @@ const newAdd = `  const addLibraryDocument = async (event: FormEvent<HTMLFormEle
     openLibraryDocument(document).catch((error) => {
       setLibraryStatus(error instanceof Error ? error.message : 'Document could not be opened.');
     });
+  };
+
+  const handleDeleteLibraryDocument = (document: LibraryDocument) => {
+    if (!window.confirm(\`Delete \"\${document.title}\" from the library?\`)) return;
+
+    setLibraryStatus('Deleting document...');
+    deleteLibraryDocument(selectedCompany.id, document)
+      .then(() => {
+        setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
+        setLibraryStatus('Document deleted.');
+      })
+      .catch((error) => {
+        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be deleted.');
+      });
   };`;
 
 if (!content.includes('const handleOpenLibraryDocument')) {
   content = content.replace(oldAdd, newAdd);
+}
+if (content.includes('const handleOpenLibraryDocument') && !content.includes('const handleDeleteLibraryDocument')) {
+  content = content.replace(
+    /  const handleOpenLibraryDocument = \(document: LibraryDocument\) => \{[\s\S]*?  \};/,
+    `  const handleOpenLibraryDocument = (document: LibraryDocument) => {
+    openLibraryDocument(document).catch((error) => {
+      setLibraryStatus(error instanceof Error ? error.message : 'Document could not be opened.');
+    });
+  };
+
+  const handleDeleteLibraryDocument = (document: LibraryDocument) => {
+    if (!window.confirm(\`Delete \"\${document.title}\" from the library?\`)) return;
+
+    setLibraryStatus('Deleting document...');
+    deleteLibraryDocument(selectedCompany.id, document)
+      .then(() => {
+        setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
+        setLibraryStatus('Document deleted.');
+      })
+      .catch((error) => {
+        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be deleted.');
+      });
+  };`,
+  );
 }
 
 if (!content.includes('onOpenLibraryDocument={handleOpenLibraryDocument}')) {
   content = content.replace(
     /onLibraryFileChange=\{handleLibraryFileChange\}\s*\n\s*onAddLibraryDocument=\{addLibraryDocument\}/,
     'onLibraryFileChange={handleLibraryFileChange}\n            onAddLibraryDocument={addLibraryDocument}\n            onOpenLibraryDocument={handleOpenLibraryDocument}',
+  );
+}
+if (!content.includes('onDeleteLibraryDocument={handleDeleteLibraryDocument}')) {
+  content = content.replace(
+    /onOpenLibraryDocument=\{handleOpenLibraryDocument\}/,
+    'onOpenLibraryDocument={handleOpenLibraryDocument}\n            onDeleteLibraryDocument={handleDeleteLibraryDocument}',
   );
 }
 
