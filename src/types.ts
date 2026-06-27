@@ -174,7 +174,7 @@ export type CompanyOnboardingProfile = {
   cashAppCashtag: string;
   paypalEmail: string;
   paymentNotes: string;
-  subscriptionPaymentStatus: 'not_connected' | 'active' | 'failed' | 'past_due';
+  subscriptionPaymentStatus: 'not_connected' | 'pending' | 'active' | 'failed' | 'past_due';
   subscriptionCardBrand: string;
   subscriptionCardLast4: string;
   subscriptionCardExpMonth: string;
