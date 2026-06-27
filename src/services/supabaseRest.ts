@@ -13,6 +13,13 @@ type ViteEnv = {
   VITE_SUPABASE_ANON_KEY?: string;
 };
 
+const viteEnv = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as ViteEnv;
+const supabaseUrl = viteEnv.VITE_SUPABASE_URL?.replace(/\/$/, '') ?? '';
+const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY ?? '';
+const AUTH_TOKEN_STORAGE_KEY = 'servicescope.supabaseAccessToken';
+const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+export const SUPABASE_AUTH_EXPIRED_CODE = 'SERVICESCOPE_AUTH_EXPIRED';
+
 type SupabaseAuthResponse = {
   access_token: string;
   token_type: string;
@@ -23,13 +30,6 @@ type SupabaseAuthResponse = {
     email?: string;
   };
 };
-
-const viteEnv = ((import.meta as unknown as { env?: ViteEnv }).env ?? {}) as ViteEnv;
-const supabaseUrl = viteEnv.VITE_SUPABASE_URL?.replace(/\/$/, '') ?? '';
-const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY ?? '';
-const AUTH_TOKEN_STORAGE_KEY = 'servicescope.supabaseAccessToken';
-const DEFAULT_REQUEST_TIMEOUT_MS = 15000;
-export const SUPABASE_AUTH_EXPIRED_CODE = 'SERVICESCOPE_AUTH_EXPIRED';
 
 export function isSupabaseConfigured() {
   return Boolean(supabaseUrl && supabaseAnonKey);
@@ -164,6 +164,23 @@ export async function uploadSupabaseStorageFile(bucket: string, path: string, fi
   if (!response.ok) {
     await readSupabaseError(response);
   }
+}
+
+export async function downloadSupabaseStorageFile(bucket: string, path: string) {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  }
+
+  const response = await fetch(`${supabaseUrl}/storage/v1/object/${encodeURIComponent(bucket)}/${path.split('/').map(encodeURIComponent).join('/')}`, {
+    method: 'GET',
+    headers: makeSupabaseHeaders(),
+  });
+
+  if (!response.ok) {
+    await readSupabaseError(response);
+  }
+
+  return response.blob();
 }
 
 export async function deleteSupabaseStorageFiles(bucket: string, paths: string[]) {
