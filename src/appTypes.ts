@@ -70,9 +70,12 @@ export type EmailAttachment = {
   fileName: string;
   mimeType: string;
   sizeBytes: number;
-  dataUrl: string;
+  dataUrl?: string;
   isInline: boolean;
   contentId?: string;
+  gmailAttachmentId?: string;
+  storageBucket?: string;
+  storagePath?: string;
 };
 
 export type EmailComposeAttachment = {
@@ -127,6 +130,11 @@ export type LibraryDocument = {
   fileSize: string;
   uploadedBy: string;
   summary: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  storageBucket?: string;
+  storagePath?: string;
 };
 
 export type LibraryDraft = {
@@ -137,6 +145,7 @@ export type LibraryDraft = {
   model: string;
   tags: string;
   fileName: string;
+  file?: File | null;
 };
 
 export type CompanyOnboardingStepKey = keyof Company['onboarding'];
