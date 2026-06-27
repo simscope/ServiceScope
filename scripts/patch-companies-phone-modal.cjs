@@ -15,8 +15,9 @@ const read = (p) => fs.readFileSync(p, 'utf8');
 const write = (p, c) => fs.writeFileSync(p, c);
 
 let types = read(files.types);
-if (!types.includes('  phone: string;\n  ownerEmail: string;')) {
-  types = types.replace('  ownerName: string;\n  ownerEmail: string;', '  ownerName: string;\n  phone: string;\n  ownerEmail: string;');
+if (!types.includes('  phone?: string;\n  ownerEmail: string;')) {
+  types = types.replace('  phone: string;\n  ownerEmail: string;', '  phone?: string;\n  ownerEmail: string;');
+  types = types.replace('  ownerName: string;\n  ownerEmail: string;', '  ownerName: string;\n  phone?: string;\n  ownerEmail: string;');
 }
 types = types.replace("'name' | 'ownerName' | 'ownerEmail' | 'temporaryPassword'", "'name' | 'ownerName' | 'phone' | 'ownerEmail' | 'temporaryPassword'");
 write(files.types, types);
@@ -32,12 +33,8 @@ store = store.replace("    phone: '',\n    billingEmail: company.ownerEmail,", "
 write(files.store, store);
 
 let backend = read(files.backend);
-if (!backend.includes('phone: string | null;')) {
-  backend = backend.replace('  owner_email: string;\n  temporary_password?: string;', '  owner_email: string;\n  phone: string | null;\n  temporary_password?: string;');
-}
-if (!backend.includes('phone: row.phone ??')) {
-  backend = backend.replace('    ownerName: row.owner_name,\n    ownerEmail: row.owner_email,', "    ownerName: row.owner_name,\n    phone: row.phone ?? '',\n    ownerEmail: row.owner_email,");
-}
+backend = backend.replace('  owner_email: string;\n  phone: string | null;\n  temporary_password?: string;', '  owner_email: string;\n  temporary_password?: string;');
+backend = backend.replace("    ownerName: row.owner_name,\n    phone: row.phone ?? '',\n    ownerEmail: row.owner_email,", "    ownerName: row.owner_name,\n    phone: '',\n    ownerEmail: row.owner_email,");
 backend = backend.replace(
   '  const companies = companyRows.map((company) => companyFromDb(company, onboardingSteps, alerts));',
   `  const companies = companyRows.map((companyRow) => {
@@ -68,13 +65,13 @@ if (!app.includes('Company phone')) {
               </label>
               <label>
                 Company phone
-                <input value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="Company phone" />
+                <input value={form.phone ?? ''} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="Company phone" />
               </label>
               <label>
                 Owner email`,
   );
 }
-app = app.replace('    const nextProfile = createDefaultCompanyOnboardingProfile(nextCompany);', '    const nextProfile = { ...createDefaultCompanyOnboardingProfile(nextCompany), phone: form.phone };');
+app = app.replace('    const nextProfile = createDefaultCompanyOnboardingProfile(nextCompany);', "    const nextProfile = { ...createDefaultCompanyOnboardingProfile(nextCompany), phone: form.phone ?? '' };");
 app = app.replace('        <div className="content-grid">', '        <>\n        <div className="content-grid companies-list-only">');
 const detailBlock = `
           {selectedCompany ? (
