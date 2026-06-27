@@ -97,7 +97,9 @@ const oldUpload = `    const attachments = await Promise.all(
         uploadedAt: new Date().toISOString(),
         dataUrl: fileKind(file) === 'photo' ? await readFileAsDataUrl(file) : undefined,
       })),
-    );`;
+    );
+
+    updateDraft({ attachments: [...(draft.attachments ?? []), ...attachments] });`;
 const newUpload = `    const attachments = await Promise.all(
       files.map(async (file): Promise<JobAttachment> => {
         const preparedFile = fileKind(file) === 'photo' ? await compressImageFile(file) : file;
@@ -114,8 +116,30 @@ const newUpload = `    const attachments = await Promise.all(
           dataUrl: kind === 'photo' ? await readFileAsDataUrl(preparedFile) : undefined,
         };
       }),
-    );`;
+    );
+
+    const nextJob = {
+      ...draft,
+      attachments: [...(draft.attachments ?? []), ...attachments],
+    };
+
+    setDraft(nextJob);
+    setSaved(false);
+    onSave(nextJob);`;
 content = content.replace(oldUpload, newUpload);
 
+// If an older version of this patch already changed only the attachment mapping, add auto-save after the mapped upload.
+content = content.replace(
+  `    updateDraft({ attachments: [...(draft.attachments ?? []), ...attachments] });`,
+  `    const nextJob = {
+      ...draft,
+      attachments: [...(draft.attachments ?? []), ...attachments],
+    };
+
+    setDraft(nextJob);
+    setSaved(false);
+    onSave(nextJob);`,
+);
+
 fs.writeFileSync(filePath, content);
-console.log('Job attachment upload and photo compression patch applied.');
+console.log('Job attachment upload, compression, and auto-save patch applied.');
