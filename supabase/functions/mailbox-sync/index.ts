@@ -26,21 +26,24 @@ type GmailPart = NonNullable<GmailMessage['payload']> & {
   partId?: string;
 };
 
+type SyncAttachment = {
+  fileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  attachmentId: string;
+  contentId: string;
+  isInline: boolean;
+};
+
 type SyncMessage = {
   providerMessageId: string;
   folder: 'inbox' | 'sent';
   row: Record<string, unknown>;
-  attachments: Array<{
-    fileName: string;
-    mimeType: string;
-    sizeBytes: number;
-    attachmentId: string;
-    contentId: string;
-    isInline: boolean;
-  }>;
+  attachments: SyncAttachment[];
 };
 
-const MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024;
+const DEFAULT_MESSAGES_PER_FOLDER = 20;
+const MAX_MESSAGES_PER_FOLDER = 40;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -185,7 +188,7 @@ function htmlFromPayload(payload: GmailMessage['payload'] | undefined): string {
   return '';
 }
 
-function collectAttachments(payload: GmailMessage['payload'] | undefined, attachments: SyncMessage['attachments'] = []) {
+function collectAttachments(payload: GmailMessage['payload'] | undefined, attachments: SyncAttachment[] = []) {
   if (!payload) return attachments;
 
   const part = payload as GmailPart;
@@ -214,15 +217,6 @@ function collectAttachments(payload: GmailMessage['payload'] | undefined, attach
   return attachments;
 }
 
-async function fetchGmailAttachment(messageId: string, attachmentId: string, accessToken: string) {
-  const attachment = await gmailFetch(`messages/${messageId}/attachments/${attachmentId}`, accessToken);
-  if (!attachment.ok) {
-    throw new Error(attachment.result.error?.message || `Gmail attachment fetch failed with ${attachment.status}`);
-  }
-
-  return String(attachment.result.data ?? '');
-}
-
 async function refreshGoogleToken(clientId: string, clientSecret: string, refreshToken: string) {
   const response = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -245,20 +239,14 @@ async function refreshGoogleToken(clientId: string, clientSecret: string, refres
 
 async function gmailFetch(path: string, accessToken: string) {
   const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
 
   const result = await response.json().catch(() => ({}));
   return { ok: response.ok, status: response.status, result };
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  mapper: (item: T) => Promise<R>,
-) {
+async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>) {
   const results: R[] = [];
   let index = 0;
 
@@ -274,6 +262,11 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+function clampMessageLimit(value: unknown) {
+  const parsed = Math.trunc(Number(value) || DEFAULT_MESSAGES_PER_FOLDER);
+  return Math.min(MAX_MESSAGES_PER_FOLDER, Math.max(5, parsed));
+}
+
 async function listGmailMessages(accessToken: string, labelId: 'INBOX' | 'SENT', limit: number) {
   const list = await gmailFetch(`messages?maxResults=${limit}&labelIds=${labelId}`, accessToken);
   if (!list.ok) {
@@ -281,29 +274,18 @@ async function listGmailMessages(accessToken: string, labelId: 'INBOX' | 'SENT',
   }
 
   const messageRefs = Array.isArray(list.result.messages) ? list.result.messages : [];
-  const messages = await mapWithConcurrency(
-    messageRefs,
-    3,
-    async (message: { id: string }) => {
-      const full = await gmailFetch(`messages/${message.id}?format=full`, accessToken);
-      if (!full.ok) {
-        throw new Error(full.result.error?.message || `Gmail message fetch failed with ${full.status}`);
-      }
-      return full.result as GmailMessage;
-    },
-  );
-
-  return messages;
+  return await mapWithConcurrency(messageRefs, 2, async (message: { id: string }) => {
+    const full = await gmailFetch(`messages/${message.id}?format=full`, accessToken);
+    if (!full.ok) {
+      throw new Error(full.result.error?.message || `Gmail message fetch failed with ${full.status}`);
+    }
+    return full.result as GmailMessage;
+  });
 }
 
 Deno.serve(async (request) => {
-  if (request.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
-
-  if (request.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
-  }
+  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -320,18 +302,12 @@ Deno.serve(async (request) => {
 
   const payload = (await request.json().catch(() => ({}))) as MailboxSyncRequest;
   const companyId = payload.companyId?.trim();
-  const messageLimit = Math.min(100, Math.max(25, Math.trunc(Number(payload.limit) || 25)));
-  if (!companyId) {
-    return jsonResponse({ error: 'Company is required.' }, 400);
-  }
+  const messageLimit = clampMessageLimit(payload.limit);
+  if (!companyId) return jsonResponse({ error: 'Company is required.' }, 400);
 
-  const callerClient = createClient(supabaseUrl, supabaseAnonKey, {
-    global: { headers: { Authorization: authorization } },
-  });
+  const callerClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authorization } } });
   const { data: sessionRows, error: sessionError } = await callerClient.rpc('app_current_session');
-  if (sessionError) {
-    return jsonResponse({ error: sessionError.message }, 401);
-  }
+  if (sessionError) return jsonResponse({ error: sessionError.message }, 401);
 
   const callerSession = Array.isArray(sessionRows) ? sessionRows[0] : null;
   const callerKind = callerSession?.kind;
@@ -339,13 +315,9 @@ Deno.serve(async (request) => {
   const callerCompanyId = callerSession?.company_id;
   const canAccessMailbox =
     callerKind === 'owner' ||
-    (callerKind === 'company' &&
-      callerCompanyId === companyId &&
-      (callerRole === 'admin' || callerRole === 'manager' || callerRole === 'dispatcher'));
+    (callerKind === 'company' && callerCompanyId === companyId && ['admin', 'manager', 'dispatcher'].includes(callerRole));
 
-  if (!canAccessMailbox) {
-    return jsonResponse({ error: 'Current login cannot sync this mailbox.' }, 403);
-  }
+  if (!canAccessMailbox) return jsonResponse({ error: 'Current login cannot sync this mailbox.' }, 403);
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   const { data: connection, error: connectionError } = await adminClient
@@ -355,13 +327,8 @@ Deno.serve(async (request) => {
     .eq('status', 'connected')
     .maybeSingle();
 
-  if (connectionError || !connection) {
-    return jsonResponse({ error: connectionError?.message || 'Connected mailbox was not found.' }, 400);
-  }
-
-  if (connection.provider !== 'google') {
-    return jsonResponse({ error: 'Only Google mailbox sync is implemented right now.' }, 400);
-  }
+  if (connectionError || !connection) return jsonResponse({ error: connectionError?.message || 'Connected mailbox was not found.' }, 400);
+  if (connection.provider !== 'google') return jsonResponse({ error: 'Only Google mailbox sync is implemented right now.' }, 400);
 
   const { data: settings, error: settingsError } = await adminClient
     .from('mailbox_oauth_settings')
@@ -393,43 +360,42 @@ Deno.serve(async (request) => {
       inbox = await gmailFetch('messages?maxResults=1&labelIds=INBOX', accessToken);
     }
 
-    if (!inbox.ok) {
-      throw new Error(inbox.result.error?.message || `Gmail access failed with ${inbox.status}`);
-    }
+    if (!inbox.ok) throw new Error(inbox.result.error?.message || `Gmail access failed with ${inbox.status}`);
 
     const inboxMessages = await listGmailMessages(accessToken, 'INBOX', messageLimit);
     const sentMessages = await listGmailMessages(accessToken, 'SENT', messageLimit);
     const now = new Date().toISOString();
-    const syncMessages: SyncMessage[] = [...inboxMessages.map((message) => ({ message, folder: 'inbox' as const })), ...sentMessages.map((message) => ({ message, folder: 'sent' as const }))].map(
-      ({ message, folder }) => {
-        const body = textFromPayload(message.payload);
-        const bodyHtml = htmlFromPayload(message.payload);
-
-        return {
-          providerMessageId: message.id,
+    const syncMessages: SyncMessage[] = [
+      ...inboxMessages.map((message) => ({ message, folder: 'inbox' as const })),
+      ...sentMessages.map((message) => ({ message, folder: 'sent' as const })),
+    ].map(({ message, folder }) => {
+      const body = textFromPayload(message.payload);
+      const bodyHtml = htmlFromPayload(message.payload);
+      return {
+        providerMessageId: message.id,
+        folder,
+        row: {
+          company_id: companyId,
+          email_connection_id: connection.id,
           folder,
-          row: {
-            company_id: companyId,
-            email_connection_id: connection.id,
-            folder,
-            provider_message_id: message.id,
-            from_email: parseEmailAddress(header(message, 'From')),
-            to_email: parseEmailAddress(header(message, 'To')),
-            subject: header(message, 'Subject') || '(No subject)',
-            preview: message.snippet || body.slice(0, 240),
-            body,
-            body_html: bodyHtml,
-            unread: message.labelIds?.includes('UNREAD') ?? false,
-            received_at: folder === 'inbox' ? new Date(header(message, 'Date') || Date.now()).toISOString() : null,
-            sent_at: folder === 'sent' ? new Date(header(message, 'Date') || Date.now()).toISOString() : null,
-            created_at: now,
-          },
-          attachments: collectAttachments(message.payload).filter((attachment) => attachment.sizeBytes <= MAX_ATTACHMENT_BYTES),
-        };
-      },
-    );
+          provider_message_id: message.id,
+          from_email: parseEmailAddress(header(message, 'From')),
+          to_email: parseEmailAddress(header(message, 'To')),
+          subject: header(message, 'Subject') || '(No subject)',
+          preview: message.snippet || body.slice(0, 240),
+          body,
+          body_html: bodyHtml,
+          unread: message.labelIds?.includes('UNREAD') ?? false,
+          received_at: folder === 'inbox' ? new Date(header(message, 'Date') || Date.now()).toISOString() : null,
+          sent_at: folder === 'sent' ? new Date(header(message, 'Date') || Date.now()).toISOString() : null,
+          created_at: now,
+        },
+        attachments: collectAttachments(message.payload),
+      };
+    });
 
     await adminClient.from('email_messages').delete().eq('company_id', companyId).eq('email_connection_id', connection.id);
+
     if (syncMessages.length) {
       const { data: insertedMessages, error: insertError } = await adminClient
         .from('email_messages')
@@ -437,27 +403,21 @@ Deno.serve(async (request) => {
         .select('id, provider_message_id');
       if (insertError) throw new Error(insertError.message);
 
-      const insertedByProviderId = new Map(
-        (insertedMessages ?? []).map((message: { id: string; provider_message_id: string }) => [message.provider_message_id, message.id]),
-      );
-      const attachmentInputs = syncMessages.flatMap((message) =>
-        message.attachments.map((attachment) => ({ message, attachment })),
-      );
-      const attachmentRows = (
-        await mapWithConcurrency(
-          attachmentInputs,
-          3,
-          async ({ message, attachment }) => ({
-            email_message_id: insertedByProviderId.get(message.providerMessageId),
-            company_id: companyId,
-            file_name: attachment.fileName,
-            mime_type: attachment.mimeType,
-            size_bytes: attachment.sizeBytes,
-            content_base64: await fetchGmailAttachment(message.providerMessageId, attachment.attachmentId, accessToken),
-            content_id: attachment.contentId || null,
-            is_inline: attachment.isInline,
-          }),
-        )
+      const insertedByProviderId = new Map((insertedMessages ?? []).map((message: { id: string; provider_message_id: string }) => [message.provider_message_id, message.id]));
+      const attachmentRows = syncMessages.flatMap((message) =>
+        message.attachments.map((attachment) => ({
+          email_message_id: insertedByProviderId.get(message.providerMessageId),
+          company_id: companyId,
+          file_name: attachment.fileName,
+          mime_type: attachment.mimeType,
+          size_bytes: attachment.sizeBytes,
+          content_base64: null,
+          content_id: attachment.contentId || null,
+          gmail_attachment_id: attachment.attachmentId,
+          storage_bucket: null,
+          storage_path: null,
+          is_inline: attachment.isInline,
+        })),
       ).filter((row) => row.email_message_id);
 
       if (attachmentRows.length) {
@@ -466,10 +426,7 @@ Deno.serve(async (request) => {
       }
     }
 
-    await adminClient
-      .from('email_connections')
-      .update({ last_sync_at: now, updated_at: now })
-      .eq('id', connection.id);
+    await adminClient.from('email_connections').update({ last_sync_at: now, updated_at: now }).eq('id', connection.id);
 
     return jsonResponse({ ok: true, count: syncMessages.length, inbox: inboxMessages.length, sent: sentMessages.length });
   } catch (error) {
