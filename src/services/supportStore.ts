@@ -2,6 +2,16 @@ import type { Company, NewSupportTicketForm, SupportTicket, SupportTicketStatus 
 
 const SUPPORT_STORAGE_KEY = 'servicescope.supportTickets';
 
+function nowStamp() {
+  return new Date().toLocaleString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+    day: '2-digit',
+    year: 'numeric',
+  });
+}
+
 function readStoredTickets() {
   if (typeof window === 'undefined') return [] as SupportTicket[];
 
@@ -30,15 +40,15 @@ function normalizeTicket(ticket: Partial<SupportTicket>, companies: Company[]): 
     status: ticket.status ?? 'new',
     subject: ticket.subject ?? 'Support request',
     message: ticket.message ?? '',
-    createdAt: ticket.createdAt ?? new Date().toLocaleDateString('en-US'),
-    lastUpdate: ticket.lastUpdate ?? 'Just now',
+    createdAt: ticket.createdAt ?? nowStamp(),
+    lastUpdate: ticket.lastUpdate ?? nowStamp(),
     messages: ticket.messages?.length ? ticket.messages : [
       {
         id: crypto.randomUUID(),
         author: 'company',
         authorName: ticket.authorName ?? company?.ownerName ?? 'Customer',
         body: ticket.message ?? '',
-        createdAt: ticket.createdAt ?? 'Just now',
+        createdAt: ticket.createdAt ?? nowStamp(),
       },
     ],
   };
@@ -55,7 +65,7 @@ export function saveSupportTickets(tickets: SupportTicket[]) {
 
 export function createSupportTicket(form: NewSupportTicketForm, companies: Company[]): SupportTicket {
   const company = companies.find((candidate) => candidate.id === form.companyId);
-  const createdAt = new Date().toLocaleDateString('en-US');
+  const createdAt = nowStamp();
 
   return {
     id: crypto.randomUUID(),
@@ -63,14 +73,14 @@ export function createSupportTicket(form: NewSupportTicketForm, companies: Compa
     companyName: company?.name ?? 'Unknown company',
     status: 'new',
     createdAt,
-    lastUpdate: 'Just now',
+    lastUpdate: createdAt,
     messages: [
       {
         id: crypto.randomUUID(),
         author: 'company',
         authorName: form.authorName,
         body: form.message,
-        createdAt: 'Just now',
+        createdAt,
       },
     ],
   };
@@ -80,15 +90,17 @@ export function updateSupportTicketStatus(ticket: SupportTicket, status: Support
   return {
     ...ticket,
     status,
-    lastUpdate: 'Just now',
+    lastUpdate: nowStamp(),
   };
 }
 
 export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {
+  const stamp = nowStamp();
+
   return {
     ...ticket,
     status: ticket.status === 'new' ? 'reviewing' : ticket.status,
-    lastUpdate: 'Just now',
+    lastUpdate: stamp,
     messages: [
       ...ticket.messages,
       {
@@ -96,7 +108,7 @@ export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicke
         author: 'owner',
         authorName: 'ServiceScope Owner',
         body,
-        createdAt: 'Just now',
+        createdAt: stamp,
       },
     ],
   };
