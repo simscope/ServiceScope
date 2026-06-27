@@ -24,6 +24,9 @@ if (!app.includes('className=\"nav-badge\"')) {
 write(appPath, app);
 
 let owner = read(ownerPath);
+owner = owner.replace('ticket.id === selectedTicket?.id', 'ticket.id === activeSupportTicket?.id');
+owner = owner.replace('{selectedTicket ? (', '{activeSupportTicket ? (');
+owner = owner.replace(/selectedTicket\./g, 'activeSupportTicket.');
 if (!owner.includes('const supportCompanyRows = companies.map')) {
   owner = owner.replace(
     "  const selectedCompany = companies.find((company) => company.id === form.companyId);",
@@ -42,7 +45,7 @@ if (!owner.includes('const supportCompanyRows = companies.map')) {
   });
   const selectedSupportCompany = supportCompanyRows.find((row) => row.company.id === selectedSupportCompanyId) ?? supportCompanyRows[0];
   const selectedCompanyTickets = selectedSupportCompany?.tickets ?? [];
-  const activeSupportTicket = selectedTicket && selectedTicket.companyId === selectedSupportCompany?.company.id ? selectedTicket : selectedCompanyTickets[0];
+  const activeSupportTicket = selectedTicket && selectedTicket['companyId'] === selectedSupportCompany?.company.id ? selectedTicket : selectedCompanyTickets[0];
   function openSupportCompany(companyId: string) {
     setSelectedSupportCompanyId(companyId);
     const firstTicket = tickets.find((ticket) => ticket.companyId === companyId);
@@ -50,9 +53,6 @@ if (!owner.includes('const supportCompanyRows = companies.map')) {
   }`,
   );
 }
-owner = owner.replace('ticket.id === selectedTicket?.id', 'ticket.id === activeSupportTicket?.id');
-owner = owner.replace('{selectedTicket ? (', '{activeSupportTicket ? (');
-owner = owner.replace(/selectedTicket\./g, 'activeSupportTicket.');
 const guideStart = owner.indexOf('        <aside className="support-owner-guide">');
 const guideEnd = owner.indexOf('\n\n        <div className="ticket-workspace">', guideStart);
 if (guideStart !== -1 && guideEnd !== -1 && !owner.includes('support-company-sidebar')) {
