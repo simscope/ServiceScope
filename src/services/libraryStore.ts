@@ -1,5 +1,5 @@
 import type { LibraryCategory, LibraryDocument, LibraryDraft, LibraryFormat } from '../appTypes';
-import { downloadSupabaseStorageFile, sqlEq, supabaseRequest, uploadSupabaseStorageFile } from './supabaseRest';
+import { deleteSupabaseStorageFiles, downloadSupabaseStorageFile, sqlEq, supabaseRequest, uploadSupabaseStorageFile } from './supabaseRest';
 
 const LIBRARY_BUCKET = 'library';
 
@@ -130,6 +130,17 @@ export async function uploadLibraryDocument(companyId: string, draft: LibraryDra
   });
 
   return rowToDocument(rows[0]);
+}
+
+export async function deleteLibraryDocument(companyId: string, document: LibraryDocument) {
+  if (document.storageBucket && document.storagePath) {
+    await deleteSupabaseStorageFiles(document.storageBucket, [document.storagePath]);
+  }
+
+  await supabaseRequest(
+    `library_documents?company_id=${sqlEq(companyId)}&id=${sqlEq(document.id)}`,
+    { method: 'DELETE' },
+  );
 }
 
 export async function openLibraryDocument(document: LibraryDocument) {
