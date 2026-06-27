@@ -13,14 +13,14 @@ type LibraryDocumentRow = {
   model: string;
   format: LibraryFormat;
   tags: string[] | null;
-  uploaded_by: string | null;
   summary: string | null;
-  file_name: string | null;
-  mime_type: string | null;
-  size_bytes: number | null;
   storage_bucket: string | null;
   storage_path: string | null;
+  external_url: string | null;
+  file_size_bytes: number | null;
+  uploaded_by_user_id: string | null;
   created_at: string;
+  updated_at: string;
 };
 
 function safeFileName(value: string) {
@@ -49,23 +49,41 @@ function detectFormat(fileName: string, mimeType = ''): LibraryFormat {
   return 'PDF';
 }
 
+function inferFileNameFromPath(storagePath?: string | null) {
+  if (!storagePath) return undefined;
+  const rawName = storagePath.split('/').pop() ?? '';
+  return rawName.replace(/^[0-9a-f-]{36}-/i, '') || undefined;
+}
+
+function inferMimeTypeFromName(fileName = '') {
+  const normalized = fileName.toLowerCase();
+  if (normalized.endsWith('.pdf')) return 'application/pdf';
+  if (normalized.endsWith('.png')) return 'image/png';
+  if (normalized.endsWith('.jpg') || normalized.endsWith('.jpeg')) return 'image/jpeg';
+  if (normalized.endsWith('.webp')) return 'image/webp';
+  if (normalized.endsWith('.doc')) return 'application/msword';
+  if (normalized.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  return 'application/octet-stream';
+}
+
 function rowToDocument(row: LibraryDocumentRow): LibraryDocument {
+  const fileName = inferFileNameFromPath(row.storage_path);
   return {
     id: row.id,
     title: row.title,
     category: row.category,
-    system: row.system,
-    manufacturer: row.manufacturer,
-    model: row.model,
+    system: row.system || 'General',
+    manufacturer: row.manufacturer || 'Unknown',
+    model: row.model || 'Any model',
     format: row.format,
     tags: row.tags ?? [],
     uploadedAt: formatLibraryDate(row.created_at),
-    fileSize: formatFileSize(row.size_bytes),
-    uploadedBy: row.uploaded_by || 'Company admin',
-    summary: row.summary || (row.file_name ? `Uploaded file: ${row.file_name}` : 'Reference document.'),
-    fileName: row.file_name ?? undefined,
-    mimeType: row.mime_type ?? undefined,
-    sizeBytes: row.size_bytes ?? undefined,
+    fileSize: formatFileSize(row.file_size_bytes),
+    uploadedBy: row.uploaded_by_user_id ? 'Company user' : 'Company admin',
+    summary: row.summary || (fileName ? `Uploaded file: ${fileName}` : 'Reference document.'),
+    fileName,
+    mimeType: inferMimeTypeFromName(fileName),
+    sizeBytes: row.file_size_bytes ?? undefined,
     storageBucket: row.storage_bucket ?? undefined,
     storagePath: row.storage_path ?? undefined,
   };
@@ -78,7 +96,7 @@ export async function listLibraryDocuments(companyId: string) {
   return rows.map(rowToDocument);
 }
 
-export async function uploadLibraryDocument(companyId: string, draft: LibraryDraft, uploadedBy = 'Company admin') {
+export async function uploadLibraryDocument(companyId: string, draft: LibraryDraft, _uploadedBy = 'Company admin') {
   if (!draft.title.trim()) throw new Error('Document title is required.');
   if (!draft.file) throw new Error('Choose a file before adding it to the library.');
 
@@ -103,13 +121,11 @@ export async function uploadLibraryDocument(companyId: string, draft: LibraryDra
       model: draft.model.trim() || 'Any model',
       format,
       tags,
-      uploaded_by: uploadedBy,
       summary: `Uploaded file: ${file.name}`,
-      file_name: file.name,
-      mime_type: file.type || 'application/octet-stream',
-      size_bytes: file.size,
       storage_bucket: LIBRARY_BUCKET,
       storage_path: storagePath,
+      external_url: null,
+      file_size_bytes: file.size,
     },
   });
 
