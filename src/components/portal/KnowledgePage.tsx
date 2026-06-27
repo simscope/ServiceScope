@@ -20,6 +20,7 @@ export function KnowledgePage({
   onLibraryFormatFilterChange,
   onLibraryFileChange,
   onAddLibraryDocument,
+  onOpenLibraryDocument,
 }: {
   libraryDocuments: LibraryDocument[];
   librarySystems: string[];
@@ -38,6 +39,7 @@ export function KnowledgePage({
   onLibraryFormatFilterChange: (value: 'all' | LibraryFormat) => void;
   onLibraryFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onAddLibraryDocument: (event: FormEvent<HTMLFormElement>) => void;
+  onOpenLibraryDocument: (document: LibraryDocument) => void;
 }) {
   return (
     <section className="library-page">
@@ -70,8 +72,13 @@ export function KnowledgePage({
           </div>
           <label>
             File
-            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx" onChange={onLibraryFileChange} />
-            {libraryDraft.fileName ? <span>{libraryDraft.fileName}</span> : null}
+            <input id="library-file-upload" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.doc,.docx" onChange={onLibraryFileChange} style={{ display: 'none' }} />
+            <span className="library-file-picker-row">
+              <label className="secondary-button compact library-file-picker-button" htmlFor="library-file-upload">
+                Choose file
+              </label>
+              <span>{libraryDraft.fileName || 'No file selected'}</span>
+            </span>
           </label>
           <label>
             Title
@@ -183,7 +190,7 @@ export function KnowledgePage({
                     <dd>{document.fileSize}</dd>
                   </div>
                 </dl>
-                <button className="secondary-button compact" type="button">
+                <button className="secondary-button compact" type="button" onClick={() => onOpenLibraryDocument(document)}>
                   Open
                 </button>
               </article>
