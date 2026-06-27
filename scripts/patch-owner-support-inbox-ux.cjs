@@ -3,6 +3,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const ownerPagesPath = path.join(root, 'src/components/OwnerPages.tsx');
+const companyPortalPath = path.join(root, 'src/CompanyPortal.tsx');
 const cssPath = path.join(root, 'src/styles/responsive.css');
 
 function read(filePath) {
@@ -12,6 +13,12 @@ function read(filePath) {
 function write(filePath, content) {
   fs.writeFileSync(filePath, content);
 }
+
+let portalContent = read(companyPortalPath);
+portalContent = portalContent
+  .split('new Map(payrollItems.map').join('new globalThis.Map(payrollItems.map')
+  .split('new Map(currentRows.map').join('new globalThis.Map(currentRows.map');
+write(companyPortalPath, portalContent);
 
 let content = read(ownerPagesPath);
 
