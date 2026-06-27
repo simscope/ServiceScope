@@ -152,6 +152,50 @@ export type CompanyJobType = {
 
 export type NewCompanyJobTypeForm = Pick<CompanyJobType, 'name' | 'jobNumberPrefix' | 'defaultDurationMinutes' | 'defaultPriority' | 'requiresParts'>;
 
+export type CompanyOnboardingProfile = {
+  companyId: string;
+  legalName: string;
+  displayName: string;
+  logoUrl: string;
+  website: string;
+  phone: string;
+  billingEmail: string;
+  serviceAddress: string;
+  serviceArea: string;
+  timezone: string;
+  emergencyContact: string;
+  jobAssignmentMode: 'manual' | 'auto' | 'round_robin';
+  acceptedPayments: CompanyPaymentMethod[];
+  achRoutingNumber: string;
+  achAccountNumber: string;
+  achAccountName: string;
+  zelleContact: string;
+  venmoContact: string;
+  cashAppCashtag: string;
+  paypalEmail: string;
+  paymentNotes: string;
+  subscriptionPaymentStatus: 'not_connected' | 'active' | 'failed' | 'past_due';
+  subscriptionCardBrand: string;
+  subscriptionCardLast4: string;
+  subscriptionCardExpMonth: string;
+  subscriptionCardExpYear: string;
+  subscriptionBillingName: string;
+  subscriptionBillingZip: string;
+  autoPayEnabled: boolean;
+  jobNumberPrefix: string;
+  useJobNumberPrefixes: boolean;
+  serviceCallFee: number;
+  defaultJobPriority: CompanyJobPriority;
+  warrantyDays: number;
+  autoArchiveCompletedAfterDays: number;
+  autoArchiveCancelledAfterDays: number;
+  requireCompletionNote: boolean;
+  requireCompletionPhoto: boolean;
+  allowWarrantyReopen: boolean;
+  jobTypes: CompanyJobType[];
+  technicians: CompanyTechnician[];
+};
+
 export type MaterialStatus = 'Needed' | 'Ordered' | 'Received' | 'Installed' | 'Returned';
 
 export type MaterialRow = {
