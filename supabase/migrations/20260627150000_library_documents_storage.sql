@@ -1,26 +1,41 @@
+do $$
+begin
+  if not exists (select 1 from pg_type where typname = 'library_category') then
+    create type public.library_category as enum ('Manual', 'Wiring diagram', 'Service bulletin', 'Install guide', 'Parts list', 'Warranty', 'Training');
+  end if;
+
+  if not exists (select 1 from pg_type where typname = 'library_format') then
+    create type public.library_format as enum ('PDF', 'Image', 'Video', 'Link');
+  end if;
+end $$;
+
 create table if not exists public.library_documents (
-  id uuid primary key default gen_random_uuid(),
-  company_id uuid not null references public.companies(id) on delete cascade,
+  id uuid not null default gen_random_uuid(),
+  company_id uuid not null,
   title text not null,
-  category text not null default 'Manual',
-  system text not null default 'General',
-  manufacturer text not null default 'Unknown',
-  model text not null default 'Any model',
-  format text not null default 'PDF',
-  tags text[] not null default '{}',
-  uploaded_by text not null default 'Company admin',
-  summary text not null default '',
-  file_name text,
-  mime_type text,
-  size_bytes bigint not null default 0,
-  storage_bucket text not null default 'library',
-  storage_path text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  category public.library_category not null,
+  system text not null default ''::text,
+  manufacturer text not null default ''::text,
+  model text not null default ''::text,
+  format public.library_format not null default 'PDF'::public.library_format,
+  tags text[] not null default '{}'::text[],
+  summary text not null default ''::text,
+  storage_bucket text not null default 'library'::text,
+  storage_path text null,
+  external_url text null,
+  file_size_bytes bigint not null default 0,
+  uploaded_by_user_id uuid null,
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now(),
+  constraint library_documents_pkey primary key (id),
+  constraint library_documents_company_id_fkey foreign key (company_id) references public.companies(id) on delete cascade,
+  constraint library_documents_uploaded_by_user_id_fkey foreign key (uploaded_by_user_id) references auth.users(id) on delete set null
 );
 
-create index if not exists idx_library_documents_company
-  on public.library_documents(company_id, created_at desc);
+create index if not exists idx_library_company_search
+  on public.library_documents using btree (company_id, category, system, manufacturer);
+
+drop trigger if exists set_library_documents_updated_at on public.library_documents;
 
 create trigger set_library_documents_updated_at
 before update on public.library_documents
