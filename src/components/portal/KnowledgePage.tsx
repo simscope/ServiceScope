@@ -1,5 +1,5 @@
 import type { ChangeEvent, FormEvent } from 'react';
-import { BookOpen, Plus, Search } from 'lucide-react';
+import { BookOpen, Plus, Search, Trash2 } from 'lucide-react';
 import type { LibraryCategory, LibraryDocument, LibraryDraft, LibraryFormat } from '../../appTypes';
 
 export function KnowledgePage({
@@ -21,6 +21,7 @@ export function KnowledgePage({
   onLibraryFileChange,
   onAddLibraryDocument,
   onOpenLibraryDocument,
+  onDeleteLibraryDocument,
 }: {
   libraryDocuments: LibraryDocument[];
   librarySystems: string[];
@@ -40,6 +41,7 @@ export function KnowledgePage({
   onLibraryFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onAddLibraryDocument: (event: FormEvent<HTMLFormElement>) => void;
   onOpenLibraryDocument?: (document: LibraryDocument) => void;
+  onDeleteLibraryDocument?: (document: LibraryDocument) => void;
 }) {
   return (
     <section className="library-page">
@@ -190,9 +192,17 @@ export function KnowledgePage({
                     <dd>{document.fileSize}</dd>
                   </div>
                 </dl>
-                <button className="secondary-button compact" type="button" onClick={() => onOpenLibraryDocument?.(document)}>
-                  Open
-                </button>
+                <div className="library-document-actions">
+                  <button className="secondary-button compact" type="button" onClick={() => onOpenLibraryDocument?.(document)}>
+                    Open
+                  </button>
+                  {onDeleteLibraryDocument ? (
+                    <button className="secondary-button compact danger-button" type="button" onClick={() => onDeleteLibraryDocument(document)}>
+                      <Trash2 size={14} aria-hidden="true" />
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
               </article>
             ))}
             {!filteredLibraryDocuments.length ? (
