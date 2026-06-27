@@ -122,12 +122,5 @@ if (!content.includes('onOpenLibraryDocument={handleOpenLibraryDocument}')) {
   );
 }
 
-if (!content.includes('{libraryStatus ? <p className="access-status library-status">{libraryStatus}</p> : null}')) {
-  content = content.replace(
-    /onOpenLibraryDocument=\{handleOpenLibraryDocument\}\s*\n\s*\/\>/,
-    'onOpenLibraryDocument={handleOpenLibraryDocument}\n        />\n        {libraryStatus ? <p className="access-status library-status">{libraryStatus}</p> : null}',
-  );
-}
-
 fs.writeFileSync(portalPath, content);
 console.log('Library Supabase storage patch applied.');
