@@ -12,10 +12,18 @@ if (!content.includes("from './services/libraryStore'")) {
   );
 }
 
-content = content.replace(
-  "  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>(initialLibraryDocuments);",
-  "  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>([]);\n  const [libraryStatus, setLibraryStatus] = useState('');",
-);
+if (content.includes('useState<LibraryDocument[]>(initialLibraryDocuments)')) {
+  content = content.replace(
+    "  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>(initialLibraryDocuments);",
+    "  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>([]);\n  const [libraryStatus, setLibraryStatus] = useState('');",
+  );
+}
+if (!content.includes('const [libraryStatus, setLibraryStatus]')) {
+  content = content.replace(
+    /  const \[libraryDocuments, setLibraryDocuments\] = useState<LibraryDocument\[\]>\([^\n]+\);/,
+    "  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>([]);\n  const [libraryStatus, setLibraryStatus] = useState('');",
+  );
+}
 content = content.replace("    fileName: '',\n  });", "    fileName: '',\n    file: null,\n  });");
 
 if (!content.includes('async function loadCompanyLibraryDocuments')) {
@@ -103,20 +111,21 @@ const newAdd = `  const addLibraryDocument = async (event: FormEvent<HTMLFormEle
     });
   };`;
 
-content = content.replace(oldAdd, newAdd);
+if (!content.includes('const handleOpenLibraryDocument')) {
+  content = content.replace(oldAdd, newAdd);
+}
 
 if (!content.includes('onOpenLibraryDocument={handleOpenLibraryDocument}')) {
   content = content.replace(
-    '          onLibraryFileChange={handleLibraryFileChange}\n          onAddLibraryDocument={addLibraryDocument}',
-    '          onLibraryFileChange={handleLibraryFileChange}\n          onAddLibraryDocument={addLibraryDocument}\n          onOpenLibraryDocument={handleOpenLibraryDocument}',
+    /onLibraryFileChange=\{handleLibraryFileChange\}\s*\n\s*onAddLibraryDocument=\{addLibraryDocument\}/,
+    'onLibraryFileChange={handleLibraryFileChange}\n            onAddLibraryDocument={addLibraryDocument}\n            onOpenLibraryDocument={handleOpenLibraryDocument}',
   );
 }
 
-// Add a small status line under the Library filters/page if the render target exists.
 if (!content.includes('{libraryStatus ? <p className="access-status library-status">{libraryStatus}</p> : null}')) {
   content = content.replace(
-    '          onOpenLibraryDocument={handleOpenLibraryDocument}\n        />',
-    '          onOpenLibraryDocument={handleOpenLibraryDocument}\n        />\n        {libraryStatus ? <p className="access-status library-status">{libraryStatus}</p> : null}',
+    /onOpenLibraryDocument=\{handleOpenLibraryDocument\}\s*\n\s*\/\>/,
+    'onOpenLibraryDocument={handleOpenLibraryDocument}\n        />\n        {libraryStatus ? <p className="access-status library-status">{libraryStatus}</p> : null}',
   );
 }
 
