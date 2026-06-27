@@ -14,10 +14,14 @@ if (!content.includes('function sanitizeAttachmentDownloadName')) {
 }
 
 if (!content.includes('selectedAttachmentIds')) {
-  content = content.replace("  const [previewUrl, setPreviewUrl] = useState('');", "  const [previewUrl, setPreviewUrl] = useState('');\n  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);");
-  content = content.replace("  const [uploadError, setUploadError] = useState('');", "  const [uploadError, setUploadError] = useState('');\n  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);");
+  if (content.includes("  const [previewUrl, setPreviewUrl] = useState('');")) {
+    content = content.replace("  const [previewUrl, setPreviewUrl] = useState('');", "  const [previewUrl, setPreviewUrl] = useState('');\n  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);");
+  } else {
+    content = content.replace("  const [uploadError, setUploadError] = useState('');", "  const [uploadError, setUploadError] = useState('');\n  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);");
+  }
 }
 
+content = content.replace("  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);\n  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);", "  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);");
 content = content.replace("    setSelectedInvoiceIds([]);\n    setSaved(false);", "    setSelectedInvoiceIds([]);\n    setSelectedAttachmentIds([]);\n    setSaved(false);");
 
 if (!content.includes('const selectedAttachments =')) {
