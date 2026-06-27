@@ -15,10 +15,12 @@ if (!content.includes("from './services/payrollStore'")) {
   );
 }
 
-content = content.replace(
-  "  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());",
-  "  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());\n  const [payrollItems, setPayrollItems] = useState<PayrollItemRow[]>([]);",
-);
+if (!content.includes('const [payrollItems, setPayrollItems]')) {
+  content = content.replace(
+    "  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());",
+    "  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());\n  const [payrollItems, setPayrollItems] = useState<PayrollItemRow[]>([]);",
+  );
+}
 
 content = content.replace(
   `        const [savedJobs, savedMaterials] = await Promise.all([
