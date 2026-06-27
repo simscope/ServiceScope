@@ -92,7 +92,7 @@ const modalBlock = `
         </div>
         {selectedCompanyId && selectedCompany ? (
           <div className="company-detail-modal-backdrop" role="presentation" onClick={() => setSelectedCompanyId('')}>
-            <div className="company-detail-modal" role="dialog" aria-modal="true" aria-label={\`${selectedCompany.name} company details\`} onClick={(event) => event.stopPropagation()}>
+            <div className="company-detail-modal" role="dialog" aria-modal="true" aria-label={selectedCompany.name + ' company details'} onClick={(event) => event.stopPropagation()}>
               <button className="modal-close-button" type="button" onClick={() => setSelectedCompanyId('')} aria-label="Close company details">×</button>
               <CompanyDetail
                 company={selectedCompany}
