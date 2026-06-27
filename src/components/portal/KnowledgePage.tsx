@@ -39,7 +39,7 @@ export function KnowledgePage({
   onLibraryFormatFilterChange: (value: 'all' | LibraryFormat) => void;
   onLibraryFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
   onAddLibraryDocument: (event: FormEvent<HTMLFormElement>) => void;
-  onOpenLibraryDocument: (document: LibraryDocument) => void;
+  onOpenLibraryDocument?: (document: LibraryDocument) => void;
 }) {
   return (
     <section className="library-page">
@@ -190,7 +190,7 @@ export function KnowledgePage({
                     <dd>{document.fileSize}</dd>
                   </div>
                 </dl>
-                <button className="secondary-button compact" type="button" onClick={() => onOpenLibraryDocument(document)}>
+                <button className="secondary-button compact" type="button" onClick={() => onOpenLibraryDocument?.(document)}>
                   Open
                 </button>
               </article>
