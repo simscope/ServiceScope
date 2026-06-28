@@ -181,7 +181,7 @@ export function CalendarPage({
               type="button"
               draggable
               onDragStart={(event) => onCalendarDragStart(event, job.jobNumber)}
-              onClick={() => onOpenJob(job)}
+              onDoubleClick={() => onOpenJob(job)}
               key={job.jobNumber}
             >
               <strong>#{job.jobNumber} - {job.organization}</strong>
@@ -226,7 +226,7 @@ export function CalendarPage({
                     type="button"
                     draggable
                     onDragStart={(event) => onCalendarDragStart(event, job.jobNumber)}
-                    onClick={() => onOpenJob(job)}
+                    onDoubleClick={() => onOpenJob(job)}
                     key={job.jobNumber}
                   >
                     #{job.jobNumber} {job.organization}
@@ -297,7 +297,7 @@ export function CalendarPage({
                         height: `${Math.max(54, (job.durationMinutes / 60) * 64 - 10)}px`,
                       }}
                       onDragStart={(event) => onCalendarDragStart(event, job.jobNumber)}
-                      onClick={() => onOpenJob(job)}
+                      onDoubleClick={() => onOpenJob(job)}
                       key={job.jobNumber}
                     >
                       <span>{calendarDropSlots.find((slot) => slot.key === job.time)?.label ?? job.time}</span>
