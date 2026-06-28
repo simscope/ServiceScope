@@ -178,6 +178,7 @@ function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAler
     id: row.id,
     name: row.name,
     ownerName: row.owner_name,
+    phone: '',
     ownerEmail: row.owner_email,
     temporaryPassword: row.temporary_password ?? '',
     domain: row.domain ?? '',
@@ -331,7 +332,12 @@ export async function loadOwnerWorkspaceFromBackend() {
     supabaseRequest<DbSubscriptionPayment[]>(`subscription_payment_methods?select=*&is_default=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
   ]);
 
-  const companies = companyRows.map((company) => companyFromDb(company, onboardingSteps, alerts));
+  const companies = companyRows.map((companyRow) => {
+    const company = companyFromDb(companyRow, onboardingSteps, alerts);
+    const profileRow = profileRows.find((profile) => profile.company_id === company.id);
+
+    return { ...company, phone: profileRow?.phone ?? company.phone ?? '' };
+  });
   const onboardingProfiles = companies.map((company) => profileFromDb(
     company,
     profileRows.find((profile) => profile.company_id === company.id),

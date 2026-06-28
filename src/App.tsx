@@ -39,6 +39,7 @@ import {
 } from './services/tenantStore';
 import {
   addOwnerReply,
+  addCompanyReply,
   createSupportTicket,
   listSupportTickets,
   saveSupportTickets,
@@ -48,6 +49,7 @@ import { applyPlan, plans } from './services/billingCatalog';
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CompanyPortal } from './CompanyPortal';
+import { CompanyAccessPage, companyPatchForAccessMode, type CompanyAccessMode } from './components/CompanyAccessPage';
 import {
   AccessPage,
   AuditPage,
@@ -64,9 +66,12 @@ import {
 } from './components/OwnerPages';
 import {
   createPlatformUser,
+  canAccessOwnerPage,
+  firstAllowedOwnerPage,
   listPlatformUsers,
   rolePermissions,
   savePlatformUsers,
+  SYSTEM_OWNER_EMAIL,
   updatePlatformUserRole,
   updatePlatformUserStatus,
 } from './services/accessStore';
@@ -74,6 +79,7 @@ import {
   createAuditEvent,
   filterAuditEvents,
   listAuditEvents,
+  loadAuditEventsFromBackend,
   saveAuditEvents,
 } from './services/auditStore';
 import {
@@ -247,6 +253,19 @@ function AuthLogin({
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isSigningIn, setIsSigningIn] = useState(false);
+  const loginErrorMessageId = 'login-error-message';
+  const loginHasError = Boolean(error || authNotice);
+  const clearLoginError = () => {
+    if (error) setError('');
+  };
+  const updateEmail = (value: string) => {
+    clearLoginError();
+    setEmail(value);
+  };
+  const updatePassword = (value: string) => {
+    clearLoginError();
+    setPassword(value);
+  };
 
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -300,7 +319,7 @@ function AuthLogin({
             <input
               type="email"
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => updateEmail(event.target.value)}
               placeholder="email@company.com"
               autoComplete="email"
               disabled={isSigningIn}
@@ -312,7 +331,7 @@ function AuthLogin({
               <input
                 type={showPassword ? 'text' : 'password'}
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={(event) => updatePassword(event.target.value)}
                 placeholder="Password"
                 autoComplete="current-password"
                 disabled={isSigningIn}
@@ -342,30 +361,53 @@ function AuthLogin({
   );
 }
 
+const ownerPageTitles: Partial<Record<AppPage, string>> = {
+  dashboard: 'ServiceScope',
+  companies: 'Companies',
+  monitoring: 'Monitoring',
+  billing: 'Plans & Billing',
+  companyAccess: 'Company Access',
+  access: 'Access',
+  audit: 'Audit Log',
+  support: 'Support Inbox',
+  companyLogin: 'Company Login',
+  portal: 'Company Portal',
+};
+
+function pageFromHash(hash: string): AppPage | null {
+  const normalizedHash = hash.replace(/^#/, '').trim().toLowerCase();
+  switch (normalizedHash) {
+    case 'dashboard': return 'dashboard';
+    case 'companies': return 'companies';
+    case 'monitoring': return 'monitoring';
+    case 'billing': return 'billing';
+    case 'companyaccess':
+    case 'company-access': return 'companyAccess';
+    case 'access': return 'access';
+    case 'audit': return 'audit';
+    case 'support': return 'support';
+    case 'company-login': return 'companyLogin';
+    case 'portal': return 'portal';
+    case 'login': return null;
+    default: return 'dashboard';
+  }
+}
+
+function hashForPage(page: AppPage) {
+  return page === 'companyLogin' ? '#company-login' : '#' + page;
+}
+
+function titleForPage(page: AppPage) {
+  return ownerPageTitles[page] ?? 'ServiceScope';
+}
+
 export function App() {
   const initialCompanies = useMemo(() => listCompanies(), []);
   const initialSupportTickets = useMemo(() => listSupportTickets(initialCompanies), [initialCompanies]);
   const initialPlatformUsers = useMemo(() => listPlatformUsers(), []);
   const initialAuditEvents = useMemo(() => listAuditEvents(), []);
   const initialOnboardingProfiles = useMemo(() => listCompanyOnboardingProfiles(initialCompanies), [initialCompanies]);
-  const initialPage =
-    window.location.hash === '#support'
-      ? 'support'
-      : window.location.hash === '#company-login'
-        ? 'companyLogin'
-      : window.location.hash === '#portal'
-        ? 'portal'
-      : window.location.hash === '#companies'
-        ? 'companies'
-        : window.location.hash === '#monitoring'
-          ? 'monitoring'
-        : window.location.hash === '#billing'
-          ? 'billing'
-          : window.location.hash === '#access'
-            ? 'access'
-            : window.location.hash === '#audit'
-              ? 'audit'
-        : 'dashboard';
+  const initialPage = pageFromHash(window.location.hash) ?? 'dashboard';
   const [companies, setCompanies] = useState<Company[]>(initialCompanies);
   const [supportTickets, setSupportTickets] = useState<SupportTicket[]>(initialSupportTickets);
   const [platformUsers, setPlatformUsers] = useState<PlatformUser[]>(initialPlatformUsers);
@@ -373,7 +415,7 @@ export function App() {
   const [onboardingProfiles, setOnboardingProfiles] = useState<CompanyOnboardingProfile[]>(initialOnboardingProfiles);
   const [selectedTicketId, setSelectedTicketId] = useState(() => initialSupportTickets[0]?.id ?? '');
   const [replyText, setReplyText] = useState('');
-  const [selectedCompanyId, setSelectedCompanyId] = useState(() => initialCompanies[0]?.id ?? '');
+  const [selectedCompanyId, setSelectedCompanyId] = useState('');
   const [form, setForm] = useState<NewCompanyForm>(emptyCompany);
   const [supportForm, setSupportForm] = useState<NewSupportTicketForm>(() => ({
     ...emptySupportForm,
@@ -383,7 +425,7 @@ export function App() {
   }));
   const [accessForm, setAccessForm] = useState<NewPlatformUserForm>(emptyAccessForm);
   const [page, setPage] = useState<AppPage>(initialPage);
-  const [authSession, setAuthSession] = useState<AuthSession | null>(() => readAuthSession());
+  const [authSession, setAuthSession] = useState<AuthSession | null>(() => (window.location.hash === '#login' ? null : readAuthSession()));
   const [authNotice, setAuthNotice] = useState(() => getAuthLinkError());
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | CompanyStatus>('all');
@@ -398,6 +440,18 @@ export function App() {
   const selectedOnboardingProfile = onboardingProfiles.find((profile) => profile.companyId === selectedCompany?.id);
   const selectedTicket = supportTickets.find((ticket) => ticket.id === selectedTicketId) ?? supportTickets[0];
   const openSupportCount = supportTickets.filter((ticket) => ticket.status !== 'resolved').length;
+  const currentOwnerUser = authSession?.kind === 'owner'
+    ? platformUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase())
+    : undefined;
+  const currentOwnerRole: PlatformUserRole = authSession?.kind === 'owner'
+    ? authSession.email.toLowerCase() === SYSTEM_OWNER_EMAIL
+      ? 'owner'
+      : currentOwnerUser?.status === 'active'
+        ? currentOwnerUser.role
+        : 'viewer'
+    : 'viewer';
+  const ownerCanAccess = (candidate: AppPage) => canAccessOwnerPage(currentOwnerRole, candidate);
+  const newSupportCount = supportTickets.filter((ticket) => ticket.status === 'new').length;
 
   useEffect(() => {
     clearLegacyLocalBusinessData();
@@ -471,8 +525,17 @@ export function App() {
         if (ignore) return;
         setCompanies(backendCompanies);
         setOnboardingProfiles(backendProfiles);
-        setSupportTickets([]);
-        setAuditEvents([]);
+        setSupportTickets(listSupportTickets(backendCompanies));
+        loadAuditEventsFromBackend(authSession.kind === 'company' ? authSession.companyId : undefined)
+          .then((events) => {
+            if (ignore) return;
+            setAuditEvents(events);
+          })
+          .catch((error) => {
+            if (ignore) return;
+            setAuditEvents([]);
+            console.error('Failed to load audit events from Supabase', error);
+          });
         setCompanyCreateStatus('');
         setSelectedCompanyId((currentId) => {
           if (backendCompanies.some((company) => company.id === currentId)) return currentId;
@@ -555,7 +618,7 @@ export function App() {
       const matchesStatus = status === 'all' || company.status === status;
       const matchesQuery =
         !normalized ||
-        [company.name, company.ownerName, company.ownerEmail, company.market, company.domain]
+        [company.name, company.ownerName, company.phone, company.ownerEmail, company.market, company.domain]
           .join(' ')
           .toLowerCase()
           .includes(normalized);
@@ -574,7 +637,7 @@ export function App() {
     if (!form.name.trim() || !form.ownerEmail.trim()) return;
 
     const nextCompany = createCompany(form);
-    const nextProfile = createDefaultCompanyOnboardingProfile(nextCompany);
+    const nextProfile = { ...createDefaultCompanyOnboardingProfile(nextCompany), phone: form.phone ?? '' };
 
     setCompanyCreateStatus('Saving company...');
     setBackendError('');
@@ -727,6 +790,27 @@ export function App() {
     });
   }
 
+  function createPortalReply(ticketId: string, body: string) {
+    const text = body.trim();
+    if (!text || !selectedCompany) return;
+
+    const nextTickets = supportTickets.map((ticket) =>
+      ticket.id === ticketId && ticket.companyId === selectedCompany.id
+        ? addCompanyReply(ticket, text, authSession?.name || selectedCompany.ownerName)
+        : ticket,
+    );
+    setSupportTickets(nextTickets);
+    saveSupportTickets(nextTickets);
+    setSelectedTicketId(ticketId);
+    recordAudit({
+      category: 'support',
+      action: 'support.customer_reply_sent',
+      actor: authSession?.name || selectedCompany.ownerName,
+      resource: selectedCompany.name,
+      details: 'Customer reply sent from company portal.',
+    });
+  }
+
   if (!authSession) {
     return (
       <AuthLogin authNotice={authNotice} onLogin={handleLogin} />
@@ -757,6 +841,7 @@ export function App() {
             });
           }}
           onCreateRequest={createPortalRequest}
+          onReplyToTicket={createPortalReply}
         />
       </main>
     );
@@ -776,34 +861,21 @@ export function App() {
         </div>
 
         <nav className="nav-list">
-          <button className={`nav-item ${page === 'dashboard' ? 'active' : ''}`} type="button" onClick={() => navigate('dashboard')}>
-            <LayoutDashboard size={18} aria-hidden="true" />
-            Dashboard
-          </button>
-          <button className={`nav-item ${page === 'companies' ? 'active' : ''}`} type="button" onClick={() => navigate('companies')}>
-            <Building2 size={18} aria-hidden="true" />
-            Companies
-          </button>
-          <button className={`nav-item ${page === 'monitoring' ? 'active' : ''}`} type="button" onClick={() => navigate('monitoring')}>
-            <Activity size={18} aria-hidden="true" />
-            Monitoring
-          </button>
-          <button className={`nav-item ${page === 'billing' ? 'active' : ''}`} type="button" onClick={() => navigate('billing')}>
-            <CreditCard size={18} aria-hidden="true" />
-            Billing
-          </button>
-          <button className={`nav-item ${page === 'access' ? 'active' : ''}`} type="button" onClick={() => navigate('access')}>
-            <UserPlus size={18} aria-hidden="true" />
-            Access
-          </button>
-          <button className={`nav-item ${page === 'audit' ? 'active' : ''}`} type="button" onClick={() => navigate('audit')}>
-            <FileClock size={18} aria-hidden="true" />
-            Audit
-          </button>
-          <button className={`nav-item ${page === 'support' ? 'active' : ''}`} type="button" onClick={() => navigate('support')}>
-            <Inbox size={18} aria-hidden="true" />
-            Support
-          </button>
+          {([
+            { page: 'dashboard' as AppPage, label: 'Dashboard', icon: <LayoutDashboard size={18} aria-hidden="true" /> },
+            { page: 'companies' as AppPage, label: 'Companies', icon: <Building2 size={18} aria-hidden="true" /> },
+            { page: 'monitoring' as AppPage, label: 'Monitoring', icon: <Activity size={18} aria-hidden="true" /> },
+            { page: 'billing' as AppPage, label: 'Billing', icon: <CreditCard size={18} aria-hidden="true" /> },
+            { page: 'companyAccess' as AppPage, label: 'Company Access', icon: <ShieldCheck size={18} aria-hidden="true" /> },
+            { page: 'access' as AppPage, label: 'Access', icon: <UserPlus size={18} aria-hidden="true" /> },
+            { page: 'audit' as AppPage, label: 'Audit', icon: <FileClock size={18} aria-hidden="true" /> },
+            { page: 'support' as AppPage, label: 'Support', icon: <Inbox size={18} aria-hidden="true" /> },
+          ]).filter((item) => ownerCanAccess(item.page)).map((item) => (
+            <button className={`nav-item ${page === item.page ? 'active' : ''}`} type="button" onClick={() => navigate(item.page)} key={item.page}>
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
         </nav>
       </aside>
 
@@ -811,9 +883,9 @@ export function App() {
         <header className="topbar">
           <div>
             <p className="eyebrow">Platform owner</p>
-            <h1>{page === 'support' ? 'Support Inbox' : page === 'companies' ? 'Companies' : page === 'monitoring' ? 'Monitoring' : page === 'billing' ? 'Plans & Billing' : page === 'access' ? 'Access' : page === 'audit' ? 'Audit Log' : 'ServiceScope'}</h1>
+            <h1>{titleForPage(page)}</h1>
           </div>
-          <button className="icon-button" type="button" aria-label="Platform settings" title="Platform settings">
+          <button className="icon-button" type="button" onClick={() => navigate('access')} aria-label="Open platform settings" title="Open platform settings">
             <SlidersHorizontal size={20} aria-hidden="true" />
           </button>
           <button className="secondary-button compact" type="button" onClick={handleSignOut}>
@@ -845,7 +917,8 @@ export function App() {
         />
           </>
         ) : page === 'companies' ? (
-        <div className="content-grid">
+        <>
+        <div className="content-grid companies-list-only">
           <section className="panel add-panel" id="companies">
             <div className="panel-heading">
               <div>
@@ -944,16 +1017,23 @@ export function App() {
             </div>
           </section>
 
-          {selectedCompany ? (
-            <CompanyDetail
-              company={selectedCompany}
-              onPrepareNext={() => prepareNextStep(selectedCompany.id)}
-              onCompleteStep={(step) => updateCompany(selectedCompany.id, (company) => completeOnboardingStep(company, step))}
-              onSaveOwnerAccess={(mode, password) => sendCompanyOwnerAccess(selectedCompany, mode, password)}
-              ownerInviteStatus={ownerAccessStatusByCompany[selectedCompany.id] ?? ''}
-            />
-          ) : null}
-        </div>
+          </div>
+        {selectedCompanyId && selectedCompany ? (
+          <div className="company-detail-modal-backdrop" role="presentation" onClick={() => setSelectedCompanyId('')}>
+            <div className="company-detail-modal" role="dialog" aria-modal="true" aria-label={selectedCompany.name + ' company details'} onClick={(event) => event.stopPropagation()}>
+              <button className="modal-close-button" type="button" onClick={() => setSelectedCompanyId('')} aria-label="Close company details">×</button>
+              <CompanyDetail
+                company={selectedCompany}
+                onPrepareNext={() => prepareNextStep(selectedCompany.id)}
+                onCompleteStep={(step) => updateCompany(selectedCompany.id, (company) => completeOnboardingStep(company, step))}
+                onSaveOwnerAccess={(mode, password) => sendCompanyOwnerAccess(selectedCompany, mode, password)}
+                ownerInviteStatus={ownerAccessStatusByCompany[selectedCompany.id] ?? ''}
+              />
+            </div>
+          </div>
+        ) : null}
+        </>
+
         ) : page === 'monitoring' ? (
           <MonitoringPage
             companies={companies}
@@ -991,6 +1071,14 @@ export function App() {
                 resource: company?.name ?? 'Unknown tenant',
                 details: `Billing status changed to ${billingLabels[billingStatus]}.`,
               });
+            }}
+          />        ) : page === 'companyAccess' ? (
+          <CompanyAccessPage
+            companies={companies}
+            onChangeCompanyAccess={(companyId, mode: CompanyAccessMode) => {
+              const company = companies.find((candidate) => candidate.id === companyId);
+              updateCompany(companyId, (currentCompany) => ({ ...currentCompany, ...companyPatchForAccessMode(mode) }));
+              recordAudit({ category: 'access', action: 'company.access_changed', actor: 'ServiceScope Owner', resource: company?.name ?? 'Unknown tenant', details: 'Company access changed to ' + mode + '.' });
             }}
           />
         ) : page === 'access' ? (

@@ -175,7 +175,7 @@ export function MaterialsPage({
               const savingThisStatus = savingStatusId === material.id;
 
               return (
-                <tr key={material.id}>
+                <tr key={material.id} className="materials-clickable-row" onClick={() => onOpenJob(job)}>
                   <td>
                     <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
                       #{job.jobNumber}
@@ -205,7 +205,7 @@ export function MaterialsPage({
                     </select>
                   </td>
                   <td>
-                    <button className="secondary-button compact" type="button" onClick={() => onOpenMaterialEditor(job.jobNumber)}>
+                    <button className="secondary-button compact" type="button" onClick={(event) => { event.stopPropagation(); onOpenMaterialEditor(job.jobNumber); }}>
                       Edit
                     </button>
                   </td>

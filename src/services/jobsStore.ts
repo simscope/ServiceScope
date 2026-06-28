@@ -1,5 +1,5 @@
 import type { Customer, JobAttachment, JobComment, JobDocumentType, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
-import { getSupabasePublicStorageUrl, sqlEq, sqlIn, supabaseRequest, uploadSupabaseStorageFile } from './supabaseRest';
+import { deleteSupabaseStorageFiles, getSupabasePublicStorageUrl, sqlEq, sqlIn, supabaseRequest, uploadSupabaseStorageFile } from './supabaseRest';
 
 type CustomerRow = { id: string; company_id: string; organization: string | null; primary_name: string | null; primary_email: string | null; primary_phone: string | null; notes: string | null; created_at: string };
 type CustomerLocationRow = { id: string; company_id: string; customer_id: string; address: string | null; created_at: string };

@@ -172,7 +172,7 @@ export function JobsPage({
   currentPortalUser: { name: string; role: 'Manager' | 'Admin' | 'Technician' };
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
-  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onSaveMaterials: (jobOrJobNumber: JobCardData | string, rows: MaterialRow[]) => void | Promise<void>;
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
@@ -183,6 +183,35 @@ export function JobsPage({
   selectedJobTypeId: string;
   onSelectedJobTypeIdChange: (id: string) => void;
 }) {
+  const createAttentionFields = ['organization', 'issue', 'clientName', 'phone', 'address'];
+  const [createTouchedFields, setCreateTouchedFields] = useState<Record<string, boolean>>({});
+  const [createFieldValues, setCreateFieldValues] = useState<Record<string, string>>({});
+  const createCustomerMatches: Array<{ id: string; primaryName: string; organization: string; primaryPhone: string; address: string }> = [];
+  const applyCustomerToCreateForm = (_customer: { id: string; primaryName: string; organization: string; primaryPhone: string; address: string }) => undefined;
+  const updateCreateField = (field: string, value: string) => {
+    setCreateFieldValues((values) => ({ ...values, [field]: value }));
+  };
+  const touchCreateField = (field: string, value: string) => {
+    updateCreateField(field, value);
+    setCreateTouchedFields((fields) => ({ ...fields, [field]: true }));
+  };
+  const createFieldNeedsAttention = (field: string) => Boolean(createTouchedFields[field]) && !String(createFieldValues[field] ?? '').trim();
+  const createFieldClass = (field: string) => (createFieldNeedsAttention(field) ? 'create-field-missing' : undefined);
+  const createFieldHint = (field: string, label: string) => (
+    createFieldNeedsAttention(field) ? <span className="create-field-warning">{label} is empty. The job can still be created.</span> : null
+  );
+  const handleCreateSubmit = (event: FormEvent<HTMLFormElement>) => {
+    const form = new FormData(event.currentTarget);
+    const nextValues = Object.fromEntries([...createAttentionFields, 'email', 'technician'].map((field) => [field, String(form.get(field) ?? '')]));
+
+    setCreateFieldValues((values) => ({ ...values, ...nextValues }));
+    setCreateTouchedFields((fields) => ({
+      ...fields,
+      ...Object.fromEntries(createAttentionFields.map((field) => [field, true])),
+    }));
+    onCreateJob(event);
+  };
+
   if (openedJob) {
     return (
       <section className="job-detail-shell">
@@ -208,22 +237,45 @@ export function JobsPage({
   return (
     <section className="client-form-panel">
       <h1>Create Job</h1>
-      <form className="job-form" onSubmit={onCreateJob}>
+      {createCustomerMatches.length ? (
+        <div className="create-customer-matches">
+          <strong>Existing client found</strong>
+          <span>Click a client to fill company, name, phone, email and address.</span>
+          <div>
+            {createCustomerMatches.map((customer) => (
+              <button type="button" key={customer.id} onClick={() => applyCustomerToCreateForm(customer)}>
+                <b>{customer.primaryName || customer.organization || 'Unnamed client'}</b>
+                <small>{[customer.organization, customer.primaryPhone, customer.address].filter(Boolean).join(' • ')}</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      <form className="job-form" onSubmit={handleCreateSubmit}>
         <label>
           Job number
           <input name="jobNumber" defaultValue="Automatic" placeholder={selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber} />
         </label>
         <label>
           Company
-          <input name="organization" placeholder="Organization / Company" />
+          <div className="create-field-control">
+            <input name="organization" placeholder="Organization / Company" value={createFieldValues.organization ?? ''} className={createFieldClass('organization')} onChange={(event) => updateCreateField('organization', event.target.value)} onBlur={(event) => touchCreateField('organization', event.target.value)} />
+            {createFieldHint('organization', 'Company')}
+          </div>
         </label>
         <label>
           Issue description
-          <input name="issue" placeholder="Describe the issue" />
+          <div className="create-field-control">
+            <input name="issue" placeholder="Describe the issue" value={createFieldValues.issue ?? ''} className={createFieldClass('issue')} onChange={(event) => updateCreateField('issue', event.target.value)} onBlur={(event) => touchCreateField('issue', event.target.value)} />
+            {createFieldHint('issue', 'Issue description')}
+          </div>
         </label>
         <label>
           Client name
-          <input name="clientName" placeholder="Client name" />
+          <div className="create-field-control">
+            <input name="clientName" placeholder="Client name" value={createFieldValues.clientName ?? ''} className={createFieldClass('clientName')} onChange={(event) => updateCreateField('clientName', event.target.value)} onBlur={(event) => touchCreateField('clientName', event.target.value)} />
+            {createFieldHint('clientName', 'Client name')}
+          </div>
         </label>
         <label>
           System
@@ -238,7 +290,10 @@ export function JobsPage({
         </label>
         <label>
           Phone
-          <input name="phone" placeholder="Phone" />
+          <div className="create-field-control">
+            <input name="phone" placeholder="Phone" value={createFieldValues.phone ?? ''} className={createFieldClass('phone')} onChange={(event) => updateCreateField('phone', event.target.value)} onBlur={(event) => touchCreateField('phone', event.target.value)} />
+            {createFieldHint('phone', 'Phone')}
+          </div>
         </label>
         <label>
           SCF ($)
@@ -246,7 +301,7 @@ export function JobsPage({
         </label>
         <label>
           Email
-          <input name="email" type="email" placeholder="Email" />
+          <input name="email" type="email" placeholder="Email" value={createFieldValues.email ?? ''} onChange={(event) => updateCreateField('email', event.target.value)} onBlur={(event) => touchCreateField('email', event.target.value)} />
         </label>
         <label>
           Select technician
@@ -261,7 +316,10 @@ export function JobsPage({
         </label>
         <label>
           Address
-          <input name="address" placeholder="Address" />
+          <div className="create-field-control">
+            <input name="address" placeholder="Address" value={createFieldValues.address ?? ''} className={createFieldClass('address')} onChange={(event) => updateCreateField('address', event.target.value)} onBlur={(event) => touchCreateField('address', event.target.value)} />
+            {createFieldHint('address', 'Address')}
+          </div>
         </label>
         <label className="job-form-wide">
           Notes
@@ -309,7 +367,7 @@ export function AllJobsPage({
   currentPortalUser: { name: string; role: 'Manager' | 'Admin' | 'Technician' };
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
-  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onSaveMaterials: (jobOrJobNumber: JobCardData | string, rows: MaterialRow[]) => void | Promise<void>;
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;

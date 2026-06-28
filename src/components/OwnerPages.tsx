@@ -31,7 +31,7 @@ import {
   ticketStatusLabels,
 } from '../appLabels';
 import { plans } from '../services/billingCatalog';
-import { SYSTEM_OWNER_ID } from '../services/accessStore';
+import { ownerPageLabels, ownerPagePermissions, SYSTEM_OWNER_ID } from '../services/accessStore';
 import { filterAuditEvents } from '../services/auditStore';
 import { onboardingStepOrder } from '../services/tenantStore';
 import { money } from '../utils/format';
@@ -66,71 +66,189 @@ export function DashboardOverview({
   onOpenCompanies: () => void;
   onOpenSupport: () => void;
 }) {
-  const newestCompanies = companies.slice(0, 4);
-  const openTickets = supportTickets.filter((ticket) => ticket.status !== 'resolved').slice(0, 4);
+  const openTickets = supportTickets.filter((ticket) => ticket.status !== 'resolved');
+  const newTickets = supportTickets.filter((ticket) => ticket.status === 'new');
+  const urgentTickets = openTickets.filter((ticket) => ticket.priority === 'urgent');
+  const overdueCompanies = companies.filter((company) => company.billingStatus === 'overdue');
+  const trialCompanies = companies.filter((company) => company.status === 'trial' || company.billingStatus === 'trialing');
+  const activeCompanies = companies.filter((company) => company.status === 'active');
+  const setupCompanies = companies.filter((company) => company.status === 'setup');
+  const monthlyRevenue = companies.reduce((total, company) => total + (plans.find((plan) => plan.name === company.plan)?.price ?? 0), 0);
+  const storageUsed = companies.reduce((total, company) => total + company.usage.storageGb, 0);
+  const averageHealth = companies.length ? Math.round(companies.reduce((total, company) => total + company.health, 0) / companies.length) : 0;
+  const lowHealthCompanies = companies.filter((company) => company.health < 70);
+  const companyRows = [...companies].sort((left, right) => {
+    const leftRisk = (left.billingStatus === 'overdue' ? 3 : 0) + (left.health < 70 ? 2 : 0) + (left.status === 'setup' ? 1 : 0);
+    const rightRisk = (right.billingStatus === 'overdue' ? 3 : 0) + (right.health < 70 ? 2 : 0) + (right.status === 'setup' ? 1 : 0);
+    return rightRisk - leftRisk || left.name.localeCompare(right.name);
+  });
+  const recentTickets = supportTickets.slice(0, 5);
+  const actionItems = [
+    ...overdueCompanies.map((company) => ({
+      key: 'billing-' + company.id,
+      tone: 'danger',
+      title: company.name + ' payment overdue',
+      detail: billingLabels[company.billingStatus] + ' · ' + company.plan + ' plan · restore access after payment.',
+      meta: 'Billing',
+      action: onOpenCompanies,
+      actionLabel: 'Open company',
+    })),
+    ...newTickets.slice(0, 4).map((ticket) => ({
+      key: 'support-' + ticket.id,
+      tone: ticket.priority === 'urgent' ? 'danger' : 'warning',
+      title: ticket.companyName + ' — ' + ticket.subject,
+      detail: ticket.kind + ' · ' + ticket.priority + ' · ' + ticket.lastUpdate,
+      meta: 'New support',
+      action: onOpenSupport,
+      actionLabel: 'Open support',
+    })),
+    ...lowHealthCompanies.slice(0, 4).map((company) => ({
+      key: 'health-' + company.id,
+      tone: 'warning',
+      title: company.name + ' health is low',
+      detail: company.health + '% health · last sync ' + company.lastSync + '.',
+      meta: 'Monitoring',
+      action: onOpenCompanies,
+      actionLabel: 'Open company',
+    })),
+    ...setupCompanies.slice(0, 3).map((company) => ({
+      key: 'setup-' + company.id,
+      tone: 'neutral',
+      title: company.name + ' is still in setup',
+      detail: 'Owner access, billing, or first data may still need attention.',
+      meta: 'Setup',
+      action: onOpenCompanies,
+      actionLabel: 'Open company',
+    })),
+  ];
 
   return (
-    <div className="overview-grid">
-      <section className="panel overview-panel">
+    <div className="owner-command-center">
+      <section className="owner-kpi-grid" aria-label="Owner dashboard summary">
+        <MetricCard icon={<Building2 size={20} />} label="Companies" value={companies.length.toString()} detail={activeCompanies.length + ' active · ' + trialCompanies.length + ' trial'} />
+        <MetricCard icon={<CircleDollarSign size={20} />} label="MRR" value={money(monthlyRevenue) + '/mo'} detail={overdueCompanies.length ? overdueCompanies.length + ' payment risk' : 'No payment risk'} />
+        <MetricCard icon={<CreditCard size={20} />} label="Billing risk" value={overdueCompanies.length.toString()} detail={overdueCompanies.length ? 'Overdue tenants' : 'All accounts current'} />
+        <MetricCard icon={<Inbox size={20} />} label="New support" value={newTickets.length.toString()} detail={openTickets.length + ' open · ' + urgentTickets.length + ' urgent'} />
+        <MetricCard icon={<CheckCircle2 size={20} />} label="Health" value={averageHealth + '%'} detail={lowHealthCompanies.length ? lowHealthCompanies.length + ' tenant needs review' : 'Portfolio stable'} />
+        <MetricCard icon={<Database size={20} />} label="Storage" value={storageUsed.toFixed(1) + ' GB'} detail="Tenant document usage" />
+      </section>
+
+      <div className="owner-dashboard-main">
+        <section className="panel owner-actions-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Action required</p>
+              <h2>What needs attention</h2>
+            </div>
+            <span className={actionItems.length ? 'owner-action-count hot' : 'owner-action-count'}>{actionItems.length}</span>
+          </div>
+
+          {actionItems.length ? (
+            <div className="owner-action-list">
+              {actionItems.slice(0, 8).map((action) => (
+                <article className={'owner-action-card ' + action.tone} key={action.key}>
+                  <div className="owner-action-icon">
+                    {action.tone === 'danger' ? <AlertTriangle size={18} aria-hidden="true" /> : <ClipboardList size={18} aria-hidden="true" />}
+                  </div>
+                  <div>
+                    <span>{action.meta}</span>
+                    <h3>{action.title}</h3>
+                    <p>{action.detail}</p>
+                  </div>
+                  <button className="secondary-button compact" type="button" onClick={action.action}>
+                    {action.actionLabel}
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="empty-state compact-empty owner-clear-state">
+              <CheckCircle2 size={24} aria-hidden="true" />
+              <h3>No urgent actions</h3>
+              <p>Billing, support, and tenant health are clean right now.</p>
+            </div>
+          )}
+        </section>
+
+        <section className="panel owner-recent-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Recent activity</p>
+              <h2>Support stream</h2>
+            </div>
+            <button className="secondary-button compact" type="button" onClick={onOpenSupport}>Open support</button>
+          </div>
+          <div className="owner-recent-list">
+            {recentTickets.length ? (
+              recentTickets.map((ticket) => (
+                <button className="owner-recent-row" type="button" onClick={onOpenSupport} key={ticket.id}>
+                  <span className={'ticket-kind ' + ticket.kind}>{ticketKindLabels[ticket.kind]}</span>
+                  <div>
+                    <strong>{ticket.subject}</strong>
+                    <small>{ticket.companyName} · {ticketStatusLabels[ticket.status]} · {ticket.lastUpdate}</small>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <p className="quiet-line">No support activity yet.</p>
+            )}
+          </div>
+        </section>
+      </div>
+
+      <section className="panel owner-companies-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Tenant overview</p>
-            <h2>Companies</h2>
+            <p className="eyebrow">Tenant control</p>
+            <h2>Companies at a glance</h2>
           </div>
-          <button className="secondary-button compact" type="button" onClick={onOpenCompanies}>
-            Open
-          </button>
+          <button className="secondary-button compact" type="button" onClick={onOpenCompanies}>Open companies</button>
         </div>
-        <div className="overview-list">
-          {newestCompanies.length ? (
-            newestCompanies.map((company) => (
-              <div className="overview-row" key={company.id}>
-                <div className="company-main">
-                  <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
-                  <div>
-                    <h3>{company.name}</h3>
-                    <p>{company.plan} - {company.market}</p>
+
+        <div className="owner-company-table" role="table" aria-label="Company health and billing overview">
+          <div className="owner-company-row owner-company-head" role="row">
+            <span>Company</span>
+            <span>Plan</span>
+            <span>Billing</span>
+            <span>Support</span>
+            <span>Jobs</span>
+            <span>Health</span>
+            <span>Sync</span>
+            <span>Action</span>
+          </div>
+          {companyRows.length ? (
+            companyRows.map((company) => {
+              const companyOpenTickets = openTickets.filter((ticket) => ticket.companyId === company.id);
+              const companyNewTickets = companyOpenTickets.filter((ticket) => ticket.status === 'new');
+              return (
+                <div className="owner-company-row" role="row" key={company.id}>
+                  <div className="company-main">
+                    <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
+                    <div>
+                      <h3>{company.name}</h3>
+                      <p>{company.ownerName} · {company.market}</p>
+                    </div>
                   </div>
+                  <strong>{company.plan}</strong>
+                  <span className={'billing-pill ' + company.billingStatus}>{billingLabels[company.billingStatus]}</span>
+                  <button className={companyNewTickets.length ? 'owner-support-count hot' : 'owner-support-count'} type="button" onClick={onOpenSupport}>
+                    {companyNewTickets.length ? companyNewTickets.length + ' new' : companyOpenTickets.length + ' open'}
+                  </button>
+                  <strong>{company.openJobs}</strong>
+                  <div className="owner-health-cell">
+                    <strong>{company.health}%</strong>
+                    <div className="health-track"><span style={{ width: company.health + '%' }} /></div>
+                  </div>
+                  <span className="owner-sync-cell">{company.lastSync}</span>
+                  <button className="secondary-button compact" type="button" onClick={onOpenCompanies}>Open</button>
                 </div>
-                <StatusPill status={company.status} />
-              </div>
-            ))
+              );
+            })
           ) : (
-            <div className="empty-state compact-empty">
+            <div className="empty-state compact-empty owner-table-empty">
               <Building2 size={24} aria-hidden="true" />
               <h3>No companies yet</h3>
               <p>Add the first tenant from the Companies page.</p>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="panel overview-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Customer voice</p>
-            <h2>Support</h2>
-          </div>
-          <button className="secondary-button compact" type="button" onClick={onOpenSupport}>
-            Open
-          </button>
-        </div>
-        <div className="overview-list">
-          {openTickets.length ? (
-            openTickets.map((ticket) => (
-              <div className="overview-row support-summary" key={ticket.id}>
-                <div>
-                  <h3>{ticket.subject}</h3>
-                  <p>{ticket.companyName} - {ticketStatusLabels[ticket.status]}</p>
-                </div>
-                <span className={`ticket-priority ${ticket.priority}`}>{ticketPriorityLabels[ticket.priority]}</span>
-              </div>
-            ))
-          ) : (
-            <div className="empty-state compact-empty">
-              <CheckCircle2 size={24} aria-hidden="true" />
-              <h3>No open support</h3>
-              <p>Resolved requests stay out of the owner dashboard.</p>
             </div>
           )}
         </div>
@@ -349,6 +467,17 @@ export function BillingPage({
   const blockedStatuses: BillingStatus[] = ['overdue', 'not_started'];
   const billingRiskCompanies = companies.filter((company) => blockedStatuses.includes(company.billingStatus) || !hasAutopay(company));
   const revenueAtRisk = billingRiskCompanies.reduce((total, company) => total + getCompanyPlan(company).price, 0);
+  const [expandedBillingCompanyId, setExpandedBillingCompanyId] = useState(() => companies[0]?.id ?? '');
+  const getAccessProfile = (company: Company, autopayReady: boolean) => {
+    if (company.billingStatus === 'overdue') return { mode: 'stop' as const, label: 'Limited', note: 'Invoice, email, reports, dispatch changes and new job creation should stay limited until payment is current.', items: ['New jobs', 'Invoices', 'Email', 'Reports', 'Dispatch changes'], action: 'Collect payment and mark paid to restore access.' };
+    if (company.billingStatus === 'not_started') return { mode: 'setup' as const, label: 'Setup', note: 'Subscription is not started. Keep live customer functions limited before go-live.', items: ['Live jobs', 'Customer invoices', 'Email', 'Portal payments'], action: 'Start billing or move tenant to trialing/paid.' };
+    if (!autopayReady) return { mode: 'warn' as const, label: 'Autopay missing', note: 'A card is needed for automatic monthly billing.', items: ['Auto billing', 'Auto renewal', 'Go-live approval'], action: 'Ask admin to connect a subscription card.' };
+    return { mode: 'ok' as const, label: 'Full', note: 'Billing is healthy. No billing limits recommended.', items: ['No billing limits'], action: 'Monitor usage and health.' };
+  };
+  const getOnboardingProgress = (company: Company) => {
+    const steps = Object.values(company.onboarding);
+    return Math.round((steps.filter((step) => step === 'done').length / (steps.length || 1)) * 100);
+  };
 
   return (
     <div className="billing-page">
@@ -756,8 +885,7 @@ export function MonitoringPage({
               </div>
               <div className="monitoring-check-grid">
                 <span className={company.billingStatus === 'paid' ? 'ok' : 'bad'}>Billing: {billingLabels[company.billingStatus]}</span>
-                <span className={autopayReady ? 'ok' : 'bad'}>Autopay: {autopayReady ? 'On' : 'Missing'}</span>
-                <span className={completedSteps === onboardingStepOrder.length ? 'ok' : 'bad'}>Onboarding: {completedSteps}/4</span>
+                <span className={autopayReady ? 'ok' : 'bad'}>Autopay: {autopayReady ? 'On' : 'Missing'}</span>
                 <span className={storagePercent < 80 ? 'ok' : 'bad'}>Storage: {storagePercent}%</span>
               </div>
               <button className="secondary-button compact" type="button" onClick={() => onOpenCompany(company.id)}>
@@ -789,9 +917,11 @@ export function AccessPage({
   const [accessSearch, setAccessSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | PlatformUserRole>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | PlatformUserStatus>('all');
+  const roleOrder: PlatformUserRole[] = ['owner', 'admin', 'support', 'viewer'];
+  const pageKeys = Object.keys(ownerPageLabels) as Array<keyof typeof ownerPageLabels>;
   const filteredUsers = users.filter((user) => {
     const normalizedSearch = accessSearch.trim().toLowerCase();
-    const haystack = [user.name, user.email, platformRoleLabels[user.role], platformStatusLabels[user.status]]
+    const haystack = [user.name, user.email, platformRoleLabels[user.role], platformStatusLabels[user.status], ownerPagePermissions[user.role].map((page) => ownerPageLabels[page]).join(' ')]
       .join(' ')
       .toLowerCase();
     const matchesSearch = !normalizedSearch || haystack.includes(normalizedSearch);
@@ -803,53 +933,88 @@ export function AccessPage({
   const activeUsers = users.filter((user) => user.status === 'active').length;
   const invitedUsers = users.filter((user) => user.status === 'invited').length;
   const disabledUsers = users.filter((user) => user.status === 'disabled').length;
+  const ownersAndAdmins = users.filter((user) => user.status === 'active' && (user.role === 'owner' || user.role === 'admin')).length;
 
   return (
-    <div className="access-page">
+    <div className="access-command-center">
       <section className="access-summary">
-        <MetricCard icon={<Users size={20} />} label="Team users" value={users.length.toString()} detail="Owner console access" />
+        <MetricCard icon={<Users size={20} />} label="Team users" value={users.length.toString()} detail="Owner console accounts" />
         <MetricCard icon={<CheckCircle2 size={20} />} label="Active" value={activeUsers.toString()} detail="Can sign in" />
-        <MetricCard icon={<UserPlus size={20} />} label="Invited" value={invitedUsers.toString()} detail="Pending setup" />
-        <MetricCard icon={<ShieldCheck size={20} />} label="Disabled" value={disabledUsers.toString()} detail="Access blocked" />
+        <MetricCard icon={<ShieldCheck size={20} />} label="Admins" value={ownersAndAdmins.toString()} detail="Owner/Admin access" />
+        <MetricCard icon={<UserPlus size={20} />} label="Invited" value={invitedUsers.toString()} detail={disabledUsers + ' disabled'} />
       </section>
 
-      <section className="panel invite-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Platform team</p>
-            <h2>Invite user</h2>
+      <div className="access-main-grid">
+        <section className="panel invite-panel access-invite-card">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Platform team</p>
+              <h2>Add user</h2>
+            </div>
+            <UserPlus size={20} aria-hidden="true" />
           </div>
-          <UserPlus size={20} aria-hidden="true" />
-        </div>
-        <form className="access-form" onSubmit={onInvite}>
-          <label>
-            Name
-            <input value={form.name} onChange={(event) => onFormChange({ ...form, name: event.target.value })} placeholder="Taylor Smith" />
-          </label>
-          <label>
-            Email
-            <input type="email" value={form.email} onChange={(event) => onFormChange({ ...form, email: event.target.value })} placeholder="taylor@servicescope.app" />
-          </label>
-          <label>
-            Role
-            <select value={form.role} onChange={(event) => onFormChange({ ...form, role: event.target.value as PlatformUserRole })}>
-              <option value="support">Support</option>
-              <option value="admin">Admin</option>
-              <option value="viewer">Viewer</option>
-            </select>
-          </label>
-          <button className="primary-button" type="submit">
-            <UserPlus size={18} aria-hidden="true" />
-            Add user
-          </button>
-        </form>
-      </section>
+          <form className="access-form" onSubmit={onInvite}>
+            <label>
+              Name
+              <input value={form.name} onChange={(event) => onFormChange({ ...form, name: event.target.value })} placeholder="Taylor Smith" />
+            </label>
+            <label>
+              Email
+              <input type="email" value={form.email} onChange={(event) => onFormChange({ ...form, email: event.target.value })} placeholder="taylor@servicescope.app" />
+            </label>
+            <label>
+              Role
+              <select value={form.role} onChange={(event) => onFormChange({ ...form, role: event.target.value as PlatformUserRole })}>
+                <option value="support">Support</option>
+                <option value="admin">Admin</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </label>
+            <div className="role-preview-box">
+              <span>Page access for {platformRoleLabels[form.role]}</span>
+              <div className="page-chip-list">
+                {ownerPagePermissions[form.role].map((page) => <b key={page}>{ownerPageLabels[page]}</b>)}
+              </div>
+            </div>
+            <button className="primary-button" type="submit">
+              <UserPlus size={18} aria-hidden="true" />
+              Add user
+            </button>
+          </form>
+        </section>
 
-      <section className="panel users-panel">
+        <section className="panel access-matrix-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Page permissions</p>
+              <h2>Access by role</h2>
+            </div>
+            <ShieldCheck size={20} aria-hidden="true" />
+          </div>
+          <div className="access-role-matrix">
+            <div className="access-role-row access-role-head">
+              <span>Role</span>
+              {pageKeys.map((page) => <span key={page}>{ownerPageLabels[page]}</span>)}
+            </div>
+            {roleOrder.map((role) => (
+              <div className="access-role-row" key={role}>
+                <strong>{platformRoleLabels[role]}</strong>
+                {pageKeys.map((page) => {
+                  const allowed = ownerPagePermissions[role].includes(page);
+                  return <span className={allowed ? 'permission-dot allowed' : 'permission-dot denied'} key={page}>{allowed ? '✓' : '—'}</span>;
+                })}
+              </div>
+            ))}
+          </div>
+          <p className="access-note">Role controls which owner pages appear in the sidebar and which hash routes can be opened.</p>
+        </section>
+      </div>
+
+      <section className="panel users-panel access-users-panel">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">RBAC</p>
-            <h2>Users</h2>
+            <h2>Users and page access</h2>
           </div>
           <Users size={20} aria-hidden="true" />
         </div>
@@ -857,7 +1022,7 @@ export function AccessPage({
         <div className="access-filter-grid">
           <label>
             Search
-            <input value={accessSearch} onChange={(event) => setAccessSearch(event.target.value)} placeholder="Name or email" />
+            <input value={accessSearch} onChange={(event) => setAccessSearch(event.target.value)} placeholder="Name, email, role, page" />
           </label>
           <label>
             Role
@@ -891,12 +1056,13 @@ export function AccessPage({
           </button>
         </div>
 
-        <div className="user-list">
+        <div className="user-list access-user-list">
           {filteredUsers.map((user) => {
             const lockedOwner = user.id === SYSTEM_OWNER_ID;
+            const pages = ownerPagePermissions[user.role];
 
             return (
-              <article className={`user-row ${lockedOwner ? 'locked-owner' : ''}`} key={user.id}>
+              <article className={`user-row access-user-row ${lockedOwner ? 'locked-owner' : ''}`} key={user.id}>
                 <div className="company-main">
                   <div className="company-avatar">{user.name.slice(0, 2).toUpperCase()}</div>
                   <div>
@@ -927,6 +1093,12 @@ export function AccessPage({
                       <option value="disabled">Disabled</option>
                     </select>
                   )}
+                </div>
+                <div className="access-page-cell">
+                  <span>Pages</span>
+                  <div className="page-chip-list compact">
+                    {pages.map((page) => <b key={page}>{ownerPageLabels[page]}</b>)}
+                  </div>
                 </div>
                 <div className="billing-cell">
                   <span>Last active</span>
@@ -975,6 +1147,26 @@ export function SupportPanel({
   onSendReply: (ticketId: string) => void;
 }) {
   const selectedCompany = companies.find((company) => company.id === form.companyId);
+  const [selectedSupportCompanyId, setSelectedSupportCompanyId] = useState(() => selectedTicket?.companyId ?? form.companyId ?? companies[0]?.id ?? '');
+  const supportCompanyRows = companies.map((company) => {
+    const rows = tickets.filter((ticket) => ticket.companyId === company.id);
+    return {
+      company,
+      tickets: rows,
+      openCount: rows.filter((ticket) => ticket.status !== 'resolved').length,
+      newCount: rows.filter((ticket) => ticket.status === 'new').length,
+      urgentCount: rows.filter((ticket) => ticket.priority === 'urgent' && ticket.status !== 'resolved').length,
+      lastUpdate: rows[0]?.lastUpdate ?? 'No requests',
+    };
+  });
+  const selectedSupportCompany = supportCompanyRows.find((row) => row.company.id === selectedSupportCompanyId) ?? supportCompanyRows[0];
+  const selectedCompanyTickets = selectedSupportCompany?.tickets ?? [];
+  const activeSupportTicket = selectedTicket && selectedTicket['companyId'] === selectedSupportCompany?.company.id ? selectedTicket : selectedCompanyTickets[0];
+  function openSupportCompany(companyId: string) {
+    setSelectedSupportCompanyId(companyId);
+    const firstTicket = tickets.find((ticket) => ticket.companyId === companyId);
+    if (firstTicket) onSelectTicket(firstTicket.id);
+  }
 
   function selectCompany(companyId: string) {
     const company = companies.find((candidate) => candidate.id === companyId);
@@ -997,62 +1189,32 @@ export function SupportPanel({
       </div>
 
       <div className="support-layout">
-        <form className="support-form" onSubmit={onSubmit}>
-          <label>
-            Company
-            <select value={form.companyId} onChange={(event) => selectCompany(event.target.value)}>
-              {companies.map((company) => (
-                <option value={company.id} key={company.id}>
-                  {company.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="form-row">
-            <label>
-              Type
-              <select value={form.kind} onChange={(event) => onFormChange({ ...form, kind: event.target.value as SupportTicketKind })}>
-                <option value="bug">Bug</option>
-                <option value="change">Change</option>
-                <option value="question">Question</option>
-              </select>
-            </label>
-            <label>
-              Priority
-              <select value={form.priority} onChange={(event) => onFormChange({ ...form, priority: event.target.value as SupportTicketPriority })}>
-                <option value="normal">Normal</option>
-                <option value="urgent">Urgent</option>
-                <option value="low">Low</option>
-              </select>
-            </label>
+        <aside className="support-company-sidebar">
+          <div className="support-company-heading">
+            <div>
+              <p className="eyebrow">Support by company</p>
+              <h3>Company windows</h3>
+              <p>Each company has its own support window. New requests show a red badge.</p>
+            </div>
+            <span className="support-total-badge">{tickets.filter((ticket) => ticket.status === 'new').length}</span>
           </div>
-          <label>
-            From
-            <input value={form.authorName} onChange={(event) => onFormChange({ ...form, authorName: event.target.value })} placeholder={selectedCompany?.ownerName ?? 'Company owner'} />
-          </label>
-          <label>
-            Reply email
-            <input type="email" value={form.authorEmail} onChange={(event) => onFormChange({ ...form, authorEmail: event.target.value })} placeholder={selectedCompany?.ownerEmail ?? 'Reply email'} />
-          </label>
-          <label>
-            Subject
-            <input value={form.subject} onChange={(event) => onFormChange({ ...form, subject: event.target.value })} placeholder="What should change?" />
-          </label>
-          <label>
-            Message
-            <textarea value={form.message} onChange={(event) => onFormChange({ ...form, message: event.target.value })} placeholder="Describe the bug, missing feature, or request." />
-          </label>
-          <button className="primary-button" type="submit">
-            <MailPlus size={18} aria-hidden="true" />
-            Send to owner
-          </button>
-        </form>
+          <div className="support-company-list">
+            {supportCompanyRows.map((row) => (
+              <button className={`support-company-card ${row.company.id === selectedSupportCompany?.company.id ? 'active' : ''}`} type="button" key={row.company.id} onClick={() => openSupportCompany(row.company.id)}>
+                <span className="company-avatar small-avatar">{row.company.name.slice(0, 2).toUpperCase()}</span>
+                <span><strong>{row.company.name}</strong><small>{row.openCount} open · {row.lastUpdate}</small></span>
+                {row.newCount ? <b>{row.newCount}</b> : null}
+                {row.urgentCount ? <em>{row.urgentCount} urgent</em> : null}
+              </button>
+            ))}
+          </div>
+        </aside>
 
         <div className="ticket-workspace">
           <div className="ticket-list">
-            {tickets.map((ticket) => (
+            {selectedCompanyTickets.map((ticket) => (
               <button
-                className={`ticket-card ${ticket.priority} ${ticket.id === selectedTicket?.id ? 'selected' : ''}`}
+                className={`ticket-card ${ticket.priority} ${ticket.id === activeSupportTicket?.id ? 'selected' : ''}`}
                 key={ticket.id}
                 type="button"
                 onClick={() => onSelectTicket(ticket.id)}
@@ -1075,14 +1237,14 @@ export function SupportPanel({
             ))}
           </div>
 
-          {selectedTicket ? (
+          {activeSupportTicket ? (
             <article className="thread-panel">
               <div className="thread-header">
                 <div>
-                  <p className="eyebrow">{selectedTicket.companyName}</p>
-                  <h3>{selectedTicket.subject}</h3>
+                  <p className="eyebrow">{activeSupportTicket.companyName}</p>
+                  <h3>{activeSupportTicket.subject}</h3>
                 </div>
-                <select value={selectedTicket.status} onChange={(event) => onStatusChange(selectedTicket.id, event.target.value as SupportTicketStatus)} aria-label={`Status for ${selectedTicket.subject}`}>
+                <select value={activeSupportTicket.status} onChange={(event) => onStatusChange(activeSupportTicket.id, event.target.value as SupportTicketStatus)} aria-label={`Status for ${activeSupportTicket.subject}`}>
                   <option value="new">New</option>
                   <option value="reviewing">Reviewing</option>
                   <option value="planned">Planned</option>
@@ -1091,7 +1253,7 @@ export function SupportPanel({
               </div>
 
               <div className="message-list">
-                {selectedTicket.messages.map((message) => (
+                {activeSupportTicket.messages.map((message) => (
                   <div className={`support-message ${message.author}`} key={message.id}>
                     <div>
                       <strong>{message.authorName}</strong>
@@ -1107,7 +1269,7 @@ export function SupportPanel({
                   Owner reply
                   <textarea value={replyText} onChange={(event) => onReplyTextChange(event.target.value)} placeholder="Write an answer or next step for the company." />
                 </label>
-                <button className="secondary-button" type="button" onClick={() => onSendReply(selectedTicket.id)}>
+                <button className="secondary-button" type="button" onClick={() => onSendReply(activeSupportTicket.id)}>
                   Send reply
                 </button>
               </div>
@@ -1145,7 +1307,7 @@ export function CompanyRow({
         <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
         <div>
           <h3>{company.name}</h3>
-          <p>{company.ownerName} - {company.market}</p>
+          <p>{[company.ownerName, company.phone, company.market].filter(Boolean).join(' - ')}</p>
         </div>
       </div>
       <StatusPill status={company.status} />
@@ -1305,12 +1467,7 @@ export function CompanyDetail({
         ) : (
           <p className="quiet-line">No active owner actions.</p>
         )}
-      </section>
-
-      <button className="secondary-button" type="button" onClick={onPrepareNext} disabled={readyToLaunch}>
-        {readyToLaunch ? <Rocket size={17} aria-hidden="true" /> : <ServerCog size={17} aria-hidden="true" />}
-        {readyToLaunch ? 'Workspace ready' : 'Prepare next step'}
-      </button>
+      </section>
     </aside>
   );
 }

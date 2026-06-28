@@ -72,7 +72,9 @@ if (!app.includes('Company phone')) {
   );
 }
 app = app.replace('    const nextProfile = createDefaultCompanyOnboardingProfile(nextCompany);', "    const nextProfile = { ...createDefaultCompanyOnboardingProfile(nextCompany), phone: form.phone ?? '' };");
-app = app.replace('        <div className="content-grid">', '        <>\n        <div className="content-grid companies-list-only">');
+if (!app.includes('companies-list-only')) {
+  app = app.replace('        <div className="content-grid">', '        <>\n        <div className="content-grid companies-list-only">');
+}
 const detailBlock = `
           {selectedCompany ? (
             <CompanyDetail
@@ -103,7 +105,17 @@ const modalBlock = `
         ) : null}
         </>
 `;
-if (app.includes(detailBlock)) app = app.replace(detailBlock, modalBlock);
+if (app.includes(detailBlock)) {
+  app = app.replace(detailBlock, modalBlock);
+} else if (app.includes('companies-list-only') && !app.includes('company-detail-modal-backdrop')) {
+  const companiesGridStart = app.indexOf('<div className="content-grid companies-list-only">');
+  const selectedCompanyStart = app.indexOf('{selectedCompany ? (', companiesGridStart);
+  const selectedCompanyEnd = selectedCompanyStart === -1 ? -1 : app.indexOf('\n        </div>', selectedCompanyStart);
+
+  if (selectedCompanyStart !== -1 && selectedCompanyEnd !== -1) {
+    app = app.slice(0, selectedCompanyStart) + modalBlock.trimStart() + app.slice(selectedCompanyEnd + '\n        </div>'.length);
+  }
+}
 write(files.app, app);
 
 let owner = read(files.owner);

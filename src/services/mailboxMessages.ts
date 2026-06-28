@@ -1,5 +1,5 @@
 import type { EmailMessage } from '../appTypes';
-import { getSupabaseAccessToken, isSupabaseConfigured, sqlEq, supabaseRequest } from './supabaseRest';
+import { getSupabaseAccessToken, getSupabasePublicStorageUrl, isSupabaseConfigured, sqlEq, supabaseRequest } from './supabaseRest';
 
 type ViteEnv = {
   VITE_SUPABASE_URL?: string;
@@ -84,7 +84,7 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
   const messageIds = rows.map((row) => row.id);
   const attachments = messageIds.length
     ? await supabaseRequest<DbEmailAttachment[]>(
-        `email_message_attachments?select=id,email_message_id,file_name,mime_type,size_bytes,content_base64,content_id,is_inline&company_id=${sqlEq(companyId)}&email_message_id=${sqlIn(messageIds)}&limit=200`,
+        `email_message_attachments?select=id,email_message_id,file_name,mime_type,size_bytes,content_base64,content_id,gmail_attachment_id,storage_bucket,storage_path,is_inline&company_id=${sqlEq(companyId)}&email_message_id=${sqlIn(messageIds)}&limit=200`,
         { select: true },
       )
     : [];

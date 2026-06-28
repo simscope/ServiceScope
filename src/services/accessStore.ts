@@ -12,14 +12,15 @@ export const ownerPageLabels: Record<OwnerPagePermission, string> = {
   companies: 'Companies',
   monitoring: 'Monitoring',
   billing: 'Billing',
+  companyAccess: 'Company Access',
   access: 'Access',
   audit: 'Audit',
   support: 'Support',
 };
 
 export const ownerPagePermissions: Record<PlatformUserRole, OwnerPagePermission[]> = {
-  owner: ['dashboard', 'companies', 'monitoring', 'billing', 'access', 'audit', 'support'],
-  admin: ['dashboard', 'companies', 'monitoring', 'billing', 'audit', 'support'],
+  owner: ['dashboard', 'companies', 'monitoring', 'billing', 'companyAccess', 'access', 'audit', 'support'],
+  admin: ['dashboard', 'companies', 'monitoring', 'billing', 'companyAccess', 'audit', 'support'],
   support: ['dashboard', 'monitoring', 'audit', 'support'],
   viewer: ['dashboard', 'companies', 'monitoring', 'audit'],
 };
@@ -36,8 +37,8 @@ const platformUsersSeed: PlatformUser[] = [
 ];
 
 export const rolePermissions: Record<PlatformUserRole, string[]> = {
-  owner: ['All owner pages', 'Billing', 'Access management', 'Audit log', 'Support', 'Tenant control'],
-  admin: ['Dashboard', 'Companies', 'Monitoring', 'Billing', 'Audit', 'Support'],
+  owner: ['All owner pages', 'Company access control', 'Billing', 'Access management', 'Audit log', 'Support', 'Tenant control'],
+  admin: ['Dashboard', 'Companies', 'Monitoring', 'Billing', 'Company access control', 'Audit', 'Support'],
   support: ['Dashboard', 'Monitoring', 'Audit', 'Support inbox'],
   viewer: ['Dashboard', 'Companies', 'Monitoring', 'Audit read-only'],
 };

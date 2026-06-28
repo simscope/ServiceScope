@@ -33,6 +33,7 @@ export type Company = {
   id: string;
   name: string;
   ownerName: string;
+  phone: string;
   ownerEmail: string;
   temporaryPassword: string;
   domain: string;
@@ -74,7 +75,7 @@ export type PlanDefinition = {
 
 export type NewCompanyForm = Pick<
   Company,
-  'name' | 'ownerName' | 'ownerEmail' | 'temporaryPassword' | 'domain' | 'market' | 'plan' | 'status'
+  'name' | 'ownerName' | 'phone' | 'ownerEmail' | 'temporaryPassword' | 'domain' | 'market' | 'plan' | 'status'
 >;
 
 export type SupportTicket = {

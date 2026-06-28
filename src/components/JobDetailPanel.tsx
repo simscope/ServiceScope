@@ -22,7 +22,7 @@ type JobDetailPanelProps = {
   };
   onClose: () => void;
   onSave: (job: JobCardData) => void;
-  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void | Promise<void>;
+  onSaveMaterials: (jobOrJobNumber: JobCardData | string, rows: MaterialRow[]) => void | Promise<void>;
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice?: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail?: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
@@ -223,6 +223,9 @@ export function JobDetailPanel({
   const [saved, setSaved] = useState(false);
   const [materialsSaved, setMaterialsSaved] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [previewAttachment, setPreviewAttachment] = useState<JobAttachment | null>(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);
   const [invoiceStatus, setInvoiceStatus] = useState('');
   const [invoiceEditorOpen, setInvoiceEditorOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
@@ -246,6 +249,9 @@ export function JobDetailPanel({
   const invoices = draft.invoices ?? [];
   const selectedInvoices = invoices.filter((invoice) => selectedInvoiceIds.includes(invoice.id));
   const allInvoicesSelected = invoices.length > 0 && selectedInvoiceIds.length === invoices.length;
+  const attachments = draft.attachments ?? [];
+  const selectedAttachments = attachments.filter((attachment) => selectedAttachmentIds.includes(attachment.id));
+  const allAttachmentsSelected = attachments.length > 0 && selectedAttachments.length === attachments.length;
 
   useEffect(() => {
     setDraft(job);
@@ -319,11 +325,23 @@ export function JobDetailPanel({
       })),
     );
 
-    updateDraft({ attachments: [...(draft.attachments ?? []), ...attachments] });
+    const nextJob = {
+      ...draft,
+      attachments: [...(draft.attachments ?? []), ...attachments],
+    };
+
+    setDraft(nextJob);
+    setSaved(false);
+    onSave(nextJob);
   }
 
   function removeAttachment(attachmentId: string) {
     updateDraft({ attachments: (draft.attachments ?? []).filter((attachment) => attachment.id !== attachmentId) });
+  }
+
+  function closeAttachmentPreview() {
+    setPreviewAttachment(null);
+    setPreviewUrl('');
   }
 
   function updateMaterial(rowId: string, patch: Partial<MaterialRow>) {
@@ -1032,6 +1050,25 @@ export function JobDetailPanel({
           <span>{saved ? 'Saved' : 'Upload files, then save the job'}</span>
         </div>
       </section>
+
+      {previewAttachment && previewUrl ? (
+        <div className="email-message-modal-backdrop" role="dialog" aria-modal="true" onClick={closeAttachmentPreview}>
+          <section className="email-message-modal job-attachment-preview-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="email-message-modal-toolbar">
+              <div>
+                <p className="eyebrow">Attachment preview</p>
+                <h2>{previewAttachment.name}</h2>
+              </div>
+              <button className="secondary-button compact" type="button" onClick={closeAttachmentPreview}>Close</button>
+            </div>
+            {previewAttachment.kind === 'photo' ? (
+              <img className="job-attachment-preview-image" src={previewUrl} alt={previewAttachment.name} />
+            ) : (
+              <iframe className="job-attachment-preview-frame" src={previewUrl} title={previewAttachment.name} />
+            )}
+          </section>
+        </div>
+      ) : null}
 
       {invoiceEditorOpen ? (
         <div className="email-message-modal-backdrop" role="dialog" aria-modal="true">
