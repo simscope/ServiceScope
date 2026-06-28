@@ -10,44 +10,128 @@ const cssPath = path.join(root, 'src/styles/responsive.css');
 function read(filePath) { return fs.readFileSync(filePath, 'utf8'); }
 function write(filePath, content) { fs.writeFileSync(filePath, content); }
 
-let store = read(supportStorePath);
-if (!store.includes('function supportTimestamp')) {
-  store = store.replace(
-    "const SUPPORT_STORAGE_KEY = 'servicescope.supportTickets';",
-    `const SUPPORT_STORAGE_KEY = 'servicescope.supportTickets';
-
-function supportTimestamp(date = new Date()) {
-  return date.toLocaleString('en-US', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}`,
-  );
-}
-store = store.replace("createdAt: ticket.createdAt ?? new Date().toLocaleDateString('en-US')", "createdAt: ticket.createdAt ?? supportTimestamp()");
-store = store.replace("lastUpdate: ticket.lastUpdate ?? 'Just now'", "lastUpdate: ticket.lastUpdate ?? ticket.createdAt ?? supportTimestamp()");
-store = store.replace("createdAt: ticket.createdAt ?? 'Just now'", "createdAt: ticket.createdAt ?? supportTimestamp()");
-store = store.replace("const createdAt = new Date().toLocaleDateString('en-US');", "const createdAt = supportTimestamp();");
-store = store.replace(/createdAt: 'Just now'/g, 'createdAt: supportTimestamp()');
-store = store.replace(/lastUpdate: 'Just now'/g, 'lastUpdate: supportTimestamp()');
-if (!store.includes('const createdAt = supportTimestamp();\n\n  return {') && store.includes('export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {\n  return {')) {
-  store = store.replace(
-    "export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {\n  return {",
-    "export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {\n  const createdAt = supportTimestamp();\n\n  return {",
-  );
-}
-store = store.replace(
-  /export function addOwnerReply\(ticket: SupportTicket, body: string\): SupportTicket \{[\s\S]*?lastUpdate: supportTimestamp\(\),/,
-  (match) => match.replace('lastUpdate: supportTimestamp(),', 'lastUpdate: createdAt,'),
-);
-store = store.replace(
-  /export function addOwnerReply\(ticket: SupportTicket, body: string\): SupportTicket \{[\s\S]*?createdAt: supportTimestamp\(\),/,
-  (match) => match.replace('createdAt: supportTimestamp(),', 'createdAt,'),
-);
-write(supportStorePath, store);
+const supportStoreSource = [
+  "import type { Company, NewSupportTicketForm, SupportTicket, SupportTicketStatus } from '../types';",
+  '',
+  "const SUPPORT_STORAGE_KEY = 'servicescope.supportTickets';",
+  '',
+  'function supportTimestamp(date = new Date()) {',
+  "  return date.toLocaleString('en-US', {",
+  "    year: 'numeric',",
+  "    month: '2-digit',",
+  "    day: '2-digit',",
+  "    hour: '2-digit',",
+  "    minute: '2-digit',",
+  '  });',
+  '}',
+  '',
+  'function readStoredTickets() {',
+  "  if (typeof window === 'undefined') return [] as SupportTicket[];",
+  '',
+  '  const saved = window.localStorage.getItem(SUPPORT_STORAGE_KEY);',
+  '  if (!saved) return [] as SupportTicket[];',
+  '',
+  '  try {',
+  '    const parsed = JSON.parse(saved);',
+  '    return Array.isArray(parsed) ? parsed as SupportTicket[] : [];',
+  '  } catch {',
+  '    return [] as SupportTicket[];',
+  '  }',
+  '}',
+  '',
+  'function normalizeTicket(ticket: Partial<SupportTicket>, companies: Company[]): SupportTicket {',
+  '  const company = companies.find((candidate) => candidate.id === ticket.companyId) ?? companies[0];',
+  '  const timestamp = ticket.createdAt ?? supportTimestamp();',
+  '',
+  '  return {',
+  '    id: ticket.id ?? crypto.randomUUID(),',
+  "    companyId: ticket.companyId ?? company?.id ?? '',",
+  "    companyName: ticket.companyName ?? company?.name ?? 'Unknown company',",
+  "    authorName: ticket.authorName ?? company?.ownerName ?? 'Customer',",
+  "    authorEmail: ticket.authorEmail ?? company?.ownerEmail ?? '',",
+  "    kind: ticket.kind ?? 'question',",
+  "    priority: ticket.priority ?? 'normal',",
+  "    status: ticket.status ?? 'new',",
+  "    subject: ticket.subject ?? 'Support request',",
+  "    message: ticket.message ?? '',",
+  '    createdAt: timestamp,',
+  '    lastUpdate: ticket.lastUpdate ?? timestamp,',
+  '    messages: ticket.messages?.length ? ticket.messages : [',
+  '      {',
+  '        id: crypto.randomUUID(),',
+  "        author: 'company',",
+  "        authorName: ticket.authorName ?? company?.ownerName ?? 'Customer',",
+  "        body: ticket.message ?? '',",
+  '        createdAt: timestamp,',
+  '      },',
+  '    ],',
+  '  };',
+  '}',
+  '',
+  'export function listSupportTickets(companies: Company[]): SupportTicket[] {',
+  '  return readStoredTickets().map((ticket) => normalizeTicket(ticket, companies));',
+  '}',
+  '',
+  'export function saveSupportTickets(tickets: SupportTicket[]) {',
+  "  if (typeof window === 'undefined') return;",
+  '  window.localStorage.setItem(SUPPORT_STORAGE_KEY, JSON.stringify(tickets));',
+  '}',
+  '',
+  'export function createSupportTicket(form: NewSupportTicketForm, companies: Company[]): SupportTicket {',
+  '  const company = companies.find((candidate) => candidate.id === form.companyId);',
+  '  const createdAt = supportTimestamp();',
+  '',
+  '  return {',
+  '    id: crypto.randomUUID(),',
+  '    ...form,',
+  "    companyName: company?.name ?? 'Unknown company',",
+  "    status: 'new',",
+  '    createdAt,',
+  '    lastUpdate: createdAt,',
+  '    messages: [',
+  '      {',
+  '        id: crypto.randomUUID(),',
+  "        author: 'company',",
+  '        authorName: form.authorName,',
+  '        body: form.message,',
+  '        createdAt,',
+  '      },',
+  '    ],',
+  '  };',
+  '}',
+  '',
+  'export function updateSupportTicketStatus(ticket: SupportTicket, status: SupportTicketStatus): SupportTicket {',
+  '  const updatedAt = supportTimestamp();',
+  '',
+  '  return {',
+  '    ...ticket,',
+  '    status,',
+  '    lastUpdate: updatedAt,',
+  '  };',
+  '}',
+  '',
+  'export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {',
+  '  const createdAt = supportTimestamp();',
+  '',
+  '  return {',
+  '    ...ticket,',
+  "    status: ticket.status === 'new' ? 'reviewing' : ticket.status,",
+  '    lastUpdate: createdAt,',
+  '    messages: [',
+  '      ...ticket.messages,',
+  '      {',
+  '        id: crypto.randomUUID(),',
+  "        author: 'owner',",
+  "        authorName: 'ServiceScope Support',",
+  '        body,',
+  '        createdAt,',
+  '      },',
+  '    ],',
+  '  };',
+  '}',
+  '',
+].join('\n');
+write(supportStorePath, supportStoreSource);
 
 let app = read(appPath);
 if (!app.includes('syncSupportTicketsFromStorage')) {
