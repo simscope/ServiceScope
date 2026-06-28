@@ -181,7 +181,7 @@ export function CalendarPage({
               type="button"
               draggable
               onDragStart={(event) => onCalendarDragStart(event, job.jobNumber)}
-              onDoubleClick={() => onOpenJob(job)}
+              onClick={() => onOpenJob(job)}
               key={job.jobNumber}
             >
               <strong>#{job.jobNumber} - {job.organization}</strong>
@@ -226,7 +226,7 @@ export function CalendarPage({
                     type="button"
                     draggable
                     onDragStart={(event) => onCalendarDragStart(event, job.jobNumber)}
-                    onDoubleClick={() => onOpenJob(job)}
+                    onClick={() => onOpenJob(job)}
                     key={job.jobNumber}
                   >
                     #{job.jobNumber} {job.organization}
@@ -297,7 +297,7 @@ export function CalendarPage({
                         height: `${Math.max(54, (job.durationMinutes / 60) * 64 - 10)}px`,
                       }}
                       onDragStart={(event) => onCalendarDragStart(event, job.jobNumber)}
-                      onDoubleClick={() => onOpenJob(job)}
+                      onClick={() => onOpenJob(job)}
                       key={job.jobNumber}
                     >
                       <span>{calendarDropSlots.find((slot) => slot.key === job.time)?.label ?? job.time}</span>
@@ -306,12 +306,18 @@ export function CalendarPage({
                       <em>{job.technician}</em>
                       <span
                         className="calendar-resize-handle start"
-                        onPointerDown={(event) => onCalendarResizeStart(event, job, 'start')}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          onCalendarResizeStart(event, job, 'start');
+                        }}
                         aria-label={`Resize start of job ${job.jobNumber}`}
                       />
                       <span
                         className="calendar-resize-handle end"
-                        onPointerDown={(event) => onCalendarResizeStart(event, job, 'end')}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          onCalendarResizeStart(event, job, 'end');
+                        }}
                         aria-label={`Resize end of job ${job.jobNumber}`}
                       />
                     </button>
