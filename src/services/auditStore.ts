@@ -115,7 +115,7 @@ async function persistAuditEventsToBackend(events: AuditEvent[]) {
 
   await supabaseRequest('audit_events?on_conflict=id', {
     method: 'POST',
-    prefer: 'resolution=merge-duplicates,return=minimal',
+    prefer: 'resolution=ignore-duplicates,return=minimal',
     body: events.map(eventToRow),
   });
 }
