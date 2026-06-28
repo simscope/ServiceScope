@@ -19,9 +19,21 @@ export function companyPatchForAccessMode(mode: CompanyAccessMode): Partial<Pick
 }
 
 const rules: Record<CompanyAccessMode, { label: string; allowed: string[]; blocked: string[] }> = {
-  full: { label: 'Full access', allowed: ['Jobs', 'Calendar', 'Materials', 'Email', 'Invoices', 'Uploads', 'Library', 'Finance'], blocked: [] },
-  limited: { label: 'Limited access', allowed: ['Dashboard', 'Billing', 'Support', 'Read-only data'], blocked: ['Create jobs', 'Edit jobs', 'Send email', 'Invoices', 'Uploads', 'Materials save'] },
-  locked: { label: 'Locked', allowed: ['Billing', 'Support', 'Read-only data'], blocked: ['Create/edit jobs', 'Send email', 'Invoices', 'Uploads', 'Library changes', 'Technician access'] },
+  full: {
+    label: 'Full access',
+    allowed: ['Jobs', 'All Jobs', 'Calendar', 'Materials', 'Tasks', 'Map', 'Email', 'Finance', 'Library', 'Portal support'],
+    blocked: [],
+  },
+  limited: {
+    label: 'Limited access',
+    allowed: ['Portal support', 'Finance view', 'Jobs view', 'All Jobs view', 'Map view', 'Library view'],
+    blocked: ['Create jobs', 'Edit jobs', 'Move calendar', 'Save materials', 'Create tasks', 'Send email', 'Create invoices', 'Upload files'],
+  },
+  locked: {
+    label: 'Locked',
+    allowed: ['Portal support', 'Finance view', 'Read-only jobs'],
+    blocked: ['Create/edit jobs', 'Move calendar', 'Save materials', 'Create tasks', 'Send email', 'Create invoices', 'Upload files', 'Library changes', 'Technician access'],
+  },
 };
 
 export function CompanyAccessPage({ companies, onChangeCompanyAccess }: { companies: Company[]; onChangeCompanyAccess: (companyId: string, mode: CompanyAccessMode) => void }) {
@@ -58,7 +70,7 @@ export function CompanyAccessPage({ companies, onChangeCompanyAccess }: { compan
                 <div className="company-main"><div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div><div><h3>{company.name}</h3><p>{company.ownerEmail} · {company.market}</p></div></div>
                 <div className="company-access-status"><span>Status</span><strong>{statusLabels[company.status]} · {billingLabels[company.billingStatus]}</strong><em className={'company-access-pill ' + mode}>{rule.label}</em></div>
                 <label className="company-access-select">Owner access<select value={mode} onChange={(event) => onChangeCompanyAccess(company.id, event.target.value as CompanyAccessMode)}><option value="full">Full access</option><option value="limited">Limited access</option><option value="locked">Locked</option></select></label>
-                <div className="company-access-rules"><span>Allowed</span><div className="page-chip-list compact allowed-list">{rule.allowed.map((item) => <b key={item}>{item}</b>)}</div>{rule.blocked.length ? <><span>Blocked</span><div className="page-chip-list compact blocked-list">{rule.blocked.map((item) => <b key={item}>{item}</b>)}</div></> : null}</div>
+                <div className="company-access-rules"><span>Allowed in company portal</span><div className="page-chip-list compact allowed-list">{rule.allowed.map((item) => <b key={item}>{item}</b>)}</div>{rule.blocked.length ? <><span>Blocked in company portal</span><div className="page-chip-list compact blocked-list">{rule.blocked.map((item) => <b key={item}>{item}</b>)}</div></> : null}</div>
                 <div className="company-access-actions"><button className="secondary-button compact" type="button" onClick={() => onChangeCompanyAccess(company.id, 'limited')}>Limit</button><button className="secondary-button compact danger-button" type="button" onClick={() => onChangeCompanyAccess(company.id, 'locked')}>Lock</button><button className="primary-button compact" type="button" onClick={() => onChangeCompanyAccess(company.id, 'full')}>Restore</button></div>
               </article>
             );
