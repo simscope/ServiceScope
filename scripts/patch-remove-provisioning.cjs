@@ -69,4 +69,11 @@ require('./patch-audit-backend.cjs');
 global.user = { email: '${user.email}' };
 require('./patch-access-page-permissions.cjs');
 delete global.user;
+const companyAccessPatchPath = path.join(__dirname, 'patch-company-access-control.cjs');
+let companyAccessPatch = fs.readFileSync(companyAccessPatchPath, 'utf8');
+companyAccessPatch = companyAccessPatch.replace(
+  `accessRender = accessRender.replace(/\\n\\s*\\/>\n?$/, '\\n' + companyAccessHandler + '          />');`,
+  `accessRender = accessRender.replace(/\\n\\s*\\/>(?:\\n)?\\s*$/, '\\n' + companyAccessHandler + '          />');`,
+);
+fs.writeFileSync(companyAccessPatchPath, companyAccessPatch);
 require('./patch-company-access-control.cjs');
