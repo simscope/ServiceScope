@@ -3,6 +3,7 @@ import type { NewPlatformUserForm, PlatformUser, PlatformUserRole, PlatformUserS
 
 export const SYSTEM_OWNER_ID = 'usr-owner';
 export const SYSTEM_OWNER_EMAIL = 'simscopeinc@gmail.com';
+const PLATFORM_USERS_STORAGE_KEY = 'servicescope.platformUsers';
 
 export type OwnerPagePermission = Exclude<AppPage, 'companyLogin' | 'portal'>;
 
@@ -25,7 +26,7 @@ export const ownerPagePermissions: Record<PlatformUserRole, OwnerPagePermission[
 
 const platformUsersSeed: PlatformUser[] = [
   {
-    id: 'usr-owner',
+    id: SYSTEM_OWNER_ID,
     name: 'ServiceScope Owner',
     email: SYSTEM_OWNER_EMAIL,
     role: 'owner',
@@ -41,6 +42,11 @@ export const rolePermissions: Record<PlatformUserRole, string[]> = {
   viewer: ['Dashboard', 'Companies', 'Monitoring', 'Audit read-only'],
 };
 
+function normalizePlatformUsers(users: PlatformUser[]) {
+  const withoutDuplicateOwner = users.filter((user) => user.id !== SYSTEM_OWNER_ID && user.email.toLowerCase() !== SYSTEM_OWNER_EMAIL);
+  return [platformUsersSeed[0], ...withoutDuplicateOwner];
+}
+
 export function canAccessOwnerPage(role: PlatformUserRole, page: AppPage) {
   if (page === 'companyLogin' || page === 'portal') return false;
   return ownerPagePermissions[role].includes(page);
@@ -51,11 +57,21 @@ export function firstAllowedOwnerPage(role: PlatformUserRole): OwnerPagePermissi
 }
 
 export function listPlatformUsers() {
-  return platformUsersSeed;
+  if (typeof window === 'undefined') return platformUsersSeed;
+  const saved = window.localStorage.getItem(PLATFORM_USERS_STORAGE_KEY);
+  if (!saved) return platformUsersSeed;
+
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? normalizePlatformUsers(parsed as PlatformUser[]) : platformUsersSeed;
+  } catch {
+    return platformUsersSeed;
+  }
 }
 
 export function savePlatformUsers(users: PlatformUser[]) {
-  void users;
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(PLATFORM_USERS_STORAGE_KEY, JSON.stringify(normalizePlatformUsers(users)));
 }
 
 export function createPlatformUser(form: NewPlatformUserForm): PlatformUser {
