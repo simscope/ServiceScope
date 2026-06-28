@@ -1,1 +1,2 @@
-console.log('Company access control patch skipped: company restrictions belong in company portal flow.');
+require('./patch-company-portal-access-locks.cjs');
+console.log('Company portal rules patch applied.');
