@@ -42,7 +42,7 @@ const newRecordAudit = `  function recordAudit(event: Omit<AuditEvent, 'id' | 'c
     const auditEvent = createAuditEvent({
       ...event,
       companyId,
-      actorUserId: event.actorUserId ?? authSession?.userId,
+      actorUserId: event.actorUserId,
       actorRole: event.actorRole ?? actorRole,
     });
 
@@ -56,6 +56,8 @@ const newRecordAudit = `  function recordAudit(event: Omit<AuditEvent, 'id' | 'c
 if (app.includes(oldRecordAudit)) {
   app = app.replace(oldRecordAudit, newRecordAudit);
 }
+
+app = app.replace(/actorUserId: event\.actorUserId \?\? authSession\?\.userId,/g, 'actorUserId: event.actorUserId,');
 
 fs.writeFileSync(appPath, app);
 console.log('Audit Supabase backend patch applied.');
