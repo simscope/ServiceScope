@@ -1,6 +1,6 @@
 import type { Company, MaterialRow } from './types';
 
-export type AppPage = 'dashboard' | 'companies' | 'monitoring' | 'billing' | 'access' | 'audit' | 'support' | 'companyLogin' | 'portal';
+export type AppPage = 'dashboard' | 'companies' | 'monitoring' | 'billing' | 'companyAccess' | 'access' | 'audit' | 'support' | 'companyLogin' | 'portal';
 export type ClientPage = 'onboarding' | 'jobs' | 'allJobs' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'portal';
 
 export type AuthSession =
