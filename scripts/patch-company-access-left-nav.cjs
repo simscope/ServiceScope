@@ -21,13 +21,17 @@ accessStore = accessStore.replace("admin: ['Dashboard', 'Companies', 'Monitoring
 write(accessStorePath, accessStore);
 
 let app = read(appPath);
-app = app.replace("import { CompanyPortal } from './CompanyPortal';", "import { CompanyPortal } from './CompanyPortal';\nimport { CompanyAccessPage, companyPatchForAccessMode, type CompanyAccessMode } from './components/CompanyAccessPage';");
+if (!app.includes("from './components/CompanyAccessPage'")) {
+  app = app.replace("import { CompanyPortal } from './CompanyPortal';", "import { CompanyPortal } from './CompanyPortal';\nimport { CompanyAccessPage, companyPatchForAccessMode, type CompanyAccessMode } from './components/CompanyAccessPage';");
+}
 app = app.replace("  billing: 'Plans & Billing',\n  access: 'Access',", "  billing: 'Plans & Billing',\n  companyAccess: 'Company Access',\n  access: 'Access',");
 app = app.replace("    case 'billing': return 'billing';\n    case 'access': return 'access';", "    case 'billing': return 'billing';\n    case 'companyaccess':\n    case 'company-access': return 'companyAccess';\n    case 'access': return 'access';");
-app = app.replace("            { page: 'billing' as AppPage, label: 'Billing', icon: <CreditCard size={18} aria-hidden=\"true\" /> },\n            { page: 'access' as AppPage, label: 'Access', icon: <UserPlus size={18} aria-hidden=\"true\" /> },", "            { page: 'billing' as AppPage, label: 'Billing', icon: <CreditCard size={18} aria-hidden=\"true\" /> },\n            { page: 'companyAccess' as AppPage, label: 'Company Access', icon: <ShieldCheck size={18} aria-hidden=\"true\" /> },\n            { page: 'access' as AppPage, label: 'Access', icon: <UserPlus size={18} aria-hidden=\"true\" /> },");
+if (!app.includes("page: 'companyAccess' as AppPage")) {
+  app = app.replace("            { page: 'billing' as AppPage, label: 'Billing', icon: <CreditCard size={18} aria-hidden=\"true\" /> },\n            { page: 'access' as AppPage, label: 'Access', icon: <UserPlus size={18} aria-hidden=\"true\" /> },", "            { page: 'billing' as AppPage, label: 'Billing', icon: <CreditCard size={18} aria-hidden=\"true\" /> },\n            { page: 'companyAccess' as AppPage, label: 'Company Access', icon: <ShieldCheck size={18} aria-hidden=\"true\" /> },\n            { page: 'access' as AppPage, label: 'Access', icon: <UserPlus size={18} aria-hidden=\"true\" /> },");
+}
 if (!app.includes("page === 'companyAccess' ? (")) {
   const handler = "        ) : page === 'companyAccess' ? (\n          <CompanyAccessPage\n            companies={companies}\n            onChangeCompanyAccess={(companyId, mode: CompanyAccessMode) => {\n              const company = companies.find((candidate) => candidate.id === companyId);\n              updateCompany(companyId, (currentCompany) => ({ ...currentCompany, ...companyPatchForAccessMode(mode) }));\n              recordAudit({ category: 'access', action: 'company.access_changed', actor: 'ServiceScope Owner', resource: company?.name ?? 'Unknown tenant', details: 'Company access changed to ' + mode + '.' });\n            }}\n          />\n";
-  app = app.replace("        ) : page === 'access' ? (\n          <AccessPage", handler + "        ) : page === 'access' ? (\n          <AccessPage");
+  app = app.replace(/\s*\) : page === 'access' \? \(\r?\n\s*<AccessPage/, handler + "        ) : page === 'access' ? (\n          <AccessPage");
 }
 write(appPath, app);
 

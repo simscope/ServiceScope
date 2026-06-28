@@ -108,7 +108,8 @@ owner = owner.replace(
 );
 
 const accessStart = owner.indexOf('export function AccessPage({');
-const accessEnd = owner.indexOf('\n\nexport function SupportPanel', accessStart);
+const nextExportMatch = accessStart === -1 ? null : owner.slice(accessStart + 1).match(/\r?\n\r?\nexport function /);
+const accessEnd = nextExportMatch ? accessStart + 1 + nextExportMatch.index : -1;
 if (accessStart === -1 || accessEnd === -1) {
   throw new Error('AccessPage patch target not found.');
 }

@@ -101,6 +101,7 @@ import {
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
+import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput, type PayrollItemRow } from './services/payrollStore';
 import {
   createJobInvoice,
   createServiceJob,
@@ -194,7 +195,8 @@ import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toL
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
-const clientPageValues: ClientPage[] = ['onboarding', 'jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
+const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
+const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
@@ -221,6 +223,18 @@ declare global {
 function readSavedClientPage(): ClientPage {
   const saved = window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY);
   return clientPageValues.includes(saved as ClientPage) ? saved as ClientPage : 'jobs';
+}
+
+function readSalaryPaidJobs(): Record<string, string> {
+  const saved = window.localStorage.getItem(SALARY_PAID_STORAGE_KEY);
+  if (!saved) return {};
+
+  try {
+    const parsed = JSON.parse(saved);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, string> : {};
+  } catch {
+    return {};
+  }
 }
 
 function loadSquareScript(environment: 'sandbox' | 'production') {
@@ -520,6 +534,7 @@ export function CompanyPortal({
   onSignOut,
   onUpdateOnboardingProfile,
   onCreateRequest,
+  onReplyToTicket,
 }: {
   selectedCompany?: Company;
   onboardingProfile?: CompanyOnboardingProfile;
@@ -528,6 +543,7 @@ export function CompanyPortal({
   onSignOut: () => void;
   onUpdateOnboardingProfile: (profile: CompanyOnboardingProfile) => void;
   onCreateRequest: (request: Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>) => void;
+  onReplyToTicket?: (ticketId: string, body: string) => void;
 }) {
   const [clientPage, setClientPage] = useState<ClientPage>(() => readSavedClientPage());
   const [request, setRequest] = useState<Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>>({
@@ -536,6 +552,8 @@ export function CompanyPortal({
     subject: '',
     message: '',
   });
+  const [requestTouched, setRequestTouched] = useState(false);
+  const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
   const [technicianForm, setTechnicianForm] = useState<NewCompanyTechnicianForm>(emptyTechnicianForm);
   const [technicianAccessStatusById, setTechnicianAccessStatusById] = useState<Record<string, string>>({});
   const [technicianAccessPasswordById, setTechnicianAccessPasswordById] = useState<Record<string, string>>({});
@@ -613,8 +631,10 @@ export function CompanyPortal({
     deductMaterials: true,
     includeScf: true,
   });
-  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>({ '243': '2026-06-01' });
-  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>(initialLibraryDocuments);
+  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());
+  const [payrollItems, setPayrollItems] = useState<PayrollItemRow[]>([]);
+  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>([]);
+  const [libraryStatus, setLibraryStatus] = useState('');
   const [librarySearch, setLibrarySearch] = useState('');
   const [libraryCategoryFilter, setLibraryCategoryFilter] = useState<'all' | LibraryCategory>('all');
   const [librarySystemFilter, setLibrarySystemFilter] = useState('all');
@@ -1246,6 +1266,24 @@ export function CompanyPortal({
         throw error;
       });
   };
+  const payrollItemByJobId = new globalThis.Map(payrollItems.map((item) => [item.jobId, item]));
+  const makePayrollItemInput = (job: ServiceJob & { paidScf: number; paidLabor: number; materialsCost: number; salaryBase: number; salary: number; warnings: string[]; payrollArchived?: boolean }, paidAt?: string | null): PayrollItemInput | null => {
+    const technicianId = findTechnicianId(profile, job.assignee);
+    if (!job.id || !technicianId) return null;
+
+    return {
+      jobId: job.id,
+      technicianId,
+      collectedCents: dollarsToCents(job.paidScf + job.paidLabor),
+      materialsCents: dollarsToCents(job.materialsCost),
+      payrollBaseCents: dollarsToCents(job.salaryBase),
+      salaryCents: dollarsToCents(job.salary),
+      reviewNote: job.warnings.join(' - '),
+      selectedForPayment: false,
+      paidAt: paidAt ?? payrollItemByJobId.get(job.id)?.paidAt ?? null,
+      archivedAt: job.payrollArchived ? new Date().toISOString() : null,
+    };
+  };
   const financeRows = allJobsRows.map((job) => {
     const materialsCost = materials
       .filter((material) => material.jobNumber === job.jobNumber)
@@ -1257,7 +1295,7 @@ export function CompanyPortal({
     const onlyScf = paidScf > 0 && paidLabor === 0;
     const salaryBase = Math.max(0, (payrollRules.includeScf ? paidScf : 0) + paidLabor - (payrollRules.deductMaterials ? materialsCost : 0));
     const salary = onlyScf ? payrollRules.scfOnlyPayout : salaryBase * (payrollRules.commissionPercent / 100);
-    const paidAt = salaryPaidJobs[job.jobNumber] ?? '';
+    const paidAt = payrollItemByJobId.get(job.id)?.paidAt?.slice(0, 10) ?? salaryPaidJobs[job.jobNumber] ?? '';
     const paid = Boolean(paidAt);
     const warrantyEndTime = new Date(job.createdAt).getTime() + profile.warrantyDays * 24 * 60 * 60 * 1000;
     const warrantyPassed = warrantyEndTime <= Date.now();
@@ -1519,6 +1557,18 @@ export function CompanyPortal({
       fileName: '',
     });
   };
+  const handleOpenLibraryDocument = (document: LibraryDocument) => {
+    if (document.storageBucket && document.storagePath) {
+      setLibraryStatus(`${document.title} is stored in ${document.storageBucket}/${document.storagePath}.`);
+      return;
+    }
+
+    setLibraryStatus(document.fileName ? `Open ${document.fileName} from connected storage.` : 'No file is attached to this document yet.');
+  };
+  const handleDeleteLibraryDocument = (document: LibraryDocument) => {
+    setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
+    setLibraryStatus(`${document.title} removed from the library.`);
+  };
   const autoTasks: TaskRow[] = allJobsRows.flatMap((job) => {
     const rows: TaskRow[] = [];
     const jobMaterials = materials.filter((material) => material.jobNumber === job.jobNumber);
@@ -1700,22 +1750,33 @@ export function CompanyPortal({
     { page: 'map', label: 'Map', icon: <Map size={16} /> },
     { page: 'email', label: 'Email', icon: <MailPlus size={16} /> },
     { page: 'finances', label: 'Finance', icon: <CreditCard size={16} /> },
-    { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
-    { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
+    { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
     { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },
   ];
+  const visibleClientNavItems = clientNavItems;
 
   function handleRequestSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    setRequestTouched(true);
     if (!request.subject.trim() || !request.message.trim()) return;
 
     onCreateRequest(request);
+    setRequestTouched(false);
     setRequest({
       kind: 'change',
       priority: 'normal',
       subject: '',
       message: '',
     });
+  }
+
+  function handleSupportReply(event: FormEvent<HTMLFormElement>, ticketId: string) {
+    event.preventDefault();
+    const body = supportReplyDrafts[ticketId]?.trim() ?? '';
+    if (!body || !onReplyToTicket) return;
+
+    onReplyToTicket(ticketId, body);
+    setSupportReplyDrafts((drafts) => ({ ...drafts, [ticketId]: '' }));
   }
 
   function updateProfile(updates: Partial<CompanyOnboardingProfile>) {
@@ -2099,51 +2160,7 @@ export function CompanyPortal({
 
       <main className="client-workspace">
         {jobsStatus ? <p className="access-status portal-status">{jobsStatus}</p> : null}
-        {clientPage === 'onboarding' ? (
-          <OnboardingPage
-            completedSteps={completedSteps}
-            profile={profile}
-            emailConnection={emailConnection}
-            handleLogoUpload={handleLogoUpload}
-            updateProfile={updateProfile}
-            connectMailbox={connectMailbox}
-            emailProviderLabels={emailProviderLabels}
-            updateMailbox={updateMailbox}
-            togglePaymentMethod={togglePaymentMethod}
-            professionTemplates={professionTemplates}
-            configuredProfessionNames={configuredProfessionNames}
-            addProfessionTemplate={addProfessionTemplate}
-            jobTypeForm={jobTypeForm}
-            setJobTypeForm={setJobTypeForm}
-            handleJobTypeSubmit={handleJobTypeSubmit}
-            removeJobType={removeJobType}
-            technicianForm={technicianForm}
-            setTechnicianForm={setTechnicianForm}
-            selectedCompany={selectedCompany}
-            handleTechnicianSubmit={handleTechnicianSubmit}
-            onSendTechnicianAccess={sendTechnicianAccess}
-            technicianAccessStatusById={technicianAccessStatusById}
-            technicianAccessPasswordById={technicianAccessPasswordById}
-            setTechnicianAccessPasswordById={setTechnicianAccessPasswordById}
-            ownerAccessPassword={ownerAccessPassword}
-            ownerAccessPasswordConfirm={ownerAccessPasswordConfirm}
-            ownerAccessStatus={ownerAccessStatus}
-            setOwnerAccessPassword={setOwnerAccessPassword}
-            setOwnerAccessPasswordConfirm={setOwnerAccessPasswordConfirm}
-            onGenerateOwnerPassword={generateOwnerPassword}
-            onSaveOwnerPassword={saveOwnerPassword}
-            mailboxConnectStatus={mailboxConnectStatus}
-            mailboxOAuthSecretDraft={mailboxOAuthSecretDraft}
-            mailboxOAuthStatus={mailboxOAuthStatus}
-            mailboxOAuthRedirectUrl={mailboxOAuthRedirectUrl}
-            setMailboxOAuthSecretDraft={setMailboxOAuthSecretDraft}
-            onCopyMailboxRedirectUrl={copyMailboxRedirectUrl}
-            onSaveMailboxOAuth={saveMailboxOAuth}
-            onStartMailboxConnection={startMailboxConnector}
-            billingStatus={billingStatus}
-            onConnectSubscriptionBilling={connectSubscriptionBilling}
-          />
-        ) : clientPage === 'jobs' ? (
+        {clientPage === 'jobs' ? (
           <JobsPage
             openedJob={openedJob}
             profile={profile}
@@ -2298,7 +2315,7 @@ export function CompanyPortal({
             emailMessages={emailMessages}
             emailTemplates={initialEmailTemplates}
             emailProviderLabels={emailProviderLabels}
-            onOpenOnboarding={() => setClientPage('onboarding')}
+            onOpenOnboarding={() => setClientPage('portal')}
             onStartMailboxConnection={startMailboxConnector}
             onLoadMoreMailbox={loadMoreMailboxMessages}
             mailboxSyncing={mailboxSyncing}
@@ -2380,6 +2397,8 @@ export function CompanyPortal({
             onLibraryFormatFilterChange={setLibraryFormatFilter}
             onLibraryFileChange={handleLibraryFileChange}
             onAddLibraryDocument={addLibraryDocument}
+            onOpenLibraryDocument={handleOpenLibraryDocument}
+            onDeleteLibraryDocument={handleDeleteLibraryDocument}
           />
         ) : clientPage === 'portal' ? (
           <section className="portal-page">
@@ -2396,7 +2415,7 @@ export function CompanyPortal({
             </div>
 
             <section className="portal-metrics">
-              <MetricCard icon={<Rocket size={20} />} label="Launch" value={`${completedSteps}/4`} detail="Provisioning steps complete" />
+              <MetricCard icon={<Building2 size={20} />} label="Account" value={selectedCompany.status} detail="Company portal" />
               <MetricCard icon={<CreditCard size={20} />} label="Plan" value={selectedCompany.plan} detail={billingLabels[selectedCompany.billingStatus]} />
               <MetricCard icon={<ClipboardList size={20} />} label="Jobs" value={selectedCompany.usage.jobsThisMonth.toString()} detail="This month" />
               <MetricCard icon={<Inbox size={20} />} label="Support" value={openTickets.length.toString()} detail="Open requests" />
@@ -2432,11 +2451,11 @@ export function CompanyPortal({
                   </div>
                   <label>
                     Subject
-                    <input value={request.subject} onChange={(event) => setRequest({ ...request, subject: event.target.value })} placeholder="What should be fixed or changed?" />
+                    <input className={requestTouched && !request.subject.trim() ? 'field-error' : undefined} value={request.subject} onChange={(event) => setRequest({ ...request, subject: event.target.value })} placeholder="What should be fixed or changed?" />
                   </label>
                   <label>
                     Message
-                    <textarea value={request.message} onChange={(event) => setRequest({ ...request, message: event.target.value })} placeholder="Describe the issue, request, or missing detail." />
+                    <textarea className={requestTouched && !request.message.trim() ? 'field-error' : undefined} value={request.message} onChange={(event) => setRequest({ ...request, message: event.target.value })} placeholder="Describe the issue, request, or missing detail." />
                   </label>
                   <button className="primary-button" type="submit">
                     <MailPlus size={18} aria-hidden="true" />
@@ -2478,9 +2497,9 @@ export function CompanyPortal({
         ) : (
           <section className="client-placeholder">
             <div className="client-placeholder-icon">
-              {clientNavItems.find((item) => item.page === clientPage)?.icon}
+              {visibleClientNavItems.find((item) => item.page === clientPage)?.icon}
             </div>
-            <h1>{clientNavItems.find((item) => item.page === clientPage)?.label}</h1>
+            <h1>{visibleClientNavItems.find((item) => item.page === clientPage)?.label}</h1>
             <p>This module is ready to be connected to live company data.</p>
             <div className="client-placeholder-grid">
               <MetricCard icon={<Activity size={20} />} label="Company" value={selectedCompany.name} detail={selectedCompany.market} />

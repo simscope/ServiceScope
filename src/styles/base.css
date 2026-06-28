@@ -1681,3 +1681,71 @@ button {
   min-height: 36px;
   background: #fbfcfd;
 }
+
+
+.create-field-control {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.job-form input.create-field-missing,
+.job-form select.create-field-missing,
+.job-form textarea.create-field-missing {
+  border-color: #f59e0b;
+  background: #fff7ed;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2);
+}
+
+.create-field-warning {
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.create-customer-matches {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 16px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  padding: 12px;
+  color: #1e3a8a;
+}
+
+.create-customer-matches > span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.create-customer-matches > div {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.create-customer-matches button {
+  display: grid;
+  gap: 3px;
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 9px 10px;
+  color: #17201b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.create-customer-matches button:hover {
+  border-color: #2563eb;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.12);
+}
+
+.create-customer-matches small {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+}

@@ -19,6 +19,7 @@ import type {
 export const emptyCompany: NewCompanyForm = {
   name: '',
   ownerName: '',
+  phone: '',
   ownerEmail: '',
   temporaryPassword: '',
   domain: '',

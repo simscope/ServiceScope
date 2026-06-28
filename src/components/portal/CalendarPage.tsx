@@ -79,7 +79,7 @@ export function CalendarPage({
   currentPortalUser: { name: string; role: 'Manager' | 'Admin' | 'Technician' };
   onCloseJob: () => void;
   onSaveJob: (job: JobCardData) => void;
-  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => void;
+  onSaveMaterials: (jobOrJobNumber: JobCardData | string, rows: MaterialRow[]) => void | Promise<void>;
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;

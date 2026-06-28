@@ -15,6 +15,7 @@ type MailboxSendRequest = {
 };
 
 const MAX_TOTAL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const EMAIL_FILES_BUCKET = 'email-files';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',

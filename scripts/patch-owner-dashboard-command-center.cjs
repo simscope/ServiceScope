@@ -15,7 +15,8 @@ function write(filePath, content) {
 
 let owner = read(ownerPath);
 const start = owner.indexOf('export function DashboardOverview({');
-const end = owner.indexOf('\n\nexport function AuditPage', start);
+const auditPageMatch = start === -1 ? null : owner.slice(start + 1).match(/\r?\n\r?\nexport function AuditPage/);
+const end = auditPageMatch ? start + 1 + auditPageMatch.index : -1;
 
 if (start === -1 || end === -1) {
   throw new Error('DashboardOverview patch target not found.');

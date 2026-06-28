@@ -2193,3 +2193,501 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+
+/* Owner shell responsive fixes */
+@media (max-width: 1120px){.content-grid{grid-template-columns:minmax(0,1fr)}.detail-panel,.add-panel{position:static!important;grid-column:auto}}
+@media (max-width: 820px){.nav-list{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}.nav-item{justify-content:flex-start;min-width:0;text-align:left}}
+
+
+/* Expandable billing company cards */
+.billing-company-card { align-items: start; }
+.billing-company-card.expanded { border-color: #9fc2ff; box-shadow: 0 12px 28px rgba(45, 89, 160, 0.12); }
+.billing-company-main { align-items: flex-start; }
+.billing-company-toggle { border: 0; cursor: pointer; }
+.billing-company-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.billing-company-tags span { border-radius: 999px; background: #eef4ef; color: #4f5b53; padding: 3px 8px; font-size: 11px; font-weight: 800; }
+.billing-open-card-button { align-self: center; }
+.billing-company-details { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(260px, 1.1fr) minmax(320px, 1.4fr); gap: 14px; width: 100%; border-top: 1px solid #e3e9e4; margin-top: 8px; padding-top: 14px; }
+.billing-access-card { display: grid; gap: 12px; border: 1px solid #dce4dd; border-radius: 10px; background: #fbfdfb; padding: 14px; }
+.billing-access-card.stop { border-color: #efb3a8; background: #fff8f6; }
+.billing-access-card.warn, .billing-access-card.setup { border-color: #f2c779; background: #fffaf0; }
+.billing-access-card.ok { border-color: #b9d7b7; background: #f7fbec; }
+.billing-access-card h3 { margin: 8px 0 4px; font-size: 16px; }
+.billing-access-card p { margin-bottom: 0; color: #4f5b53; font-size: 13px; line-height: 1.45; }
+.billing-access-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.billing-access-list span { border-radius: 999px; background: #ffffff; border: 1px solid #e3e9e4; padding: 6px 9px; font-size: 12px; font-weight: 900; }
+.billing-company-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.billing-company-facts div { border: 1px solid #e3e9e4; border-radius: 9px; background: #ffffff; padding: 10px; }
+.billing-company-facts dt, .billing-company-progress span { color: #667269; font-size: 11px; font-weight: 900; text-transform: uppercase; }
+.billing-company-facts dd { margin: 4px 0 0; color: #17201b; font-size: 13px; font-weight: 900; }
+.billing-company-progress { grid-column: 1 / -1; display: grid; gap: 8px; border: 1px solid #e3e9e4; border-radius: 10px; background: #ffffff; padding: 12px; }
+.billing-company-progress > div:not(.health-track) { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.billing-company-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 1120px) { .billing-company-details, .billing-company-facts { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .billing-company-details, .billing-company-facts { grid-template-columns: 1fr; } }
+
+
+/* Billing company rows with opening window */
+.billing-company-card {
+  position: relative;
+}
+
+.billing-company-card.expanded {
+  border-color: #60a5fa;
+  background: #f8fbff;
+}
+
+.billing-company-card.expanded .billing-company-details {
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 14px 30px rgba(37, 99, 235, 0.12);
+  margin-top: 12px;
+  padding: 44px 14px 14px;
+  position: relative;
+}
+
+.billing-company-card.expanded .billing-company-details::before {
+  content: 'Company billing window';
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.billing-company-card:not(.expanded) {
+  box-shadow: none;
+}
+
+.billing-company-card:not(.expanded):hover {
+  border-color: #93c5fd;
+  background: #fbfdff;
+}
+
+
+/* Companies page modal details */
+.companies-list-only {
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+}
+
+.company-detail-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(15, 23, 42, 0.52);
+  padding: 28px;
+}
+
+.company-detail-modal {
+  position: relative;
+  width: min(980px, 96vw);
+  max-height: 92vh;
+  overflow: auto;
+  border-radius: 18px;
+  background: #f8fbf8;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+}
+
+.company-detail-modal .detail-panel {
+  position: static !important;
+  width: 100%;
+  max-width: none;
+  border: 0;
+  box-shadow: none;
+}
+
+.modal-close-button {
+  position: sticky;
+  top: 12px;
+  left: calc(100% - 54px);
+  z-index: 2;
+  width: 38px;
+  height: 38px;
+  border: 1px solid #d5ded7;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #17201b;
+  font-size: 24px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.company-row {
+  cursor: pointer;
+}
+
+@media (max-width: 920px) {
+  .companies-list-only {
+    grid-template-columns: 1fr;
+  }
+
+  .company-detail-modal-backdrop {
+    padding: 12px;
+  }
+}
+
+
+/* Compact finance payroll formula panel */
+.payroll-rules-panel {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.65fr) minmax(0, 1.8fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px !important;
+}
+
+.payroll-rules-panel > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.payroll-rules-panel .eyebrow {
+  margin-bottom: 0;
+  font-size: 11px;
+}
+
+.payroll-rules-panel h2 {
+  font-size: 18px;
+  line-height: 1.05;
+}
+
+.payroll-rules-panel p {
+  margin: 0;
+  color: #4f5b53;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.payroll-rule-controls {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.75fr) minmax(120px, 0.75fr) minmax(160px, 0.85fr) minmax(160px, 0.85fr) minmax(180px, 1fr);
+  align-items: end;
+  gap: 8px;
+}
+
+.payroll-rule-controls label {
+  display: grid;
+  gap: 3px;
+  color: #4f5b53;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.payroll-rule-controls input {
+  min-height: 30px;
+  border-radius: 7px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.payroll-rule-controls .payroll-checkbox {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #d4ddd6;
+  border-radius: 7px;
+  background: #f8faf8;
+  padding: 4px 8px;
+  color: #17201b;
+  font-size: 11px;
+  line-height: 1.1;
+  text-align: right;
+}
+
+.payroll-rule-controls .payroll-checkbox input[type='checkbox'] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+}
+
+@media (max-width: 1100px) {
+  .payroll-rules-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .payroll-rule-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+
+/* Materials job card open fixes */
+.materials-clickable-row {
+  cursor: pointer;
+}
+
+.materials-clickable-row:hover {
+  background: #f8fbff;
+}
+
+.materials-clickable-row .job-number-link {
+  position: relative;
+  z-index: 1;
+}
+
+
+/* Job attachment browser preview */
+.job-file-preview-button {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  text-align: inherit;
+}
+
+.job-file-preview-button img,
+.job-file-preview-button .job-file-icon {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.job-file-preview-button:hover img,
+.job-file-preview-button:hover .job-file-icon {
+  transform: scale(1.015);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+
+.job-file-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.job-attachment-preview-modal {
+  width: min(1100px, 96vw);
+  max-height: 92vh;
+}
+
+.job-attachment-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 76vh;
+  object-fit: contain;
+  border-radius: 12px;
+  background: #0f172a;
+}
+
+.job-attachment-preview-frame {
+  width: 100%;
+  height: 76vh;
+  border: 1px solid #dbe5de;
+  border-radius: 12px;
+  background: #ffffff;
+}
+
+
+/* Job attachment selectable downloads */
+.job-files-download-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin:10px 0 12px;border:1px solid #dce4dd;border-radius:10px;background:#fbfdfb;padding:10px}.job-files-download-toolbar label,.job-file-select{display:inline-flex;align-items:center;gap:7px;color:#17201b;font-size:12px;font-weight:900}.job-files-download-toolbar span{color:#526157;font-size:12px;font-weight:800}.job-file-card{position:relative}.job-file-card.selected{border-color:#60a5fa;background:#f8fbff;box-shadow:0 8px 22px rgba(37,99,235,.1)}.job-file-select{align-self:start;justify-self:start;border-radius:999px;background:#eef6ff;color:#1e3a8a;padding:5px 8px}.job-file-select input,.job-files-download-toolbar input{width:16px;height:16px;margin:0}
+
+
+/* Company portal dashboard QA fixes */
+.portal-viewer-badge {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.portal-viewer-badge small {
+  color: #dce6ef;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.portal-alert-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 14px 0;
+  border: 1px solid #f2c779;
+  border-radius: 12px;
+  background: #fff7e8;
+  padding: 16px;
+}
+
+.portal-alert-panel h2,
+.portal-alert-panel p {
+  margin: 0;
+}
+
+.portal-alert-panel p {
+  color: #6b5a30;
+  font-weight: 800;
+}
+
+.portal-restriction-list,
+.portal-account-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.portal-restriction-list div,
+.portal-account-list div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e2e8e4;
+  border-radius: 9px;
+  background: #fbfdfb;
+  padding: 9px 10px;
+}
+
+.portal-account-list dt,
+.portal-restriction-list span {
+  color: #667269;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.portal-account-list dd,
+.portal-restriction-list strong {
+  margin: 0;
+  color: #17201b;
+  font-size: 13px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.portal-request-form .field-error {
+  border-color: #dc2626;
+  background: #fff1f2;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.13);
+}
+
+.portal-request-status {
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .portal-alert-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .portal-viewer-badge small {
+    display: none;
+  }
+}
+
+
+/* Owner support inbox QA fixes */
+.support-owner-guide {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  border: 1px solid #dfe7e1;
+  border-radius: 12px;
+  background: #fbfdfb;
+  padding: 16px;
+}
+
+.support-owner-guide h3,
+.support-owner-guide p {
+  margin: 0;
+}
+
+.support-owner-guide p {
+  color: #526157;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.support-owner-guide dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.support-owner-guide dl div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #e2e8e4;
+  border-radius: 9px;
+  background: #ffffff;
+  padding: 9px 10px;
+}
+
+.support-owner-guide dt {
+  color: #667269;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.support-owner-guide dd {
+  margin: 0;
+  color: #17201b;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.support-owner-note {
+  display: grid;
+  gap: 4px;
+  border-radius: 10px;
+  background: #eef6ff;
+  color: #1e3a8a;
+  padding: 12px;
+}
+
+.support-owner-note span {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+
+/* Company support workspaces and badges */
+.nav-badge,.support-total-badge{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;border-radius:999px;background:#ef4444;color:#fff;padding:0 6px;font-size:11px;font-weight:900;line-height:1}.nav-badge{margin-left:auto}.support-total-badge{min-width:26px;height:26px;font-size:12px}.support-company-sidebar{display:grid;align-content:start;gap:12px;border:1px solid #dfe7e1;border-radius:12px;background:#fbfdfb;padding:16px}.support-company-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.support-company-heading h3,.support-company-heading p{margin:0}.support-company-heading p{color:#526157;font-size:13px;font-weight:800;line-height:1.4}.support-company-list{display:grid;gap:8px}.support-company-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;width:100%;border:1px solid #dfe7e1;border-radius:10px;background:#fff;padding:10px;color:#17201b;text-align:left;cursor:pointer}.support-company-card.active{border-color:#9ac06f;background:#f7fbec;box-shadow:0 10px 22px rgba(35,74,35,.08)}.support-company-card span:not(.company-avatar){display:grid;min-width:0}.support-company-card small{color:#647067;font-size:11px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.support-company-card b{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;border-radius:999px;background:#ef4444;color:#fff;padding:0 7px;font-size:11px;font-weight:900}.support-company-card em{grid-column:2/-1;justify-self:start;border-radius:999px;background:#fff1f2;color:#b91c1c;padding:3px 8px;font-size:11px;font-style:normal;font-weight:900}.small-avatar{width:38px;height:38px}
+
+
+/* Portal support thread history */
+.portal-ticket-thread{display:grid;gap:12px}.portal-ticket-thread-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.portal-ticket-messages{display:grid;gap:8px;border-top:1px solid #e5ece7;padding-top:10px}.portal-ticket-message{border:1px solid #dfe7e1;border-radius:10px;background:#fff;padding:10px}.portal-ticket-message.owner{background:#eef4ff;border-color:#cfe0ff}.portal-ticket-message>div{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}.portal-ticket-message span{color:#647067;font-size:12px;font-weight:800}.portal-ticket-message p{margin:0;color:#17201b;white-space:pre-wrap}
+
+.portal-ticket-reply-form{display:grid;gap:8px;border-top:1px solid #e5ece7;padding-top:10px}.portal-ticket-reply-form label{display:grid;gap:6px;font-weight:900}.portal-ticket-reply-form textarea{width:100%;min-height:76px;resize:vertical}.portal-ticket-reply-form button{justify-self:start}
+
+
+/* Portal support compact two-column layout */
+.portal-page{gap:12px}.portal-page .portal-hero{padding:14px 18px}.portal-metrics{gap:10px}.portal-metrics .metric-card{padding:14px;min-height:96px}.portal-grid{grid-template-columns:minmax(280px,360px) minmax(0,1fr);align-items:start;gap:16px}.portal-support-panel{align-self:start}.portal-ticket-panel{grid-column:auto;align-self:start;min-width:0}.portal-ticket-list{gap:8px}.portal-ticket-row{min-height:auto;padding:12px}.portal-ticket-thread{align-items:stretch}.portal-ticket-thread-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:12px}.portal-ticket-messages{max-height:320px;overflow:auto}.portal-ticket-message{padding:8px 10px}.portal-request-form{gap:10px}.portal-request-form textarea{min-height:96px}.portal-request-form .form-row{gap:10px}.portal-request-form button{min-height:42px}
+@media (max-width: 980px){.portal-grid{grid-template-columns:1fr}.portal-ticket-panel{grid-column:auto}.portal-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width: 620px){.portal-metrics{grid-template-columns:1fr}.portal-page .portal-hero{align-items:flex-start;flex-direction:column}.portal-grid{gap:12px}}
+
+
+/* Access command center page */
+.access-command-center{display:grid;gap:16px}.access-main-grid{display:grid;grid-template-columns:minmax(300px,.7fr) minmax(0,1.3fr);gap:16px;align-items:start}.access-invite-card,.access-matrix-panel,.access-users-panel{min-width:0}.role-preview-box{display:grid;gap:8px;border:1px solid #dfe7e1;border-radius:12px;background:#f8fbf6;padding:10px}.role-preview-box>span,.access-page-cell>span{color:#526157;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.page-chip-list{display:flex;flex-wrap:wrap;gap:6px}.page-chip-list b{display:inline-flex;align-items:center;border-radius:999px;background:#eef4ea;color:#17201b;padding:5px 9px;font-size:11px;font-weight:900}.page-chip-list.compact b{padding:4px 8px;font-size:10px}.access-role-matrix{display:grid;border:1px solid #dfe7e1;border-radius:14px;overflow:hidden}.access-role-row{display:grid;grid-template-columns:120px repeat(7,minmax(74px,1fr));gap:0;align-items:center;border-top:1px solid #edf2ee;background:#fff}.access-role-row:first-child{border-top:0}.access-role-row>span,.access-role-row>strong{padding:12px 10px;border-left:1px solid #edf2ee;min-height:44px;display:flex;align-items:center;justify-content:center;text-align:center}.access-role-row>strong{justify-content:flex-start;border-left:0}.access-role-head{background:#f4f7f4;color:#526157;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.permission-dot.allowed{color:#166534;background:#ecfdf3;font-weight:900}.permission-dot.denied{color:#9ca3af;background:#fafafa}.access-note{margin:12px 0 0;color:#526157;font-weight:800}.access-user-row{grid-template-columns:minmax(210px,1.25fr) .65fr .65fr minmax(240px,1.5fr) .7fr auto}.access-page-cell{display:grid;gap:6px}.access-user-list .user-row{align-items:start}
+@media (max-width:1200px){.access-main-grid{grid-template-columns:1fr}.access-role-row{grid-template-columns:110px repeat(7,minmax(64px,1fr));font-size:12px}.access-user-row{grid-template-columns:1fr 1fr}.access-user-row>.user-status{justify-self:start}}
+@media (max-width:720px){.access-role-matrix{overflow:auto}.access-role-row{min-width:760px}.access-user-row{grid-template-columns:1fr}.access-filter-grid{grid-template-columns:1fr}.access-summary{grid-template-columns:1fr}}
+
+.company-access-banner{display:grid;gap:4px;border:1px solid #fde68a;border-radius:14px;background:#fffdf4;color:#17201b;padding:12px 14px;margin-bottom:14px}.company-access-banner.locked{border-color:#fecaca;background:#fff7f7}.company-access-banner strong{font-weight:900}.company-access-banner span{font-weight:800;color:#526157}
+
+/* Company access control panel */
+.company-access-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) 220px auto;gap:10px;align-items:end;margin-bottom:14px}.company-access-toolbar label{display:grid;gap:6px;color:#526157;font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.company-access-toolbar input,.company-access-toolbar select{width:100%;border:1px solid #d6dfd8;border-radius:10px;background:#f8faf7;padding:10px 12px;font-weight:800}.company-access-list{display:grid;gap:10px}.company-access-row{display:grid;grid-template-columns:minmax(230px,1.1fr) minmax(170px,.8fr) 180px minmax(280px,1.4fr) auto;gap:12px;align-items:start;border:1px solid #dfe7e1;border-radius:14px;background:#fff;padding:12px}.company-access-row.limited{border-color:#fde68a;background:#fffdf4}.company-access-row.locked{border-color:#fecaca;background:#fff7f7}.company-access-status,.company-access-select,.company-access-rules{display:grid;gap:7px}.company-access-status span,.company-access-select,.company-access-rules>span{color:#526157;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.company-access-select select{border:1px solid #d6dfd8;border-radius:10px;background:#fff;padding:9px 10px;font-weight:900}.company-access-pill{display:inline-flex;justify-self:start;border-radius:999px;padding:5px 9px;font-style:normal;font-size:11px;font-weight:900}.company-access-pill.full{background:#ecfdf3;color:#166534}.company-access-pill.limited{background:#fef3c7;color:#92400e}.company-access-pill.locked{background:#fee2e2;color:#991b1b}.company-access-actions{display:grid;gap:7px;min-width:120px}.danger-button{border-color:#fecaca!important;background:#fff7f7!important;color:#991b1b!important}.allowed-list b{background:#ecfdf3;color:#166534}.blocked-list b{background:#fee2e2;color:#991b1b}@media(max-width:1380px){.company-access-row{grid-template-columns:1fr 1fr}.company-access-actions{grid-column:1/-1;grid-template-columns:repeat(3,minmax(0,1fr))}.company-access-rules{grid-column:1/-1}.company-access-toolbar{grid-template-columns:1fr 220px auto}}@media(max-width:760px){.company-access-toolbar,.company-access-row,.company-access-actions{grid-template-columns:1fr}.company-access-rules{grid-column:auto}}
+
+
+/* Owner command center dashboard */
+.owner-command-center{display:grid;gap:16px}.owner-kpi-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}.owner-kpi-grid .metric-card{min-height:112px;padding:16px}.owner-dashboard-main{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(320px,.75fr);gap:16px;align-items:start}.owner-actions-panel,.owner-recent-panel,.owner-companies-panel{min-width:0}.owner-action-count{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;border-radius:999px;background:#eef4ea;color:#17201b;font-weight:900}.owner-action-count.hot{background:#fee2e2;color:#991b1b}.owner-action-list{display:grid;gap:10px}.owner-action-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:12px;align-items:center;border:1px solid #dfe7e1;border-radius:14px;background:#fff;padding:12px}.owner-action-card.danger{border-color:#fecaca;background:#fff7f7}.owner-action-card.warning{border-color:#fde68a;background:#fffdf4}.owner-action-card.neutral{border-color:#dbeafe;background:#f8fbff}.owner-action-icon{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border-radius:10px;background:#eef4ea;color:#17201b}.owner-action-card.danger .owner-action-icon{background:#fee2e2;color:#991b1b}.owner-action-card.warning .owner-action-icon{background:#fef3c7;color:#92400e}.owner-action-card h3,.owner-action-card p{margin:0}.owner-action-card span{color:#526157;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.owner-action-card p{color:#526157;font-weight:800;line-height:1.35}.owner-recent-list{display:grid;gap:8px}.owner-recent-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start;width:100%;border:1px solid #dfe7e1;border-radius:12px;background:#fff;padding:10px;text-align:left;cursor:pointer}.owner-recent-row strong,.owner-recent-row small{display:block}.owner-recent-row small{color:#647067;font-weight:800;margin-top:3px}.owner-company-table{display:grid;gap:0;border:1px solid #dfe7e1;border-radius:14px;overflow:hidden}.owner-company-row{display:grid;grid-template-columns:minmax(220px,1.6fr) .65fr .8fr .75fr .45fr 1fr .85fr .55fr;gap:12px;align-items:center;padding:12px 14px;border-top:1px solid #edf2ee;background:#fff}.owner-company-row:first-child{border-top:0}.owner-company-head{background:#f4f7f4;color:#526157;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.04em}.owner-company-row h3,.owner-company-row p{margin:0}.owner-company-row p{color:#647067;font-size:12px;font-weight:800}.owner-support-count{justify-self:start;border:1px solid #dfe7e1;border-radius:999px;background:#fff;padding:6px 10px;font-weight:900;cursor:pointer}.owner-support-count.hot{border-color:#fecaca;background:#fee2e2;color:#991b1b}.owner-health-cell{display:grid;gap:5px}.owner-sync-cell{color:#526157;font-size:12px;font-weight:800}.owner-table-empty{border-top:1px solid #edf2ee}.owner-clear-state{min-height:180px}
+@media (max-width:1300px){.owner-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.owner-dashboard-main{grid-template-columns:1fr}.owner-company-row{grid-template-columns:minmax(220px,1.5fr) .7fr .9fr .8fr .5fr 1fr}.owner-company-row>span:nth-child(7),.owner-company-row>.owner-sync-cell,.owner-company-head span:nth-child(7){display:none}.owner-company-row>button.secondary-button,.owner-company-head span:nth-child(8){display:none}}
+@media (max-width:820px){.owner-kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.owner-action-card{grid-template-columns:auto minmax(0,1fr)}.owner-action-card button{grid-column:2}.owner-company-head{display:none}.owner-company-row{grid-template-columns:1fr;gap:8px}.owner-company-row .billing-pill,.owner-support-count{justify-self:start}}
+@media (max-width:560px){.owner-kpi-grid{grid-template-columns:1fr}.owner-kpi-grid .metric-card{min-height:auto}.owner-dashboard-main{gap:12px}}
