@@ -69,3 +69,4 @@ require('./patch-audit-backend.cjs');
 global.user = { email: '${user.email}' };
 require('./patch-access-page-permissions.cjs');
 delete global.user;
+require('./patch-company-access-control.cjs');
