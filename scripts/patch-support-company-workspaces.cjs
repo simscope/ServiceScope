@@ -15,7 +15,7 @@ if (!app.includes('const newSupportCount = supportTickets.filter')) {
     "  const openSupportCount = supportTickets.filter((ticket) => ticket.status !== 'resolved').length;\n  const newSupportCount = supportTickets.filter((ticket) => ticket.status === 'new').length;",
   );
 }
-if (!app.includes('className=\"nav-badge\"')) {
+if (!app.includes('className="nav-badge"')) {
   app = app.replace(
     '            Support\n          </button>',
     '            Support\n            {newSupportCount ? <span className="nav-badge">{newSupportCount}</span> : null}\n          </button>',
@@ -91,3 +91,4 @@ if (!css.includes('Company support workspaces and badges')) {
   write(cssPath, css);
 }
 console.log('Company support workspaces and badges patch applied.');
+require('./patch-support-history-thread.cjs');
