@@ -26,20 +26,28 @@ function supportTimestamp(date = new Date()) {
   });
 }`,
   );
-  store = store.replace("createdAt: ticket.createdAt ?? new Date().toLocaleDateString('en-US')", "createdAt: ticket.createdAt ?? supportTimestamp()");
-  store = store.replace("lastUpdate: ticket.lastUpdate ?? 'Just now'", "lastUpdate: ticket.lastUpdate ?? ticket.createdAt ?? supportTimestamp()");
-  store = store.replace("createdAt: ticket.createdAt ?? 'Just now'", "createdAt: ticket.createdAt ?? supportTimestamp()");
-  store = store.replace("const createdAt = new Date().toLocaleDateString('en-US');", "const createdAt = supportTimestamp();");
-  store = store.replace("createdAt: 'Just now'", "createdAt");
-  store = store.replace("lastUpdate: 'Just now'", "lastUpdate: supportTimestamp()");
+}
+store = store.replace("createdAt: ticket.createdAt ?? new Date().toLocaleDateString('en-US')", "createdAt: ticket.createdAt ?? supportTimestamp()");
+store = store.replace("lastUpdate: ticket.lastUpdate ?? 'Just now'", "lastUpdate: ticket.lastUpdate ?? ticket.createdAt ?? supportTimestamp()");
+store = store.replace("createdAt: ticket.createdAt ?? 'Just now'", "createdAt: ticket.createdAt ?? supportTimestamp()");
+store = store.replace("const createdAt = new Date().toLocaleDateString('en-US');", "const createdAt = supportTimestamp();");
+store = store.replace(/createdAt: 'Just now'/g, 'createdAt: supportTimestamp()');
+store = store.replace(/lastUpdate: 'Just now'/g, 'lastUpdate: supportTimestamp()');
+if (!store.includes('const createdAt = supportTimestamp();\n\n  return {') && store.includes('export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {\n  return {')) {
   store = store.replace(
     "export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {\n  return {",
     "export function addOwnerReply(ticket: SupportTicket, body: string): SupportTicket {\n  const createdAt = supportTimestamp();\n\n  return {",
   );
-  store = store.replace("lastUpdate: supportTimestamp()", "lastUpdate: createdAt");
-  store = store.replace("createdAt: 'Just now'", "createdAt");
-  write(supportStorePath, store);
 }
+store = store.replace(
+  /export function addOwnerReply\(ticket: SupportTicket, body: string\): SupportTicket \{[\s\S]*?lastUpdate: supportTimestamp\(\),/,
+  (match) => match.replace('lastUpdate: supportTimestamp(),', 'lastUpdate: createdAt,'),
+);
+store = store.replace(
+  /export function addOwnerReply\(ticket: SupportTicket, body: string\): SupportTicket \{[\s\S]*?createdAt: supportTimestamp\(\),/,
+  (match) => match.replace('createdAt: supportTimestamp(),', 'createdAt,'),
+);
+write(supportStorePath, store);
 
 let app = read(appPath);
 if (!app.includes('syncSupportTicketsFromStorage')) {
