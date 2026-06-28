@@ -71,6 +71,11 @@ if (!portal.includes("clientPage === 'onboarding'")) {
   portal = portal.replace("        {clientPage === 'jobs' ? (", renderLines.join('\n'));
 }
 
+portal = portal.replace(
+  "\n    const reader = new FileReader();\n    reader.addEventListener('load', () => {\n      updateProfile({ logoUrl: String(reader.result ?? '') });\n    });\n    reader.readAsDataURL(file);\n",
+  "\n",
+);
+
 fs.writeFileSync(portalPath, portal);
 require('./move-onboarding-after-portal.cjs');
-console.log('Company onboarding ensured after portal.');
+console.log('Company onboarding ensured after portal and logo previews are not saved to database.');
