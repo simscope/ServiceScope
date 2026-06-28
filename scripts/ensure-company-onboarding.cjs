@@ -78,4 +78,5 @@ portal = portal.replace(
 
 fs.writeFileSync(portalPath, portal);
 require('./move-onboarding-after-portal.cjs');
-console.log('Company onboarding ensured after portal and logo previews are not saved to database.');
+require('./ensure-mailbox-on-demand.cjs');
+console.log('Company onboarding ensured after portal, logo previews are not saved, and mailbox bodies load on demand.');
