@@ -65,3 +65,4 @@ owner = owner.replace(/\n\s*<span className=\{completedSteps === onboardingStepO
 write(ownerPath, owner);
 
 console.log('Provisioning and onboarding UI removed.');
+require('./patch-audit-backend.cjs');
