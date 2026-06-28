@@ -203,6 +203,7 @@ export function CompanyAccessPage({
 write(ownerPath, owner);
 
 let app = read(appPath);
+app = app.replace('const ownerPageTitles: Record<AppPage, string> = {', 'const ownerPageTitles: Partial<Record<AppPage, string>> = {');
 if (!app.includes('CompanyAccessPage,')) {
   app = app.replace('  CompanyDetail,\n', '  CompanyAccessPage,\n  CompanyDetail,\n');
 }
