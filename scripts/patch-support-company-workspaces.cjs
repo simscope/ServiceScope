@@ -92,3 +92,4 @@ if (!css.includes('Company support workspaces and badges')) {
 }
 console.log('Company support workspaces and badges patch applied.');
 require('./patch-support-history-thread.cjs');
+require('./patch-portal-support-compact-layout.cjs');
