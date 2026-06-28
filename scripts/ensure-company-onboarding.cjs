@@ -72,4 +72,5 @@ if (!portal.includes("clientPage === 'onboarding'")) {
 }
 
 fs.writeFileSync(portalPath, portal);
-console.log('Company onboarding ensured.');
+require('./move-onboarding-after-portal.cjs');
+console.log('Company onboarding ensured after portal.');
