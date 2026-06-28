@@ -66,3 +66,4 @@ write(ownerPath, owner);
 
 console.log('Provisioning and onboarding UI removed.');
 require('./patch-audit-backend.cjs');
+require('./patch-access-page-permissions.cjs');
