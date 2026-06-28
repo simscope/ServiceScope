@@ -77,3 +77,4 @@ companyAccessPatch = companyAccessPatch.replace(
 );
 fs.writeFileSync(companyAccessPatchPath, companyAccessPatch);
 require('./patch-company-access-control.cjs');
+require('./patch-company-access-left-nav.cjs');
