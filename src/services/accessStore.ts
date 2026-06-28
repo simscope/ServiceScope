@@ -1,7 +1,27 @@
+import type { AppPage } from '../appTypes';
 import type { NewPlatformUserForm, PlatformUser, PlatformUserRole, PlatformUserStatus } from '../types';
 
 export const SYSTEM_OWNER_ID = 'usr-owner';
 export const SYSTEM_OWNER_EMAIL = 'simscopeinc@gmail.com';
+
+export type OwnerPagePermission = Exclude<AppPage, 'companyLogin' | 'portal'>;
+
+export const ownerPageLabels: Record<OwnerPagePermission, string> = {
+  dashboard: 'Dashboard',
+  companies: 'Companies',
+  monitoring: 'Monitoring',
+  billing: 'Billing',
+  access: 'Access',
+  audit: 'Audit',
+  support: 'Support',
+};
+
+export const ownerPagePermissions: Record<PlatformUserRole, OwnerPagePermission[]> = {
+  owner: ['dashboard', 'companies', 'monitoring', 'billing', 'access', 'audit', 'support'],
+  admin: ['dashboard', 'companies', 'monitoring', 'billing', 'audit', 'support'],
+  support: ['dashboard', 'monitoring', 'audit', 'support'],
+  viewer: ['dashboard', 'companies', 'monitoring', 'audit'],
+};
 
 const platformUsersSeed: PlatformUser[] = [
   {
@@ -15,11 +35,20 @@ const platformUsersSeed: PlatformUser[] = [
 ];
 
 export const rolePermissions: Record<PlatformUserRole, string[]> = {
-  owner: ['All platform settings', 'Billing', 'Access management', 'Support', 'Tenant provisioning'],
-  admin: ['Tenant provisioning', 'Support', 'Billing status', 'Company setup'],
-  support: ['Support inbox', 'Read tenant health', 'Reply to companies'],
-  viewer: ['Read dashboard', 'Read companies', 'Read support'],
+  owner: ['All owner pages', 'Billing', 'Access management', 'Audit log', 'Support', 'Tenant control'],
+  admin: ['Dashboard', 'Companies', 'Monitoring', 'Billing', 'Audit', 'Support'],
+  support: ['Dashboard', 'Monitoring', 'Audit', 'Support inbox'],
+  viewer: ['Dashboard', 'Companies', 'Monitoring', 'Audit read-only'],
 };
+
+export function canAccessOwnerPage(role: PlatformUserRole, page: AppPage) {
+  if (page === 'companyLogin' || page === 'portal') return false;
+  return ownerPagePermissions[role].includes(page);
+}
+
+export function firstAllowedOwnerPage(role: PlatformUserRole): OwnerPagePermission {
+  return ownerPagePermissions[role][0] ?? 'dashboard';
+}
 
 export function listPlatformUsers() {
   return platformUsersSeed;
