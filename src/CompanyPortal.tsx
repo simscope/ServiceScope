@@ -54,6 +54,7 @@ import { MapPage } from './components/portal/MapPage';
 import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
+import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
 import {
   AccessPage,
   AuditPage,
@@ -118,6 +119,8 @@ import type {
   BillingStatus,
   Company,
   CompanyPlan,
+  CompanyPortalAccessLevel,
+  CompanyPortalAccessPage,
   CompanyStatus,
   NewPlatformUserForm,
   NewSupportTicketForm,
@@ -196,7 +199,7 @@ import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './uti
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
 const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
-const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
+const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
@@ -897,6 +900,17 @@ export function CompanyPortal({
   const completedSteps = Object.values(activeCompany.onboarding).filter((step) => step === 'done').length;
   const openTickets = tickets.filter((ticket) => ticket.status !== 'resolved');
   const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(activeCompany);
+  const companyAccessRules = resolveCompanyAccessRules(activeCompany);
+  const accessLevelForPage = (page: CompanyPortalAccessPage): CompanyPortalAccessLevel => companyAccessRules[page];
+  const canViewPage = (page: CompanyPortalAccessPage) => accessLevelForPage(page) !== 'off';
+  const canWritePage = (page: CompanyPortalAccessPage) => accessLevelForPage(page) === 'full';
+  const stopCompanyWrite = (page: CompanyPortalAccessPage, action: string) => {
+    const level = accessLevelForPage(page);
+    if (level === 'full') return false;
+
+    setJobsStatus(`Owner access for ${page} is ${accessLevelLabels[level].toLowerCase()}. Restore full access before ${action}.`);
+    return true;
+  };
   const generatedCompanyEmailSignature = [
     '--',
     profile.displayName || activeCompany.name,
@@ -1122,6 +1136,8 @@ export function CompanyPortal({
     });
   };
   const openEmailCompose = (compose: EmailCompose, attachments: EmailComposeAttachment[] = []) => {
+    if (stopCompanyWrite('email', 'opening email composer')) return;
+
     setEmailCompose({
       ...compose,
       signatureText: compose.signatureText || companyEmailSignature,
@@ -1132,6 +1148,8 @@ export function CompanyPortal({
     setClientPage('email');
   };
   const sendEmailDraft = async (attachments: EmailComposeAttachment[]) => {
+    if (stopCompanyWrite('email', 'sending email')) return;
+
     if (!selectedCompanyId) {
       setMailboxConnectStatus('Choose a company before sending email.');
       return;
@@ -1224,6 +1242,7 @@ export function CompanyPortal({
       }));
 
   const saveMaterialDraftRows = () => {
+    if (stopCompanyWrite('materials', 'saving materials')) return;
     if (!editingMaterialsJobNumber) return;
     const jobNumber = editingMaterialsJobNumber;
     const cleanRows = normalizeMaterialRows(jobNumber, materialDraftRows);
@@ -1247,6 +1266,8 @@ export function CompanyPortal({
       });
   };
   const saveJobMaterials = (jobNumber: string, rows: MaterialRow[]) => {
+    if (stopCompanyWrite('materials', 'saving materials')) return Promise.resolve();
+
     const cleanRows = normalizeMaterialRows(jobNumber, rows);
 
     setMaterials((currentRows) => [
@@ -1355,6 +1376,8 @@ export function CompanyPortal({
     };
   });
   const toggleSalaryPaid = (jobNumber: string) => {
+    if (stopCompanyWrite('finances', 'updating payroll')) return;
+
     setSalaryPaidJobs((jobs) => {
       if (jobs[jobNumber]) {
         const nextJobs = { ...jobs };
@@ -1366,6 +1389,7 @@ export function CompanyPortal({
     });
   };
   const markSalaryJobsPaid = (jobNumbers: string[]) => {
+    if (stopCompanyWrite('finances', 'updating payroll')) return;
     if (!jobNumbers.length) return;
     const paidAt = new Date().toISOString().slice(0, 10);
     setSalaryPaidJobs((jobs) => ({
@@ -1391,6 +1415,8 @@ export function CompanyPortal({
     }));
   };
   const handleSaveJob = (updatedJob: JobCardData, openJobAfterSave = true) => {
+    if (stopCompanyWrite('jobs', 'saving jobs')) return;
+
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
       return nextJobs;
@@ -1433,6 +1459,8 @@ export function CompanyPortal({
   };
   const handleCreateJob = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (stopCompanyWrite('jobs', 'creating jobs')) return;
+
     const form = new FormData(event.currentTarget);
     const rawJobNumber = String(form.get('jobNumber') ?? '').trim();
     const technicianName = String(form.get('technician') ?? '').trim();
@@ -1471,6 +1499,10 @@ export function CompanyPortal({
       });
   };
   const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number, documentType: JobDocumentType) => {
+    if (stopCompanyWrite('finances', 'creating invoices')) {
+      throw new Error('Finance access is read-only.');
+    }
+
     const invoice = await createJobInvoice(selectedCompany.id, job, invoiceMaterials, amount, documentType);
     setJobs((currentJobs) => currentJobs.map((currentJob) => (
       currentJob.id === job.id
@@ -1481,6 +1513,10 @@ export function CompanyPortal({
     return invoice;
   };
   const handleDeleteInvoice = async (job: JobCardData, invoiceId: string) => {
+    if (stopCompanyWrite('finances', 'deleting invoices')) {
+      throw new Error('Finance access is read-only.');
+    }
+
     await deleteJobInvoice(selectedCompany.id, job.id, invoiceId);
     const removeInvoice = (currentJob: ServiceJob) => (
       currentJob.id === job.id
@@ -1523,6 +1559,7 @@ export function CompanyPortal({
   };
   const addLibraryDocument = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (stopCompanyWrite('knowledge', 'adding library documents')) return;
     if (!libraryDraft.title.trim()) return;
 
     setLibraryDocuments((documents) => [
@@ -1566,6 +1603,8 @@ export function CompanyPortal({
     setLibraryStatus(document.fileName ? `Open ${document.fileName} from connected storage.` : 'No file is attached to this document yet.');
   };
   const handleDeleteLibraryDocument = (document: LibraryDocument) => {
+    if (stopCompanyWrite('knowledge', 'deleting library documents')) return;
+
     setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
     setLibraryStatus(`${document.title} removed from the library.`);
   };
@@ -1649,6 +1688,7 @@ export function CompanyPortal({
   const urgentTaskCount = taskRows.filter((task) => task.priority === 'Urgent' && task.status !== 'Done').length;
   const createManualTask = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (stopCompanyWrite('tasks', 'creating tasks')) return;
     if (!taskForm.title.trim()) return;
 
     setManualTasks((tasks) => [
@@ -1668,6 +1708,8 @@ export function CompanyPortal({
     setTaskForm(emptyTaskForm);
   };
   const updateTaskStatus = (task: TaskRow, status: TaskStatus) => {
+    if (stopCompanyWrite('tasks', 'updating tasks')) return;
+
     if (task.source === 'Auto') {
       setCompletedAutoTaskIds((ids) => (status === 'Done' ? Array.from(new Set([...ids, task.id])) : ids.filter((id) => id !== task.id)));
       return;
@@ -1752,11 +1794,17 @@ export function CompanyPortal({
     { page: 'finances', label: 'Finance', icon: <CreditCard size={16} /> },
     { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
     { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },
+    { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
   ];
-  const visibleClientNavItems = clientNavItems;
+  const visibleClientNavItems = clientNavItems.filter((item) => canViewPage(item.page as CompanyPortalAccessPage));
+  const renderedClientPage = canViewPage(clientPage as CompanyPortalAccessPage) ? clientPage : visibleClientNavItems[0]?.page ?? 'portal';
+  const activePageAccessLevel = accessLevelForPage(renderedClientPage as CompanyPortalAccessPage);
+  const activePageReadOnly = !canWritePage(renderedClientPage as CompanyPortalAccessPage);
 
   function handleRequestSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (stopCompanyWrite('portal', 'sending support requests')) return;
+
     setRequestTouched(true);
     if (!request.subject.trim() || !request.message.trim()) return;
 
@@ -1984,6 +2032,8 @@ export function CompanyPortal({
   }
 
   function persistCalendarAssignment(jobNumber: string, assignee: string, dayKey: string, slotKey: string, durationMinutes: number) {
+    if (stopCompanyWrite('calendar', 'saving calendar appointments')) return;
+
     const baseJob = jobs.find((job) => job.jobNumber === jobNumber);
     const appointment = calendarAppointmentFromParts(dayKey, slotKey);
     if (!baseJob || !appointment) return;
@@ -2022,6 +2072,8 @@ export function CompanyPortal({
 
   function handleCalendarDrop(event: DragEvent<HTMLDivElement>, dayKey: string, slotKey: string) {
     event.preventDefault();
+    if (stopCompanyWrite('calendar', 'moving calendar appointments')) return;
+
     const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
     if (!jobNumber) return;
     const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
@@ -2046,6 +2098,8 @@ export function CompanyPortal({
 
   function handleCalendarMonthDrop(event: DragEvent<HTMLDivElement>, dayKey: string) {
     event.preventDefault();
+    if (stopCompanyWrite('calendar', 'moving calendar appointments')) return;
+
     const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
     if (!jobNumber) return;
     const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
@@ -2063,6 +2117,7 @@ export function CompanyPortal({
   }
 
   function confirmCalendarMonthDrop() {
+    if (stopCompanyWrite('calendar', 'saving calendar appointments')) return;
     if (!monthDropRequest) return;
     const appointment = calendarAppointmentFromParts(monthDropRequest.dayKey, monthDropRequest.time);
 
@@ -2087,6 +2142,7 @@ export function CompanyPortal({
   ) {
     event.preventDefault();
     event.stopPropagation();
+    if (stopCompanyWrite('calendar', 'resizing calendar appointments')) return;
 
     if (!job.dayKey || !job.time) return;
     const startSlotIndex = calendarDropSlots.findIndex((slot) => slot.key === job.time);
@@ -2133,9 +2189,9 @@ export function CompanyPortal({
         </div>
 
         <nav className="client-nav" aria-label="Company navigation">
-          {clientNavItems.map((item) => (
+          {visibleClientNavItems.map((item) => (
             <button
-              className={`client-nav-item ${clientPage === item.page ? 'active' : ''} ${item.adminOnly ? 'admin' : ''}`}
+              className={`client-nav-item ${renderedClientPage === item.page ? 'active' : ''} ${item.adminOnly ? 'admin' : ''}`}
               type="button"
               key={item.page}
               onClick={() => {
@@ -2160,7 +2216,13 @@ export function CompanyPortal({
 
       <main className="client-workspace">
         {jobsStatus ? <p className="access-status portal-status">{jobsStatus}</p> : null}
-        {clientPage === 'jobs' ? (
+        {activePageReadOnly ? (
+          <div className={'company-access-banner ' + activePageAccessLevel}>
+            <strong>{visibleClientNavItems.find((item) => item.page === renderedClientPage)?.label ?? 'This page'} is {accessLevelLabels[activePageAccessLevel].toLowerCase()}</strong>
+            <span>Owner access controls are active for this company.</span>
+          </div>
+        ) : null}
+        {renderedClientPage === 'jobs' ? (
           <JobsPage
             openedJob={openedJob}
             profile={profile}
@@ -2180,7 +2242,7 @@ export function CompanyPortal({
             selectedJobTypeId={selectedJobTypeId}
             onSelectedJobTypeIdChange={setSelectedJobTypeId}
           />
-        ) : clientPage === 'allJobs' ? (
+        ) : renderedClientPage === 'allJobs' ? (
           <AllJobsPage
             openedJob={openedJob}
             profile={profile}
@@ -2205,7 +2267,7 @@ export function CompanyPortal({
             onSaveInlineJob={handleSaveInlineJob}
             onOpenJob={setOpenedJob}
           />
-        ) : clientPage === 'calendar' ? (
+        ) : renderedClientPage === 'calendar' ? (
           <CalendarPage
             openedJob={openedJob}
             profile={profile}
@@ -2243,7 +2305,7 @@ export function CompanyPortal({
             onMonthDropRequestChange={setMonthDropRequest}
             onConfirmCalendarMonthDrop={confirmCalendarMonthDrop}
           />
-        ) : clientPage === 'materials' ? (
+        ) : renderedClientPage === 'materials' ? (
           <MaterialsPage
             materials={materials}
             jobsWithoutMaterials={filteredJobsWithoutMaterials}
@@ -2272,7 +2334,7 @@ export function CompanyPortal({
             onAddMaterialDraftRow={addMaterialDraftRow}
             onSaveMaterialDraftRows={saveMaterialDraftRows}
           />
-        ) : clientPage === 'tasks' ? (
+        ) : renderedClientPage === 'tasks' ? (
           <TasksPage
             openedJob={openedJob}
             profile={profile}
@@ -2309,13 +2371,13 @@ export function CompanyPortal({
             onOpenJob={setOpenedJob}
             onUpdateTaskStatus={updateTaskStatus}
           />
-        ) : clientPage === 'email' ? (
+        ) : renderedClientPage === 'email' ? (
           <EmailPage
             emailConnection={emailConnection}
             emailMessages={emailMessages}
             emailTemplates={initialEmailTemplates}
             emailProviderLabels={emailProviderLabels}
-            onOpenOnboarding={() => setClientPage('portal')}
+            onOpenOnboarding={() => setClientPage('onboarding')}
             onStartMailboxConnection={startMailboxConnector}
             onLoadMoreMailbox={loadMoreMailboxMessages}
             mailboxSyncing={mailboxSyncing}
@@ -2336,7 +2398,7 @@ export function CompanyPortal({
             composeAttachmentRequest={emailComposeAttachments}
             onSendEmailDraft={sendEmailDraft}
           />
-        ) : clientPage === 'map' ? (
+        ) : renderedClientPage === 'map' ? (
           <MapPage
             filteredTechnicianLocations={filteredTechnicianLocations}
             mapTechFilter={mapTechFilter}
@@ -2352,7 +2414,7 @@ export function CompanyPortal({
             }}
             profile={profile}
           />
-        ) : clientPage === 'finances' ? (
+        ) : renderedClientPage === 'finances' ? (
           <FinancePage
             openedJob={openedJob}
             profile={profile}
@@ -2378,7 +2440,7 @@ export function CompanyPortal({
             onToggleSalaryPaid={toggleSalaryPaid}
             onMarkSalaryJobsPaid={markSalaryJobsPaid}
           />
-        ) : clientPage === 'knowledge' ? (
+        ) : renderedClientPage === 'knowledge' ? (
           <KnowledgePage
             libraryDocuments={libraryDocuments}
             librarySystems={librarySystems}
@@ -2400,7 +2462,7 @@ export function CompanyPortal({
             onOpenLibraryDocument={handleOpenLibraryDocument}
             onDeleteLibraryDocument={handleDeleteLibraryDocument}
           />
-        ) : clientPage === 'portal' ? (
+        ) : renderedClientPage === 'portal' ? (
           <section className="portal-page">
             <div className="portal-hero">
               <div className="portal-identity">
@@ -2497,9 +2559,9 @@ export function CompanyPortal({
         ) : (
           <section className="client-placeholder">
             <div className="client-placeholder-icon">
-              {visibleClientNavItems.find((item) => item.page === clientPage)?.icon}
+              {visibleClientNavItems.find((item) => item.page === renderedClientPage)?.icon}
             </div>
-            <h1>{visibleClientNavItems.find((item) => item.page === clientPage)?.label}</h1>
+            <h1>{visibleClientNavItems.find((item) => item.page === renderedClientPage)?.label}</h1>
             <p>This module is ready to be connected to live company data.</p>
             <div className="client-placeholder-grid">
               <MetricCard icon={<Activity size={20} />} label="Company" value={selectedCompany.name} detail={selectedCompany.market} />

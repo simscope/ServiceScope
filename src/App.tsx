@@ -49,7 +49,7 @@ import { applyPlan, plans } from './services/billingCatalog';
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CompanyPortal } from './CompanyPortal';
-import { CompanyAccessPage, companyPatchForAccessMode, type CompanyAccessMode } from './components/CompanyAccessPage';
+import { CompanyAccessPage, companyPatchForAccessMode, resolveCompanyAccessRules, type CompanyAccessMode } from './components/CompanyAccessPage';
 import {
   AccessPage,
   AuditPage,
@@ -101,7 +101,10 @@ import type {
   AuditEventCategory,
   BillingStatus,
   Company,
+  CompanyAccessRules,
   CompanyPlan,
+  CompanyPortalAccessLevel,
+  CompanyPortalAccessPage,
   CompanyStatus,
   NewPlatformUserForm,
   NewSupportTicketForm,
@@ -180,6 +183,30 @@ import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toL
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 
 const AUTH_STORAGE_KEY = 'servicescope.authSession';
+const COMPANY_ACCESS_RULES_STORAGE_KEY = 'servicescope.companyAccessRules';
+
+function readCompanyAccessRulesOverlay(): Record<string, CompanyAccessRules> {
+  const saved = window.localStorage.getItem(COMPANY_ACCESS_RULES_STORAGE_KEY);
+  if (!saved) return {};
+
+  try {
+    const parsed = JSON.parse(saved);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, CompanyAccessRules> : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveCompanyAccessRulesOverlay(rules: Record<string, CompanyAccessRules>) {
+  window.localStorage.setItem(COMPANY_ACCESS_RULES_STORAGE_KEY, JSON.stringify(rules));
+}
+
+function applyCompanyAccessRulesOverlay(companies: Company[], overlay = readCompanyAccessRulesOverlay()) {
+  return companies.map((company) => ({
+    ...company,
+    accessRules: overlay[company.id] ?? company.accessRules,
+  }));
+}
 
 function readAuthSession(): AuthSession | null {
   const hashParams = getAuthHashParams();
@@ -402,7 +429,7 @@ function titleForPage(page: AppPage) {
 }
 
 export function App() {
-  const initialCompanies = useMemo(() => listCompanies(), []);
+  const initialCompanies = useMemo(() => applyCompanyAccessRulesOverlay(listCompanies()), []);
   const initialSupportTickets = useMemo(() => listSupportTickets(initialCompanies), [initialCompanies]);
   const initialPlatformUsers = useMemo(() => listPlatformUsers(), []);
   const initialAuditEvents = useMemo(() => listAuditEvents(), []);
@@ -523,9 +550,10 @@ export function App() {
     loadOwnerWorkspaceFromBackend()
       .then(({ companies: backendCompanies, onboardingProfiles: backendProfiles }) => {
         if (ignore) return;
-        setCompanies(backendCompanies);
+        const companiesWithAccessRules = applyCompanyAccessRulesOverlay(backendCompanies);
+        setCompanies(companiesWithAccessRules);
         setOnboardingProfiles(backendProfiles);
-        setSupportTickets(listSupportTickets(backendCompanies));
+        setSupportTickets(listSupportTickets(companiesWithAccessRules));
         loadAuditEventsFromBackend(authSession.kind === 'company' ? authSession.companyId : undefined)
           .then((events) => {
             if (ignore) return;
@@ -538,11 +566,11 @@ export function App() {
           });
         setCompanyCreateStatus('');
         setSelectedCompanyId((currentId) => {
-          if (backendCompanies.some((company) => company.id === currentId)) return currentId;
-          if (authSession.kind === 'company' && backendCompanies.some((company) => company.id === authSession.companyId)) {
+          if (companiesWithAccessRules.some((company) => company.id === currentId)) return currentId;
+          if (authSession.kind === 'company' && companiesWithAccessRules.some((company) => company.id === authSession.companyId)) {
             return authSession.companyId;
           }
-          return backendCompanies[0]?.id ?? '';
+          return companiesWithAccessRules[0]?.id ?? '';
         });
       })
       .catch((error) => {
@@ -628,6 +656,11 @@ export function App() {
   }, [companies, query, status]);
 
   function persist(nextCompanies: Company[]) {
+    const overlay = readCompanyAccessRulesOverlay();
+    nextCompanies.forEach((company) => {
+      if (company.accessRules) overlay[company.id] = company.accessRules;
+    });
+    saveCompanyAccessRulesOverlay(overlay);
     setCompanies(nextCompanies);
     saveCompanies(nextCompanies);
   }
@@ -1072,13 +1105,32 @@ export function App() {
                 details: `Billing status changed to ${billingLabels[billingStatus]}.`,
               });
             }}
-          />        ) : page === 'companyAccess' ? (
+          />
+        ) : page === 'companyAccess' ? (
           <CompanyAccessPage
             companies={companies}
             onChangeCompanyAccess={(companyId, mode: CompanyAccessMode) => {
               const company = companies.find((candidate) => candidate.id === companyId);
               updateCompany(companyId, (currentCompany) => ({ ...currentCompany, ...companyPatchForAccessMode(mode) }));
               recordAudit({ category: 'access', action: 'company.access_changed', actor: 'ServiceScope Owner', resource: company?.name ?? 'Unknown tenant', details: 'Company access changed to ' + mode + '.' });
+            }}
+            onChangeCompanyPageAccess={(companyId, accessPage: CompanyPortalAccessPage, level: CompanyPortalAccessLevel) => {
+              const company = companies.find((candidate) => candidate.id === companyId);
+              updateCompany(companyId, (currentCompany) => ({
+                ...currentCompany,
+                accessRules: {
+                  ...resolveCompanyAccessRules(currentCompany),
+                  [accessPage]: level,
+                },
+                lastSync: 'Access rules updated',
+              }));
+              recordAudit({
+                category: 'access',
+                action: 'company.page_access_changed',
+                actor: 'ServiceScope Owner',
+                resource: company?.name ?? 'Unknown tenant',
+                details: `${accessPage} access changed to ${level}.`,
+              });
             }}
           />
         ) : page === 'access' ? (

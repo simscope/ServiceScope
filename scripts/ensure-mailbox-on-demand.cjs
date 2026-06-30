@@ -51,7 +51,11 @@ if (!emailPage.includes('messageDetailsById')) {
   );
 }
 
-if (!emailPage.includes('loadMailboxMessageDetail(openedBaseMessage.id)')) {
+const hasOnDemandMessageDetail =
+  emailPage.includes('loadMailboxMessageDetail(openedBaseMessage.id)') ||
+  emailPage.includes('loadMailboxMessageDetail(openedMessageBase.id)');
+
+if (!hasOnDemandMessageDetail) {
   emailPage = emailPage.replace(
     `  useEffect(() => {
     if (!openedMessage && !composeOpen) return undefined;
@@ -108,7 +112,10 @@ if (!emailPage.includes('loadMailboxMessageDetail(openedBaseMessage.id)')) {
   );
 }
 
-if (!emailPage.includes('{messageDetailStatus ? <p className="access-status">{messageDetailStatus}</p> : null}')) {
+if (
+  emailPage.includes('const [messageDetailStatus') &&
+  !emailPage.includes('{messageDetailStatus ? <p className="access-status">{messageDetailStatus}</p> : null}')
+) {
   emailPage = emailPage.replace(
     `              <div><strong>Date:</strong> {openedMessage.receivedAt || 'Unknown'}</div>
             </div>`,

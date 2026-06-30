@@ -213,6 +213,28 @@ function safeFileName(name: string) { return name.trim().replace(/[^a-zA-Z0-9._-
 function dataUrlToBlob(dataUrl: string) { const [header, base64] = dataUrl.split(','); const mime = header.match(/data:([^;]+)/)?.[1] ?? 'application/octet-stream'; const bytes = Uint8Array.from(atob(base64 ?? ''), (char) => char.charCodeAt(0)); return new Blob([bytes], { type: mime }); }
 
 async function syncAttachments(companyId: string, job: ServiceJob) {
+  const existingAttachments = await supabaseRequest<Pick<JobAttachmentRow, 'storage_bucket' | 'storage_path'>[]>(
+    `job_attachments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&select=storage_bucket,storage_path&limit=1000`,
+  );
+  const retainedStorageKeys = new Set(
+    (job.attachments ?? [])
+      .filter((attachment) => attachment.storageBucket && attachment.storagePath)
+      .map((attachment) => `${attachment.storageBucket}/${attachment.storagePath}`),
+  );
+  const removedStorageByBucket = existingAttachments.reduce((acc, attachment) => {
+    if (!attachment.storage_bucket || !attachment.storage_path) return acc;
+    if (retainedStorageKeys.has(`${attachment.storage_bucket}/${attachment.storage_path}`)) return acc;
+
+    const paths = acc.get(attachment.storage_bucket) ?? [];
+    paths.push(attachment.storage_path);
+    acc.set(attachment.storage_bucket, paths);
+    return acc;
+  }, new Map<string, string[]>());
+
+  for (const [bucket, paths] of removedStorageByBucket) {
+    await deleteSupabaseStorageFiles(bucket, paths);
+  }
+
   await supabaseRequest(`job_attachments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}`, { method: 'DELETE' });
   const rows: Omit<JobAttachmentRow, 'created_at' | 'uploaded_by_user_id'>[] = [];
   for (const attachment of job.attachments ?? []) {

@@ -1,5 +1,5 @@
 import type { EmailAttachment, EmailMessage } from '../appTypes';
-import { getSupabaseAccessToken, isSupabaseConfigured, sqlEq, supabaseRequest } from './supabaseRest';
+import { getSupabaseAccessToken, getSupabasePublicStorageUrl, isSupabaseConfigured, sqlEq, supabaseRequest } from './supabaseRest';
 
 type ViteEnv = {
   VITE_SUPABASE_URL?: string;
@@ -13,6 +13,8 @@ type DbEmailMessage = {
   to_email: string | null;
   subject: string;
   preview: string;
+  body: string | null;
+  body_html: string | null;
   unread: boolean;
   received_at: string | null;
   sent_at: string | null;
@@ -24,7 +26,7 @@ type DbEmailAttachment = {
   file_name: string;
   mime_type: string;
   size_bytes: number;
-  content_base64?: string | null;
+  content_base64: string | null;
   gmail_attachment_id?: string | null;
   storage_bucket?: string | null;
   storage_path?: string | null;
@@ -97,7 +99,7 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
 
   const safeLimit = clampMailboxLimit(limit);
   const rows = await supabaseRequest<DbEmailMessage[]>(
-    `email_messages?select=id,folder,from_email,to_email,subject,preview,unread,received_at,sent_at&company_id=${sqlEq(companyId)}&order=received_at.desc.nullslast&order=sent_at.desc.nullslast&limit=${safeLimit}`,
+    `email_messages?select=id,folder,from_email,to_email,subject,preview,body,body_html,unread,received_at,sent_at&company_id=${sqlEq(companyId)}&order=received_at.desc.nullslast&order=sent_at.desc.nullslast&limit=${safeLimit}`,
     { select: true },
   );
   const messageIds = rows.map((row) => row.id);
@@ -114,7 +116,11 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
       fileName: attachment.file_name,
       mimeType: attachment.mime_type,
       sizeBytes: attachment.size_bytes,
-      dataUrl: toDataUrl(attachment.mime_type, attachment.content_base64),
+      dataUrl: attachment.storage_bucket && attachment.storage_path
+        ? getSupabasePublicStorageUrl(attachment.storage_bucket, attachment.storage_path)
+        : attachment.content_base64
+          ? toDataUrl(attachment.mime_type, attachment.content_base64)
+          : undefined,
       isInline: attachment.is_inline,
       contentId: attachment.content_id ?? undefined,
       gmailAttachmentId: attachment.gmail_attachment_id ?? undefined,
@@ -135,8 +141,8 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
       to: row.to_email ?? '',
       subject: row.subject,
       preview: makePreview(row.preview),
-      body: '',
-      bodyHtml: '',
+      body: row.body ?? '',
+      bodyHtml: inlineCidImages(row.body_html ?? '', messageAttachments),
       attachments: messageAttachments,
       jobNumber: '',
       receivedAt: formatMessageDate(row.received_at ?? row.sent_at),
