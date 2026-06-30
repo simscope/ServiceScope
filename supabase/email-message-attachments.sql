@@ -5,11 +5,22 @@ create table if not exists public.email_message_attachments (
   file_name text not null,
   mime_type text not null default 'application/octet-stream',
   size_bytes integer not null default 0,
-  content_base64 text not null default '',
+  content_base64 text,
   content_id text,
+  gmail_attachment_id text,
+  storage_bucket text,
+  storage_path text,
   is_inline boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+alter table public.email_message_attachments
+  alter column content_base64 drop not null;
+
+alter table public.email_message_attachments
+  add column if not exists gmail_attachment_id text,
+  add column if not exists storage_bucket text,
+  add column if not exists storage_path text;
 
 create index if not exists idx_email_message_attachments_message
   on public.email_message_attachments(email_message_id);

@@ -110,6 +110,15 @@ function normalizeBase64(value: string) {
   return base64.replace(/\s/g, '');
 }
 
+function base64ToBytes(value: string) {
+  const binary = atob(normalizeBase64(value));
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function safeFileName(name: string) {
+  return name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'attachment';
+}
+
 function encodeHeader(value: string) {
   return /^[\x00-\x7F]*$/.test(value) ? value : `=?UTF-8?B?${base64FromUtf8(value)}?=`;
 }
@@ -355,17 +364,37 @@ Deno.serve(async (request) => {
 
     const messageId = insertedMessage?.id;
     if (messageId && attachments.length) {
-      const { error: attachmentError } = await adminClient.from('email_message_attachments').insert(
-        attachments.map((attachment) => ({
+      const attachmentRows = [];
+
+      for (const attachment of attachments) {
+        const fileName = attachment.fileName?.trim() || 'attachment';
+        const mimeType = attachment.mimeType?.trim() || 'application/octet-stream';
+        const storagePath = `${companyId}/${messageId}/${crypto.randomUUID()}-${safeFileName(fileName)}`;
+        const { error: uploadError } = await adminClient.storage
+          .from(EMAIL_FILES_BUCKET)
+          .upload(storagePath, base64ToBytes(attachment.contentBase64 ?? ''), {
+            contentType: mimeType,
+            upsert: true,
+          });
+
+        if (uploadError) throw new Error(uploadError.message);
+
+        attachmentRows.push({
           email_message_id: messageId,
           company_id: companyId,
-          file_name: attachment.fileName?.trim() || 'attachment',
-          mime_type: attachment.mimeType?.trim() || 'application/octet-stream',
+          file_name: fileName,
+          mime_type: mimeType,
           size_bytes: attachment.sizeBytes ?? 0,
-          content_base64: normalizeBase64(attachment.contentBase64 ?? ''),
+          content_base64: null,
           content_id: null,
+          storage_bucket: EMAIL_FILES_BUCKET,
+          storage_path: storagePath,
           is_inline: false,
-        })),
+        });
+      }
+
+      const { error: attachmentError } = await adminClient.from('email_message_attachments').insert(
+        attachmentRows,
       );
       if (attachmentError) throw new Error(attachmentError.message);
     }

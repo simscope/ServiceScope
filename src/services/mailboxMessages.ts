@@ -26,8 +26,10 @@ type DbEmailAttachment = {
   file_name: string;
   mime_type: string;
   size_bytes: number;
-  content_base64: string;
+  content_base64: string | null;
   content_id: string | null;
+  storage_bucket: string | null;
+  storage_path: string | null;
   is_inline: boolean;
 };
 
@@ -95,9 +97,15 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
       fileName: attachment.file_name,
       mimeType: attachment.mime_type,
       sizeBytes: attachment.size_bytes,
-      dataUrl: toDataUrl(attachment.mime_type, attachment.content_base64),
+      dataUrl: attachment.storage_bucket && attachment.storage_path
+        ? getSupabasePublicStorageUrl(attachment.storage_bucket, attachment.storage_path)
+        : attachment.content_base64
+          ? toDataUrl(attachment.mime_type, attachment.content_base64)
+          : undefined,
       isInline: attachment.is_inline,
       contentId: attachment.content_id ?? undefined,
+      storageBucket: attachment.storage_bucket ?? undefined,
+      storagePath: attachment.storage_path ?? undefined,
     });
     acc.set(attachment.email_message_id, list);
     return acc;

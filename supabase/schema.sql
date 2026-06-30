@@ -721,8 +721,11 @@ create table email_message_attachments (
   file_name text not null,
   mime_type text not null default 'application/octet-stream',
   size_bytes integer not null default 0,
-  content_base64 text not null default '',
+  content_base64 text,
   content_id text,
+  gmail_attachment_id text,
+  storage_bucket text,
+  storage_path text,
   is_inline boolean not null default false,
   created_at timestamptz not null default now()
 );
@@ -1151,12 +1154,14 @@ insert into storage.buckets (id, name, public)
 values
   ('job-files', 'job-files', false),
   ('library', 'library', false),
+  ('email-files', 'email-files', true),
   ('company-logos', 'company-logos', true)
 on conflict (id) do nothing;
 
 -- Storage policies use the convention:
 -- job-files/{company_id}/{job_id}/{file}
 -- library/{company_id}/{file}
+-- email-files/{company_id}/{email_message_id}/{file}
 -- company-logos/{company_id}/{file}
 create policy "authenticated can read company logos" on storage.objects
   for select using (bucket_id = 'company-logos');
@@ -1198,6 +1203,33 @@ create policy "company managers can upload library files" on storage.objects
   for insert with check (
     bucket_id = 'library'
     and public.can_manage_company((storage.foldername(name))[1]::uuid)
+  );
+
+create policy "company members can read email files" on storage.objects
+  for select using (
+    bucket_id = 'email-files'
+    and public.can_access_company((storage.foldername(name))[1]::uuid)
+  );
+
+create policy "company members can upload email files" on storage.objects
+  for insert with check (
+    bucket_id = 'email-files'
+    and public.can_access_company((storage.foldername(name))[1]::uuid)
+  );
+
+create policy "company members can update email files" on storage.objects
+  for update using (
+    bucket_id = 'email-files'
+    and public.can_access_company((storage.foldername(name))[1]::uuid)
+  ) with check (
+    bucket_id = 'email-files'
+    and public.can_access_company((storage.foldername(name))[1]::uuid)
+  );
+
+create policy "company members can delete email files" on storage.objects
+  for delete using (
+    bucket_id = 'email-files'
+    and public.can_access_company((storage.foldername(name))[1]::uuid)
   );
 
 -- =========================================================

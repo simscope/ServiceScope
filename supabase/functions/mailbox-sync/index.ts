@@ -44,6 +44,7 @@ type SyncMessage = {
 
 const DEFAULT_MESSAGES_PER_FOLDER = 20;
 const MAX_MESSAGES_PER_FOLDER = 40;
+const EMAIL_FILES_BUCKET = 'email-files';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -139,6 +140,17 @@ function decodeBase64Url(value: string) {
   const binary = atob(padded);
   const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
   return new TextDecoder().decode(bytes);
+}
+
+function base64UrlToBytes(value: string) {
+  const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=');
+  const binary = atob(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function safeFileName(name: string) {
+  return name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'attachment';
 }
 
 function textFromPayload(payload: GmailMessage['payload'] | undefined): string {
@@ -244,6 +256,42 @@ async function gmailFetch(path: string, accessToken: string) {
 
   const result = await response.json().catch(() => ({}));
   return { ok: response.ok, status: response.status, result };
+}
+
+async function deleteStoredEmailFiles(adminClient: ReturnType<typeof createClient>, companyId: string, connectionId: string) {
+  const { data: messages, error: messagesError } = await adminClient
+    .from('email_messages')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('email_connection_id', connectionId);
+
+  if (messagesError) throw new Error(messagesError.message);
+  const messageIds = (messages ?? []).map((message: { id: string }) => message.id);
+  if (!messageIds.length) return;
+
+  const { data: attachments, error: attachmentsError } = await adminClient
+    .from('email_message_attachments')
+    .select('storage_bucket,storage_path')
+    .eq('company_id', companyId)
+    .in('email_message_id', messageIds);
+
+  if (attachmentsError) throw new Error(attachmentsError.message);
+
+  const pathsByBucket = new Map<string, string[]>();
+  for (const attachment of attachments ?? []) {
+    const bucket = attachment.storage_bucket;
+    const path = attachment.storage_path;
+    if (!bucket || !path) continue;
+
+    const paths = pathsByBucket.get(bucket) ?? [];
+    paths.push(path);
+    pathsByBucket.set(bucket, paths);
+  }
+
+  for (const [bucket, paths] of pathsByBucket) {
+    const { error } = await adminClient.storage.from(bucket).remove(paths);
+    if (error) throw new Error(error.message);
+  }
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>) {
@@ -394,6 +442,7 @@ Deno.serve(async (request) => {
       };
     });
 
+    await deleteStoredEmailFiles(adminClient, companyId, connection.id);
     await adminClient.from('email_messages').delete().eq('company_id', companyId).eq('email_connection_id', connection.id);
 
     if (syncMessages.length) {
@@ -404,21 +453,48 @@ Deno.serve(async (request) => {
       if (insertError) throw new Error(insertError.message);
 
       const insertedByProviderId = new Map((insertedMessages ?? []).map((message: { id: string; provider_message_id: string }) => [message.provider_message_id, message.id]));
-      const attachmentRows = syncMessages.flatMap((message) =>
-        message.attachments.map((attachment) => ({
-          email_message_id: insertedByProviderId.get(message.providerMessageId),
-          company_id: companyId,
-          file_name: attachment.fileName,
-          mime_type: attachment.mimeType,
-          size_bytes: attachment.sizeBytes,
-          content_base64: null,
-          content_id: attachment.contentId || null,
-          gmail_attachment_id: attachment.attachmentId,
-          storage_bucket: null,
-          storage_path: null,
-          is_inline: attachment.isInline,
-        })),
-      ).filter((row) => row.email_message_id);
+      const attachmentRows = [];
+
+      for (const message of syncMessages) {
+        const emailMessageId = insertedByProviderId.get(message.providerMessageId);
+        if (!emailMessageId) continue;
+
+        for (const attachment of message.attachments) {
+          const attachmentResponse = await gmailFetch(
+            `messages/${message.providerMessageId}/attachments/${attachment.attachmentId}`,
+            accessToken,
+          );
+
+          if (!attachmentResponse.ok) {
+            throw new Error(attachmentResponse.result.error?.message || `Gmail attachment fetch failed with ${attachmentResponse.status}`);
+          }
+
+          const attachmentBytes = base64UrlToBytes(String(attachmentResponse.result.data ?? ''));
+          const storagePath = `${companyId}/${emailMessageId}/${crypto.randomUUID()}-${safeFileName(attachment.fileName)}`;
+          const { error: uploadError } = await adminClient.storage
+            .from(EMAIL_FILES_BUCKET)
+            .upload(storagePath, attachmentBytes, {
+              contentType: attachment.mimeType,
+              upsert: true,
+            });
+
+          if (uploadError) throw new Error(uploadError.message);
+
+          attachmentRows.push({
+            email_message_id: emailMessageId,
+            company_id: companyId,
+            file_name: attachment.fileName,
+            mime_type: attachment.mimeType,
+            size_bytes: attachment.sizeBytes || attachmentBytes.byteLength,
+            content_base64: null,
+            content_id: attachment.contentId || null,
+            gmail_attachment_id: attachment.attachmentId,
+            storage_bucket: EMAIL_FILES_BUCKET,
+            storage_path: storagePath,
+            is_inline: attachment.isInline,
+          });
+        }
+      }
 
       if (attachmentRows.length) {
         const { error: attachmentError } = await adminClient.from('email_message_attachments').insert(attachmentRows);
