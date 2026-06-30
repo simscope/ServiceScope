@@ -1783,6 +1783,7 @@ export function CompanyPortal({
   const unassignedCalendarJobs = calendarJobs.filter((job) => !job.dayKey || job.assignee === 'No technician');
   const visibleCalendarJobs = scheduledJobs.filter((job) => activeCalendarTech === 'all' || job.assignee === activeCalendarTech);
   const visibleCalendarDays = calendarView === 'day' ? [formatCalendarDay(calendarAnchor)] : calendarDays;
+  const unreadEmailCount = emailMessages.filter((message) => message.unread).length;
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
     { page: 'allJobs', label: 'All Jobs', icon: <LayoutDashboard size={16} /> },
@@ -2201,6 +2202,11 @@ export function CompanyPortal({
             >
               {item.icon}
               {item.label}
+              {item.page === 'email' && unreadEmailCount > 0 ? (
+                <span className="client-nav-badge" aria-label={`${unreadEmailCount} unread emails`}>
+                  {unreadEmailCount > 99 ? '99+' : unreadEmailCount}
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>
