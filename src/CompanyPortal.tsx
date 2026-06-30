@@ -199,7 +199,7 @@ import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './uti
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
 const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
-const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];
+const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
@@ -1794,6 +1794,7 @@ export function CompanyPortal({
     { page: 'finances', label: 'Finance', icon: <CreditCard size={16} /> },
     { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
     { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },
+    { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
   ];
   const visibleClientNavItems = clientNavItems.filter((item) => canViewPage(item.page as CompanyPortalAccessPage));
   const renderedClientPage = canViewPage(clientPage as CompanyPortalAccessPage) ? clientPage : visibleClientNavItems[0]?.page ?? 'portal';
@@ -2376,7 +2377,7 @@ export function CompanyPortal({
             emailMessages={emailMessages}
             emailTemplates={initialEmailTemplates}
             emailProviderLabels={emailProviderLabels}
-            onOpenOnboarding={() => setClientPage('portal')}
+            onOpenOnboarding={() => setClientPage('onboarding')}
             onStartMailboxConnection={startMailboxConnector}
             onLoadMoreMailbox={loadMoreMailboxMessages}
             mailboxSyncing={mailboxSyncing}

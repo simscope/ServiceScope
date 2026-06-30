@@ -3,6 +3,7 @@ import type { EmailCompose, EmailComposeAttachment } from '../appTypes';
 import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobDocumentType, JobInvoice, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
 import { money } from '../utils/format';
+import { deleteJobFile } from '../services/jobFiles';
 
 type PaymentMethodOption = {
   value: string;
@@ -335,13 +336,76 @@ export function JobDetailPanel({
     onSave(nextJob);
   }
 
-  function removeAttachment(attachmentId: string) {
-    updateDraft({ attachments: (draft.attachments ?? []).filter((attachment) => attachment.id !== attachmentId) });
+  async function removeAttachment(attachmentId: string) {
+    const attachment = (draft.attachments ?? []).find((item) => item.id === attachmentId);
+    const companyId = draft.companyId || job.companyId;
+    const nextJob = {
+      ...draft,
+      attachments: (draft.attachments ?? []).filter((item) => item.id !== attachmentId),
+    };
+
+    setDraft(nextJob);
+    setSelectedAttachmentIds((ids) => ids.filter((id) => id !== attachmentId));
+    setSaved(false);
+    setUploadError('');
+
+    try {
+      if (companyId && draft.id && attachment?.storagePath) {
+        await deleteJobFile(companyId, draft.id, attachmentId, attachment.storageBucket, attachment.storagePath);
+      }
+      await Promise.resolve(onSave(nextJob));
+      setSaved(true);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'File could not be deleted.');
+    }
   }
 
   function closeAttachmentPreview() {
     setPreviewAttachment(null);
     setPreviewUrl('');
+  }
+
+  function attachmentUrl(attachment: JobAttachment) {
+    return attachment.dataUrl ?? '';
+  }
+
+  function openAttachment(attachment: JobAttachment) {
+    const url = attachmentUrl(attachment);
+    if (!url) {
+      setUploadError('Save the job first, then open this file.');
+      return;
+    }
+    setPreviewAttachment(attachment);
+    setPreviewUrl(url);
+  }
+
+  async function downloadAttachment(attachment: JobAttachment) {
+    const url = attachmentUrl(attachment);
+    if (!url) {
+      setUploadError('Save the job first, then download this file.');
+      return;
+    }
+
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = attachment.name || 'attachment';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch {
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = attachment.name || 'attachment';
+      anchor.target = '_blank';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+    }
   }
 
   function updateMaterial(rowId: string, patch: Partial<MaterialRow>) {

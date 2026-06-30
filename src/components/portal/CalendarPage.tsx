@@ -306,12 +306,18 @@ export function CalendarPage({
                       <em>{job.technician}</em>
                       <span
                         className="calendar-resize-handle start"
-                        onPointerDown={(event) => onCalendarResizeStart(event, job, 'start')}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          onCalendarResizeStart(event, job, 'start');
+                        }}
                         aria-label={`Resize start of job ${job.jobNumber}`}
                       />
                       <span
                         className="calendar-resize-handle end"
-                        onPointerDown={(event) => onCalendarResizeStart(event, job, 'end')}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          onCalendarResizeStart(event, job, 'end');
+                        }}
                         aria-label={`Resize end of job ${job.jobNumber}`}
                       />
                     </button>

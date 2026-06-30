@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from '
 import { MailPlus } from 'lucide-react';
 import type { EmailCompose, EmailComposeAttachment, EmailConnection, EmailFolder, EmailMessage, EmailTemplate } from '../../appTypes';
 import type { ServiceJob } from '../../types';
+import { loadMailboxMessageDetail } from '../../services/mailboxMessages';
 
 export function EmailPage({
   emailConnection,
@@ -59,15 +60,52 @@ export function EmailPage({
   const [composeAttachments, setComposeAttachments] = useState<EmailComposeAttachment[]>([]);
   const [fileInputKey, setFileInputKey] = useState(0);
   const [sending, setSending] = useState(false);
-  const openedMessage = useMemo(
+  const [loadingMessageId, setLoadingMessageId] = useState('');
+  const [messageDetailsById, setMessageDetailsById] = useState<Record<string, Pick<EmailMessage, 'body' | 'bodyHtml' | 'attachments'>>>({});
+  const openedMessageBase = useMemo(
     () => visibleEmailMessages.find((message) => message.id === openedMessageId) ?? null,
     [openedMessageId, visibleEmailMessages],
   );
+  const openedMessage = useMemo(() => {
+    if (!openedMessageBase) return null;
+    const detail = messageDetailsById[openedMessageBase.id];
+    return detail ? { ...openedMessageBase, ...detail } : openedMessageBase;
+  }, [messageDetailsById, openedMessageBase]);
   const openedMessageDocument = useMemo(() => {
     if (!openedMessage?.bodyHtml) return '';
 
     return `<!doctype html><html><head><base target="_blank"><meta charset="utf-8"><style>html,body{margin:0;padding:0;background:#fff;color:#111;font-family:Arial,sans-serif;line-height:1.45;}img{max-width:100%;height:auto;}table{max-width:100%;}a{color:#0b57d0;}</style></head><body>${openedMessage.bodyHtml}</body></html>`;
   }, [openedMessage]);
+
+  useEffect(() => {
+    if (!openedMessageBase || messageDetailsById[openedMessageBase.id] || loadingMessageId === openedMessageBase.id) return;
+
+    let cancelled = false;
+    setLoadingMessageId(openedMessageBase.id);
+    loadMailboxMessageDetail(openedMessageBase.id)
+      .then((detail) => {
+        if (cancelled) return;
+        setMessageDetailsById((details) => ({ ...details, [openedMessageBase.id]: detail }));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setMessageDetailsById((details) => ({
+          ...details,
+          [openedMessageBase.id]: {
+            body: openedMessageBase.body,
+            bodyHtml: openedMessageBase.bodyHtml,
+            attachments: openedMessageBase.attachments,
+          },
+        }));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingMessageId('');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadingMessageId, messageDetailsById, openedMessageBase]);
 
   useEffect(() => {
     if (!openedMessage && !composeOpen) return undefined;
@@ -411,7 +449,7 @@ export function EmailPage({
             {openedMessageDocument ? (
               <iframe className="email-message-html-frame" title={openedMessage.subject} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={openedMessageDocument} />
             ) : (
-              <div className="email-message-body">{openedMessage.body || openedMessage.preview || 'No message body available.'}</div>
+              <div className="email-message-body">{loadingMessageId === openedMessage.id ? 'Loading email body from mailbox...' : openedMessage.body || openedMessage.preview || 'No message body available.'}</div>
             )}
           </section>
         </div>
