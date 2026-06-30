@@ -13,6 +13,8 @@ type DbEmailMessage = {
   to_email: string | null;
   subject: string;
   preview: string;
+  body: string | null;
+  body_html: string | null;
   unread: boolean;
   received_at: string | null;
   sent_at: string | null;
@@ -97,7 +99,7 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
 
   const safeLimit = clampMailboxLimit(limit);
   const rows = await supabaseRequest<DbEmailMessage[]>(
-    `email_messages?select=id,folder,from_email,to_email,subject,preview,unread,received_at,sent_at&company_id=${sqlEq(companyId)}&order=received_at.desc.nullslast&order=sent_at.desc.nullslast&limit=${safeLimit}`,
+    `email_messages?select=id,folder,from_email,to_email,subject,preview,body,body_html,unread,received_at,sent_at&company_id=${sqlEq(companyId)}&order=received_at.desc.nullslast&order=sent_at.desc.nullslast&limit=${safeLimit}`,
     { select: true },
   );
   const messageIds = rows.map((row) => row.id);
@@ -139,8 +141,8 @@ export async function loadMailboxMessages(companyId: string, limit = DEFAULT_MAI
       to: row.to_email ?? '',
       subject: row.subject,
       preview: makePreview(row.preview),
-      body: '',
-      bodyHtml: '',
+      body: row.body ?? '',
+      bodyHtml: inlineCidImages(row.body_html ?? '', messageAttachments),
       attachments: messageAttachments,
       jobNumber: '',
       receivedAt: formatMessageDate(row.received_at ?? row.sent_at),

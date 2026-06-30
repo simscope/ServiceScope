@@ -397,6 +397,7 @@ Deno.serve(async (request) => {
       ...sentMessages.map((message) => ({ message, folder: 'sent' as const })),
     ].map(({ message, folder }) => {
       const body = textFromPayload(message.payload);
+      const bodyHtml = htmlFromPayload(message.payload);
       return {
         providerMessageId: message.id,
         folder,
@@ -409,8 +410,8 @@ Deno.serve(async (request) => {
           to_email: parseEmailAddress(header(message, 'To')),
           subject: header(message, 'Subject') || '(No subject)',
           preview: message.snippet || body.slice(0, 240),
-          body: null,
-          body_html: null,
+          body,
+          body_html: bodyHtml,
           unread: message.labelIds?.includes('UNREAD') ?? false,
           received_at: folder === 'inbox' ? new Date(header(message, 'Date') || Date.now()).toISOString() : null,
           sent_at: folder === 'sent' ? new Date(header(message, 'Date') || Date.now()).toISOString() : null,
