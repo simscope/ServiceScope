@@ -26,7 +26,7 @@ const removeAttachmentBody = `  async function removeAttachment(attachmentId: st
 
     try {
       if (companyId && draft.id && attachment?.storagePath) {
-        await deleteJobFile(companyId, draft.id, attachmentId);
+        await deleteJobFile(companyId, draft.id, attachmentId, attachment.storageBucket, attachment.storagePath);
       }
       await Promise.resolve(onSave(nextJob));
       setSaved(true);
@@ -57,4 +57,4 @@ removeAttachmentBody,
 );
 
 fs.writeFileSync(detailPath, source);
-console.log('Job file delete uses service role function and saves immediately.');
+console.log('Job file delete uses direct bucket delete and saves immediately.');
