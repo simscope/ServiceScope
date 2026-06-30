@@ -434,14 +434,21 @@ export function EmailPage({
                 <strong>Attachments</strong>
                 <div className="email-attachment-grid">
                   {openedMessage.attachments.map((attachment) => (
-                    <a className="email-attachment-item" href={attachment.dataUrl} download={attachment.fileName} target="_blank" rel="noreferrer" key={attachment.id}>
-                      {attachment.mimeType.startsWith('image/') ? (
-                        <img src={attachment.dataUrl} alt={attachment.fileName} />
-                      ) : (
+                    attachment.dataUrl ? (
+                      <a className="email-attachment-item" href={attachment.dataUrl} download={attachment.fileName} target="_blank" rel="noreferrer" key={attachment.id}>
+                        {attachment.mimeType.startsWith('image/') ? (
+                          <img src={attachment.dataUrl} alt={attachment.fileName} />
+                        ) : (
+                          <span>{attachment.fileName.split('.').pop()?.toUpperCase() || 'FILE'}</span>
+                        )}
+                        <small>{attachment.fileName}</small>
+                      </a>
+                    ) : (
+                      <div className="email-attachment-item" key={attachment.id} title="Attachment metadata loaded, file content is not available yet">
                         <span>{attachment.fileName.split('.').pop()?.toUpperCase() || 'FILE'}</span>
-                      )}
-                      <small>{attachment.fileName}</small>
-                    </a>
+                        <small>{attachment.fileName}</small>
+                      </div>
+                    )
                   ))}
                 </div>
               </div>
