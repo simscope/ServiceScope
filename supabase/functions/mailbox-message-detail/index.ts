@@ -38,7 +38,7 @@ type SyncAttachment = {
   dataUrl?: string;
 };
 
-const MAX_INLINE_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_DETAIL_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -298,9 +298,9 @@ Deno.serve(async (request) => {
 
     const message = full.result as GmailMessage;
     const attachments = collectAttachments(message.payload);
-    const attachmentsWithInlineData = await Promise.all(
+    const attachmentsWithData = await Promise.all(
       attachments.map(async (attachment) => {
-        if (!attachment.isInline || !attachment.attachmentId || attachment.sizeBytes > MAX_INLINE_ATTACHMENT_BYTES) return attachment;
+        if (!attachment.attachmentId || attachment.sizeBytes > MAX_DETAIL_ATTACHMENT_BYTES) return attachment;
         const file = await gmailFetch(`messages/${message.id}/attachments/${attachment.attachmentId}`, accessToken);
         if (!file.ok) return attachment;
         const attachmentData = file.result as GmailAttachment;
@@ -315,7 +315,7 @@ Deno.serve(async (request) => {
       ok: true,
       body: textFromPayload(message.payload),
       bodyHtml: htmlFromPayload(message.payload),
-      attachments: attachmentsWithInlineData.map((attachment) => ({
+      attachments: attachmentsWithData.map((attachment) => ({
         fileName: attachment.fileName,
         mimeType: attachment.mimeType,
         sizeBytes: attachment.sizeBytes,
