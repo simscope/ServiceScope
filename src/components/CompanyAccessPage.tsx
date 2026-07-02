@@ -23,6 +23,7 @@ export const companyPortalAccessPages: AccessPageDefinition[] = [
   { page: 'finances', label: 'Finance', detail: 'Invoices, payroll, and money reports' },
   { page: 'knowledge', label: 'Library', detail: 'Manuals and uploaded documents' },
   { page: 'portal', label: 'Portal', detail: 'Support requests and account page' },
+  { page: 'onboarding', label: 'Onboarding', detail: 'Company setup, billing, and mailbox settings' },
 ];
 
 export const accessLevelLabels: Record<CompanyPortalAccessLevel, string> = {
@@ -54,6 +55,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
       finances: 'readonly',
       knowledge: 'readonly',
       portal: 'full',
+      onboarding: 'full',
     };
   }
 
@@ -68,6 +70,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
     finances: 'readonly',
     knowledge: 'readonly',
     portal: 'full',
+    onboarding: 'full',
   };
 }
 
@@ -81,6 +84,7 @@ export function resolveCompanyAccessRules(company: Company): Required<CompanyAcc
   return {
     ...defaultCompanyAccessRules(fallbackAccessMode(company)),
     ...company.accessRules,
+    onboarding: company.accessRules?.onboarding ?? defaultCompanyAccessRules(fallbackAccessMode(company)).onboarding,
   };
 }
 
