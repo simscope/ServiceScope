@@ -962,6 +962,10 @@ export function App() {
                 <input value={form.ownerName} onChange={(event) => setForm({ ...form, ownerName: event.target.value })} placeholder="Owner full name" />
               </label>
               <label>
+                Owner phone
+                <input type="tel" value={form.phone} onChange={(event) => setForm({ ...form, phone: event.target.value })} placeholder="Owner personal phone" />
+              </label>
+              <label>
                 Owner email
                 <input type="email" value={form.ownerEmail} onChange={(event) => setForm({ ...form, ownerEmail: event.target.value })} placeholder="Owner email" />
               </label>
