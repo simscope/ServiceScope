@@ -2562,6 +2562,50 @@ export function CompanyPortal({
               </section>
             </div>
           </section>
+        ) : renderedClientPage === 'onboarding' ? (
+          <OnboardingPage
+            completedSteps={completedSteps}
+            profile={profile}
+            emailConnection={emailConnection}
+            handleLogoUpload={handleLogoUpload}
+            updateProfile={updateProfile}
+            connectMailbox={connectMailbox}
+            emailProviderLabels={emailProviderLabels}
+            updateMailbox={updateMailbox}
+            togglePaymentMethod={togglePaymentMethod}
+            professionTemplates={professionTemplates}
+            configuredProfessionNames={configuredProfessionNames}
+            addProfessionTemplate={addProfessionTemplate}
+            jobTypeForm={jobTypeForm}
+            setJobTypeForm={setJobTypeForm}
+            handleJobTypeSubmit={handleJobTypeSubmit}
+            removeJobType={removeJobType}
+            technicianForm={technicianForm}
+            setTechnicianForm={setTechnicianForm}
+            selectedCompany={selectedCompany}
+            handleTechnicianSubmit={handleTechnicianSubmit}
+            onSendTechnicianAccess={sendTechnicianAccess}
+            technicianAccessStatusById={technicianAccessStatusById}
+            technicianAccessPasswordById={technicianAccessPasswordById}
+            setTechnicianAccessPasswordById={setTechnicianAccessPasswordById}
+            ownerAccessPassword={ownerAccessPassword}
+            ownerAccessPasswordConfirm={ownerAccessPasswordConfirm}
+            ownerAccessStatus={ownerAccessStatus}
+            setOwnerAccessPassword={setOwnerAccessPassword}
+            setOwnerAccessPasswordConfirm={setOwnerAccessPasswordConfirm}
+            onGenerateOwnerPassword={generateOwnerPassword}
+            onSaveOwnerPassword={saveOwnerPassword}
+            mailboxConnectStatus={mailboxConnectStatus}
+            mailboxOAuthSecretDraft={mailboxOAuthSecretDraft}
+            mailboxOAuthStatus={mailboxOAuthStatus}
+            mailboxOAuthRedirectUrl={mailboxOAuthRedirectUrl}
+            setMailboxOAuthSecretDraft={setMailboxOAuthSecretDraft}
+            onCopyMailboxRedirectUrl={copyMailboxRedirectUrl}
+            onSaveMailboxOAuth={saveMailboxOAuth}
+            onStartMailboxConnection={startMailboxConnector}
+            billingStatus={billingStatus}
+            onConnectSubscriptionBilling={connectSubscriptionBilling}
+          />
         ) : (
           <section className="client-placeholder">
             <div className="client-placeholder-icon">

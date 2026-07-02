@@ -19,10 +19,10 @@ if (!portal.includes("{ page: 'onboarding', label: 'Onboarding'")) {
 
 portal = portal.replace("onOpenOnboarding={() => setClientPage('portal')}", "onOpenOnboarding={() => setClientPage('onboarding')}");
 
-if (!portal.includes("clientPage === 'onboarding'")) {
+if (!portal.includes("renderedClientPage === 'onboarding'")) {
   const pw = 'Pass' + 'word';
   const renderLines = [
-    "        {clientPage === 'onboarding' ? (",
+    "        {renderedClientPage === 'onboarding' ? (",
     '          <OnboardingPage',
     '            completedSteps={completedSteps}',
     '            profile={profile}',
@@ -66,9 +66,9 @@ if (!portal.includes("clientPage === 'onboarding'")) {
     '            billingStatus={billingStatus}',
     '            onConnectSubscriptionBilling={connectSubscriptionBilling}',
     '          />',
-    "        ) : clientPage === 'jobs' ? (",
+    "        ) : renderedClientPage === 'jobs' ? (",
   ];
-  portal = portal.replace("        {clientPage === 'jobs' ? (", renderLines.join('\n'));
+  portal = portal.replace("        {renderedClientPage === 'jobs' ? (", renderLines.join('\n'));
 }
 
 portal = portal.replace(
