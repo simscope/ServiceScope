@@ -201,19 +201,20 @@ export function createDefaultCompanyOnboardingProfile(company: Company): Company
 
 function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: Company): CompanyOnboardingProfile {
   const legacyProfile = profile as Partial<CompanyOnboardingProfile> & { achAccountLast4?: string };
+  const normalizedJobTypeName = (jobType: Partial<CompanyJobType>) => String(jobType.name ?? '').trim().toLowerCase();
   const acceptedPayments = (profile.acceptedPayments ?? ['ach', 'zelle', 'credit_card', 'check', 'cash']).filter((method): method is CompanyPaymentMethod =>
     validPaymentMethods.includes(method as CompanyPaymentMethod),
   );
   const defaultJobTypes = makeJobTypes();
   const legacyWorkflowTypes = new Set(['diagnostics', 'repair', 'installation', 'maintenance']);
   const savedJobTypes = profile.jobTypes?.length
-    ? profile.jobTypes.filter((jobType) => !legacyWorkflowTypes.has(jobType.name.toLowerCase()))
+    ? profile.jobTypes.filter((jobType) => normalizedJobTypeName(jobType) && !legacyWorkflowTypes.has(normalizedJobTypeName(jobType)))
     : defaultJobTypes.filter((jobType) => jobType.name === 'HVAC');
   const defaultJobTypeNames = new Set(defaultJobTypes.map((jobType) => jobType.name.toLowerCase()));
   const savedLooksLikeOldAutoList =
     profile.useJobNumberPrefixes === undefined &&
     savedJobTypes.length === defaultJobTypes.length &&
-    savedJobTypes.every((jobType) => defaultJobTypeNames.has(jobType.name.toLowerCase()));
+    savedJobTypes.every((jobType) => defaultJobTypeNames.has(normalizedJobTypeName(jobType)));
   const jobTypes = savedLooksLikeOldAutoList
     ? defaultJobTypes.filter((jobType) => jobType.name === 'HVAC')
     : savedJobTypes.length
@@ -221,7 +222,8 @@ function normalizeProfile(profile: Partial<CompanyOnboardingProfile>, company: C
       : defaultJobTypes.filter((jobType) => jobType.name === 'HVAC');
   const normalizedJobTypes = jobTypes.map((jobType) => ({
     ...jobType,
-    jobNumberPrefix: jobType.jobNumberPrefix || makeJobTypePrefix(jobType.name),
+    name: jobType.name || 'Service',
+    jobNumberPrefix: jobType.jobNumberPrefix || makeJobTypePrefix(jobType.name || 'Service'),
   }));
   const technicians = profile.technicians?.length ? profile.technicians : makeTechnicians(company);
   const normalizedTechnicians = technicians.filter((technician) => {

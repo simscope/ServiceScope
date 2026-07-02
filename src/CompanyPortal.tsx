@@ -494,7 +494,7 @@ function makeCompanyEmailDomain(company: Company) {
     }
   }
 
-  return `${company.name.toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/^$/, 'company')}.com`;
+  return `${String(company.name ?? 'company').toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/^$/, 'company')}.com`;
 }
 
 function makeDefaultEmailConnection(
@@ -967,7 +967,11 @@ export function CompanyPortal({
   }
 
   const professionTemplates = makeJobTypes();
-  const configuredProfessionNames = new Set(profile.jobTypes.map((jobType) => jobType.name.toLowerCase()));
+  const configuredProfessionNames = new Set(
+    profile.jobTypes
+      .map((jobType) => String(jobType.name ?? '').trim().toLowerCase())
+      .filter(Boolean),
+  );
   const defaultJobType = profile.jobTypes.find((jobType) => jobType.name === 'HVAC') ?? profile.jobTypes[0];
   const selectedJobType = profile.jobTypes.find((jobType) => jobType.id === selectedJobTypeId) ?? defaultJobType;
   const selectedJobPrefix = profile.useJobNumberPrefixes ? selectedJobType?.jobNumberPrefix || profile.jobNumberPrefix || 'JOB' : '';
@@ -1986,7 +1990,7 @@ export function CompanyPortal({
   }
 
   function addProfessionTemplate(template: NewCompanyJobTypeForm) {
-    if (configuredProfessionNames.has(template.name.toLowerCase())) return;
+    if (configuredProfessionNames.has(String(template.name ?? '').toLowerCase())) return;
 
     updateProfile({
       jobTypes: [...profile.jobTypes, createCompanyJobType(template)],

@@ -259,8 +259,8 @@ function profileFromDb(
     autoPayEnabled: subscriptionPayment?.autopay_enabled ?? false,
     jobTypes: jobTypes.map((jobType): CompanyJobType => ({
       id: jobType.id,
-      name: jobType.name,
-      jobNumberPrefix: jobType.job_number_prefix,
+      name: jobType.name || 'Service',
+      jobNumberPrefix: jobType.job_number_prefix || '',
       defaultDurationMinutes: jobType.default_duration_minutes,
       defaultPriority: jobType.default_priority,
       requiresParts: jobType.requires_parts,
@@ -277,14 +277,14 @@ function profileFromDb(
         status: technician.status,
         assignedJobs: technician.assigned_jobs_count,
       }));
-      const knownEmails = new Set(technicianRows.map((technician) => technician.email.toLowerCase()).filter(Boolean));
+      const knownEmails = new Set(technicianRows.map((technician) => String(technician.email ?? '').toLowerCase()).filter(Boolean));
       const userTechnicians = companyUsers
         .filter((user) => user.role === 'technician' || user.role === 'dispatcher' || user.role === 'manager')
-        .filter((user) => !knownEmails.has(user.email.toLowerCase()))
+        .filter((user) => !knownEmails.has(String(user.email ?? '').toLowerCase()))
         .map((user): CompanyTechnician => ({
           id: `user-${user.id}`,
-          name: user.name,
-          email: user.email,
+          name: user.name || 'Team member',
+          email: user.email || '',
           phone: '',
           photoUrl: '',
           accessPassword: '',
