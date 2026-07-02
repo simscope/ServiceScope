@@ -1,4 +1,5 @@
 import type { Company, NewCompanyForm, OnboardingStepKey, OnboardingStepStatus } from '../types';
+import { getPlan } from './billingCatalog';
 
 export const onboardingStepOrder: OnboardingStepKey[] = ['workspace', 'users', 'data', 'billing'];
 
@@ -27,13 +28,14 @@ export function saveCompanies(companies: Company[]) {
 
 export function createCompany(form: NewCompanyForm): Company {
   const slug = slugify(form.domain || form.name);
+  const plan = getPlan(form.plan);
 
   return {
     id: crypto.randomUUID(),
     ...form,
     domain: form.domain || `${slug}.servicescope.app`,
     billingStatus: form.status === 'trial' ? 'trialing' : 'not_started',
-    seats: form.plan === 'Scale' ? 30 : form.plan === 'Growth' ? 15 : 5,
+    seats: plan.seats,
     technicians: 0,
     openJobs: 0,
     revenue: 0,
