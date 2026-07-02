@@ -30,11 +30,9 @@ import {
   EyeOff,
 } from 'lucide-react';
 import {
-  completeOnboardingStep,
   createCompany,
   listCompanies,
   onboardingStepOrder,
-  prepareNextOnboardingStep,
   saveCompanies,
 } from './services/tenantStore';
 import {
@@ -62,7 +60,6 @@ import {
   MonitoringPage,
   StatusPill,
   SupportPanel,
-  formatStepStatus,
 } from './components/OwnerPages';
 import {
   createPlatformUser,
@@ -135,7 +132,6 @@ import {
   platformRoleLabels,
   platformStatusLabels,
   statusLabels,
-  stepLabels,
   ticketKindLabels,
   ticketPriorityLabels,
   ticketStatusLabels,
@@ -159,7 +155,6 @@ import type {
   AppPage,
   AuthSession,
   ClientPage,
-  CompanyOnboardingStepKey,
   EmailCompose,
   EmailConnection,
   EmailFolder,
@@ -717,10 +712,6 @@ export function App() {
     }
   }
 
-  function prepareNextStep(companyId: string) {
-    updateCompany(companyId, prepareNextOnboardingStep);
-  }
-
   function navigate(nextPage: AppPage) {
     setPage(nextPage);
     window.history.replaceState(null, '', `#${nextPage === 'companyLogin' ? 'company-login' : nextPage}`);
@@ -1057,8 +1048,6 @@ export function App() {
               <button className="modal-close-button" type="button" onClick={() => setSelectedCompanyId('')} aria-label="Close company details">×</button>
               <CompanyDetail
                 company={selectedCompany}
-                onPrepareNext={() => prepareNextStep(selectedCompany.id)}
-                onCompleteStep={(step) => updateCompany(selectedCompany.id, (company) => completeOnboardingStep(company, step))}
                 onSaveOwnerAccess={(mode, password) => sendCompanyOwnerAccess(selectedCompany, mode, password)}
                 ownerInviteStatus={ownerAccessStatusByCompany[selectedCompany.id] ?? ''}
               />

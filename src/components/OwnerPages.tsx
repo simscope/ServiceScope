@@ -18,14 +18,12 @@ import {
   UserPlus,
   Users,
 } from 'lucide-react';
-import type { CompanyOnboardingStepKey } from '../appTypes';
 import {
   auditCategoryLabels,
   billingLabels,
   platformRoleLabels,
   platformStatusLabels,
   statusLabels,
-  stepLabels,
   ticketKindLabels,
   ticketPriorityLabels,
   ticketStatusLabels,
@@ -45,7 +43,6 @@ import type {
   CompanyStatus,
   NewPlatformUserForm,
   NewSupportTicketForm,
-  OnboardingStepStatus,
   PlatformUser,
   PlatformUserRole,
   PlatformUserStatus,
@@ -1338,14 +1335,10 @@ export function CompanyRow({
 
 export function CompanyDetail({
   company,
-  onPrepareNext,
-  onCompleteStep,
   onSaveOwnerAccess,
   ownerInviteStatus,
 }: {
   company: Company;
-  onPrepareNext: () => void;
-  onCompleteStep: (step: CompanyOnboardingStepKey) => void;
   onSaveOwnerAccess: (mode: 'create' | 'reset', password: string) => void;
   ownerInviteStatus: string;
 }) {
@@ -1429,45 +1422,7 @@ export function CompanyDetail({
         </p>
       </section>
 
-      <section className="detail-section">
-        <div className="section-title">
-          <Database size={18} aria-hidden="true" />
-          <h3>Provisioning</h3>
-          <span>{completedSteps}/4</span>
-        </div>
-        <div className="steps-list">
-          {Object.entries(company.onboarding).map(([step, stepStatus]) => (
-            <div className="step-row" key={step}>
-              <span className={`step-dot ${stepStatus}`} />
-              <span>{stepLabels[step as keyof Company['onboarding']]}</span>
-              {stepStatus === 'done' ? (
-                <strong>{formatStepStatus(stepStatus)}</strong>
-              ) : (
-                <button className="step-action" type="button" onClick={() => onCompleteStep(step as CompanyOnboardingStepKey)}>
-                  Complete
-                </button>
-              )}
-            </div>
-          ))}
-        </div>
-      </section>
 
-      <section className="detail-section">
-        <div className="section-title">
-          <AlertTriangle size={18} aria-hidden="true" />
-          <h3>Owner signals</h3>
-          <span>{company.alerts.length}</span>
-        </div>
-        {company.alerts.length ? (
-          <div className="alerts-list">
-            {company.alerts.map((alert) => (
-              <p key={alert}>{alert}</p>
-            ))}
-          </div>
-        ) : (
-          <p className="quiet-line">No active owner actions.</p>
-        )}
-      </section>
     </aside>
   );
 }
@@ -1486,6 +1441,3 @@ export function StatusPill({ status }: { status: CompanyStatus }) {
   return <span className={`status-pill ${status}`}>{statusLabels[status]}</span>;
 }
 
-export function formatStepStatus(status: OnboardingStepStatus) {
-  return status.replace('_', ' ');
-}
