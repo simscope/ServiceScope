@@ -633,10 +633,11 @@ type MonitoringSignal = {
   id: string;
   company: Company;
   severity: 'critical' | 'warning' | 'info';
-  category: 'Billing' | 'Onboarding' | 'Support' | 'Usage' | 'Health' | 'Operations';
+  category: 'Billing' | 'Support' | 'Usage' | 'Health' | 'Operations';
   title: string;
   detail: string;
   action: 'billing' | 'company' | 'support';
+  actionLabel: string;
 };
 
 export function MonitoringPage({
@@ -662,7 +663,6 @@ export function MonitoringPage({
     const plan = getCompanyPlan(company);
     const paymentProfile = getPaymentProfile(company);
     const autopayReady = Boolean(paymentProfile?.autoPayEnabled && paymentProfile.subscriptionPaymentStatus === 'active' && paymentProfile.subscriptionCardLast4);
-    const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
     const companyTickets = openTickets.filter((ticket) => ticket.companyId === company.id);
     const urgentTickets = companyTickets.filter((ticket) => ticket.priority === 'urgent');
     const storageRatio = plan.storageGb ? company.usage.storageGb / plan.storageGb : 0;
@@ -678,6 +678,7 @@ export function MonitoringPage({
         title: 'Subscription payment overdue',
         detail: `${company.plan} ${money(plan.price)}/mo is overdue. Limit invoices, email sending, reports, and new job creation.`,
         action: 'billing',
+        actionLabel: 'Open billing',
       });
     } else if (company.billingStatus === 'not_started' || !autopayReady) {
       nextSignals.push({
@@ -688,6 +689,7 @@ export function MonitoringPage({
         title: 'Autopay is not connected',
         detail: 'Company admin must connect a card before automatic monthly billing can run.',
         action: 'billing',
+        actionLabel: 'Open billing',
       });
     }
 
@@ -700,6 +702,7 @@ export function MonitoringPage({
         title: 'Tenant health is critical',
         detail: `Health is ${company.health}%. Review onboarding, billing, support, and recent activity.`,
         action: 'company',
+        actionLabel: 'Open company',
       });
     } else if (company.health < 80) {
       nextSignals.push({
@@ -710,18 +713,7 @@ export function MonitoringPage({
         title: 'Tenant health needs attention',
         detail: `Health is ${company.health}%. Watch this account before it becomes a support issue.`,
         action: 'company',
-      });
-    }
-
-    if (completedSteps < onboardingStepOrder.length) {
-      nextSignals.push({
-        id: `${company.id}-onboarding`,
-        company,
-        severity: company.status === 'active' ? 'critical' : 'warning',
-        category: 'Onboarding',
-        title: 'Onboarding is incomplete',
-        detail: `${completedSteps}/${onboardingStepOrder.length} steps complete. Workspace may not be ready for daily operations.`,
-        action: 'company',
+        actionLabel: 'Open company',
       });
     }
 
@@ -734,6 +726,7 @@ export function MonitoringPage({
         title: 'Urgent support waiting',
         detail: `${urgentTickets.length} urgent support request${urgentTickets.length > 1 ? 's' : ''} open.`,
         action: 'support',
+        actionLabel: 'Open support',
       });
     } else if (companyTickets.length) {
       nextSignals.push({
@@ -744,6 +737,7 @@ export function MonitoringPage({
         title: 'Open support requests',
         detail: `${companyTickets.length} open support request${companyTickets.length > 1 ? 's' : ''}.`,
         action: 'support',
+        actionLabel: 'Open support',
       });
     }
 
@@ -756,6 +750,7 @@ export function MonitoringPage({
         title: storageRatio >= 1 ? 'Storage limit exceeded' : 'Storage near plan limit',
         detail: `${company.usage.storageGb.toFixed(1)} GB used of ${plan.storageGb} GB on ${company.plan}.`,
         action: 'billing',
+        actionLabel: 'Open billing',
       });
     }
 
@@ -768,6 +763,7 @@ export function MonitoringPage({
         title: 'Technician workload is high',
         detail: `${company.openJobs} open jobs across ${company.technicians} technicians.`,
         action: 'company',
+        actionLabel: 'Open company',
       });
     }
 
@@ -780,6 +776,7 @@ export function MonitoringPage({
         title: alert,
         detail: `Owner signal from ${company.name}.`,
         action: 'company',
+        actionLabel: 'Open company',
       });
     });
 
@@ -834,7 +831,7 @@ export function MonitoringPage({
                   <p>{signal.company.name} - {signal.detail}</p>
                 </div>
                 <button className="secondary-button compact" type="button" onClick={() => runAction(signal)}>
-                  Open
+                  {signal.actionLabel}
                 </button>
               </article>
             ))
@@ -855,7 +852,6 @@ export function MonitoringPage({
           const companySignals = signals.filter((signal) => signal.company.id === company.id);
           const critical = companySignals.some((signal) => signal.severity === 'critical');
           const warning = companySignals.some((signal) => signal.severity === 'warning');
-          const completedSteps = Object.values(company.onboarding).filter((step) => step === 'done').length;
           const storagePercent = Math.min(100, Math.round((company.usage.storageGb / plan.storageGb) * 100));
           const autopayReady = Boolean(paymentProfile?.autoPayEnabled && paymentProfile.subscriptionPaymentStatus === 'active' && paymentProfile.subscriptionCardLast4);
 
@@ -1373,7 +1369,7 @@ export function CompanyDetail({
         <Rocket size={18} aria-hidden="true" />
         <div>
           <strong>{readyToLaunch ? 'Ready to launch' : 'Launch readiness'}</strong>
-          <span>{readyToLaunch ? 'Tenant can be handed to the company owner.' : `${completedSteps} of ${onboardingStepOrder.length} provisioning steps complete.`}</span>
+          <span>{readyToLaunch ? 'Tenant can be handed to the company owner.' : `${completedSteps} of ${onboardingStepOrder.length} setup steps complete.`}</span>
         </div>
       </div>
 
