@@ -901,7 +901,7 @@ export function CompanyPortal({
   const openTickets = tickets.filter((ticket) => ticket.status !== 'resolved');
   const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(activeCompany);
   const companyAccessRules = resolveCompanyAccessRules(activeCompany);
-  const accessLevelForPage = (page: CompanyPortalAccessPage): CompanyPortalAccessLevel => companyAccessRules[page];
+  const accessLevelForPage = (page: CompanyPortalAccessPage): CompanyPortalAccessLevel => companyAccessRules[page] ?? 'full';
   const canViewPage = (page: CompanyPortalAccessPage) => accessLevelForPage(page) !== 'off';
   const canWritePage = (page: CompanyPortalAccessPage) => accessLevelForPage(page) === 'full';
   const stopCompanyWrite = (page: CompanyPortalAccessPage, action: string) => {
