@@ -877,7 +877,7 @@ export function OnboardingPage({
                   <p className="eyebrow">Suggested professions</p>
                   <div className="profession-chip-grid">
                     {professionTemplates.map((template) => {
-                      const selected = configuredProfessionNames.has(template.name.toLowerCase());
+                      const selected = configuredProfessionNames.has(String(template.name ?? '').toLowerCase());
 
                       return (
                         <button
