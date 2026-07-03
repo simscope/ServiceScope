@@ -636,6 +636,8 @@ type MonitoringSignal = {
   category: 'Billing' | 'Support' | 'Usage' | 'Health' | 'Operations';
   title: string;
   detail: string;
+  ownerAction: string;
+  metric: string;
   action: 'billing' | 'company' | 'support';
   actionLabel: string;
 };
@@ -677,8 +679,10 @@ export function MonitoringPage({
         category: 'Billing',
         title: 'Subscription payment overdue',
         detail: `${company.plan} ${money(plan.price)}/mo is overdue. Limit invoices, email sending, reports, and new job creation.`,
+        ownerAction: 'Collect payment or mark the account paid before restoring write access.',
+        metric: `${money(plan.price)}/mo`,
         action: 'billing',
-        actionLabel: 'Open billing',
+        actionLabel: 'Review billing',
       });
     } else if (company.billingStatus === 'not_started' || !autopayReady) {
       nextSignals.push({
@@ -688,8 +692,10 @@ export function MonitoringPage({
         category: 'Billing',
         title: 'Autopay is not connected',
         detail: 'Company admin must connect a card before automatic monthly billing can run.',
+        ownerAction: 'Ask the company admin to connect a subscription card.',
+        metric: company.billingStatus === 'not_started' ? 'Not started' : 'Card missing',
         action: 'billing',
-        actionLabel: 'Open billing',
+        actionLabel: 'Review billing',
       });
     }
 
@@ -701,8 +707,10 @@ export function MonitoringPage({
         category: 'Health',
         title: 'Tenant health is critical',
         detail: `Health is ${company.health}%. Review onboarding, billing, support, and recent activity.`,
+        ownerAction: 'Check the tenant card below and resolve the highest severity signal first.',
+        metric: `${company.health}%`,
         action: 'company',
-        actionLabel: 'Open company',
+        actionLabel: 'Review company',
       });
     } else if (company.health < 80) {
       nextSignals.push({
@@ -712,8 +720,10 @@ export function MonitoringPage({
         category: 'Health',
         title: 'Tenant health needs attention',
         detail: `Health is ${company.health}%. Watch this account before it becomes a support issue.`,
+        ownerAction: 'Watch billing, storage, support, and workload until health returns above 80%.',
+        metric: `${company.health}%`,
         action: 'company',
-        actionLabel: 'Open company',
+        actionLabel: 'Review company',
       });
     }
 
@@ -725,8 +735,10 @@ export function MonitoringPage({
         category: 'Support',
         title: 'Urgent support waiting',
         detail: `${urgentTickets.length} urgent support request${urgentTickets.length > 1 ? 's' : ''} open.`,
+        ownerAction: 'Answer urgent tickets before handling lower-risk monitoring items.',
+        metric: `${urgentTickets.length} urgent`,
         action: 'support',
-        actionLabel: 'Open support',
+        actionLabel: 'Review support',
       });
     } else if (companyTickets.length) {
       nextSignals.push({
@@ -736,8 +748,10 @@ export function MonitoringPage({
         category: 'Support',
         title: 'Open support requests',
         detail: `${companyTickets.length} open support request${companyTickets.length > 1 ? 's' : ''}.`,
+        ownerAction: 'Review ticket age and decide whether the tenant needs owner follow-up.',
+        metric: `${companyTickets.length} open`,
         action: 'support',
-        actionLabel: 'Open support',
+        actionLabel: 'Review support',
       });
     }
 
@@ -749,8 +763,10 @@ export function MonitoringPage({
         category: 'Usage',
         title: storageRatio >= 1 ? 'Storage limit exceeded' : 'Storage near plan limit',
         detail: `${company.usage.storageGb.toFixed(1)} GB used of ${plan.storageGb} GB on ${company.plan}.`,
+        ownerAction: storageRatio >= 1 ? 'Upgrade the plan or archive old files before more uploads.' : 'Warn the tenant before uploads reach the plan limit.',
+        metric: `${Math.round(storageRatio * 100)}%`,
         action: 'billing',
-        actionLabel: 'Open billing',
+        actionLabel: 'Review plan',
       });
     }
 
@@ -762,8 +778,10 @@ export function MonitoringPage({
         category: 'Operations',
         title: 'Technician workload is high',
         detail: `${company.openJobs} open jobs across ${company.technicians} technicians.`,
+        ownerAction: 'Add technicians, close old jobs, or rebalance work before dispatch slows down.',
+        metric: `${jobsPerTech.toFixed(1)} jobs/tech`,
         action: 'company',
-        actionLabel: 'Open company',
+        actionLabel: 'Review company',
       });
     }
 
@@ -775,8 +793,10 @@ export function MonitoringPage({
         category: 'Operations',
         title: alert,
         detail: `Owner signal from ${company.name}.`,
+        ownerAction: 'Review the tenant record and clear the owner signal when it is no longer active.',
+        metric: 'Owner signal',
         action: 'company',
-        actionLabel: 'Open company',
+        actionLabel: 'Review company',
       });
     });
 
@@ -788,6 +808,19 @@ export function MonitoringPage({
   const billingRisk = signals.filter((signal) => signal.category === 'Billing').length;
   const avgHealth = companies.length ? Math.round(companies.reduce((sum, company) => sum + company.health, 0) / companies.length) : 0;
   const healthyCompanies = companies.filter((company) => company.health >= 80 && !signals.some((signal) => signal.company.id === company.id && signal.severity === 'critical'));
+  const totalStorageUsed = companies.reduce((sum, company) => sum + company.usage.storageGb, 0);
+  const totalStorageLimit = companies.reduce((sum, company) => sum + getCompanyPlan(company).storageGb, 0);
+  const platformStoragePercent = totalStorageLimit ? Math.round((totalStorageUsed / totalStorageLimit) * 100) : 0;
+  const totalOpenTickets = openTickets.length;
+  const urgentTicketCount = openTickets.filter((ticket) => ticket.priority === 'urgent').length;
+  const totalOpenJobs = companies.reduce((sum, company) => sum + company.openJobs, 0);
+  const totalTechnicians = companies.reduce((sum, company) => sum + company.technicians, 0);
+  const averageJobsPerTech = totalTechnicians ? totalOpenJobs / totalTechnicians : totalOpenJobs;
+  const watchlistCompanies = companies.filter((company) => signals.some((signal) => signal.company.id === company.id));
+  const topSignals = [...signals].sort((left, right) => {
+    const rank = { critical: 0, warning: 1, info: 2 };
+    return rank[left.severity] - rank[right.severity] || left.company.name.localeCompare(right.company.name);
+  });
 
   const runAction = (signal: MonitoringSignal) => {
     if (signal.action === 'billing') onOpenBilling();
@@ -804,11 +837,34 @@ export function MonitoringPage({
         <MetricCard icon={<CheckCircle2 size={20} />} label="Avg health" value={`${avgHealth}%`} detail={`${healthyCompanies.length} healthy tenants`} />
       </section>
 
+      <section className="monitoring-insight-grid" aria-label="Monitoring overview">
+        <article className="monitoring-insight">
+          <span>Billing coverage</span>
+          <strong>{companies.length - billingRisk}/{companies.length}</strong>
+          <p>{billingRisk ? 'Tenants need payment or autopay attention.' : 'All tenants have clean billing signals.'}</p>
+        </article>
+        <article className="monitoring-insight">
+          <span>Storage usage</span>
+          <strong>{platformStoragePercent}%</strong>
+          <p>{totalStorageUsed.toFixed(1)} GB used of {totalStorageLimit} GB across active plans.</p>
+        </article>
+        <article className="monitoring-insight">
+          <span>Dispatch load</span>
+          <strong>{averageJobsPerTech.toFixed(1)}</strong>
+          <p>{totalOpenJobs} open jobs across {totalTechnicians} technicians.</p>
+        </article>
+        <article className="monitoring-insight">
+          <span>Support backlog</span>
+          <strong>{totalOpenTickets}</strong>
+          <p>{urgentTicketCount ? `${urgentTicketCount} urgent ticket${urgentTicketCount > 1 ? 's' : ''} need fast response.` : 'No urgent support tickets.'}</p>
+        </article>
+      </section>
+
       <section className="panel monitoring-command-panel">
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Platform command center</p>
-            <h2>Action queue</h2>
+            <h2>Live signals</h2>
           </div>
           <div className="monitoring-filter">
             <button className={severityFilter === 'all' ? 'active' : ''} type="button" onClick={() => setSeverityFilter('all')}>All</button>
@@ -829,7 +885,9 @@ export function MonitoringPage({
                 <div>
                   <h3>{signal.title}</h3>
                   <p>{signal.company.name} - {signal.detail}</p>
+                  <strong>{signal.ownerAction}</strong>
                 </div>
+                <span className="monitoring-metric">{signal.metric}</span>
                 <button className="secondary-button compact" type="button" onClick={() => runAction(signal)}>
                   {signal.actionLabel}
                 </button>
@@ -846,13 +904,14 @@ export function MonitoringPage({
       </section>
 
       <section className="monitoring-grid">
-        {companies.map((company) => {
+        {(watchlistCompanies.length ? watchlistCompanies : companies).map((company) => {
           const plan = getCompanyPlan(company);
           const paymentProfile = getPaymentProfile(company);
-          const companySignals = signals.filter((signal) => signal.company.id === company.id);
+          const companySignals = topSignals.filter((signal) => signal.company.id === company.id);
           const critical = companySignals.some((signal) => signal.severity === 'critical');
           const warning = companySignals.some((signal) => signal.severity === 'warning');
           const storagePercent = Math.min(100, Math.round((company.usage.storageGb / plan.storageGb) * 100));
+          const jobsPerTech = company.openJobs / Math.max(company.technicians, 1);
           const autopayReady = Boolean(paymentProfile?.autoPayEnabled && paymentProfile.subscriptionPaymentStatus === 'active' && paymentProfile.subscriptionCardLast4);
 
           return (
@@ -880,9 +939,18 @@ export function MonitoringPage({
                 <span className={company.billingStatus === 'paid' ? 'ok' : 'bad'}>Billing: {billingLabels[company.billingStatus]}</span>
                 <span className={autopayReady ? 'ok' : 'bad'}>Autopay: {autopayReady ? 'On' : 'Missing'}</span>
                 <span className={storagePercent < 80 ? 'ok' : 'bad'}>Storage: {storagePercent}%</span>
+                <span className={jobsPerTech < 4 ? 'ok' : 'bad'}>Load: {jobsPerTech.toFixed(1)} jobs/tech</span>
+              </div>
+              <div className="monitoring-card-signals">
+                {companySignals.length ? companySignals.slice(0, 3).map((signal) => (
+                  <p key={signal.id}>
+                    <span className={`monitoring-severity ${signal.severity}`}>{signal.category}</span>
+                    {signal.title}
+                  </p>
+                )) : <p><span className="monitoring-severity info">Clear</span>No active monitoring signals.</p>}
               </div>
               <button className="secondary-button compact" type="button" onClick={() => onOpenCompany(company.id)}>
-                Open company
+                Review company
               </button>
             </article>
           );

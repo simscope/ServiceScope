@@ -496,6 +496,44 @@ h2 {
   min-width: 0;
 }
 
+.monitoring-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.monitoring-insight {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #dfe7e1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 16px;
+  min-height: 132px;
+}
+
+.monitoring-insight span {
+  color: #526157;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.monitoring-insight strong {
+  color: #101915;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.monitoring-insight p {
+  margin: 0;
+  color: #526157;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .monitoring-filter {
   display: inline-flex;
   flex-wrap: wrap;
@@ -526,7 +564,7 @@ h2 {
 
 .monitoring-signal {
   display: grid;
-  grid-template-columns: 170px minmax(0, 1fr) auto;
+  grid-template-columns: 170px minmax(0, 1fr) 120px auto;
   align-items: center;
   gap: 14px;
   border: 1px solid #e3e9e4;
@@ -555,6 +593,25 @@ h2 {
   color: #667269;
   font-size: 13px;
   line-height: 1.45;
+}
+
+.monitoring-signal strong {
+  display: block;
+  margin-top: 6px;
+  color: #17201b;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.monitoring-metric {
+  justify-self: stretch;
+  border: 1px solid #dfe7e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17201b;
+  padding: 10px;
+  text-align: center;
+  font-weight: 900;
 }
 
 .monitoring-severity,
@@ -657,6 +714,28 @@ h2 {
 .monitoring-check-grid .bad {
   background: #fff0c6;
   color: #7a5600;
+}
+
+.monitoring-card-signals {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid #edf2ee;
+  padding-top: 10px;
+}
+
+.monitoring-card-signals p {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: #526157;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.monitoring-card-signals .monitoring-severity {
+  flex: 0 0 auto;
 }
 
 .user-list {
@@ -2667,6 +2746,11 @@ textarea {
 .portal-ticket-thread{display:grid;gap:12px}.portal-ticket-thread-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.portal-ticket-messages{display:grid;gap:8px;border-top:1px solid #e5ece7;padding-top:10px}.portal-ticket-message{border:1px solid #dfe7e1;border-radius:10px;background:#fff;padding:10px}.portal-ticket-message.owner{background:#eef4ff;border-color:#cfe0ff}.portal-ticket-message>div{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}.portal-ticket-message span{color:#647067;font-size:12px;font-weight:800}.portal-ticket-message p{margin:0;color:#17201b;white-space:pre-wrap}
 
 .portal-ticket-reply-form{display:grid;gap:8px;border-top:1px solid #e5ece7;padding-top:10px}.portal-ticket-reply-form label{display:grid;gap:6px;font-weight:900}.portal-ticket-reply-form textarea{width:100%;min-height:76px;resize:vertical}.portal-ticket-reply-form button{justify-self:start}
+
+
+/* Monitoring command center */
+@media (max-width:1180px){.monitoring-insight-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.monitoring-signal{grid-template-columns:150px minmax(0,1fr) 110px}.monitoring-signal button{grid-column:2/-1;justify-self:start}}
+@media (max-width:680px){.monitoring-insight-grid,.monitoring-signal{grid-template-columns:1fr}.monitoring-metric,.monitoring-signal button{justify-self:stretch}}
 
 
 /* Portal support compact two-column layout */
