@@ -1,6 +1,7 @@
 // src/components/CreateJob.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { useAuth } from '../context/AuthContext';
 
 /* ---------- styles ---------- */
 const input = {
@@ -54,6 +55,7 @@ const getBlacklistNote = (client) => {
 const isBlacklisted = (client) => getBlacklistNote(client).length > 0;
 
 export default function CreateJob({ onCreated }) {
+  const { profile } = useAuth();
   const [form, setForm] = useState({
     issue: '',
     system_type: 'HVAC',
@@ -213,6 +215,7 @@ export default function CreateJob({ onCreated }) {
       const { data: d2, error: e2 } = await supabase
         .from('clients')
         .insert({
+          company_id: payload.company_id,
           full_name: payload.full_name,
           phone: payload.phone,
           email: payload.email,
@@ -255,6 +258,7 @@ export default function CreateJob({ onCreated }) {
 
       if (hasAnyClientField && !clientId) {
         const clientPayload = {
+          company_id: profile?.company_id || profile?.org_id || null,
           company: (form.client_company || '').trim(),
           full_name: (form.client_name || '').trim(),
           phone: (form.client_phone || '').trim(),
@@ -277,10 +281,11 @@ export default function CreateJob({ onCreated }) {
       }
 
       const jobPayload = {
+        company_id: profile?.company_id || profile?.org_id || null,
         issue: (form.issue || '').trim(),
         system_type: form.system_type || null,
         scf: toNum(form.scf),
-        technician_id: form.technician_id ? Number(form.technician_id) : null,
+        technician_id: form.technician_id || null,
         client_id: clientId,
         status: 'Diagnosis',
       };

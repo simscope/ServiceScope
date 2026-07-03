@@ -587,6 +587,7 @@ export default function JobDetailsPage() {
 
   const saveClient = async () => {
     const payload = {
+      company_id: profile?.company_id || profile?.org_id || job?.company_id || null,
       company: stringOrNull(client.company) ?? '',
       full_name: stringOrNull(client.full_name) ?? '',
       phone: stringOrNull(client.phone) ?? '',
