@@ -1,0 +1,1 @@
+{ "buildCommand": "npm install && npm run build", "startCommand": "node server/index.js" }

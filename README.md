@@ -11,6 +11,7 @@ ServiceScope is a multi-tenant service company platform for HVAC, appliance, plu
 - Job detail card with client data, materials, invoices, comments, photos/files, and payment fields.
 - Payroll workflow with technician financial cards, selected payouts, paid payroll, and archive logic.
 - Supabase schema draft in `supabase/schema.sql`.
+- Technician mobile web app imported from `simscope/hvac-app` in `apps/technician-mobile`.
 
 ## Backend Status
 
@@ -23,6 +24,16 @@ npm install
 npm run dev
 npm run build
 ```
+
+Technician mobile app:
+
+```bash
+npm run tech:install
+npm run tech:dev
+npm run tech:build
+```
+
+Create `apps/technician-mobile/client/.env.local` from `apps/technician-mobile/client/.env.example` before running the technician app locally.
 
 ## Supabase
 
