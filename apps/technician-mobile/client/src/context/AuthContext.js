@@ -53,7 +53,7 @@ export function AuthProvider({ children }) {
         const { data, error } = await supabase
           .from('profiles')
           // УБРАЛ org_id, чтобы не ловить 42703
-          .select('id, full_name, role, technician_id')
+          .select('id, full_name, role, technician_id, company_id')
           .eq('id', uid)
           .maybeSingle();
 
@@ -135,7 +135,7 @@ export function AuthProvider({ children }) {
       try {
         const { data, error } = await supabase
           .from('technicians')
-          .select('id, full_name, name, phone, email')
+          .select('id, company_id, org_id, full_name, name, phone, email, role')
           .eq('id', id)
           .maybeSingle();
 
@@ -176,7 +176,9 @@ export function AuthProvider({ children }) {
       phone: techRow?.phone ?? null,
       email: techRow?.email ?? null,
       // org_id в схеме нет — если понадобится, добавишь в БД и в select выше
-      org_id: null,
+      company_id: techRow?.company_id ?? profRow?.company_id ?? null,
+      org_id: techRow?.org_id ?? profRow?.company_id ?? null,
+      role,
     };
   }, [role, profRow, techRow]);
 
