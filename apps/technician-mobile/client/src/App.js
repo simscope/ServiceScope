@@ -17,11 +17,9 @@ import AllJobsPage from './pages/AllJobsPage.jsx';
 import JobDetailsPage from './pages/JobDetailsPage.jsx';
 import CalendarPage from './pages/CalendarPage.jsx';
 import MaterialsPage from './pages/MaterialsPage.jsx';
-import ChatPage from './pages/ChatPage.jsx';
 import InvoicePage from './pages/InvoicePage.jsx';
 import TechniciansPage from './pages/TechniciansPage.jsx';
 import FinancePage from './pages/FinancePage.jsx';
-import ChatAdminPage from './pages/ChatAdminPage.jsx';
 import TasksTodayPage from './pages/TasksTodayPage.jsx';
 import TechniciansMap from './pages/TechniciansMap.jsx';
 import TechLibraryPage from './pages/TechLibraryPage.jsx';
@@ -172,14 +170,7 @@ function Shell() {
           />
 
           {/* Чат — менеджер + админ */}
-          <Route
-            path="/chat"
-            element={
-              <ProtectedRoute allow={['admin', 'manager']}>
-                <ChatPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/chat" element={<Navigate to="/jobs" replace />} />
 
           {/* Email — менеджер + админ */}
           <Route
@@ -218,14 +209,7 @@ function Shell() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/chat-admin"
-            element={
-              <ProtectedRoute allow="admin">
-                <ChatAdminPage />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/chat-admin" element={<Navigate to="/jobs" replace />} />
 
           {/* Живая карта техников */}
           <Route
