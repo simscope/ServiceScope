@@ -15,6 +15,7 @@ const GMAIL_FN = 'gmail_list';
 const GMAIL_UNREAD_CACHE_KEY = 'GMAIL_UNREAD_COUNT';
 const GMAIL_UNREAD_TS_KEY = 'GMAIL_UNREAD_COUNT_TS';
 const GMAIL_REFRESH_MS = 5 * 60 * 1000;
+const CHAT_ENABLED = false;
 
 const Icon = {
   Jobs: (p) => (
@@ -126,6 +127,11 @@ export default function TopNav() {
   };
 
   const refreshUnreadFromServer = async () => {
+    if (!CHAT_ENABLED) {
+      setChatUnreadTotal(0);
+      return;
+    }
+
     if (!uid) {
       setChatUnreadTotal(0);
       return;
@@ -188,6 +194,10 @@ export default function TopNav() {
   };
 
   useEffect(() => {
+    if (!CHAT_ENABLED) {
+      return undefined;
+    }
+
     const onLocalChanged = (e) => {
       const n = e?.detail?.total;
       if (typeof n === 'number') setChatUnreadTotal(n);
@@ -201,6 +211,11 @@ export default function TopNav() {
   }, []);
 
   useEffect(() => {
+    if (!CHAT_ENABLED) {
+      setChatUnreadTotal(0);
+      return undefined;
+    }
+
     if (channelRef.current) {
       try {
         supabase.removeChannel(channelRef.current);
@@ -321,7 +336,6 @@ export default function TopNav() {
         { to: '/tasks/today', label: 'Задачи', icon: <Icon.Tasks /> },
         { to: '/map', label: 'Карта', icon: <Icon.Map /> },
         { to: '/email', label: 'Email', icon: <Icon.Email /> },
-        { to: '/chat', label: 'Чат', icon: <Icon.Chat /> },
       );
     }
 
@@ -329,7 +343,6 @@ export default function TopNav() {
       arr.push(
         { to: '/technicians', label: 'Техники', icon: <Icon.Techs /> },
         { to: '/finance', label: 'Финансы', icon: <Icon.Money /> },
-        { to: '/chat-admin', label: 'Чат (админ)', icon: <Icon.AdminChat /> },
       );
     }
 
