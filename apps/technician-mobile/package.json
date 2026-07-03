@@ -1,0 +1,10 @@
+{
+  "name": "servicescope-technician-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "install:client": "npm install --prefix client",
+    "dev": "npm start --prefix client",
+    "build": "npm run build --prefix client"
+  }
+}
