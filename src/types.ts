@@ -9,7 +9,7 @@ export type CompanyPlan = 'Launch' | 'Growth' | 'Scale';
 export type PlatformUserRole = 'owner' | 'admin' | 'support' | 'viewer';
 export type PlatformUserStatus = 'active' | 'invited' | 'disabled';
 export type AuditEventCategory = 'tenant' | 'billing' | 'access' | 'support';
-export type CompanyPortalAccessPage = 'jobs' | 'allJobs' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'portal' | 'onboarding';
+export type CompanyPortalAccessPage = 'jobs' | 'allJobs' | 'debtors' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'portal' | 'onboarding';
 export type CompanyPortalAccessLevel = 'full' | 'readonly' | 'off';
 export type CompanyAccessRules = Partial<Record<CompanyPortalAccessPage, CompanyPortalAccessLevel>>;
 export type CompanyTechnicianRole = 'technician' | 'dispatcher' | 'manager';
@@ -269,6 +269,7 @@ export type JobInvoice = {
 export type ServiceJob = {
   id: string;
   companyId: string;
+  customerId?: string;
   jobNumber: string;
   status: ServiceJobStatus;
   system: string;
@@ -285,6 +286,7 @@ export type ServiceJob = {
   laborPayment: string;
   issue: string;
   notes: string;
+  customerBlacklist?: string;
   attachments: JobAttachment[];
   comments: JobComment[];
   invoices: JobInvoice[];

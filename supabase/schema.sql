@@ -459,6 +459,7 @@ create table customers (
   primary_email citext,
   primary_phone text,
   notes text not null default '',
+  blacklist text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
