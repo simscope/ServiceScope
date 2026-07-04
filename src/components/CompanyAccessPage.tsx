@@ -15,6 +15,7 @@ type AccessPageDefinition = {
 export const companyPortalAccessPages: AccessPageDefinition[] = [
   { page: 'jobs', label: 'Jobs', detail: 'Create and edit service jobs' },
   { page: 'allJobs', label: 'All Jobs', detail: 'View full job list and job details' },
+  { page: 'debtors', label: 'Debtors', detail: 'Track unpaid completed jobs and payment gaps' },
   { page: 'calendar', label: 'Calendar', detail: 'Schedule and move appointments' },
   { page: 'materials', label: 'Materials', detail: 'Edit material rows and parts' },
   { page: 'tasks', label: 'Tasks', detail: 'Create and complete tasks' },
@@ -47,6 +48,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
     return {
       jobs: 'readonly',
       allJobs: 'readonly',
+      debtors: 'readonly',
       calendar: 'readonly',
       materials: 'readonly',
       tasks: 'readonly',
@@ -62,6 +64,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
   return {
     jobs: 'readonly',
     allJobs: 'readonly',
+    debtors: 'readonly',
     calendar: 'off',
     materials: 'off',
     tasks: 'off',

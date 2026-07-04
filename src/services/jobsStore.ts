@@ -1,7 +1,7 @@
 import type { Customer, JobAttachment, JobComment, JobDocumentType, JobInvoice, JobInvoiceStatus, MaterialRow, NewCustomerForm, NewServiceJobForm, ServiceJob, ServiceJobStatus } from '../types';
 import { deleteSupabaseStorageFiles, getSupabasePublicStorageUrl, sqlEq, sqlIn, supabaseRequest, uploadSupabaseStorageFile } from './supabaseRest';
 
-type CustomerRow = { id: string; company_id: string; organization: string | null; primary_name: string | null; primary_email: string | null; primary_phone: string | null; notes: string | null; created_at: string };
+type CustomerRow = { id: string; company_id: string; organization: string | null; primary_name: string | null; primary_email: string | null; primary_phone: string | null; notes: string | null; blacklist?: string | null; created_at: string };
 type CustomerLocationRow = { id: string; company_id: string; customer_id: string; address: string | null; created_at: string };
 type TechnicianRow = { id: string; name: string };
 type JobRow = { id: string; company_id: string; customer_id: string | null; customer_location_id: string | null; technician_id: string | null; job_type_id: string | null; job_number: string; status: ServiceJobStatus; system: string | null; issue: string | null; notes: string | null; service_call_fee_cents: number | null; labor_cents: number | null; created_at: string };
@@ -57,6 +57,7 @@ function mapJob(row: JobRow, customers: CustomerRow[], locations: CustomerLocati
   return {
     id: row.id,
     companyId: row.company_id,
+    customerId: customer?.id,
     jobNumber: row.job_number,
     status: row.status,
     system: row.system ?? '',
@@ -73,6 +74,7 @@ function mapJob(row: JobRow, customers: CustomerRow[], locations: CustomerLocati
     laborPayment: payments.find((payment) => payment.job_id === row.id && payment.scope === 'labor')?.method ?? '',
     issue: row.issue ?? '',
     notes: row.notes ?? '',
+    customerBlacklist: customer?.blacklist ?? '',
     attachments: attachments.filter((item) => item.job_id === row.id).map(mapAttachment),
     comments: comments.filter((item) => item.job_id === row.id).map(mapComment),
     invoices: invoices.filter((item) => item.job_id === row.id).map(mapInvoice),
@@ -309,6 +311,13 @@ export async function saveCompanyJobs(companyId: string, companyJobs: ServiceJob
   const savedJobs: ServiceJob[] = [];
   for (const job of companyJobs) savedJobs.push(await saveServiceJob(companyId, job));
   return savedJobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function saveCustomerBlacklist(companyId: string, customerId: string, blacklist: string): Promise<void> {
+  await supabaseRequest(`customers?company_id=${sqlEq(companyId)}&id=${sqlEq(customerId)}`, {
+    method: 'PATCH',
+    body: { blacklist: blacklist.trim() || null },
+  });
 }
 
 function nextInvoiceNumber(jobNumber: string, existingInvoiceNumbers: string[]) {

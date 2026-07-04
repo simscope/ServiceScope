@@ -1447,6 +1447,150 @@ button {
   cursor: pointer;
 }
 
+.debtors-page {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.debtors-header,
+.debtors-toolbar,
+.debtors-group-heading,
+.debtors-summary,
+.blacklist-cell,
+.debtors-readonly {
+  display: flex;
+  align-items: center;
+}
+
+.debtors-header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.debtors-header h1 {
+  margin: 0;
+}
+
+.debtors-summary {
+  gap: 12px;
+  border: 1px solid #cfd8d1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 10px 14px;
+  color: #17201b;
+}
+
+.debtors-summary span {
+  color: #526158;
+  font-size: 13px;
+}
+
+.debtors-summary strong {
+  font-size: 20px;
+}
+
+.debtors-toolbar {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.debtors-toolbar label {
+  display: grid;
+  gap: 5px;
+  color: #526158;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.debtors-toolbar select,
+.debtors-toolbar input {
+  min-height: 38px;
+}
+
+.debtors-search {
+  flex: 1;
+  min-width: 280px;
+}
+
+.debtors-search span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #cfd8d1;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0 10px;
+}
+
+.debtors-search input {
+  flex: 1;
+  border: 0;
+  padding: 0;
+}
+
+.debtors-group {
+  display: grid;
+  gap: 8px;
+}
+
+.debtors-group-heading {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.debtors-group-heading h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.debtors-group-heading strong {
+  color: #17201b;
+}
+
+.debtors-table {
+  min-width: 1480px;
+}
+
+.all-jobs-table tbody tr.debtors-row td {
+  background: #fff1f1;
+  color: #3d2525;
+}
+
+.all-jobs-table tbody tr.debtors-row:hover td {
+  background: #ffe3e3;
+}
+
+.blacklist-cell {
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.blacklist-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #a8b3bd;
+  flex: 0 0 10px;
+}
+
+.blacklist-dot.active {
+  background: #dc2626;
+}
+
+.blacklist-modal textarea {
+  min-height: 130px;
+  width: 100%;
+  resize: vertical;
+}
+
+.debtors-readonly {
+  gap: 8px;
+  color: #7a4b00;
+  font-weight: 800;
+}
+
 .materials-page {
   display: grid;
   gap: 16px;

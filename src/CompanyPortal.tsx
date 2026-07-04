@@ -46,6 +46,7 @@ import { confirmSubscriptionBillingSetup, startSubscriptionBillingSetup } from '
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CalendarPage } from './components/portal/CalendarPage';
+import { DebtorsPage } from './components/portal/DebtorsPage';
 import { EmailPage } from './components/portal/EmailPage';
 import { FinancePage } from './components/portal/FinancePage';
 import { AllJobsPage, JobsPage } from './components/portal/JobsPages';
@@ -109,6 +110,7 @@ import {
   deleteJobInvoice,
   listCompanyJobMaterials,
   listCompanyJobs,
+  saveCustomerBlacklist,
   saveJobAppointment,
   saveJobMaterials as saveJobMaterialsToBackend,
   saveServiceJob,
@@ -1418,8 +1420,8 @@ export function CompanyPortal({
       },
     }));
   };
-  const handleSaveJob = (updatedJob: JobCardData, openJobAfterSave = true) => {
-    if (stopCompanyWrite('jobs', 'saving jobs')) return;
+  const handleSaveJob = (updatedJob: JobCardData, openJobAfterSave = true, accessPage: CompanyPortalAccessPage = 'jobs') => {
+    if (stopCompanyWrite(accessPage, 'saving jobs')) return;
 
     setJobs((currentJobs) => {
       const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
@@ -1445,6 +1447,20 @@ export function CompanyPortal({
       .catch((error) => {
         setJobsStatus(error instanceof Error ? error.message : 'Job could not be saved.');
       });
+  };
+  const handleSaveCustomerBlacklist = async (job: ServiceJob, blacklist: string) => {
+    if (stopCompanyWrite('debtors', 'updating customer blacklist')) {
+      throw new Error('Debtors access is read-only.');
+    }
+    if (!job.customerId) {
+      throw new Error('Customer record was not found for this job.');
+    }
+
+    const cleanBlacklist = blacklist.trim();
+    setJobs((currentJobs) => currentJobs.map((currentJob) => (
+      currentJob.customerId === job.customerId ? { ...currentJob, customerBlacklist: cleanBlacklist } : currentJob
+    )));
+    await saveCustomerBlacklist(selectedCompany.id, job.customerId, cleanBlacklist);
   };
   const handleSaveInlineJob = (job: ServiceJob) => {
     const draft = inlineJobDrafts[job.id] ?? {};
@@ -1791,6 +1807,7 @@ export function CompanyPortal({
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
     { page: 'allJobs', label: 'All Jobs', icon: <LayoutDashboard size={16} /> },
+    { page: 'debtors', label: 'Debtors', icon: <CircleDollarSign size={16} /> },
     { page: 'calendar', label: 'Calendar', icon: <CalendarDays size={16} /> },
     { page: 'materials', label: 'Materials', icon: <Box size={16} /> },
     { page: 'tasks', label: 'Tasks', icon: <CheckCircle2 size={16} /> },
@@ -2276,6 +2293,25 @@ export function CompanyPortal({
             onUpdateInlineJobDraft={updateInlineJobDraft}
             onSaveInlineJob={handleSaveInlineJob}
             onOpenJob={setOpenedJob}
+          />
+        ) : renderedClientPage === 'debtors' ? (
+          <DebtorsPage
+            openedJob={openedJob}
+            profile={profile}
+            paymentMethodOptions={paymentMethodOptions}
+            materials={materials}
+            currentPortalUser={currentPortalUser}
+            onCloseJob={() => setOpenedJob(null)}
+            onSaveJob={(job) => handleSaveJob(job, true, 'debtors')}
+            onSaveMaterials={saveJobMaterials}
+            onCreateInvoice={handleCreateInvoice}
+            onDeleteInvoice={handleDeleteInvoice}
+            onComposeEmail={openEmailCompose}
+            allJobsRows={allJobsRows}
+            onOpenJob={setOpenedJob}
+            onSaveDebtorJob={(job) => handleSaveJob(job, false, 'debtors')}
+            onSaveCustomerBlacklist={handleSaveCustomerBlacklist}
+            readOnly={activePageReadOnly}
           />
         ) : renderedClientPage === 'calendar' ? (
           <CalendarPage
