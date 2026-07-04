@@ -11,3 +11,119 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.technician-shell {
+  min-height: 100vh;
+  background: #ffffff;
+}
+
+.technician-page {
+  min-height: 100vh;
+  padding: 58px 0 88px;
+}
+
+.mobile-topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  height: 58px;
+  display: grid;
+  grid-template-columns: 44px 1fr 44px;
+  align-items: center;
+  border-bottom: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(14px);
+  padding: 0 14px;
+}
+
+.mobile-topbar strong {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.mobile-icon-button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mobile-icon-button svg {
+  width: 25px;
+  height: 25px;
+}
+
+.mobile-tabbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid #e5e7eb;
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(14px);
+  padding: 7px 6px calc(7px + env(safe-area-inset-bottom));
+}
+
+.mobile-tab {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 3px;
+  color: #8a8a8a;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mobile-tab svg {
+  width: 27px;
+  height: 27px;
+}
+
+.mobile-tab.active {
+  color: #0a84ff;
+}
+
+@media (max-width: 720px) {
+  .technician-page > .p-4,
+  .technician-page > div,
+  .technician-page > section {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}

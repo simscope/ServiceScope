@@ -1,7 +1,6 @@
 // client/src/pages/JobsPage.jsx
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import CreateJob from '../components/CreateJob';
 import { supabase } from '../supabaseClient';
 
 /* ===== Полный набор статусов (Title Case) ===== */
@@ -253,8 +252,6 @@ export default function JobsPage() {
 
         @media (max-width: 1024px) { .col-system, .col-date { display:none; } }
       `}</style>
-
-      <CreateJob onCreated={fetchAll} />
 
       <div className="overflow-x-auto" style={{ marginTop: 16 }}>
         <table className="jobs-table">

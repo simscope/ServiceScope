@@ -1,33 +1,19 @@
-// src/App.js
 import React, { useEffect, useState } from 'react';
-import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
-
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { supabase } from './supabaseClient';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
 
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import TopNav from './components/TopNav.jsx';
-import EmailTab from './pages/EmailTab.jsx';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { supabase } from './supabaseClient';
 
-// страницы
+import CalendarPage from './pages/CalendarPage.jsx';
+import JobDetailsPage from './pages/JobDetailsPage.jsx';
+import JobsPage from './pages/JobsPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import NoAccessPage from './pages/NoAccessPage.jsx';
-import JobsPage from './pages/JobsPage.jsx';
-import AllJobsPage from './pages/AllJobsPage.jsx';
-import JobDetailsPage from './pages/JobDetailsPage.jsx';
-import CalendarPage from './pages/CalendarPage.jsx';
-import MaterialsPage from './pages/MaterialsPage.jsx';
-import InvoicePage from './pages/InvoicePage.jsx';
-import TechniciansPage from './pages/TechniciansPage.jsx';
-import FinancePage from './pages/FinancePage.jsx';
-import TasksTodayPage from './pages/TasksTodayPage.jsx';
-import TechniciansMap from './pages/TechniciansMap.jsx';
-import TechLibraryPage from './pages/TechLibraryPage.jsx';
-import DebtorsPage from './pages/DebtorsPage.jsx';
-// 🔥 НОВАЯ страница — Reset Password
 import ResetPassword from './pages/ResetPassword.jsx';
+import TechLibraryPage from './pages/TechLibraryPage.jsx';
 
-/* ───────────── Гард доступа к конкретной заявке (для техника) ───────────── */
 function JobAccess({ children }) {
   const { role, profile, user, loading } = useAuth();
   const { id } = useParams();
@@ -39,20 +25,25 @@ function JobAccess({ children }) {
   useEffect(() => {
     let alive = true;
 
-    (async () => {
+    async function checkAccess() {
       if (loading) return;
 
       if (!user) {
-        if (alive) { setOk(false); setChecking(false); }
+        if (alive) {
+          setOk(false);
+          setChecking(false);
+        }
         return;
       }
 
       if (role === 'admin' || role === 'manager') {
-        if (alive) { setOk(true); setChecking(false); }
+        if (alive) {
+          setOk(true);
+          setChecking(false);
+        }
         return;
       }
 
-      // role = tech → проверяем, что заявка назначена на этого техника
       setChecking(true);
       const { data, error } = await supabase
         .from('jobs')
@@ -70,12 +61,14 @@ function JobAccess({ children }) {
       }
 
       const jobTechId = data?.technician_id ?? data?.tech_id ?? null;
-      const allow = !!profile?.id && jobTechId === profile.id;
-      setOk(!!allow);
+      setOk(Boolean(profile?.id && jobTechId === profile.id));
       setChecking(false);
-    })();
+    }
 
-    return () => { alive = false; };
+    checkAccess();
+    return () => {
+      alive = false;
+    };
   }, [id, role, profile?.id, user, loading]);
 
   if (loading || checking) return null;
@@ -84,145 +77,46 @@ function JobAccess({ children }) {
   return children;
 }
 
-/* ─────────────────────────── Оболочка с верхним меню ─────────────────────── */
 function Shell() {
   const { pathname } = useLocation();
   const hideNav = pathname === '/login' || pathname === '/no-access' || pathname === '/reset-password';
 
   return (
-    <div className="app-shell">
+    <div className="app-shell technician-shell">
       {!hideNav && <TopNav />}
-      <div className="app-page">
+      <main className="app-page technician-page">
         <Routes>
-          {/* Публичные */}
           <Route path="/login" element={<LoginPage />} />
           <Route path="/no-access" element={<NoAccessPage />} />
-
-          {/* 🔥 Страница смены пароля */}
           <Route path="/reset-password" element={<ResetPassword />} />
 
-          {/* Задачи — менеджер + админ */}
-          <Route
-            path="/tasks/today"
-            element={
-              <ProtectedRoute allow={['admin', 'manager']}>
-                <TasksTodayPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="/tasks" element={<Navigate to="/tasks/today" replace />} />
-
-          {/* Заявки — менеджер + админ */}
           <Route
             path="/jobs"
             element={
-              <ProtectedRoute allow={['admin', 'manager']}>
+              <ProtectedRoute allow={['admin', 'manager', 'tech']}>
                 <JobsPage />
               </ProtectedRoute>
             }
           />
 
-          {/* Все заявки — менеджер + админ */}
-          <Route
-            path="/jobs/all"
-            element={
-              <ProtectedRoute allow={['admin', 'manager']}>
-                <AllJobsPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/debtors"
-              element={
-                <ProtectedRoute allow={['admin', 'manager']}>
-                <DebtorsPage />
-              </ProtectedRoute>
-            }
-           />
-          {/* Календарь — менеджер + админ */}
           <Route
             path="/calendar"
             element={
-              <ProtectedRoute allow={['admin', 'manager']}>
+              <ProtectedRoute allow={['admin', 'manager', 'tech']}>
                 <CalendarPage />
               </ProtectedRoute>
             }
           />
 
-          {/* Материалы — менеджер + админ */}
-          <Route
-            path="/materials"
-            element={
-              <ProtectedRoute allow={['admin', 'manager']}>
-                <MaterialsPage />
-              </ProtectedRoute>
-            }
-          />
-
-          {/* 🔥 Техбиблиотека — менеджер + админ */}
           <Route
             path="/tech-library"
             element={
-              <ProtectedRoute allow={['admin', 'manager']}>
+              <ProtectedRoute allow={['admin', 'manager', 'tech']}>
                 <TechLibraryPage />
               </ProtectedRoute>
             }
           />
 
-          {/* Чат — менеджер + админ */}
-          <Route path="/chat" element={<Navigate to="/jobs" replace />} />
-
-          {/* Email — менеджер + админ */}
-          <Route
-            path="/email"
-            element={
-              <ProtectedRoute allow={['admin', 'manager']}>
-                <EmailTab />
-              </ProtectedRoute>
-            }
-          />
-
-          {/* Инвойс — менеджер + админ */}
-          <Route
-            path="/invoice/:id"
-            element={
-              <ProtectedRoute allow={['admin', 'manager']}>
-                <InvoicePage />
-              </ProtectedRoute>
-            }
-          />
-
-          {/* Только админ */}
-          <Route
-            path="/technicians"
-            element={
-              <ProtectedRoute allow="admin">
-                <TechniciansPage />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/finance"
-            element={
-              <ProtectedRoute allow="admin">
-                <FinancePage />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="/chat-admin" element={<Navigate to="/jobs" replace />} />
-
-          {/* Живая карта техников */}
-          <Route
-            path="/map"
-            element={
-              <ProtectedRoute allow="admin">
-                <TechniciansMap />
-              </ProtectedRoute>
-            }
-          />
-          <Route path="/live" element={<Navigate to="/map" replace />} />
-
-          {/* Детали заявки */}
           <Route
             path="/jobs/:id"
             element={
@@ -233,7 +127,6 @@ function Shell() {
               </ProtectedRoute>
             }
           />
-
           <Route
             path="/job/:id"
             element={
@@ -245,16 +138,14 @@ function Shell() {
             }
           />
 
-          {/* Корень и 404 */}
           <Route index element={<Navigate to="/jobs" replace />} />
           <Route path="*" element={<Navigate to="/jobs" replace />} />
         </Routes>
-      </div>
+      </main>
     </div>
   );
 }
 
-/* ───────────────────────────── Корневой экспорт ──────────────────────────── */
 export default function App() {
   return (
     <AuthProvider>
