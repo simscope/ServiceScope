@@ -1467,7 +1467,7 @@ export function CompanyPortal({
   };
   const handleImportJobs = async (importedJobs: ServiceJob[]) => {
     if (stopCompanyWrite('import', 'importing jobs')) return;
-    setJobsStatus(`Importing ${importedJobs.length} Housecall Pro jobs...`);
+    setJobsStatus(`Importing ${importedJobs.length} migration jobs...`);
 
     const savedJobs: ServiceJob[] = [];
     for (const importedJob of importedJobs) {
@@ -1479,10 +1479,10 @@ export function CompanyPortal({
           ? currentJobs.map((job) => (job.id === savedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job))
           : [savedJob, ...currentJobs];
       });
-      setJobsStatus(`Imported ${savedJobs.length}/${importedJobs.length} Housecall Pro jobs...`);
+      setJobsStatus(`Imported ${savedJobs.length}/${importedJobs.length} migration jobs...`);
     }
 
-    setJobsStatus(`Housecall Pro import complete: ${savedJobs.length} jobs saved.`);
+    setJobsStatus(`Migration import complete: ${savedJobs.length} jobs saved.`);
   };
   const handleSaveInlineJob = (job: ServiceJob) => {
     const draft = inlineJobDrafts[job.id] ?? {};

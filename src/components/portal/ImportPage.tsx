@@ -1,8 +1,34 @@
 import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react';
-import { Database, FileSpreadsheet, UploadCloud } from 'lucide-react';
+import { CheckCircle2, Database, FileSpreadsheet, UploadCloud } from 'lucide-react';
 import type { CompanyOnboardingProfile, ServiceJob, ServiceJobStatus } from '../../types';
 
 type CsvRow = Record<string, string>;
+type MigrationSourceId = 'housecall_pro' | 'jobber' | 'workiz' | 'servicetitan' | 'fieldedge' | 'service_fusion' | 'quickbooks' | 'generic';
+
+type MigrationSource = {
+  id: MigrationSourceId;
+  name: string;
+  audience: string;
+  jobsDetail: string;
+  customersDetail: string;
+  importedFromLabel: string;
+  note: string;
+  jobNumberColumns: string[];
+  companyColumns: string[];
+  contactColumns: string[];
+  phoneColumns: string[];
+  emailColumns: string[];
+  addressColumns: string[];
+  systemColumns: string[];
+  issueColumns: string[];
+  technicianColumns: string[];
+  statusColumns: string[];
+  appointmentColumns: string[];
+  createdColumns: string[];
+  scfColumns: string[];
+  laborColumns: string[];
+  paymentColumns: string[];
+};
 
 type ImportDraft = {
   job: ServiceJob;
@@ -33,6 +59,129 @@ const statusOptions: ServiceJobStatus[] = [
 ];
 
 const paidLabels = new Set(['paid', 'complete', 'completed', 'collected', 'yes', 'true', 'cash', 'check', 'card', 'credit card', 'zelle', 'venmo']);
+
+const baseSourceColumns = {
+  jobNumberColumns: ['Job #', 'Job Number', 'Job ID', 'Invoice #', 'Invoice Number', 'Number', 'Work Order #', 'Work Order Number'],
+  companyColumns: ['Customer', 'Company', 'Customer Name', 'Client', 'Client Company', 'Billing Name', 'Display Name'],
+  contactColumns: ['Contact', 'Contact Name', 'Client Name', 'First Name', 'Name', 'Customer Contact', 'Primary Contact'],
+  phoneColumns: ['Phone', 'Customer Phone', 'Mobile Phone', 'Home Phone', 'Primary Phone', 'Phone Number'],
+  emailColumns: ['Email', 'Customer Email', 'Primary Email', 'Email Address'],
+  addressColumns: ['Address', 'Service Address', 'Job Address', 'Street', 'Street 1', 'Address 1'],
+  systemColumns: ['System', 'Business Unit', 'Job Type', 'Service Type', 'Category', 'Trade'],
+  issueColumns: ['Issue', 'Job Description', 'Description', 'Summary', 'Task', 'Call Reason'],
+  technicianColumns: ['Technician', 'Assigned To', 'Employee', 'Pro', 'Tech', 'Primary Technician'],
+  statusColumns: ['Status', 'Job Status', 'Invoice Status', 'Work Order Status'],
+  appointmentColumns: ['Scheduled', 'Scheduled Date', 'Appointment', 'Start Time', 'Date', 'Job Date', 'Arrival Window Start'],
+  createdColumns: ['Created', 'Created At', 'Date Created', 'Created Date'],
+  scfColumns: ['Service Call Fee', 'Service Fee', 'SCF', 'Trip Charge', 'Dispatch Fee', 'Diagnostic Fee'],
+  laborColumns: ['Labor', 'Labor Amount', 'Labor Total', 'Total', 'Balance', 'Invoice Total', 'Amount', 'Grand Total'],
+  paymentColumns: ['SCF Payment', 'Service Fee Payment', 'Payment Method', 'Labor Payment', 'Paid By', 'Payment Status'],
+};
+
+const migrationSources: MigrationSource[] = [
+  {
+    id: 'housecall_pro',
+    name: 'Housecall Pro',
+    audience: 'Small service companies moving jobs, customers, invoices, and unpaid work.',
+    jobsDetail: 'Upload the Housecall Pro Jobs export.',
+    customersDetail: 'Optional Customers export improves matching.',
+    importedFromLabel: 'Housecall Pro',
+    note: 'Best first step for HCP companies: customers + jobs now, invoices/payments as CSV columns when present.',
+    ...baseSourceColumns,
+  },
+  {
+    id: 'jobber',
+    name: 'Jobber',
+    audience: 'Strong target for HVAC, plumbing, appliance, cleaning, and home service teams.',
+    jobsDetail: 'Upload Jobber Requests, Jobs, or Invoices CSV.',
+    customersDetail: 'Upload Jobber Clients CSV for cleaner customer data.',
+    importedFromLabel: 'Jobber',
+    note: 'Use this to pitch a same-day move from Jobber: clients, scheduled jobs, totals, balances, and tech assignment.',
+    ...baseSourceColumns,
+    jobNumberColumns: ['Job #', 'Job Number', 'Request #', 'Invoice #', 'Quote #', 'Number'],
+    companyColumns: ['Client', 'Client Name', 'Company Name', 'Customer', 'Customer Name'],
+    issueColumns: ['Title', 'Description', 'Job Description', 'Request Title', 'Internal Notes'],
+    appointmentColumns: ['Start At', 'Scheduled Start', 'Visit Start', 'Date', 'Created At'],
+  },
+  {
+    id: 'workiz',
+    name: 'Workiz',
+    audience: 'Phone-heavy dispatch teams and lead-driven service companies.',
+    jobsDetail: 'Upload Workiz Jobs, Calls, or Invoices CSV.',
+    customersDetail: 'Upload Workiz Clients CSV if available.',
+    importedFromLabel: 'Workiz',
+    note: 'Good for companies that care about calls, dispatch, and fast job history transfer.',
+    ...baseSourceColumns,
+    jobNumberColumns: ['Job ID', 'Job #', 'Ticket ID', 'Lead ID', 'Invoice #'],
+    companyColumns: ['Client Name', 'Customer Name', 'Company', 'Name'],
+    technicianColumns: ['Tech', 'Technician', 'Assigned Technician', 'Dispatcher'],
+    issueColumns: ['Job Type', 'Description', 'Issue', 'Lead Source'],
+  },
+  {
+    id: 'servicetitan',
+    name: 'ServiceTitan',
+    audience: 'Larger trades companies where migration is higher value but more structured.',
+    jobsDetail: 'Upload exported Jobs or Invoices CSV from reports.',
+    customersDetail: 'Upload Customers or Locations export.',
+    importedFromLabel: 'ServiceTitan',
+    note: 'Use as white-glove migration: jobs first, then customers, locations, equipment, memberships, and pricebook later.',
+    ...baseSourceColumns,
+    jobNumberColumns: ['Job Number', 'Project Number', 'Invoice Number', 'Work Order Number'],
+    companyColumns: ['Customer Name', 'Location Name', 'Bill To Name', 'Company'],
+    addressColumns: ['Location Address', 'Service Location', 'Address', 'Street'],
+    technicianColumns: ['Primary Technician', 'Technician', 'Assigned Technician'],
+    systemColumns: ['Business Unit', 'Job Type', 'Trade'],
+  },
+  {
+    id: 'fieldedge',
+    name: 'FieldEdge',
+    audience: 'HVAC and trades companies tied to dispatch and QuickBooks workflows.',
+    jobsDetail: 'Upload FieldEdge Work Orders, Jobs, or Invoices CSV.',
+    customersDetail: 'Upload Customers CSV if available.',
+    importedFromLabel: 'FieldEdge',
+    note: 'Good for companies that want dispatch + finance without keeping an older QuickBooks-heavy workflow.',
+    ...baseSourceColumns,
+    jobNumberColumns: ['Work Order #', 'WO #', 'Invoice #', 'Job #'],
+    companyColumns: ['Customer', 'Customer Name', 'Bill To', 'Company'],
+    issueColumns: ['Problem', 'Description', 'Work Requested', 'Notes'],
+  },
+  {
+    id: 'service_fusion',
+    name: 'Service Fusion',
+    audience: 'Small and mid-size field service teams with jobs, estimates, and invoices.',
+    jobsDetail: 'Upload Service Fusion Jobs, Estimates, or Invoices CSV.',
+    customersDetail: 'Upload Customer list CSV if available.',
+    importedFromLabel: 'Service Fusion',
+    note: 'Useful second-wave target: import open/completed jobs and unpaid balances first.',
+    ...baseSourceColumns,
+    jobNumberColumns: ['Job Number', 'Estimate Number', 'Invoice Number', 'Customer PO', 'Number'],
+    issueColumns: ['Description', 'Services', 'Job Notes', 'Memo'],
+  },
+  {
+    id: 'quickbooks',
+    name: 'QuickBooks / spreadsheets',
+    audience: 'Companies running service work from invoices, Excel, and Google Sheets.',
+    jobsDetail: 'Upload invoice/job spreadsheet exported from QuickBooks or Excel.',
+    customersDetail: 'Upload customer list CSV if separate.',
+    importedFromLabel: 'QuickBooks or spreadsheet',
+    note: 'This is the easiest landing path for companies without real field-service software.',
+    ...baseSourceColumns,
+    jobNumberColumns: ['Invoice No.', 'Invoice #', 'Transaction No.', 'Doc Number', 'Job #', 'Number'],
+    companyColumns: ['Customer', 'Customer Name', 'Name', 'Company'],
+    laborColumns: ['Amount', 'Open Balance', 'Balance', 'Total', 'Invoice Total'],
+    statusColumns: ['Status', 'Paid Status'],
+  },
+  {
+    id: 'generic',
+    name: 'Generic CSV',
+    audience: 'Fallback for any CRM/FSM export.',
+    jobsDetail: 'Upload any jobs/invoices/work-orders CSV.',
+    customersDetail: 'Optional customer CSV.',
+    importedFromLabel: 'Generic CSV',
+    note: 'Use when a competitor export has different names. The parser accepts many common column labels.',
+    ...baseSourceColumns,
+  },
+];
 
 function normalizeKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -131,10 +280,10 @@ function rowText(row: CsvRow) {
   return Object.values(row).join(' ').trim().toLowerCase();
 }
 
-function matchCustomer(customers: CsvRow[], jobRow: CsvRow) {
-  const company = cell(jobRow, ['Customer', 'Company', 'Customer Name', 'Client', 'Client Name']);
-  const phone = cell(jobRow, ['Phone', 'Customer Phone', 'Mobile Phone']);
-  const email = cell(jobRow, ['Email', 'Customer Email']);
+function matchCustomer(customers: CsvRow[], jobRow: CsvRow, source: MigrationSource) {
+  const company = cell(jobRow, source.companyColumns);
+  const phone = cell(jobRow, source.phoneColumns);
+  const email = cell(jobRow, source.emailColumns);
   const key = [company, phone, email].filter(Boolean).map((value) => value.toLowerCase());
   if (!key.length) return undefined;
   return customers.find((customer) => {
@@ -143,33 +292,33 @@ function matchCustomer(customers: CsvRow[], jobRow: CsvRow) {
   });
 }
 
-function buildJob(companyId: string, row: CsvRow, customerRow: CsvRow | undefined, existing: ServiceJob | undefined, fallbackNumber: string): ImportDraft {
-  const jobNumber = cell(row, ['Job #', 'Job Number', 'Job ID', 'Invoice #', 'Invoice Number', 'Number']) || fallbackNumber;
-  const organization = cell(row, ['Customer', 'Company', 'Customer Name', 'Client', 'Client Company'])
-    || cell(customerRow, ['Company', 'Customer', 'Customer Name'])
+function buildJob(companyId: string, row: CsvRow, customerRow: CsvRow | undefined, existing: ServiceJob | undefined, fallbackNumber: string, source: MigrationSource): ImportDraft {
+  const jobNumber = cell(row, source.jobNumberColumns) || fallbackNumber;
+  const organization = cell(row, source.companyColumns)
+    || cell(customerRow, source.companyColumns)
     || cell(row, ['Name']);
-  const clientName = cell(row, ['Contact', 'Contact Name', 'Client Name', 'First Name', 'Name'])
-    || cell(customerRow, ['Contact', 'Contact Name', 'First Name', 'Name'])
+  const clientName = cell(row, source.contactColumns)
+    || cell(customerRow, source.contactColumns)
     || organization;
-  const phone = cell(row, ['Phone', 'Customer Phone', 'Mobile Phone', 'Home Phone'])
-    || cell(customerRow, ['Phone', 'Customer Phone', 'Mobile Phone', 'Home Phone']);
-  const email = cell(row, ['Email', 'Customer Email'])
-    || cell(customerRow, ['Email', 'Customer Email']);
+  const phone = cell(row, source.phoneColumns)
+    || cell(customerRow, source.phoneColumns);
+  const email = cell(row, source.emailColumns)
+    || cell(customerRow, source.emailColumns);
   const address = [
-    cell(row, ['Address', 'Service Address', 'Job Address', 'Street']),
+    cell(row, source.addressColumns),
     cell(row, ['City']),
     cell(row, ['State']),
     cell(row, ['Zip', 'Zip Code', 'Postal Code']),
-  ].filter(Boolean).join(', ') || cell(customerRow, ['Address', 'Service Address', 'Street']);
-  const scf = moneyValue(cell(row, ['Service Call Fee', 'Service Fee', 'SCF', 'Trip Charge']));
-  const labor = moneyValue(cell(row, ['Labor', 'Labor Amount', 'Labor Total', 'Total', 'Balance', 'Invoice Total']));
-  const technician = cell(row, ['Technician', 'Assigned To', 'Employee', 'Pro']) || existing?.technician || 'No technician';
-  const status = statusValue(cell(row, ['Status', 'Job Status', 'Invoice Status']));
-  const appointment = parseDate(cell(row, ['Scheduled', 'Scheduled Date', 'Appointment', 'Start Time', 'Date']));
+  ].filter(Boolean).join(', ') || cell(customerRow, source.addressColumns);
+  const scf = moneyValue(cell(row, source.scfColumns));
+  const labor = moneyValue(cell(row, source.laborColumns));
+  const technician = cell(row, source.technicianColumns) || existing?.technician || 'No technician';
+  const status = statusValue(cell(row, source.statusColumns));
+  const appointment = parseDate(cell(row, source.appointmentColumns));
   const notes = [
     cell(row, ['Notes', 'Private Notes', 'Description']),
-    cell(row, ['Tags']) ? `HCP tags: ${cell(row, ['Tags'])}` : '',
-    cell(row, ['Invoice #', 'Invoice Number']) ? `HCP invoice: ${cell(row, ['Invoice #', 'Invoice Number'])}` : '',
+    cell(row, ['Tags']) ? `${source.name} tags: ${cell(row, ['Tags'])}` : '',
+    cell(row, ['Invoice #', 'Invoice Number']) ? `${source.name} invoice: ${cell(row, ['Invoice #', 'Invoice Number'])}` : '',
   ].filter(Boolean).join('\n');
   const warnings = [
     !organization ? 'missing customer/company' : '',
@@ -186,7 +335,7 @@ function buildJob(companyId: string, row: CsvRow, customerRow: CsvRow | undefine
       customerId: existing?.customerId,
       jobNumber,
       status,
-      system: cell(row, ['System', 'Business Unit', 'Job Type', 'Service Type']) || existing?.system || 'Appliance',
+      system: cell(row, source.systemColumns) || existing?.system || 'Appliance',
       clientName,
       organization,
       phone,
@@ -195,10 +344,10 @@ function buildJob(companyId: string, row: CsvRow, customerRow: CsvRow | undefine
       technician,
       assignee: technician,
       serviceCallFee: scf,
-      scfPayment: paymentValue(cell(row, ['SCF Payment', 'Service Fee Payment', 'Payment Method']), scf),
+      scfPayment: paymentValue(cell(row, source.paymentColumns), scf),
       labor,
-      laborPayment: paymentValue(cell(row, ['Labor Payment', 'Payment Method', 'Paid By']), labor),
-      issue: cell(row, ['Issue', 'Job Description', 'Description', 'Summary']) || 'Imported from Housecall Pro',
+      laborPayment: paymentValue(cell(row, source.paymentColumns), labor),
+      issue: cell(row, source.issueColumns) || `Imported from ${source.importedFromLabel}`,
       notes,
       customerBlacklist: existing?.customerBlacklist,
       attachments: existing?.attachments ?? [],
@@ -206,7 +355,7 @@ function buildJob(companyId: string, row: CsvRow, customerRow: CsvRow | undefine
       invoices: existing?.invoices ?? [],
       appointment: appointment || existing?.appointment,
       calendarDurationMinutes: existing?.calendarDurationMinutes ?? 120,
-      createdAt: parseDate(cell(row, ['Created', 'Created At', 'Date Created'])) || existing?.createdAt || new Date().toISOString(),
+      createdAt: parseDate(cell(row, source.createdColumns)) || existing?.createdAt || new Date().toISOString(),
     },
   };
 }
@@ -247,13 +396,15 @@ export function ImportPage({
   const [importing, setImporting] = useState(false);
   const [jobsFileName, setJobsFileName] = useState('');
   const [customersFileName, setCustomersFileName] = useState('');
+  const [sourceId, setSourceId] = useState<MigrationSourceId>('housecall_pro');
 
+  const activeSource = migrationSources.find((source) => source.id === sourceId) ?? migrationSources[0];
   const existingByNumber = useMemo(() => new Map(existingJobs.map((job) => [job.jobNumber.toLowerCase(), job])), [existingJobs]);
   const drafts = useMemo(() => jobsRows.map((row, index) => {
-    const jobNumber = cell(row, ['Job #', 'Job Number', 'Job ID', 'Invoice #', 'Invoice Number', 'Number']);
+    const jobNumber = cell(row, activeSource.jobNumberColumns);
     const fallback = `${profile.jobNumberPrefix || 'HVAC'}-${String(Number(nextJobNumber.replace(/\D/g, '')) + index || index + 1).padStart(4, '0')}`;
-    return buildJob(companyId, row, matchCustomer(customersRows, row), jobNumber ? existingByNumber.get(jobNumber.toLowerCase()) : undefined, fallback);
-  }), [companyId, customersRows, existingByNumber, jobsRows, nextJobNumber, profile.jobNumberPrefix]);
+    return buildJob(companyId, row, matchCustomer(customersRows, row, activeSource), jobNumber ? existingByNumber.get(jobNumber.toLowerCase()) : undefined, fallback, activeSource);
+  }), [activeSource, companyId, customersRows, existingByNumber, jobsRows, nextJobNumber, profile.jobNumberPrefix]);
   const validDrafts = drafts.filter(({ job }) => job.jobNumber.trim() && (job.organization.trim() || job.clientName.trim()));
   const createCount = validDrafts.filter((draft) => draft.action === 'create').length;
   const updateCount = validDrafts.filter((draft) => draft.action === 'update').length;
@@ -266,7 +417,7 @@ export function ImportPage({
     const rows = parseCsv(text);
     setFileName(file.name);
     setter(rows);
-    setStatus(`${file.name}: ${rows.length} rows loaded.`);
+    setStatus(`${file.name}: ${rows.length} rows loaded for ${activeSource.name}.`);
   }
 
   async function importJobs() {
@@ -275,7 +426,7 @@ export function ImportPage({
     setStatus(`Importing ${validDrafts.length} jobs...`);
     try {
       await onImportJobs(validDrafts.map((draft) => draft.job));
-      setStatus(`Imported ${validDrafts.length} jobs. ${createCount} new, ${updateCount} updated.`);
+      setStatus(`Imported ${validDrafts.length} jobs from ${activeSource.name}. ${createCount} new, ${updateCount} updated.`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -288,18 +439,37 @@ export function ImportPage({
       <div className="section-title-row">
         <div>
           <span className="eyebrow">Migration</span>
-          <h1>Housecall Pro import</h1>
+          <h1>Migration Center</h1>
+          <p className="import-source-note">{activeSource.note}</p>
         </div>
         <button className="primary-button import-action-button" type="button" onClick={importJobs} disabled={readOnly || importing || validDrafts.length === 0}>
           <UploadCloud size={16} /> {importing ? 'Importing...' : 'Import jobs'}
         </button>
       </div>
 
+      <div className="migration-source-grid" role="list" aria-label="Migration source">
+        {migrationSources.map((source) => (
+          <button
+            className={`migration-source-card${source.id === activeSource.id ? ' active' : ''}`}
+            type="button"
+            key={source.id}
+            onClick={() => setSourceId(source.id)}
+            disabled={importing}
+          >
+            <span>
+              <strong>{source.name}</strong>
+              {source.id === activeSource.id ? <CheckCircle2 size={16} aria-hidden="true" /> : null}
+            </span>
+            <small>{source.audience}</small>
+          </button>
+        ))}
+      </div>
+
       <div className="import-upload-grid">
         <CsvFilePicker
           icon={<FileSpreadsheet size={20} />}
           title="Jobs CSV"
-          detail="Export Jobs from Housecall Pro and upload it here."
+          detail={activeSource.jobsDetail}
           fileName={jobsFileName}
           disabled={readOnly || importing}
           onFile={(event) => void readFile(event, setJobsRows, setJobsFileName)}
@@ -307,7 +477,7 @@ export function ImportPage({
         <CsvFilePicker
           icon={<Database size={20} />}
           title="Customers CSV"
-          detail="Optional, but improves customer name, phone, email, and address matching."
+          detail={activeSource.customersDetail}
           fileName={customersFileName}
           disabled={readOnly || importing}
           onFile={(event) => void readFile(event, setCustomersRows, setCustomersFileName)}
@@ -315,7 +485,7 @@ export function ImportPage({
       </div>
 
       <div className="import-summary-grid">
-        <div className="metric-card"><span>Jobs rows</span><strong>{jobsRows.length}</strong><p>From HCP export</p></div>
+        <div className="metric-card"><span>Jobs rows</span><strong>{jobsRows.length}</strong><p>From {activeSource.name}</p></div>
         <div className="metric-card"><span>Customers rows</span><strong>{customersRows.length}</strong><p>Optional lookup</p></div>
         <div className="metric-card"><span>New</span><strong>{createCount}</strong><p>Will be created</p></div>
         <div className="metric-card"><span>Updates</span><strong>{updateCount}</strong><p>Matched by Job #</p></div>
@@ -357,7 +527,7 @@ export function ImportPage({
             ))}
           </tbody>
         </table>
-        {!validDrafts.length ? <span className="empty-inline">Upload a Housecall Pro jobs CSV to preview import rows.</span> : null}
+        {!validDrafts.length ? <span className="empty-inline">Choose a source and upload a jobs CSV to preview import rows.</span> : null}
       </div>
     </section>
   );

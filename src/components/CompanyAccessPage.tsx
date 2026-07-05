@@ -23,7 +23,7 @@ export const companyPortalAccessPages: AccessPageDefinition[] = [
   { page: 'email', label: 'Email', detail: 'Mailbox, compose, and send' },
   { page: 'finances', label: 'Finance', detail: 'Invoices, payroll, and money reports' },
   { page: 'knowledge', label: 'Library', detail: 'Manuals and uploaded documents' },
-  { page: 'import', label: 'Import', detail: 'Housecall Pro CSV migration tools' },
+  { page: 'import', label: 'Import', detail: 'CSV migration tools for Housecall Pro, Jobber, Workiz, ServiceTitan, and spreadsheets' },
   { page: 'portal', label: 'Portal', detail: 'Support requests and account page' },
   { page: 'onboarding', label: 'Onboarding', detail: 'Company setup, billing, and mailbox settings' },
 ];
