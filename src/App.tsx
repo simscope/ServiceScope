@@ -293,8 +293,12 @@ function AuthLogin({
     event.preventDefault();
     setError('');
 
-    const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password.trim()) {
+    const formData = new FormData(event.currentTarget);
+    const submittedEmail = String(formData.get('email') ?? email).trim();
+    const submittedPassword = String(formData.get('password') ?? password);
+    const normalizedEmail = submittedEmail.toLowerCase();
+
+    if (!normalizedEmail || !submittedPassword.trim()) {
       setError('Enter your email and password.');
       return;
     }
@@ -306,7 +310,9 @@ function AuthLogin({
 
     setIsSigningIn(true);
     try {
-      const session = await signInAndResolveSession(normalizedEmail, password);
+      setEmail(submittedEmail);
+      setPassword(submittedPassword);
+      const session = await signInAndResolveSession(normalizedEmail, submittedPassword);
       onLogin(session);
     } catch (error) {
       setSupabaseAccessToken(null);
@@ -340,6 +346,7 @@ function AuthLogin({
             Email
             <input
               type="email"
+              name="email"
               value={email}
               onChange={(event) => updateEmail(event.target.value)}
               placeholder="email@company.com"
@@ -352,6 +359,7 @@ function AuthLogin({
             <div className="password-input-shell">
               <input
                 type={showPassword ? 'text' : 'password'}
+                name="password"
                 value={password}
                 onChange={(event) => updatePassword(event.target.value)}
                 placeholder="Password"
@@ -714,7 +722,7 @@ export function App() {
 
   function navigate(nextPage: AppPage) {
     setPage(nextPage);
-    window.history.replaceState(null, '', `#${nextPage === 'companyLogin' ? 'company-login' : nextPage}`);
+    window.history.replaceState(null, '', hashForPage(nextPage));
   }
 
   function recordAudit(event: Omit<AuditEvent, 'id' | 'createdAt'>) {
