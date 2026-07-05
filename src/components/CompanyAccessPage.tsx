@@ -23,6 +23,7 @@ export const companyPortalAccessPages: AccessPageDefinition[] = [
   { page: 'email', label: 'Email', detail: 'Mailbox, compose, and send' },
   { page: 'finances', label: 'Finance', detail: 'Invoices, payroll, and money reports' },
   { page: 'knowledge', label: 'Library', detail: 'Manuals and uploaded documents' },
+  { page: 'import', label: 'Import', detail: 'Housecall Pro CSV migration tools' },
   { page: 'portal', label: 'Portal', detail: 'Support requests and account page' },
   { page: 'onboarding', label: 'Onboarding', detail: 'Company setup, billing, and mailbox settings' },
 ];
@@ -56,6 +57,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
       email: 'readonly',
       finances: 'readonly',
       knowledge: 'readonly',
+      import: 'readonly',
       portal: 'full',
       onboarding: 'full',
     };
@@ -72,6 +74,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
     email: 'off',
     finances: 'readonly',
     knowledge: 'readonly',
+    import: 'off',
     portal: 'full',
     onboarding: 'full',
   };

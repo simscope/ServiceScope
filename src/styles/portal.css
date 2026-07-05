@@ -1784,6 +1784,79 @@
   font-weight: 800;
 }
 
+.import-page {
+  display: grid;
+  gap: 14px;
+}
+
+.import-upload-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.import-upload-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d6dfd8;
+  border-radius: 8px;
+  background: #fff;
+  padding: 18px;
+  cursor: pointer;
+}
+
+.import-upload-card svg {
+  color: #1f6bc7;
+}
+
+.import-upload-card strong {
+  font-size: 16px;
+}
+
+.import-upload-card span {
+  color: #667269;
+  font-size: 13px;
+}
+
+.import-upload-card input {
+  margin-top: 6px;
+}
+
+.import-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.import-preview {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.import-pill {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.import-pill.create {
+  background: #e8f6ee;
+  color: #166534;
+}
+
+.import-pill.update {
+  background: #e8f1ff;
+  color: #1d4ed8;
+}
+
+@media (max-width: 860px) {
+  .import-upload-grid,
+  .import-metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
 .profile-wide {
   grid-column: 1 / -1;
 }
