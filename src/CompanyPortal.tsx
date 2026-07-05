@@ -986,7 +986,8 @@ export function CompanyPortal({
   const generatedJobNumber = selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber;
   const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
   const allJobsRows = jobs;
-  const activeJobsRows = allJobsRows.filter((job) => !isCustomerJobPaid(job));
+  const closedJobStatuses = new Set<ServiceJobStatus>(['Completed', 'Warranty', 'Cancelled']);
+  const activeJobsRows = allJobsRows.filter((job) => !closedJobStatuses.has(job.status) && !isCustomerJobPaid(job));
   const paidJobsRows = allJobsRows.filter(isCustomerJobPaid);
   const visibleAllJobsRows = allJobsVisibility === 'paid' ? paidJobsRows : allJobsVisibility === 'all' ? allJobsRows : activeJobsRows;
   const allJobsGroups = Array.from(new Set(['No technician', ...allJobsRows.map((job) => job.assignee)])).map((technician) => ({
