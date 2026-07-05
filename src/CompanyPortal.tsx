@@ -201,7 +201,7 @@ import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './uti
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
 const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
-const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];
+const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
