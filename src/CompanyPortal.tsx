@@ -2275,6 +2275,7 @@ export function CompanyPortal({
         {renderedClientPage === 'jobs' ? (
           <JobsPage
             openedJob={openedJob}
+            jobs={allJobsRows}
             profile={profile}
             paymentMethodOptions={paymentMethodOptions}
             materials={materials}

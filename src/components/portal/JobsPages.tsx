@@ -41,6 +41,10 @@ function normalizeSearch(value: string | number | null | undefined) {
   return String(value ?? '').trim().toLowerCase();
 }
 
+function normalizePhone(value: string | number | null | undefined) {
+  return String(value ?? '').replace(/\D+/g, '');
+}
+
 function paymentLabel(value: string) {
   return paymentMethodLabels[value as CompanyPaymentMethod] ?? value;
 }
@@ -148,6 +152,7 @@ function downloadExcelFile(rows: ServiceJob[]) {
 
 export function JobsPage({
   openedJob,
+  jobs,
   profile,
   paymentMethodOptions,
   materials,
@@ -166,6 +171,7 @@ export function JobsPage({
   onSelectedJobTypeIdChange,
 }: {
   openedJob: JobCardData | null;
+  jobs: ServiceJob[];
   profile: CompanyOnboardingProfile;
   paymentMethodOptions: { value: CompanyPaymentMethod; label: string }[];
   materials: MaterialRow[];
@@ -186,8 +192,82 @@ export function JobsPage({
   const createAttentionFields = ['organization', 'issue', 'clientName', 'phone', 'address'];
   const [createTouchedFields, setCreateTouchedFields] = useState<Record<string, boolean>>({});
   const [createFieldValues, setCreateFieldValues] = useState<Record<string, string>>({});
-  const createCustomerMatches: Array<{ id: string; primaryName: string; organization: string; primaryPhone: string; address: string }> = [];
-  const applyCustomerToCreateForm = (_customer: { id: string; primaryName: string; organization: string; primaryPhone: string; address: string }) => undefined;
+  const createCustomerMatches = useMemo(() => {
+    const normalizedEmail = normalizeSearch(createFieldValues.email);
+    const normalizedPhone = normalizePhone(createFieldValues.phone);
+    const normalizedName = normalizeSearch(createFieldValues.clientName);
+    const normalizedOrganization = normalizeSearch(createFieldValues.organization);
+    const normalizedAddress = normalizeSearch(createFieldValues.address);
+    const hasLookup =
+      normalizedEmail.length >= 3 ||
+      normalizedPhone.length >= 4 ||
+      normalizedName.length >= 3 ||
+      normalizedOrganization.length >= 3 ||
+      normalizedAddress.length >= 5;
+
+    if (!hasLookup) return [];
+
+    const matches = new Map<string, {
+      id: string;
+      primaryName: string;
+      organization: string;
+      primaryPhone: string;
+      primaryEmail: string;
+      address: string;
+      jobsCount: number;
+      lastJobAt: string;
+    }>();
+
+    jobs.forEach((job) => {
+      const customerKey = job.customerId || [job.organization, job.clientName, job.phone, job.email, job.address].map(normalizeSearch).join('|');
+      const isMatch =
+        (normalizedEmail && normalizeSearch(job.email).includes(normalizedEmail)) ||
+        (normalizedPhone.length >= 4 && normalizePhone(job.phone).includes(normalizedPhone)) ||
+        (normalizedName.length >= 3 && normalizeSearch(job.clientName).includes(normalizedName)) ||
+        (normalizedOrganization.length >= 3 && normalizeSearch(job.organization).includes(normalizedOrganization)) ||
+        (normalizedAddress.length >= 5 && normalizeSearch(job.address).includes(normalizedAddress));
+
+      if (!isMatch) return;
+
+      const existing = matches.get(customerKey);
+      if (existing) {
+        existing.jobsCount += 1;
+        if (job.createdAt > existing.lastJobAt) existing.lastJobAt = job.createdAt;
+        return;
+      }
+
+      matches.set(customerKey, {
+        id: customerKey,
+        primaryName: job.clientName,
+        organization: job.organization,
+        primaryPhone: job.phone,
+        primaryEmail: job.email,
+        address: job.address,
+        jobsCount: 1,
+        lastJobAt: job.createdAt,
+      });
+    });
+
+    return Array.from(matches.values())
+      .sort((first, second) => second.lastJobAt.localeCompare(first.lastJobAt))
+      .slice(0, 5);
+  }, [createFieldValues.address, createFieldValues.clientName, createFieldValues.email, createFieldValues.organization, createFieldValues.phone, jobs]);
+  const applyCustomerToCreateForm = (customer: {
+    primaryName: string;
+    organization: string;
+    primaryPhone: string;
+    primaryEmail: string;
+    address: string;
+  }) => {
+    setCreateFieldValues((values) => ({
+      ...values,
+      organization: customer.organization,
+      clientName: customer.primaryName,
+      phone: customer.primaryPhone,
+      email: customer.primaryEmail,
+      address: customer.address,
+    }));
+  };
   const updateCreateField = (field: string, value: string) => {
     setCreateFieldValues((values) => ({ ...values, [field]: value }));
   };
@@ -245,7 +325,7 @@ export function JobsPage({
             {createCustomerMatches.map((customer) => (
               <button type="button" key={customer.id} onClick={() => applyCustomerToCreateForm(customer)}>
                 <b>{customer.primaryName || customer.organization || 'Unnamed client'}</b>
-                <small>{[customer.organization, customer.primaryPhone, customer.address].filter(Boolean).join(' • ')}</small>
+                <small>{[customer.organization, customer.primaryPhone, customer.primaryEmail, customer.address, `${customer.jobsCount} jobs`].filter(Boolean).join(' / ')}</small>
               </button>
             ))}
           </div>
