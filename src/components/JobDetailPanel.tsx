@@ -301,6 +301,22 @@ export function JobDetailPanel({
     setSaved(true);
   }
 
+  function archiveDraft() {
+    const assignee = draft.technician || 'No technician';
+    const nextJob = {
+      ...draft,
+      status: 'Cancelled' as ServiceJobStatus,
+      technician: assignee,
+      assignee,
+      attachments: draft.attachments ?? [],
+    };
+
+    onSave(nextJob);
+    setDraft(nextJob);
+    setSaved(true);
+    onClose();
+  }
+
   async function handleFileUpload(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
@@ -820,8 +836,8 @@ export function JobDetailPanel({
         <section className="job-detail-card">
           <div className="job-detail-card-header">
             <h2>Parameters</h2>
-            <button className="archive-button" type="button">
-              Archive
+            <button className="archive-button" type="button" onClick={archiveDraft} disabled={draft.status === 'Cancelled'}>
+              {draft.status === 'Cancelled' ? 'Archived' : 'Archive'}
             </button>
           </div>
           <div className="job-detail-form">
