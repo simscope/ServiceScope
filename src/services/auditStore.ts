@@ -11,7 +11,9 @@ type AuditEventRow = {
   actor_role: string | null;
   category: AuditEventCategory;
   action: string;
-  resource: string;
+  resource: string | null;
+  resource_label?: string | null;
+  resource_type?: string | null;
   resource_id: string | null;
   details: string;
   user_agent: string | null;
@@ -67,7 +69,7 @@ function rowToAuditEvent(row: AuditEventRow): AuditEvent {
     category: row.category,
     action: row.action,
     actor: row.actor_name,
-    resource: row.resource,
+    resource: row.resource ?? row.resource_label ?? row.resource_type ?? 'Unknown resource',
     resourceId: row.resource_id ?? undefined,
     details: row.details,
     createdAt: formatAuditTime(row.created_at),

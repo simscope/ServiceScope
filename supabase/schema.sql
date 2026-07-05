@@ -97,11 +97,14 @@ create table audit_events (
   action text not null,
   actor_user_id uuid references auth.users(id) on delete set null,
   actor_name text not null,
+  actor_role text,
   resource_type text,
   resource_id text,
+  resource text not null default 'Unknown resource',
   resource_label text not null,
   details text not null default '',
   metadata jsonb not null default '{}'::jsonb,
+  user_agent text,
   created_at timestamptz not null default now()
 );
 
