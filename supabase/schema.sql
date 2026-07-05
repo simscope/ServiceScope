@@ -389,7 +389,14 @@ as $$
   limit 1;
 $$;
 
+grant usage on schema public to authenticated;
+grant execute on function can_access_company(uuid) to authenticated;
+grant execute on function can_access_company(uuid) to service_role;
+grant execute on function can_manage_company(uuid) to authenticated;
+grant execute on function can_manage_company(uuid) to service_role;
 grant execute on function app_current_session() to authenticated;
+revoke execute on function can_access_company(uuid) from anon;
+revoke execute on function can_manage_company(uuid) from anon;
 
 -- =========================================================
 -- Company settings
