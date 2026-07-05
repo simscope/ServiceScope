@@ -17,6 +17,125 @@
   width: 100%;
 }
 
+.job-inbox-page {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.job-inbox-create {
+  display: grid;
+  grid-template-columns: 160px repeat(3, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.job-inbox-create label {
+  display: grid;
+  gap: 6px;
+  color: #4f5b53;
+  font-weight: 800;
+}
+
+.job-inbox-create input,
+.job-inbox-create select,
+.job-inbox-create textarea {
+  width: 100%;
+}
+
+.job-inbox-create textarea {
+  min-height: 72px;
+}
+
+.job-inbox-wide {
+  grid-column: span 2;
+}
+
+.job-inbox-list {
+  display: grid;
+  gap: 10px;
+}
+
+.job-inbox-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.job-inbox-card.new {
+  border-color: #9cc7ff;
+  background: #f5f9ff;
+}
+
+.job-inbox-card.converted {
+  border-color: #9ad6ad;
+  background: #f4fbf5;
+}
+
+.job-inbox-card.spam,
+.job-inbox-card.ignored {
+  opacity: 0.76;
+}
+
+.job-inbox-card > div:first-child,
+.job-inbox-card-main,
+.job-inbox-actions {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.job-inbox-card-main h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.job-inbox-card-main p {
+  margin: 0;
+  color: #5f6c63;
+}
+
+.job-inbox-card-main > p {
+  max-width: 680px;
+  color: #17201b;
+}
+
+.job-inbox-card-main span {
+  display: block;
+  margin-top: 6px;
+  color: #5f6c63;
+  font-size: 12px;
+}
+
+.job-inbox-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .job-inbox-create {
+    grid-template-columns: 1fr;
+  }
+
+  .job-inbox-wide {
+    grid-column: auto;
+  }
+
+  .job-inbox-card-main,
+  .job-inbox-actions {
+    display: grid;
+    justify-content: stretch;
+  }
+}
+
 .tasks-header {
   display: flex;
   align-items: end;

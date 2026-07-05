@@ -1,7 +1,7 @@
 import type { Company, MaterialRow } from './types';
 
 export type AppPage = 'dashboard' | 'companies' | 'monitoring' | 'billing' | 'companyAccess' | 'access' | 'audit' | 'support' | 'companyLogin' | 'portal';
-export type ClientPage = 'onboarding' | 'jobs' | 'allJobs' | 'debtors' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'import' | 'portal';
+export type ClientPage = 'onboarding' | 'jobInbox' | 'jobs' | 'allJobs' | 'debtors' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'import' | 'portal';
 
 export type AuthSession =
   | { kind: 'owner'; userId: string; name: string; email: string }
@@ -23,6 +23,25 @@ export type TaskRow = {
 };
 
 export type TaskForm = Pick<TaskRow, 'title' | 'jobNumber' | 'assignedTo' | 'dueDate' | 'priority' | 'notes'>;
+
+export type JobInboxSource = 'call' | 'missed_call' | 'website' | 'online_booking' | 'email' | 'sms' | 'manual';
+export type JobInboxStatus = 'new' | 'converted' | 'ignored' | 'duplicate' | 'spam';
+
+export type JobInboxItem = {
+  id: string;
+  companyId: string;
+  source: JobInboxSource;
+  clientName: string;
+  clientPhone: string;
+  clientEmail: string;
+  address: string;
+  message: string;
+  status: JobInboxStatus;
+  jobId: string;
+  createdAt: string;
+};
+
+export type JobInboxForm = Pick<JobInboxItem, 'source' | 'clientName' | 'clientPhone' | 'clientEmail' | 'address' | 'message'>;
 
 export type EmailProvider = 'google' | 'microsoft' | 'smtp';
 export type EmailFolder = 'inbox' | 'sent' | 'templates';

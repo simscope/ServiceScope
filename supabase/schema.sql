@@ -520,6 +520,23 @@ create table appointments (
   check (ends_at > starts_at)
 );
 
+create table job_inbox (
+  id uuid primary key default gen_random_uuid(),
+  company_id uuid not null references companies(id) on delete cascade,
+  source text not null default 'manual'
+    check (source in ('call', 'missed_call', 'website', 'online_booking', 'email', 'sms', 'manual')),
+  client_name text not null default '',
+  client_phone text not null default '',
+  client_email citext,
+  address text not null default '',
+  message text not null default '',
+  status text not null default 'new'
+    check (status in ('new', 'converted', 'ignored', 'duplicate', 'spam')),
+  job_id uuid references jobs(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table job_comments (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references companies(id) on delete cascade,
@@ -869,6 +886,8 @@ create index idx_jobs_technician on jobs(technician_id);
 create index idx_jobs_customer on jobs(customer_id);
 create index idx_appointments_company_starts on appointments(company_id, starts_at);
 create index idx_appointments_technician_starts on appointments(technician_id, starts_at);
+create index idx_job_inbox_company_status on job_inbox(company_id, status, created_at desc);
+create index idx_job_inbox_company_source on job_inbox(company_id, source, created_at desc);
 create index idx_job_comments_job on job_comments(job_id, created_at);
 create index idx_job_attachments_job on job_attachments(job_id);
 create index idx_job_materials_job on job_materials(job_id);
@@ -901,6 +920,7 @@ create trigger set_customers_updated_at before update on customers for each row 
 create trigger set_customer_locations_updated_at before update on customer_locations for each row execute function set_updated_at();
 create trigger set_jobs_updated_at before update on jobs for each row execute function set_updated_at();
 create trigger set_appointments_updated_at before update on appointments for each row execute function set_updated_at();
+create trigger set_job_inbox_updated_at before update on job_inbox for each row execute function set_updated_at();
 create trigger set_job_materials_updated_at before update on job_materials for each row execute function set_updated_at();
 create trigger set_job_invoices_updated_at before update on job_invoices for each row execute function set_updated_at();
 create trigger set_payroll_batches_updated_at before update on payroll_batches for each row execute function set_updated_at();
@@ -942,6 +962,7 @@ alter table job_payments enable row level security;
 alter table job_invoices enable row level security;
 alter table payroll_batches enable row level security;
 alter table payroll_items enable row level security;
+alter table job_inbox enable row level security;
 alter table tasks enable row level security;
 alter table technician_locations enable row level security;
 alter table email_connections enable row level security;
@@ -1076,6 +1097,11 @@ create policy "payroll batches manageable by company managers or platform" on pa
 create policy "payroll items readable by company or platform" on payroll_items
   for select using (public.can_access_company(company_id));
 create policy "payroll items manageable by company managers or platform" on payroll_items
+  for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
+
+create policy "job inbox readable by company or platform" on job_inbox
+  for select using (public.can_access_company(company_id));
+create policy "job inbox manageable by company managers or platform" on job_inbox
   for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
 
 create policy "tasks readable by company or platform" on tasks

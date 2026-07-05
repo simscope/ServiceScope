@@ -4,6 +4,7 @@ import type { LibraryCategory, LibraryDocument, LibraryDraft, LibraryFormat } fr
 
 export function KnowledgePage({
   libraryDocuments,
+  libraryStatus,
   librarySystems,
   filteredLibraryDocuments,
   libraryDraft,
@@ -24,6 +25,7 @@ export function KnowledgePage({
   onDeleteLibraryDocument,
 }: {
   libraryDocuments: LibraryDocument[];
+  libraryStatus: string;
   librarySystems: string[];
   filteredLibraryDocuments: LibraryDocument[];
   libraryDraft: LibraryDraft;
@@ -120,6 +122,7 @@ export function KnowledgePage({
             <Plus size={18} aria-hidden="true" />
             Add to library
           </button>
+          {libraryStatus ? <p className="access-status">{libraryStatus}</p> : null}
         </form>
 
         <section className="library-browser">

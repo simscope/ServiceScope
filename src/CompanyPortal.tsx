@@ -57,6 +57,8 @@ import { MapPage } from './components/portal/MapPage';
 import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
+import { JobInboxPage } from './features/job-inbox/JobInboxPage';
+import { createJobInboxItem, listJobInboxItems, updateJobInboxStatus } from './features/job-inbox/api';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
 import {
   AccessPage,
@@ -104,6 +106,7 @@ import {
 } from './services/mailboxOAuthSettings';
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
+import { deleteLibraryDocument, listLibraryDocuments, openLibraryDocument, uploadLibraryDocument } from './services/libraryStore';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput, type PayrollItemRow } from './services/payrollStore';
 import {
@@ -187,6 +190,9 @@ import type {
   EmailProvider,
   EmailTemplate,
   FinancePeriod,
+  JobInboxForm,
+  JobInboxItem,
+  JobInboxStatus,
   LibraryCategory,
   LibraryDocument,
   LibraryDraft,
@@ -203,7 +209,7 @@ import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './uti
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
 const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
-const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'import', 'portal', 'onboarding'];
+const clientPageValues: ClientPage[] = ['jobInbox', 'jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'import', 'portal', 'onboarding'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
@@ -571,6 +577,18 @@ export function CompanyPortal({
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
   const [jobsStatus, setJobsStatus] = useState('');
+  const [jobInboxItems, setJobInboxItems] = useState<JobInboxItem[]>([]);
+  const [jobInboxStatus, setJobInboxStatus] = useState('');
+  const [jobInboxSearch, setJobInboxSearch] = useState('');
+  const [jobInboxStatusFilter, setJobInboxStatusFilter] = useState<'all' | JobInboxStatus>('new');
+  const [jobInboxForm, setJobInboxForm] = useState<JobInboxForm>({
+    source: 'manual',
+    clientName: '',
+    clientPhone: '',
+    clientEmail: '',
+    address: '',
+    message: '',
+  });
   const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
   const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
@@ -662,7 +680,9 @@ export function CompanyPortal({
     if (!selectedCompany) {
       setJobs([]);
       setMaterials([]);
+      setJobInboxItems([]);
       setJobsStatus('');
+      setJobInboxStatus('');
       return undefined;
     }
 
@@ -676,20 +696,55 @@ export function CompanyPortal({
           listCompanyJobs(company.id),
           listCompanyJobMaterials(company.id),
         ]);
+        const savedInboxItems = await listJobInboxItems(company.id).catch((error) => {
+          console.error('Failed to load job inbox', error);
+          setJobInboxStatus(error instanceof Error ? error.message : 'Job Inbox could not be loaded.');
+          return [];
+        });
 
         if (cancelled) return;
         setJobs(savedJobs);
         setMaterials(savedMaterials);
+        setJobInboxItems(savedInboxItems);
         setJobsStatus('');
       } catch (error) {
         if (cancelled) return;
         setJobs([]);
         setMaterials([]);
+        setJobInboxItems([]);
         setJobsStatus(error instanceof Error ? error.message : 'Jobs could not be loaded.');
       }
     }
 
     void loadJobsAndCustomers();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedCompany]);
+
+  useEffect(() => {
+    if (!selectedCompany) {
+      setLibraryDocuments([]);
+      setLibraryStatus('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    const company = selectedCompany;
+    setLibraryStatus('Loading library...');
+
+    listLibraryDocuments(company.id)
+      .then((documents) => {
+        if (cancelled) return;
+        setLibraryDocuments(documents);
+        setLibraryStatus('');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setLibraryDocuments([]);
+        setLibraryStatus(error instanceof Error ? error.message : 'Library could not be loaded.');
+      });
 
     return () => {
       cancelled = true;
@@ -1540,6 +1595,77 @@ export function CompanyPortal({
         setJobsStatus(error instanceof Error ? error.message : 'Job could not be created.');
       });
   };
+  const handleCreateJobInboxItem = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (stopCompanyWrite('jobInbox', 'creating job inbox items')) return;
+    if (!jobInboxForm.clientName.trim() && !jobInboxForm.clientPhone.trim() && !jobInboxForm.clientEmail.trim() && !jobInboxForm.message.trim()) {
+      setJobInboxStatus('Add a client, phone, email, or message before saving an inbox item.');
+      return;
+    }
+
+    setJobInboxStatus('Saving inbox item...');
+    createJobInboxItem(selectedCompany.id, jobInboxForm)
+      .then((item) => {
+        setJobInboxItems((items) => [item, ...items]);
+        setJobInboxForm({
+          source: 'manual',
+          clientName: '',
+          clientPhone: '',
+          clientEmail: '',
+          address: '',
+          message: '',
+        });
+        setJobInboxStatus('Inbox item saved.');
+      })
+      .catch((error) => {
+        setJobInboxStatus(error instanceof Error ? error.message : 'Inbox item could not be saved.');
+      });
+  };
+  const handleUpdateJobInboxStatus = (item: JobInboxItem, status: JobInboxStatus) => {
+    if (stopCompanyWrite('jobInbox', 'updating job inbox items')) return;
+
+    setJobInboxStatus('Updating inbox item...');
+    updateJobInboxStatus(selectedCompany.id, item.id, status)
+      .then((savedItem) => {
+        setJobInboxItems((items) => items.map((candidate) => (candidate.id === savedItem.id ? savedItem : candidate)));
+        setJobInboxStatus(`Inbox item marked ${status}.`);
+      })
+      .catch((error) => {
+        setJobInboxStatus(error instanceof Error ? error.message : 'Inbox item could not be updated.');
+      });
+  };
+  const handleConvertJobInboxItem = (item: JobInboxItem) => {
+    if (stopCompanyWrite('jobInbox', 'converting job inbox items')) return;
+    if (stopCompanyWrite('jobs', 'creating jobs')) return;
+
+    const createdJob = createServiceJob(selectedCompany.id, {
+      jobNumber: generatedJobNumber,
+      system: selectedJobType?.name ?? 'General',
+      clientName: item.clientName.trim() || 'Unknown client',
+      organization: item.clientName.trim() || 'Unknown company',
+      phone: item.clientPhone,
+      email: item.clientEmail,
+      address: item.address,
+      technician: '',
+      serviceCallFee: String(profile.serviceCallFee),
+      issue: item.message.trim() || 'Service request',
+      notes: `Created from Job Inbox (${item.source}).`,
+    });
+
+    setJobInboxStatus('Converting inbox item to job...');
+    saveServiceJob(selectedCompany.id, createdJob)
+      .then(async (savedJob) => {
+        const savedItem = await updateJobInboxStatus(selectedCompany.id, item.id, 'converted', savedJob.id);
+        setJobs((currentJobs) => [savedJob, ...currentJobs.filter((job) => job.id !== savedJob.id)]);
+        setJobInboxItems((items) => items.map((candidate) => (candidate.id === savedItem.id ? savedItem : candidate)));
+        setOpenedJob(savedJob);
+        setClientPage('jobs');
+        setJobInboxStatus(`Converted to job ${savedJob.jobNumber}.`);
+      })
+      .catch((error) => {
+        setJobInboxStatus(error instanceof Error ? error.message : 'Inbox item could not be converted.');
+      });
+  };
   const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number, documentType: JobDocumentType) => {
     if (stopCompanyWrite('finances', 'creating invoices')) {
       throw new Error('Finance access is read-only.');
@@ -1596,59 +1722,62 @@ export function CompanyPortal({
     setLibraryDraft((draft) => ({
       ...draft,
       fileName: file.name,
+      file,
       title: draft.title || file.name.replace(/\.[^/.]+$/, ''),
     }));
   };
   const addLibraryDocument = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (stopCompanyWrite('knowledge', 'adding library documents')) return;
-    if (!libraryDraft.title.trim()) return;
-
-    setLibraryDocuments((documents) => [
-      {
-        id: `lib-${Date.now()}`,
-        title: libraryDraft.title.trim(),
-        category: libraryDraft.category,
-        system: libraryDraft.system.trim() || 'General',
-        manufacturer: libraryDraft.manufacturer.trim() || 'Unknown',
-        model: libraryDraft.model.trim() || 'Any model',
-        format: libraryDraft.fileName.toLowerCase().match(/\.(png|jpg|jpeg|webp)$/) ? 'Image' : 'PDF',
-        tags: libraryDraft.tags
-          .split(',')
-          .map((tag) => tag.trim())
-          .filter(Boolean),
-        uploadedAt: '2026-06-12',
-        fileSize: libraryDraft.fileName ? 'Pending storage' : 'Link / reference',
-        uploadedBy: 'Company admin',
-        summary: libraryDraft.fileName
-          ? `Uploaded file: ${libraryDraft.fileName}`
-          : 'Reference document added by the company admin.',
-      },
-      ...documents,
-    ]);
-    setLibraryDraft({
-      title: '',
-      category: 'Manual',
-      system: profile.jobTypes[0]?.name ?? 'HVAC',
-      manufacturer: '',
-      model: '',
-      tags: '',
-      fileName: '',
-    });
-  };
-  const handleOpenLibraryDocument = (document: LibraryDocument) => {
-    if (document.storageBucket && document.storagePath) {
-      setLibraryStatus(`${document.title} is stored in ${document.storageBucket}/${document.storagePath}.`);
+    if (!libraryDraft.title.trim()) {
+      setLibraryStatus('Document title is required.');
+      return;
+    }
+    if (!libraryDraft.file) {
+      setLibraryStatus('Choose a file before adding it to the library.');
       return;
     }
 
-    setLibraryStatus(document.fileName ? `Open ${document.fileName} from connected storage.` : 'No file is attached to this document yet.');
+    setLibraryStatus('Uploading document...');
+    uploadLibraryDocument(selectedCompany.id, libraryDraft, currentPortalUser.name)
+      .then((document) => {
+        setLibraryDocuments((documents) => [document, ...documents]);
+        setLibraryDraft({
+          title: '',
+          category: 'Manual',
+          system: profile.jobTypes[0]?.name ?? 'HVAC',
+          manufacturer: '',
+          model: '',
+          tags: '',
+          fileName: '',
+          file: null,
+        });
+        setLibraryStatus(`${document.title} added to the library.`);
+      })
+      .catch((error) => {
+        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be uploaded.');
+      });
+  };
+  const handleOpenLibraryDocument = (document: LibraryDocument) => {
+    setLibraryStatus(`Opening ${document.title}...`);
+    openLibraryDocument(document)
+      .then(() => setLibraryStatus(''))
+      .catch((error) => {
+        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be opened.');
+      });
   };
   const handleDeleteLibraryDocument = (document: LibraryDocument) => {
     if (stopCompanyWrite('knowledge', 'deleting library documents')) return;
 
-    setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
-    setLibraryStatus(`${document.title} removed from the library.`);
+    setLibraryStatus(`Deleting ${document.title}...`);
+    deleteLibraryDocument(selectedCompany.id, document)
+      .then(() => {
+        setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
+        setLibraryStatus(`${document.title} removed from the library.`);
+      })
+      .catch((error) => {
+        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be deleted.');
+      });
   };
   const autoTasks: TaskRow[] = allJobsRows.flatMap((job) => {
     const rows: TaskRow[] = [];
@@ -1827,6 +1956,7 @@ export function CompanyPortal({
   const visibleCalendarDays = calendarView === 'day' ? [formatCalendarDay(calendarAnchor)] : calendarDays;
   const unreadEmailCount = emailMessages.filter((message) => message.unread).length;
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
+    { page: 'jobInbox', label: 'Inbox', icon: <Inbox size={16} /> },
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
     { page: 'allJobs', label: 'All Jobs', icon: <LayoutDashboard size={16} /> },
     { page: 'debtors', label: 'Debtors', icon: <CircleDollarSign size={16} /> },
@@ -2272,7 +2402,21 @@ export function CompanyPortal({
             <span>Owner access controls are active for this company.</span>
           </div>
         ) : null}
-        {renderedClientPage === 'jobs' ? (
+        {renderedClientPage === 'jobInbox' ? (
+          <JobInboxPage
+            items={jobInboxItems}
+            form={jobInboxForm}
+            status={jobInboxStatus}
+            search={jobInboxSearch}
+            statusFilter={jobInboxStatusFilter}
+            onFormChange={setJobInboxForm}
+            onCreateItem={handleCreateJobInboxItem}
+            onSearchChange={setJobInboxSearch}
+            onStatusFilterChange={setJobInboxStatusFilter}
+            onConvertToJob={handleConvertJobInboxItem}
+            onUpdateStatus={handleUpdateJobInboxStatus}
+          />
+        ) : renderedClientPage === 'jobs' ? (
           <JobsPage
             openedJob={openedJob}
             jobs={allJobsRows}
@@ -2522,6 +2666,7 @@ export function CompanyPortal({
         ) : renderedClientPage === 'knowledge' ? (
           <KnowledgePage
             libraryDocuments={libraryDocuments}
+            libraryStatus={libraryStatus}
             librarySystems={librarySystems}
             filteredLibraryDocuments={filteredLibraryDocuments}
             libraryDraft={libraryDraft}

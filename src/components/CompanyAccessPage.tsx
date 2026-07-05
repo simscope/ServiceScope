@@ -13,6 +13,7 @@ type AccessPageDefinition = {
 };
 
 export const companyPortalAccessPages: AccessPageDefinition[] = [
+  { page: 'jobInbox', label: 'Job Inbox', detail: 'Review incoming calls, bookings, emails, and SMS before creating jobs' },
   { page: 'jobs', label: 'Jobs', detail: 'Create and edit service jobs' },
   { page: 'allJobs', label: 'All Jobs', detail: 'View full job list and job details' },
   { page: 'debtors', label: 'Debtors', detail: 'Track unpaid completed jobs and payment gaps' },
@@ -47,6 +48,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
 
   if (mode === 'limited') {
     return {
+      jobInbox: 'readonly',
       jobs: 'readonly',
       allJobs: 'readonly',
       debtors: 'readonly',
@@ -64,6 +66,7 @@ export function defaultCompanyAccessRules(mode: CompanyAccessMode): Required<Com
   }
 
   return {
+    jobInbox: 'readonly',
     jobs: 'readonly',
     allJobs: 'readonly',
     debtors: 'readonly',
