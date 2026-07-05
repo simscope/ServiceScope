@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "node scripts/ensure-company-onboarding.cjs && node scripts/ensure-job-file-delete.cjs && tsc -b && vite build",
+    "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "tech:install": "npm install --prefix apps/technician-mobile/client",
     "tech:dev": "npm start --prefix apps/technician-mobile/client",
