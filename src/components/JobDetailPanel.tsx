@@ -913,7 +913,19 @@ export function JobDetailPanel({
 
         <div className="job-detail-side">
           <section className="job-detail-card">
-            <h2>Client</h2>
+            <div className="job-client-heading">
+              <h2>Client</h2>
+              {draft.customerBlacklist?.trim() ? (
+                <span className="customer-blacklist-badge" title={draft.customerBlacklist}>
+                  Blacklisted
+                </span>
+              ) : null}
+            </div>
+            {draft.customerBlacklist?.trim() ? (
+              <div className="customer-blacklist-warning">
+                {draft.customerBlacklist}
+              </div>
+            ) : null}
             <div className="job-detail-form">
               <label>
                 Company

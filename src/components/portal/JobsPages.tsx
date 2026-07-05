@@ -557,7 +557,14 @@ export function AllJobsPage({
                         </button>
                       </td>
                       <td>
-                        <strong>{job.organization}</strong>
+                        <strong>
+                          {job.organization}
+                          {job.customerBlacklist?.trim() ? (
+                            <span className="customer-blacklist-badge inline" title={job.customerBlacklist}>
+                              Blacklisted
+                            </span>
+                          ) : null}
+                        </strong>
                         <span>{job.clientName}</span>
                       </td>
                       <td>{job.phone}</td>
