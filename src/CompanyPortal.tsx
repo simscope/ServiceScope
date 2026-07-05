@@ -23,6 +23,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  UploadCloud,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -49,6 +50,7 @@ import { CalendarPage } from './components/portal/CalendarPage';
 import { DebtorsPage } from './components/portal/DebtorsPage';
 import { EmailPage } from './components/portal/EmailPage';
 import { FinancePage } from './components/portal/FinancePage';
+import { ImportPage } from './components/portal/ImportPage';
 import { AllJobsPage, JobsPage } from './components/portal/JobsPages';
 import { KnowledgePage } from './components/portal/KnowledgePage';
 import { MapPage } from './components/portal/MapPage';
@@ -201,7 +203,7 @@ import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './uti
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
 const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
-const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];
+const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'import', 'portal', 'onboarding'];
 
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
@@ -1463,6 +1465,25 @@ export function CompanyPortal({
     )));
     await saveCustomerBlacklist(selectedCompany.id, job.customerId, cleanBlacklist);
   };
+  const handleImportJobs = async (importedJobs: ServiceJob[]) => {
+    if (stopCompanyWrite('import', 'importing jobs')) return;
+    setJobsStatus(`Importing ${importedJobs.length} Housecall Pro jobs...`);
+
+    const savedJobs: ServiceJob[] = [];
+    for (const importedJob of importedJobs) {
+      const savedJob = await saveServiceJob(selectedCompany.id, importedJob);
+      savedJobs.push(savedJob);
+      setJobs((currentJobs) => {
+        const exists = currentJobs.some((job) => job.id === savedJob.id || job.jobNumber === savedJob.jobNumber);
+        return exists
+          ? currentJobs.map((job) => (job.id === savedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job))
+          : [savedJob, ...currentJobs];
+      });
+      setJobsStatus(`Imported ${savedJobs.length}/${importedJobs.length} Housecall Pro jobs...`);
+    }
+
+    setJobsStatus(`Housecall Pro import complete: ${savedJobs.length} jobs saved.`);
+  };
   const handleSaveInlineJob = (job: ServiceJob) => {
     const draft = inlineJobDrafts[job.id] ?? {};
     const updatedJob = {
@@ -1815,9 +1836,10 @@ export function CompanyPortal({
     { page: 'map', label: 'Map', icon: <Map size={16} /> },
     { page: 'email', label: 'Email', icon: <MailPlus size={16} /> },
     { page: 'finances', label: 'Finance', icon: <CreditCard size={16} /> },
-    { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
+    { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
+    { page: 'import', label: 'Import', icon: <UploadCloud size={16} /> },
     { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },
-    { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
+    { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
   ];
   const visibleClientNavItems = clientNavItems.filter((item) => canViewPage(item.page as CompanyPortalAccessPage));
   const renderedClientPage = canViewPage(clientPage as CompanyPortalAccessPage) ? clientPage : visibleClientNavItems[0]?.page ?? 'portal';
@@ -2460,6 +2482,15 @@ export function CompanyPortal({
               setMapSearch('');
             }}
             profile={profile}
+          />
+        ) : renderedClientPage === 'import' ? (
+          <ImportPage
+            companyId={selectedCompany.id}
+            profile={profile}
+            existingJobs={allJobsRows}
+            nextJobNumber={nextJobNumber}
+            onImportJobs={handleImportJobs}
+            readOnly={activePageReadOnly}
           />
         ) : renderedClientPage === 'finances' ? (
           <FinancePage
