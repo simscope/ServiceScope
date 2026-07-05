@@ -1585,6 +1585,66 @@ button {
   resize: vertical;
 }
 
+.blacklist-list-modal {
+  width: min(920px, calc(100vw - 40px));
+}
+
+.blacklist-list-search {
+  width: 100%;
+}
+
+.blacklist-list {
+  display: grid;
+  gap: 10px;
+  max-height: min(62vh, 620px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.blacklist-list-item,
+.blacklist-list-actions {
+  display: flex;
+  align-items: center;
+}
+
+.blacklist-list-item {
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #f0b8b8;
+  border-radius: 8px;
+  background: #fff7f7;
+  padding: 12px;
+}
+
+.blacklist-list-item div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.blacklist-list-item strong,
+.blacklist-list-item span,
+.blacklist-list-item p,
+.blacklist-list-item small {
+  overflow-wrap: anywhere;
+}
+
+.blacklist-list-item p {
+  margin: 4px 0 0;
+  color: #5b2a2a;
+}
+
+.blacklist-list-item span,
+.blacklist-list-item small {
+  color: #526158;
+}
+
+.blacklist-list-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .debtors-readonly {
   gap: 8px;
   color: #7a4b00;

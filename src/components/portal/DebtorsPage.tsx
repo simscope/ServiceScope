@@ -75,6 +75,8 @@ export function DebtorsPage({
   const [blacklistJob, setBlacklistJob] = useState<ServiceJob | null>(null);
   const [blacklistDraft, setBlacklistDraft] = useState('');
   const [blacklistStatus, setBlacklistStatus] = useState('');
+  const [blacklistListOpen, setBlacklistListOpen] = useState(false);
+  const [blacklistSearch, setBlacklistSearch] = useState('');
 
   const paymentOptions = useMemo(() => [{ value: '', label: '--' }, ...paymentMethodOptions], [paymentMethodOptions]);
 
@@ -83,10 +85,42 @@ export function DebtorsPage({
     return allJobsRows
       .filter((job) => isFinishedJob(job))
       .filter((job) => !isCustomerJobPaid(job))
+      .filter((job) => !job.customerBlacklist?.trim())
       .filter((job) => techFilter === 'all' || job.assignee === techFilter)
       .filter((job) => !query || jobSearchText(job).includes(query))
       .sort((a, b) => Number(b.jobNumber || 0) - Number(a.jobNumber || 0));
   }, [allJobsRows, search, techFilter]);
+
+  const blacklistedCustomers = useMemo(() => {
+    const query = blacklistSearch.trim().toLowerCase();
+    const groups = new Map<string, { job: ServiceJob; jobs: ServiceJob[]; total: number }>();
+
+    for (const job of allJobsRows) {
+      if (!job.customerBlacklist?.trim()) continue;
+
+      const key = job.customerId || `${job.organization}-${job.clientName}-${job.phone}`;
+      const group = groups.get(key) ?? { job, jobs: [], total: 0 };
+      group.jobs.push(job);
+      group.total += debtAmount(job);
+      if (job.createdAt > group.job.createdAt) group.job = job;
+      groups.set(key, group);
+    }
+
+    return Array.from(groups.values())
+      .filter(({ job, jobs }) => {
+        if (!query) return true;
+        return [
+          job.organization,
+          job.clientName,
+          job.phone,
+          job.email,
+          job.address,
+          job.customerBlacklist,
+          ...jobs.map((item) => item.jobNumber),
+        ].join(' ').toLowerCase().includes(query);
+      })
+      .sort((a, b) => (a.job.organization || a.job.clientName).localeCompare(b.job.organization || b.job.clientName));
+  }, [allJobsRows, blacklistSearch]);
 
   const groupedJobs = useMemo(() => {
     const groups = new Map<string, ServiceJob[]>();
@@ -206,6 +240,54 @@ export function DebtorsPage({
         </div>
       ) : null}
 
+      {blacklistListOpen ? (
+        <div className="email-compose-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setBlacklistListOpen(false); }}>
+          <section className="email-compose-modal blacklist-list-modal" role="dialog" aria-modal="true" aria-label="Blacklisted customers" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="email-compose-header">
+              <div>
+                <p className="eyebrow">Customer blacklist</p>
+                <h2>Blacklisted customers</h2>
+              </div>
+              <button className="secondary-button compact" type="button" onClick={() => setBlacklistListOpen(false)}>Close</button>
+            </div>
+            <label className="debtors-search blacklist-list-search">
+              Search
+              <span>
+                <Search size={16} />
+                <input value={blacklistSearch} onChange={(event) => setBlacklistSearch(event.target.value)} placeholder="Company, name, phone, note or Job #" />
+              </span>
+            </label>
+            {blacklistStatus ? <p className="access-status">{blacklistStatus}</p> : null}
+            <div className="blacklist-list">
+              {blacklistedCustomers.map(({ job, jobs, total }) => (
+                <article className="blacklist-list-item" key={job.customerId || job.id}>
+                  <div>
+                    <strong>{job.organization || job.clientName || 'Unknown client'}</strong>
+                    <span>{[job.clientName, job.phone, job.address].filter(Boolean).join(' - ')}</span>
+                    <p>{job.customerBlacklist}</p>
+                    <small>{jobs.length} job{jobs.length === 1 ? '' : 's'} - unpaid {money(total)}</small>
+                  </div>
+                  <div className="blacklist-list-actions">
+                    <button className="secondary-button compact" type="button" onClick={() => { setBlacklistListOpen(false); onOpenJob(job); }}>
+                      Open job
+                    </button>
+                    <button className="secondary-button compact" type="button" onClick={() => { setBlacklistListOpen(false); openBlacklist(job); }} disabled={readOnly || !job.customerId}>
+                      Edit
+                    </button>
+                    <button className="secondary-button compact danger-lite" type="button" onClick={() => saveBlacklistForJob(job, '')} disabled={readOnly || !job.customerId}>
+                      Clear
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {!blacklistedCustomers.length ? (
+                <div className="empty-inline">No blacklisted customers match the search.</div>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
       <div className="debtors-header">
         <div>
           <p className="eyebrow">Receivables</p>
@@ -214,6 +296,9 @@ export function DebtorsPage({
         <div className="debtors-summary">
           <span>{visibleJobs.length} jobs</span>
           <strong>{money(grandTotal)}</strong>
+          <button className="secondary-button compact" type="button" onClick={() => setBlacklistListOpen(true)}>
+            Blacklist ({blacklistedCustomers.length})
+          </button>
         </div>
       </div>
 
@@ -274,7 +359,6 @@ export function DebtorsPage({
                     {jobs.map((job) => {
                       const draft = drafts[job.id] ?? {};
                       const row = { ...job, ...draft };
-                      const blacklisted = Boolean(job.customerBlacklist?.trim());
                       return (
                         <tr className="debtors-row" key={job.id}>
                           <td>
@@ -312,15 +396,9 @@ export function DebtorsPage({
                           </td>
                           <td>
                             <div className="blacklist-cell">
-                              <span className={`blacklist-dot ${blacklisted ? 'active' : ''}`} title={job.customerBlacklist || 'Not blacklisted'} />
                               <button className="secondary-button compact" type="button" onClick={() => openBlacklist(job)} disabled={readOnly || !job.customerId}>
-                                {blacklisted ? 'Edit' : 'Blacklist'}
+                                Blacklist
                               </button>
-                              {blacklisted ? (
-                                <button className="secondary-button compact danger-lite" type="button" onClick={() => saveBlacklistForJob(job, '')} disabled={readOnly || !job.customerId}>
-                                  Clear
-                                </button>
-                              ) : null}
                             </div>
                           </td>
                           <td>
