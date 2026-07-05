@@ -131,6 +131,9 @@ export async function saveOnboardingProfileToBackend(
       service_area: profile.serviceArea,
       timezone: profile.timezone,
       emergency_contact: profile.emergencyContact,
+      website_intake_enabled: profile.websiteIntakeEnabled,
+      website_intake_token: profile.websiteIntakeToken || null,
+      website_intake_allowed_origins: profile.websiteIntakeAllowedOrigins || null,
     },
   ]);
 

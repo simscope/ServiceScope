@@ -56,6 +56,9 @@ type DbCompanyProfile = {
   service_area: string | null;
   timezone: string;
   emergency_contact: string | null;
+  website_intake_enabled: boolean | null;
+  website_intake_token: string | null;
+  website_intake_allowed_origins: string | null;
 };
 
 type DbWorkflow = {
@@ -229,6 +232,9 @@ function profileFromDb(
     serviceArea: profileRow?.service_area ?? company.market,
     timezone: profileRow?.timezone ?? defaults.timezone,
     emergencyContact: profileRow?.emergency_contact ?? company.ownerEmail,
+    websiteIntakeEnabled: profileRow?.website_intake_enabled ?? defaults.websiteIntakeEnabled,
+    websiteIntakeToken: profileRow?.website_intake_token ?? defaults.websiteIntakeToken,
+    websiteIntakeAllowedOrigins: profileRow?.website_intake_allowed_origins ?? defaults.websiteIntakeAllowedOrigins,
     jobAssignmentMode: workflow?.job_assignment_mode ?? defaults.jobAssignmentMode,
     useJobNumberPrefixes: workflow?.use_job_number_prefixes ?? defaults.useJobNumberPrefixes,
     jobNumberPrefix: workflow?.default_job_number_prefix ?? defaults.jobNumberPrefix,

@@ -27,3 +27,6 @@ verify_jwt = true
 
 [functions.mailbox-oauth-callback]
 verify_jwt = false
+
+[functions.website-intake]
+verify_jwt = false

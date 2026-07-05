@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { ChangeEvent, FormEvent } from 'react';
-import { Building2, ClipboardList, CreditCard, MailPlus, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react';
+import { Building2, ClipboardList, Copy, CreditCard, Globe2, MailPlus, Plus, ShieldCheck, UserPlus, Users } from 'lucide-react';
 import type { EmailConnection, EmailProvider } from '../../appTypes';
 import { paymentMethodLabels } from '../../appLabels';
 import { getPlan } from '../../services/billingCatalog';
@@ -107,6 +107,7 @@ export function OnboardingPage({
   const technicianLimit = selectedPlan.technicians;
   const technicianLimitReached = profile.technicians.length >= technicianLimit;
   const [technicianEditorId, setTechnicianEditorId] = useState<string | null>('');
+  const [websiteIntakeCopyStatus, setWebsiteIntakeCopyStatus] = useState('');
   const [technicianDraft, setTechnicianDraft] = useState<NewCompanyTechnicianForm & { status: CompanyTechnician['status'] }>({
     name: '',
     email: '',
@@ -138,6 +139,49 @@ export function OnboardingPage({
     emailConnection.replyTo.trim() &&
     emailConnection.signature.trim(),
   );
+  const viteEnv = (import.meta as unknown as { env?: { VITE_SUPABASE_URL?: string } }).env ?? {};
+  const websiteIntakeEndpoint = viteEnv.VITE_SUPABASE_URL
+    ? `${viteEnv.VITE_SUPABASE_URL.replace(/\/$/, '')}/functions/v1/website-intake`
+    : 'https://YOUR-PROJECT.supabase.co/functions/v1/website-intake';
+  const websiteIntakeToken = profile.websiteIntakeToken || 'generate-a-token-first';
+  const websiteIntakeSnippet = `<form id="servicescope-request-form">
+  <input name="name" placeholder="Name" required>
+  <input name="phone" placeholder="Phone">
+  <input name="email" type="email" placeholder="Email">
+  <input name="address" placeholder="Service address">
+  <textarea name="message" placeholder="How can we help?"></textarea>
+  <input name="website" tabindex="-1" autocomplete="off" style="display:none">
+  <button type="submit">Request service</button>
+</form>
+<script>
+document.getElementById('servicescope-request-form').addEventListener('submit', async function (event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = Object.fromEntries(new FormData(form).entries());
+  const response = await fetch('${websiteIntakeEndpoint}', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: '${websiteIntakeToken}', source: 'website', ...data })
+  });
+  if (!response.ok) throw new Error('Request could not be sent.');
+  form.reset();
+  alert('Request sent.');
+});
+</script>`;
+
+  function generateWebsiteIntakeToken() {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    updateProfile({ websiteIntakeToken: token, websiteIntakeEnabled: true });
+    setWebsiteIntakeCopyStatus('');
+  }
+
+  function copyWebsiteIntakeSnippet() {
+    void navigator.clipboard.writeText(websiteIntakeSnippet)
+      .then(() => setWebsiteIntakeCopyStatus('Copied.'))
+      .catch(() => setWebsiteIntakeCopyStatus('Copy failed.'));
+  }
 
   function updateTechnician(technicianId: string, updates: Partial<CompanyOnboardingProfile['technicians'][number]>) {
     updateProfile({
@@ -337,6 +381,65 @@ export function OnboardingPage({
                       </select>
                     </label>
                   </div>
+                </div>
+              </section>
+
+              <section className="panel website-intake-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Website requests</p>
+                    <h2>Public service form</h2>
+                  </div>
+                  <Globe2 size={20} aria-hidden="true" />
+                </div>
+                <div className="website-intake-grid">
+                  <label className="mailbox-check website-intake-toggle">
+                    <input
+                      type="checkbox"
+                      checked={profile.websiteIntakeEnabled}
+                      onChange={(event) => updateProfile({ websiteIntakeEnabled: event.target.checked })}
+                    />
+                    <span>
+                      <strong>Send website form submissions to Job Inbox</strong>
+                      <small>New website requests stay as intake records until the office converts them to jobs.</small>
+                    </span>
+                  </label>
+                  <label>
+                    Public token
+                    <div className="copy-field-row">
+                      <input value={profile.websiteIntakeToken} onChange={(event) => updateProfile({ websiteIntakeToken: event.target.value.trim() })} placeholder="Generate a token" />
+                      <button className="secondary-button compact" type="button" onClick={generateWebsiteIntakeToken}>
+                        Generate
+                      </button>
+                    </div>
+                  </label>
+                  <label>
+                    Allowed website domains
+                    <textarea
+                      value={profile.websiteIntakeAllowedOrigins}
+                      onChange={(event) => updateProfile({ websiteIntakeAllowedOrigins: event.target.value })}
+                      placeholder="https://company.com&#10;https://www.company.com"
+                    />
+                    <span className="mailbox-helper-text">One domain per line. Leave empty only while testing.</span>
+                  </label>
+                  <label>
+                    Intake endpoint
+                    <input value={websiteIntakeEndpoint} readOnly />
+                  </label>
+                </div>
+                <div className="website-intake-snippet">
+                  <div className="mailbox-step-heading">
+                    <div>
+                      <strong>Embed snippet</strong>
+                      <p>Paste this into the company website contact/request page.</p>
+                    </div>
+                    <button className="secondary-button compact" type="button" onClick={copyWebsiteIntakeSnippet}>
+                      <Copy size={15} aria-hidden="true" />
+                      Copy
+                    </button>
+                  </div>
+                  <textarea value={websiteIntakeSnippet} readOnly />
+                  {websiteIntakeCopyStatus ? <span className="mailbox-helper-text">{websiteIntakeCopyStatus}</span> : null}
                 </div>
               </section>
 

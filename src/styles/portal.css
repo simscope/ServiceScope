@@ -952,6 +952,10 @@
   grid-column: 1 / -1;
 }
 
+.website-intake-panel {
+  grid-column: 1 / -1;
+}
+
 .payment-setup-panel {
   grid-column: 1 / -1;
 }
@@ -1166,6 +1170,67 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
+}
+
+.website-intake-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.website-intake-grid label:not(.mailbox-check) {
+  display: grid;
+  gap: 6px;
+  color: #4f5b53;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.website-intake-grid input,
+.website-intake-grid textarea,
+.website-intake-snippet textarea {
+  width: 100%;
+  border: 1px solid #cdd8d1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #17201b;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.website-intake-grid textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+
+.website-intake-toggle {
+  min-height: 92px;
+}
+
+.website-intake-snippet {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid #d6e6fb;
+  border-radius: 8px;
+  background: #f7fbff;
+  padding: 12px;
+}
+
+.website-intake-snippet p {
+  margin: 3px 0 0;
+  color: #667269;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.website-intake-snippet textarea {
+  min-height: 220px;
+  font-family: Consolas, "Liberation Mono", monospace;
+  line-height: 1.45;
+  resize: vertical;
 }
 
 .saved-pill,

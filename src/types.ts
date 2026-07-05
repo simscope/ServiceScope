@@ -173,6 +173,9 @@ export type CompanyOnboardingProfile = {
   serviceArea: string;
   timezone: string;
   emergencyContact: string;
+  websiteIntakeEnabled: boolean;
+  websiteIntakeToken: string;
+  websiteIntakeAllowedOrigins: string;
   jobAssignmentMode: 'manual' | 'auto' | 'round_robin';
   acceptedPayments: CompanyPaymentMethod[];
   achRoutingNumber: string;

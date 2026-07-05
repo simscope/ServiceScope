@@ -168,6 +168,9 @@ create table company_profiles (
   service_area text,
   timezone text not null default 'America/New_York',
   emergency_contact text,
+  website_intake_enabled boolean not null default false,
+  website_intake_token text,
+  website_intake_allowed_origins text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -897,6 +900,7 @@ create index idx_appointments_company_starts on appointments(company_id, starts_
 create index idx_appointments_technician_starts on appointments(technician_id, starts_at);
 create index idx_job_inbox_company_status on job_inbox(company_id, status, created_at desc);
 create index idx_job_inbox_company_source on job_inbox(company_id, source, created_at desc);
+create unique index idx_company_profiles_website_intake_token on company_profiles(website_intake_token) where website_intake_token is not null and website_intake_token <> '';
 create index idx_job_comments_job on job_comments(job_id, created_at);
 create index idx_job_attachments_job on job_attachments(job_id);
 create index idx_job_materials_job on job_materials(job_id);
