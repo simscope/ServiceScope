@@ -66,6 +66,7 @@ import {
   canAccessOwnerPage,
   firstAllowedOwnerPage,
   listPlatformUsers,
+  loadPlatformUsersFromBackend,
   rolePermissions,
   savePlatformUsers,
   SYSTEM_OWNER_EMAIL,
@@ -556,6 +557,17 @@ export function App() {
         const companiesWithAccessRules = applyCompanyAccessRulesOverlay(backendCompanies);
         setCompanies(companiesWithAccessRules);
         setOnboardingProfiles(backendProfiles);
+        if (authSession.kind === 'owner') {
+          loadPlatformUsersFromBackend()
+            .then((users) => {
+              if (ignore) return;
+              setPlatformUsers(users);
+            })
+            .catch((error) => {
+              if (ignore) return;
+              console.error('Failed to load platform users from Supabase', error);
+            });
+        }
         setSupportTickets(listSupportTickets(companiesWithAccessRules));
         loadAuditEventsFromBackend(authSession.kind === 'company' ? authSession.companyId : undefined)
           .then((events) => {

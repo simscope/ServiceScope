@@ -1,7 +1,9 @@
 import type { Company, NewCompanyForm, OnboardingStepKey, OnboardingStepStatus } from '../types';
 import { getPlan } from './billingCatalog';
+import { isSupabaseConfigured } from './supabaseRest';
 
 export const onboardingStepOrder: OnboardingStepKey[] = ['workspace', 'users', 'data', 'billing'];
+const COMPANIES_STORAGE_KEY = 'servicescope.companies';
 
 const stepNames: Record<OnboardingStepKey, string> = {
   workspace: 'workspace',
@@ -19,11 +21,28 @@ function slugify(value: string) {
 }
 
 export function listCompanies(): Company[] {
-  return [];
+  if (isSupabaseConfigured() || typeof window === 'undefined') return [];
+
+  const saved = window.localStorage.getItem(COMPANIES_STORAGE_KEY);
+  if (!saved) return [];
+
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed as Company[] : [];
+  } catch {
+    return [];
+  }
 }
 
 export function saveCompanies(companies: Company[]) {
-  void companies;
+  if (typeof window === 'undefined') return;
+
+  if (isSupabaseConfigured()) {
+    window.localStorage.removeItem(COMPANIES_STORAGE_KEY);
+    return;
+  }
+
+  window.localStorage.setItem(COMPANIES_STORAGE_KEY, JSON.stringify(companies));
 }
 
 export function createCompany(form: NewCompanyForm): Company {
