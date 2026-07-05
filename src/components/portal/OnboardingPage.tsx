@@ -144,29 +144,160 @@ export function OnboardingPage({
     ? `${viteEnv.VITE_SUPABASE_URL.replace(/\/$/, '')}/functions/v1/website-intake`
     : 'https://YOUR-PROJECT.supabase.co/functions/v1/website-intake';
   const websiteIntakeToken = profile.websiteIntakeToken || 'generate-a-token-first';
-  const websiteIntakeSnippet = `<form id="servicescope-request-form">
-  <input name="name" placeholder="Name" required>
-  <input name="phone" placeholder="Phone">
-  <input name="email" type="email" placeholder="Email">
-  <input name="address" placeholder="Service address">
-  <textarea name="message" placeholder="How can we help?"></textarea>
-  <input name="website" tabindex="-1" autocomplete="off" style="display:none">
-  <button type="submit">Request service</button>
-</form>
+  const websiteIntakeSnippet = `<div id="servicescope-widget" class="servicescope-widget">
+  <button id="servicescope-widget-tab" class="servicescope-widget-tab" type="button" aria-expanded="false">
+    <span>Request service</span>
+  </button>
+  <div id="servicescope-widget-panel" class="servicescope-widget-panel" hidden>
+    <div class="servicescope-widget-header">
+      <strong>Request service</strong>
+      <button id="servicescope-widget-close" type="button" aria-label="Close request form">×</button>
+    </div>
+    <form id="servicescope-request-form" class="servicescope-request-form">
+      <input name="name" placeholder="Name" required>
+      <input name="phone" placeholder="Phone">
+      <input name="email" type="email" placeholder="Email">
+      <input name="address" placeholder="Service address">
+      <textarea name="message" placeholder="How can we help?"></textarea>
+      <input name="website" tabindex="-1" autocomplete="off" style="display:none">
+      <button type="submit">Send request</button>
+      <p id="servicescope-widget-status" class="servicescope-widget-status" aria-live="polite"></p>
+    </form>
+  </div>
+</div>
+<style>
+  .servicescope-widget {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    z-index: 2147483000;
+    font-family: Arial, sans-serif;
+  }
+  .servicescope-widget-tab {
+    border: 0;
+    border-radius: 999px;
+    background: #10251b;
+    color: #ffffff;
+    box-shadow: 0 12px 30px rgba(16, 37, 27, 0.22);
+    padding: 14px 18px;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .servicescope-widget-tab:hover { background: #173827; }
+  .servicescope-widget-panel {
+    width: min(360px, calc(100vw - 28px));
+    margin-bottom: 10px;
+    border: 1px solid #d8e1dc;
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 20px 60px rgba(15, 23, 42, 0.24);
+    overflow: hidden;
+  }
+  .servicescope-widget-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: #f5f8f6;
+    padding: 14px 16px;
+  }
+  .servicescope-widget-header strong { color: #10251b; font-size: 17px; }
+  .servicescope-widget-header button {
+    width: 32px;
+    height: 32px;
+    border: 1px solid #d8e1dc;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #10251b;
+    font-size: 22px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .servicescope-request-form {
+    display: grid;
+    gap: 10px;
+    padding: 14px 16px 16px;
+  }
+  .servicescope-request-form input,
+  .servicescope-request-form textarea {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid #cfd9d3;
+    border-radius: 9px;
+    padding: 11px 12px;
+    color: #10251b;
+    font: inherit;
+    font-size: 14px;
+  }
+  .servicescope-request-form textarea {
+    min-height: 92px;
+    resize: vertical;
+  }
+  .servicescope-request-form button[type="submit"] {
+    border: 0;
+    border-radius: 9px;
+    background: #10251b;
+    color: #ffffff;
+    padding: 12px 14px;
+    font-size: 15px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  .servicescope-request-form button[type="submit"]:hover { background: #173827; }
+  .servicescope-widget-status {
+    min-height: 18px;
+    margin: 0;
+    color: #52635a;
+    font-size: 13px;
+    font-weight: 700;
+  }
+  @media (max-width: 520px) {
+    .servicescope-widget {
+      right: 12px;
+      bottom: 12px;
+      left: 12px;
+    }
+    .servicescope-widget-panel { width: 100%; }
+    .servicescope-widget-tab { width: 100%; }
+  }
+</style>
 <script>
-document.getElementById('servicescope-request-form').addEventListener('submit', async function (event) {
-  event.preventDefault();
-  const form = event.currentTarget;
-  const data = Object.fromEntries(new FormData(form).entries());
-  const response = await fetch('${websiteIntakeEndpoint}', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: '${websiteIntakeToken}', source: 'website', ...data })
+(() => {
+  const endpoint = '${websiteIntakeEndpoint}';
+  const token = '${websiteIntakeToken}';
+  const tab = document.getElementById('servicescope-widget-tab');
+  const panel = document.getElementById('servicescope-widget-panel');
+  const close = document.getElementById('servicescope-widget-close');
+  const form = document.getElementById('servicescope-request-form');
+  const status = document.getElementById('servicescope-widget-status');
+
+  function setOpen(open) {
+    panel.hidden = !open;
+    tab.setAttribute('aria-expanded', String(open));
+  }
+
+  tab.addEventListener('click', () => setOpen(panel.hidden));
+  close.addEventListener('click', () => setOpen(false));
+
+  form.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    status.textContent = 'Sending...';
+    const data = Object.fromEntries(new FormData(form).entries());
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token, source: 'website', ...data })
+      });
+      if (!response.ok) throw new Error('Request could not be sent.');
+      form.reset();
+      status.textContent = 'Request sent. We will contact you soon.';
+      window.setTimeout(() => setOpen(false), 1400);
+    } catch (error) {
+      status.textContent = error instanceof Error ? error.message : 'Request could not be sent.';
+    }
   });
-  if (!response.ok) throw new Error('Request could not be sent.');
-  form.reset();
-  alert('Request sent.');
-});
+})();
 </script>`;
 
   function generateWebsiteIntakeToken() {
@@ -430,8 +561,8 @@ document.getElementById('servicescope-request-form').addEventListener('submit', 
                 <div className="website-intake-snippet">
                   <div className="mailbox-step-heading">
                     <div>
-                      <strong>Embed snippet</strong>
-                      <p>Paste this into the company website contact/request page.</p>
+                      <strong>Floating request widget</strong>
+                      <p>Paste this before the closing body tag. It shows a small service request tab on the website.</p>
                     </div>
                     <button className="secondary-button compact" type="button" onClick={copyWebsiteIntakeSnippet}>
                       <Copy size={15} aria-hidden="true" />
