@@ -18,9 +18,24 @@ function mapCompanyRole(role: string): 'Manager' | 'Admin' | 'Technician' {
   return 'Technician';
 }
 
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 export async function signInAndResolveSession(email: string, password: string): Promise<AuthSession> {
   await signInWithSupabasePassword(email, password);
-  return resolveCurrentAuthSession();
+
+  let lastError: unknown;
+  for (const delay of [0, 250, 700]) {
+    if (delay) await wait(delay);
+    try {
+      return await resolveCurrentAuthSession();
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError;
 }
 
 export async function resolveCurrentAuthSession(): Promise<AuthSession> {

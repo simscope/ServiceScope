@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent } from 'react';
+import { useMemo, useState, type ChangeEvent, type ReactNode } from 'react';
 import { Database, FileSpreadsheet, UploadCloud } from 'lucide-react';
 import type { CompanyOnboardingProfile, ServiceJob, ServiceJobStatus } from '../../types';
 
@@ -8,6 +8,15 @@ type ImportDraft = {
   job: ServiceJob;
   action: 'create' | 'update';
   warnings: string[];
+};
+
+type CsvFilePickerProps = {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  fileName: string;
+  disabled?: boolean;
+  onFile: (event: ChangeEvent<HTMLInputElement>) => void;
 };
 
 const statusOptions: ServiceJobStatus[] = [
@@ -202,6 +211,21 @@ function buildJob(companyId: string, row: CsvRow, customerRow: CsvRow | undefine
   };
 }
 
+function CsvFilePicker({ icon, title, detail, fileName, disabled, onFile }: CsvFilePickerProps) {
+  return (
+    <label className={`import-upload-card${disabled ? ' disabled' : ''}`}>
+      {icon}
+      <strong>{title}</strong>
+      <span>{detail}</span>
+      <input type="file" accept=".csv,text/csv" onChange={onFile} disabled={disabled} />
+      <div className="import-file-control">
+        <b>Choose CSV</b>
+        <small>{fileName || 'No file selected'}</small>
+      </div>
+    </label>
+  );
+}
+
 export function ImportPage({
   companyId,
   profile,
@@ -221,6 +245,8 @@ export function ImportPage({
   const [jobsRows, setJobsRows] = useState<CsvRow[]>([]);
   const [status, setStatus] = useState('');
   const [importing, setImporting] = useState(false);
+  const [jobsFileName, setJobsFileName] = useState('');
+  const [customersFileName, setCustomersFileName] = useState('');
 
   const existingByNumber = useMemo(() => new Map(existingJobs.map((job) => [job.jobNumber.toLowerCase(), job])), [existingJobs]);
   const drafts = useMemo(() => jobsRows.map((row, index) => {
@@ -233,11 +259,12 @@ export function ImportPage({
   const updateCount = validDrafts.filter((draft) => draft.action === 'update').length;
   const warningCount = validDrafts.reduce((sum, draft) => sum + draft.warnings.length, 0);
 
-  async function readFile(event: ChangeEvent<HTMLInputElement>, setter: (rows: CsvRow[]) => void) {
+  async function readFile(event: ChangeEvent<HTMLInputElement>, setter: (rows: CsvRow[]) => void, setFileName: (value: string) => void) {
     const file = event.target.files?.[0];
     if (!file) return;
     const text = await file.text();
     const rows = parseCsv(text);
+    setFileName(file.name);
     setter(rows);
     setStatus(`${file.name}: ${rows.length} rows loaded.`);
   }
@@ -263,27 +290,31 @@ export function ImportPage({
           <span className="eyebrow">Migration</span>
           <h1>Housecall Pro import</h1>
         </div>
-        <button className="primary-action" type="button" onClick={importJobs} disabled={readOnly || importing || validDrafts.length === 0}>
+        <button className="primary-button import-action-button" type="button" onClick={importJobs} disabled={readOnly || importing || validDrafts.length === 0}>
           <UploadCloud size={16} /> {importing ? 'Importing...' : 'Import jobs'}
         </button>
       </div>
 
       <div className="import-upload-grid">
-        <label className="import-upload-card">
-          <FileSpreadsheet size={20} />
-          <strong>Jobs CSV</strong>
-          <span>Export Jobs from Housecall Pro and upload it here.</span>
-          <input type="file" accept=".csv,text/csv" onChange={(event) => void readFile(event, setJobsRows)} disabled={readOnly || importing} />
-        </label>
-        <label className="import-upload-card">
-          <Database size={20} />
-          <strong>Customers CSV</strong>
-          <span>Optional, but improves customer name, phone, email, and address matching.</span>
-          <input type="file" accept=".csv,text/csv" onChange={(event) => void readFile(event, setCustomersRows)} disabled={readOnly || importing} />
-        </label>
+        <CsvFilePicker
+          icon={<FileSpreadsheet size={20} />}
+          title="Jobs CSV"
+          detail="Export Jobs from Housecall Pro and upload it here."
+          fileName={jobsFileName}
+          disabled={readOnly || importing}
+          onFile={(event) => void readFile(event, setJobsRows, setJobsFileName)}
+        />
+        <CsvFilePicker
+          icon={<Database size={20} />}
+          title="Customers CSV"
+          detail="Optional, but improves customer name, phone, email, and address matching."
+          fileName={customersFileName}
+          disabled={readOnly || importing}
+          onFile={(event) => void readFile(event, setCustomersRows, setCustomersFileName)}
+        />
       </div>
 
-      <div className="metric-grid import-metrics">
+      <div className="import-summary-grid">
         <div className="metric-card"><span>Jobs rows</span><strong>{jobsRows.length}</strong><p>From HCP export</p></div>
         <div className="metric-card"><span>Customers rows</span><strong>{customersRows.length}</strong><p>Optional lookup</p></div>
         <div className="metric-card"><span>New</span><strong>{createCount}</strong><p>Will be created</p></div>
