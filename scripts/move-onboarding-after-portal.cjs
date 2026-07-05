@@ -7,7 +7,7 @@ let portal = fs.readFileSync(portalPath, 'utf8');
 
 portal = portal.replace(
   /const clientPageValues: ClientPage\[\] = \[[^\]]+\];/,
-  "const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];",
+  "const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal', 'onboarding'];",
 );
 
 portal = portal.replace(/\n\s*\{ page: 'onboarding', label: 'Onboarding', icon: <Rocket size=\{16\} \/> \},/g, '');

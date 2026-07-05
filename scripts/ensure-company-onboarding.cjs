@@ -7,7 +7,7 @@ let portal = fs.readFileSync(portalPath, 'utf8');
 
 portal = portal.replace(
   "const clientPageValues: ClientPage[] = ['jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];",
-  "const clientPageValues: ClientPage[] = ['onboarding', 'jobs', 'allJobs', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];",
+  "const clientPageValues: ClientPage[] = ['onboarding', 'jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'portal'];",
 );
 
 if (!portal.includes("{ page: 'onboarding', label: 'Onboarding'")) {
