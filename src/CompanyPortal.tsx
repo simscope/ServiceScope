@@ -59,7 +59,8 @@ import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { createJobInboxItem, listJobInboxItems, updateJobInboxStatus } from './features/job-inbox/api';
-import { createManualTask as createManualTaskInBackend, listManualTasks, updateManualTaskStatus } from './features/tasks/api';
+import { useLibraryFeature } from './features/library/useLibraryFeature';
+import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
 import {
   AccessPage,
@@ -107,7 +108,6 @@ import {
 } from './services/mailboxOAuthSettings';
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
-import { deleteLibraryDocument, listLibraryDocuments, openLibraryDocument, uploadLibraryDocument } from './services/libraryStore';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput, type PayrollItemRow } from './services/payrollStore';
 import {
@@ -170,10 +170,8 @@ import {
   emptyCompany,
   emptyJobTypeForm,
   emptySupportForm,
-  emptyTaskForm,
   emptyTechnicianForm,
   initialEmailTemplates,
-  initialLibraryDocuments,
   initialMaterialRows,
   libraryCategories,
   libraryFormats,
@@ -193,15 +191,7 @@ import type {
   JobInboxForm,
   JobInboxItem,
   JobInboxStatus,
-  LibraryCategory,
-  LibraryDocument,
-  LibraryDraft,
-  LibraryFormat,
   PayrollRules,
-  TaskForm,
-  TaskPriority,
-  TaskRow,
-  TaskStatus,
 } from './appTypes';
 import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
@@ -614,12 +604,6 @@ export function CompanyPortal({
   const [materialSearch, setMaterialSearch] = useState('');
   const [editingMaterialsJobNumber, setEditingMaterialsJobNumber] = useState('');
   const [materialDraftRows, setMaterialDraftRows] = useState<MaterialRow[]>([]);
-  const [manualTasks, setManualTasks] = useState<TaskRow[]>([]);
-  const [completedAutoTaskIds, setCompletedAutoTaskIds] = useState<string[]>([]);
-  const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
-  const [taskStatusFilter, setTaskStatusFilter] = useState<'all' | TaskStatus>('all');
-  const [taskOwnerFilter, setTaskOwnerFilter] = useState('all');
-  const [taskSearch, setTaskSearch] = useState('');
   const [mapTechFilter, setMapTechFilter] = useState('all');
   const [mapStatusFilter, setMapStatusFilter] = useState('all');
   const [mapSearch, setMapSearch] = useState('');
@@ -658,30 +642,37 @@ export function CompanyPortal({
   });
   const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());
   const [payrollItems, setPayrollItems] = useState<PayrollItemRow[]>([]);
-  const [libraryDocuments, setLibraryDocuments] = useState<LibraryDocument[]>([]);
-  const [libraryStatus, setLibraryStatus] = useState('');
-  const [librarySearch, setLibrarySearch] = useState('');
-  const [libraryCategoryFilter, setLibraryCategoryFilter] = useState<'all' | LibraryCategory>('all');
-  const [librarySystemFilter, setLibrarySystemFilter] = useState('all');
-  const [libraryFormatFilter, setLibraryFormatFilter] = useState<'all' | LibraryFormat>('all');
-  const [libraryDraft, setLibraryDraft] = useState<LibraryDraft>({
-    title: '',
-    category: 'Manual',
-    system: 'HVAC',
-    manufacturer: '',
-    model: '',
-    tags: '',
-    fileName: '',
-  });
 
   const selectedCompanyId = selectedCompany?.id ?? '';
+  const libraryProfile = useMemo(
+    () => selectedCompany ? onboardingProfile ?? createDefaultCompanyOnboardingProfile(selectedCompany) : undefined,
+    [onboardingProfile, selectedCompany],
+  );
+  const featureAccessRules = selectedCompany ? resolveCompanyAccessRules(selectedCompany) : undefined;
+  const libraryAccessLevel = featureAccessRules?.knowledge ?? (selectedCompany ? 'full' : 'off');
+  const taskAccessLevel = featureAccessRules?.tasks ?? (selectedCompany ? 'full' : 'off');
+  const libraryFeature = useLibraryFeature({
+    companyId: selectedCompanyId,
+    profile: libraryProfile,
+    currentUserName: signedInUser?.name ?? selectedCompany?.ownerName ?? 'Company admin',
+    canWrite: libraryAccessLevel === 'full',
+    readOnlyMessage: `Owner access for knowledge is ${accessLevelLabels[libraryAccessLevel].toLowerCase()}. Restore full access before`,
+  });
+  const tasksFeature = useTasksFeature({
+    companyId: selectedCompanyId,
+    jobs,
+    materials,
+    technicianNames: libraryProfile?.technicians.map((technician) => technician.name) ?? [],
+    canWrite: taskAccessLevel === 'full',
+    readOnlyMessage: `Owner access for tasks is ${accessLevelLabels[taskAccessLevel].toLowerCase()}. Restore full access before`,
+    setStatus: setJobsStatus,
+  });
 
   useEffect(() => {
     if (!selectedCompany) {
       setJobs([]);
       setMaterials([]);
       setJobInboxItems([]);
-      setManualTasks([]);
       setJobsStatus('');
       setJobInboxStatus('');
       return undefined;
@@ -697,65 +688,27 @@ export function CompanyPortal({
           listCompanyJobs(company.id),
           listCompanyJobMaterials(company.id),
         ]);
-        let taskLoadWarning = '';
-        const [savedInboxItems, savedManualTasks] = await Promise.all([
-          listJobInboxItems(company.id).catch((error) => {
-            console.error('Failed to load job inbox', error);
-            setJobInboxStatus(error instanceof Error ? error.message : 'Job Inbox could not be loaded.');
-            return [];
-          }),
-          listManualTasks(company.id, savedJobs).catch((error) => {
-            console.error('Failed to load manual tasks', error);
-            taskLoadWarning = error instanceof Error ? error.message : 'Tasks could not be loaded.';
-            return [];
-          }),
-        ]);
+        const savedInboxItems = await listJobInboxItems(company.id).catch((error) => {
+          console.error('Failed to load job inbox', error);
+          setJobInboxStatus(error instanceof Error ? error.message : 'Job Inbox could not be loaded.');
+          return [];
+        });
 
         if (cancelled) return;
         setJobs(savedJobs);
         setMaterials(savedMaterials);
         setJobInboxItems(savedInboxItems);
-        setManualTasks(savedManualTasks);
-        setJobsStatus(taskLoadWarning);
+        setJobsStatus('');
       } catch (error) {
         if (cancelled) return;
         setJobs([]);
         setMaterials([]);
         setJobInboxItems([]);
-        setManualTasks([]);
         setJobsStatus(error instanceof Error ? error.message : 'Jobs could not be loaded.');
       }
     }
 
     void loadJobsAndCustomers();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedCompany]);
-
-  useEffect(() => {
-    if (!selectedCompany) {
-      setLibraryDocuments([]);
-      setLibraryStatus('');
-      return undefined;
-    }
-
-    let cancelled = false;
-    const company = selectedCompany;
-    setLibraryStatus('Loading library...');
-
-    listLibraryDocuments(company.id)
-      .then((documents) => {
-        if (cancelled) return;
-        setLibraryDocuments(documents);
-        setLibraryStatus('');
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setLibraryDocuments([]);
-        setLibraryStatus(error instanceof Error ? error.message : 'Library could not be loaded.');
-      });
 
     return () => {
       cancelled = true;
@@ -1706,203 +1659,6 @@ export function CompanyPortal({
     setJobs((currentJobs) => currentJobs.map(removeInvoice));
     setOpenedJob((currentJob) => (currentJob?.id === job.id ? removeInvoice(currentJob) : currentJob));
   };
-  const librarySystems = Array.from(new Set([...profile.jobTypes.map((jobType) => jobType.name), ...libraryDocuments.map((document) => document.system)])).filter(Boolean);
-  const filteredLibraryDocuments = libraryDocuments.filter((document) => {
-    const normalizedSearch = librarySearch.trim().toLowerCase();
-    const matchesCategory = libraryCategoryFilter === 'all' || document.category === libraryCategoryFilter;
-    const matchesSystem = librarySystemFilter === 'all' || document.system === librarySystemFilter;
-    const matchesFormat = libraryFormatFilter === 'all' || document.format === libraryFormatFilter;
-    const haystack = [
-      document.title,
-      document.category,
-      document.system,
-      document.manufacturer,
-      document.model,
-      document.format,
-      document.summary,
-      document.tags.join(' '),
-    ]
-      .join(' ')
-      .toLowerCase();
-
-    return matchesCategory && matchesSystem && matchesFormat && (!normalizedSearch || haystack.includes(normalizedSearch));
-  });
-  const handleLibraryFileChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setLibraryDraft((draft) => ({
-      ...draft,
-      fileName: file.name,
-      file,
-      title: draft.title || file.name.replace(/\.[^/.]+$/, ''),
-    }));
-  };
-  const addLibraryDocument = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (stopCompanyWrite('knowledge', 'adding library documents')) return;
-    if (!libraryDraft.title.trim()) {
-      setLibraryStatus('Document title is required.');
-      return;
-    }
-    if (!libraryDraft.file) {
-      setLibraryStatus('Choose a file before adding it to the library.');
-      return;
-    }
-
-    setLibraryStatus('Uploading document...');
-    uploadLibraryDocument(selectedCompany.id, libraryDraft, currentPortalUser.name)
-      .then((document) => {
-        setLibraryDocuments((documents) => [document, ...documents]);
-        setLibraryDraft({
-          title: '',
-          category: 'Manual',
-          system: profile.jobTypes[0]?.name ?? 'HVAC',
-          manufacturer: '',
-          model: '',
-          tags: '',
-          fileName: '',
-          file: null,
-        });
-        setLibraryStatus(`${document.title} added to the library.`);
-      })
-      .catch((error) => {
-        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be uploaded.');
-      });
-  };
-  const handleOpenLibraryDocument = (document: LibraryDocument) => {
-    setLibraryStatus(`Opening ${document.title}...`);
-    openLibraryDocument(document)
-      .then(() => setLibraryStatus(''))
-      .catch((error) => {
-        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be opened.');
-      });
-  };
-  const handleDeleteLibraryDocument = (document: LibraryDocument) => {
-    if (stopCompanyWrite('knowledge', 'deleting library documents')) return;
-
-    setLibraryStatus(`Deleting ${document.title}...`);
-    deleteLibraryDocument(selectedCompany.id, document)
-      .then(() => {
-        setLibraryDocuments((documents) => documents.filter((item) => item.id !== document.id));
-        setLibraryStatus(`${document.title} removed from the library.`);
-      })
-      .catch((error) => {
-        setLibraryStatus(error instanceof Error ? error.message : 'Document could not be deleted.');
-      });
-  };
-  const autoTasks: TaskRow[] = allJobsRows.flatMap((job) => {
-    const rows: TaskRow[] = [];
-    const jobMaterials = materials.filter((material) => material.jobNumber === job.jobNumber);
-
-    if (!job.scfPayment) {
-      rows.push({
-        id: `auto-${job.jobNumber}-scf`,
-        title: 'Collect SCF payment',
-        jobNumber: job.jobNumber,
-        assignedTo: job.assignee === 'No technician' ? 'Office' : job.assignee,
-        dueDate: '2026-06-12',
-        priority: 'Urgent',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-scf`) ? 'Done' : 'To do',
-        notes: 'Service call fee is still unpaid.',
-        source: 'Auto',
-      });
-    }
-
-    if (job.assignee === 'No technician') {
-      rows.push({
-        id: `auto-${job.jobNumber}-assign-tech`,
-        title: 'Assign technician',
-        jobNumber: job.jobNumber,
-        assignedTo: 'Dispatcher',
-        dueDate: '2026-06-12',
-        priority: 'Normal',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-assign-tech`) ? 'Done' : 'To do',
-        notes: 'Job is active but has no technician.',
-        source: 'Auto',
-      });
-    }
-
-    if (jobMaterials.some((material) => material.status === 'Needed')) {
-      rows.push({
-        id: `auto-${job.jobNumber}-order-parts`,
-        title: 'Order required parts',
-        jobNumber: job.jobNumber,
-        assignedTo: 'Office',
-        dueDate: '2026-06-12',
-        priority: 'Normal',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-order-parts`) ? 'Done' : 'To do',
-        notes: 'One or more materials are marked as needed.',
-        source: 'Auto',
-      });
-    }
-
-    if (jobMaterials.some((material) => material.status === 'Received') && job.status !== 'Completed') {
-      rows.push({
-        id: `auto-${job.jobNumber}-return-visit`,
-        title: 'Schedule return visit',
-        jobNumber: job.jobNumber,
-        assignedTo: job.assignee === 'No technician' ? 'Dispatcher' : job.assignee,
-        dueDate: '2026-06-13',
-        priority: 'Normal',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-return-visit`) ? 'Done' : 'To do',
-        notes: 'Parts are received and the job is not completed yet.',
-        source: 'Auto',
-      });
-    }
-
-    return rows;
-  });
-  const taskRows = [...autoTasks, ...manualTasks];
-  const filteredTaskRows = taskRows.filter((task) => {
-    const job = materialJobMap.get(task.jobNumber);
-    const normalizedSearch = taskSearch.trim().toLowerCase();
-    const haystack = [task.title, task.jobNumber, task.assignedTo, task.notes, job?.organization, job?.clientName, job?.issue]
-      .join(' ')
-      .toLowerCase();
-    const matchesStatus = taskStatusFilter === 'all' || task.status === taskStatusFilter;
-    const matchesOwner = taskOwnerFilter === 'all' || task.assignedTo === taskOwnerFilter;
-
-    return matchesStatus && matchesOwner && (!normalizedSearch || haystack.includes(normalizedSearch));
-  });
-  const taskAssignees = Array.from(new Set(['Office', 'Dispatcher', ...profile.technicians.map((technician) => technician.name), ...taskRows.map((task) => task.assignedTo)])).filter(Boolean);
-  const openTaskCount = taskRows.filter((task) => task.status !== 'Done').length;
-  const autoTaskCount = autoTasks.filter((task) => task.status !== 'Done').length;
-  const urgentTaskCount = taskRows.filter((task) => task.priority === 'Urgent' && task.status !== 'Done').length;
-  const createManualTask = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (stopCompanyWrite('tasks', 'creating tasks')) return;
-    if (!taskForm.title.trim()) return;
-
-    setJobsStatus('Saving task...');
-    createManualTaskInBackend(selectedCompany.id, taskForm, allJobsRows)
-      .then((task) => {
-        setManualTasks((tasks) => [task, ...tasks]);
-        setTaskForm(emptyTaskForm);
-        setJobsStatus('Task saved.');
-      })
-      .catch((error) => {
-        setJobsStatus(error instanceof Error ? error.message : 'Task could not be saved.');
-      });
-  };
-  const updateTaskStatus = (task: TaskRow, status: TaskStatus) => {
-    if (stopCompanyWrite('tasks', 'updating tasks')) return;
-
-    if (task.source === 'Auto') {
-      setCompletedAutoTaskIds((ids) => (status === 'Done' ? Array.from(new Set([...ids, task.id])) : ids.filter((id) => id !== task.id)));
-      return;
-    }
-
-    setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? { ...row, status } : row)));
-    updateManualTaskStatus(selectedCompany.id, task.id, status, allJobsRows)
-      .then((savedTask) => {
-        setManualTasks((tasks) => tasks.map((row) => (row.id === savedTask.id ? savedTask : row)));
-        setJobsStatus('Task updated.');
-      })
-      .catch((error) => {
-        setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? task : row)));
-        setJobsStatus(error instanceof Error ? error.message : 'Task could not be updated.');
-      });
-  };
   const calendarAnchor = parseLocalDate(calendarAnchorDate);
   const calendarWeekStart = startOfWeek(calendarAnchor);
   const calendarDays = Array.from({ length: 7 }, (_, index) => formatCalendarDay(addDays(calendarWeekStart, index)));
@@ -2576,29 +2332,25 @@ export function CompanyPortal({
             onCreateInvoice={handleCreateInvoice}
             onDeleteInvoice={handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
-            openTaskCount={openTaskCount}
-            autoTaskCount={autoTaskCount}
-            urgentTaskCount={urgentTaskCount}
-            taskForm={taskForm}
-            onTaskFormChange={setTaskForm}
-            onCreateManualTask={createManualTask}
+            openTaskCount={tasksFeature.openTaskCount}
+            autoTaskCount={tasksFeature.autoTaskCount}
+            urgentTaskCount={tasksFeature.urgentTaskCount}
+            taskForm={tasksFeature.taskForm}
+            onTaskFormChange={tasksFeature.setTaskForm}
+            onCreateManualTask={tasksFeature.createManualTask}
             allJobsRows={allJobsRows}
-            taskAssignees={taskAssignees}
-            taskStatusFilter={taskStatusFilter}
-            onTaskStatusFilterChange={setTaskStatusFilter}
-            taskOwnerFilter={taskOwnerFilter}
-            onTaskOwnerFilterChange={setTaskOwnerFilter}
-            taskSearch={taskSearch}
-            onTaskSearchChange={setTaskSearch}
-            onResetFilters={() => {
-              setTaskStatusFilter('all');
-              setTaskOwnerFilter('all');
-              setTaskSearch('');
-            }}
-            filteredTaskRows={filteredTaskRows}
-            jobMap={materialJobMap}
+            taskAssignees={tasksFeature.taskAssignees}
+            taskStatusFilter={tasksFeature.taskStatusFilter}
+            onTaskStatusFilterChange={tasksFeature.setTaskStatusFilter}
+            taskOwnerFilter={tasksFeature.taskOwnerFilter}
+            onTaskOwnerFilterChange={tasksFeature.setTaskOwnerFilter}
+            taskSearch={tasksFeature.taskSearch}
+            onTaskSearchChange={tasksFeature.setTaskSearch}
+            onResetFilters={tasksFeature.resetTaskFilters}
+            filteredTaskRows={tasksFeature.filteredTaskRows}
+            jobMap={tasksFeature.jobMap}
             onOpenJob={setOpenedJob}
-            onUpdateTaskStatus={updateTaskStatus}
+            onUpdateTaskStatus={tasksFeature.updateTaskStatus}
           />
         ) : renderedClientPage === 'email' ? (
           <EmailPage
@@ -2680,26 +2432,26 @@ export function CompanyPortal({
           />
         ) : renderedClientPage === 'knowledge' ? (
           <KnowledgePage
-            libraryDocuments={libraryDocuments}
-            libraryStatus={libraryStatus}
-            librarySystems={librarySystems}
-            filteredLibraryDocuments={filteredLibraryDocuments}
-            libraryDraft={libraryDraft}
-            onLibraryDraftChange={setLibraryDraft}
+            libraryDocuments={libraryFeature.libraryDocuments}
+            libraryStatus={libraryFeature.libraryStatus}
+            librarySystems={libraryFeature.librarySystems}
+            filteredLibraryDocuments={libraryFeature.filteredLibraryDocuments}
+            libraryDraft={libraryFeature.libraryDraft}
+            onLibraryDraftChange={libraryFeature.setLibraryDraft}
             libraryCategories={libraryCategories}
             libraryFormats={libraryFormats}
-            librarySearch={librarySearch}
-            onLibrarySearchChange={setLibrarySearch}
-            libraryCategoryFilter={libraryCategoryFilter}
-            onLibraryCategoryFilterChange={setLibraryCategoryFilter}
-            librarySystemFilter={librarySystemFilter}
-            onLibrarySystemFilterChange={setLibrarySystemFilter}
-            libraryFormatFilter={libraryFormatFilter}
-            onLibraryFormatFilterChange={setLibraryFormatFilter}
-            onLibraryFileChange={handleLibraryFileChange}
-            onAddLibraryDocument={addLibraryDocument}
-            onOpenLibraryDocument={handleOpenLibraryDocument}
-            onDeleteLibraryDocument={handleDeleteLibraryDocument}
+            librarySearch={libraryFeature.librarySearch}
+            onLibrarySearchChange={libraryFeature.setLibrarySearch}
+            libraryCategoryFilter={libraryFeature.libraryCategoryFilter}
+            onLibraryCategoryFilterChange={libraryFeature.setLibraryCategoryFilter}
+            librarySystemFilter={libraryFeature.librarySystemFilter}
+            onLibrarySystemFilterChange={libraryFeature.setLibrarySystemFilter}
+            libraryFormatFilter={libraryFeature.libraryFormatFilter}
+            onLibraryFormatFilterChange={libraryFeature.setLibraryFormatFilter}
+            onLibraryFileChange={libraryFeature.handleLibraryFileChange}
+            onAddLibraryDocument={libraryFeature.addLibraryDocument}
+            onOpenLibraryDocument={libraryFeature.handleOpenLibraryDocument}
+            onDeleteLibraryDocument={libraryFeature.handleDeleteLibraryDocument}
           />
         ) : renderedClientPage === 'portal' ? (
           <section className="portal-page">
