@@ -651,7 +651,9 @@ create table tasks (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references companies(id) on delete cascade,
   job_id uuid references jobs(id) on delete set null,
+  job_number text not null default '',
   assigned_user_id uuid references company_users(id) on delete set null,
+  assigned_to text not null default 'Office',
   title text not null,
   notes text not null default '',
   due_at timestamptz,
@@ -894,6 +896,7 @@ create index idx_job_materials_job on job_materials(job_id);
 create index idx_job_payments_job on job_payments(job_id);
 create index idx_payroll_items_technician on payroll_items(company_id, technician_id, paid_at);
 create index idx_tasks_company_status on tasks(company_id, status);
+create index idx_tasks_company_source on tasks(company_id, source, created_at desc);
 create index idx_technician_locations_latest on technician_locations(technician_id, recorded_at desc);
 create index idx_email_messages_company_folder on email_messages(company_id, folder, created_at desc);
 create index idx_email_message_attachments_message on email_message_attachments(email_message_id);

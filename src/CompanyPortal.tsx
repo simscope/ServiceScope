@@ -59,6 +59,7 @@ import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { createJobInboxItem, listJobInboxItems, updateJobInboxStatus } from './features/job-inbox/api';
+import { createManualTask as createManualTaskInBackend, listManualTasks, updateManualTaskStatus } from './features/tasks/api';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
 import {
   AccessPage,
@@ -173,7 +174,6 @@ import {
   emptyTechnicianForm,
   initialEmailTemplates,
   initialLibraryDocuments,
-  initialManualTasks,
   initialMaterialRows,
   libraryCategories,
   libraryFormats,
@@ -614,7 +614,7 @@ export function CompanyPortal({
   const [materialSearch, setMaterialSearch] = useState('');
   const [editingMaterialsJobNumber, setEditingMaterialsJobNumber] = useState('');
   const [materialDraftRows, setMaterialDraftRows] = useState<MaterialRow[]>([]);
-  const [manualTasks, setManualTasks] = useState<TaskRow[]>(initialManualTasks);
+  const [manualTasks, setManualTasks] = useState<TaskRow[]>([]);
   const [completedAutoTaskIds, setCompletedAutoTaskIds] = useState<string[]>([]);
   const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
   const [taskStatusFilter, setTaskStatusFilter] = useState<'all' | TaskStatus>('all');
@@ -681,6 +681,7 @@ export function CompanyPortal({
       setJobs([]);
       setMaterials([]);
       setJobInboxItems([]);
+      setManualTasks([]);
       setJobsStatus('');
       setJobInboxStatus('');
       return undefined;
@@ -696,22 +697,32 @@ export function CompanyPortal({
           listCompanyJobs(company.id),
           listCompanyJobMaterials(company.id),
         ]);
-        const savedInboxItems = await listJobInboxItems(company.id).catch((error) => {
-          console.error('Failed to load job inbox', error);
-          setJobInboxStatus(error instanceof Error ? error.message : 'Job Inbox could not be loaded.');
-          return [];
-        });
+        let taskLoadWarning = '';
+        const [savedInboxItems, savedManualTasks] = await Promise.all([
+          listJobInboxItems(company.id).catch((error) => {
+            console.error('Failed to load job inbox', error);
+            setJobInboxStatus(error instanceof Error ? error.message : 'Job Inbox could not be loaded.');
+            return [];
+          }),
+          listManualTasks(company.id, savedJobs).catch((error) => {
+            console.error('Failed to load manual tasks', error);
+            taskLoadWarning = error instanceof Error ? error.message : 'Tasks could not be loaded.';
+            return [];
+          }),
+        ]);
 
         if (cancelled) return;
         setJobs(savedJobs);
         setMaterials(savedMaterials);
         setJobInboxItems(savedInboxItems);
-        setJobsStatus('');
+        setManualTasks(savedManualTasks);
+        setJobsStatus(taskLoadWarning);
       } catch (error) {
         if (cancelled) return;
         setJobs([]);
         setMaterials([]);
         setJobInboxItems([]);
+        setManualTasks([]);
         setJobsStatus(error instanceof Error ? error.message : 'Jobs could not be loaded.');
       }
     }
@@ -1862,21 +1873,16 @@ export function CompanyPortal({
     if (stopCompanyWrite('tasks', 'creating tasks')) return;
     if (!taskForm.title.trim()) return;
 
-    setManualTasks((tasks) => [
-      {
-        id: `task-${Date.now()}`,
-        title: taskForm.title.trim(),
-        jobNumber: taskForm.jobNumber,
-        assignedTo: taskForm.assignedTo || 'Office',
-        dueDate: taskForm.dueDate,
-        priority: taskForm.priority,
-        status: 'To do',
-        notes: taskForm.notes.trim(),
-        source: 'Manual',
-      },
-      ...tasks,
-    ]);
-    setTaskForm(emptyTaskForm);
+    setJobsStatus('Saving task...');
+    createManualTaskInBackend(selectedCompany.id, taskForm, allJobsRows)
+      .then((task) => {
+        setManualTasks((tasks) => [task, ...tasks]);
+        setTaskForm(emptyTaskForm);
+        setJobsStatus('Task saved.');
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Task could not be saved.');
+      });
   };
   const updateTaskStatus = (task: TaskRow, status: TaskStatus) => {
     if (stopCompanyWrite('tasks', 'updating tasks')) return;
@@ -1887,6 +1893,15 @@ export function CompanyPortal({
     }
 
     setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? { ...row, status } : row)));
+    updateManualTaskStatus(selectedCompany.id, task.id, status, allJobsRows)
+      .then((savedTask) => {
+        setManualTasks((tasks) => tasks.map((row) => (row.id === savedTask.id ? savedTask : row)));
+        setJobsStatus('Task updated.');
+      })
+      .catch((error) => {
+        setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? task : row)));
+        setJobsStatus(error instanceof Error ? error.message : 'Task could not be updated.');
+      });
   };
   const calendarAnchor = parseLocalDate(calendarAnchorDate);
   const calendarWeekStart = startOfWeek(calendarAnchor);
