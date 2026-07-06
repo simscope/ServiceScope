@@ -59,6 +59,7 @@ import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
+import { useEmailFeature } from './features/email/useEmailFeature';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
@@ -190,8 +191,6 @@ import type {
   EmailCompose,
   EmailComposeAttachment,
   EmailConnection,
-  EmailFolder,
-  EmailMessage,
   EmailProvider,
   EmailTemplate,
   JobInboxItem,
@@ -595,15 +594,34 @@ export function CompanyPortal({
     setMapSearch,
     resetMapFilters,
   } = useMapFeature();
-  const [emailConnection, setEmailConnection] = useState<EmailConnection | null>(null);
-  const [mailboxConnectStatus, setMailboxConnectStatus] = useState('');
-  const [mailboxOAuthSecretDraft, setMailboxOAuthSecretDraft] = useState('');
-  const [mailboxOAuthStatus, setMailboxOAuthStatus] = useState('');
-  const [emailFolder, setEmailFolder] = useState<EmailFolder>('inbox');
-  const [emailSearch, setEmailSearch] = useState('');
-  const [emailMessages, setEmailMessages] = useState<EmailMessage[]>([]);
-  const [mailboxSyncLimit, setMailboxSyncLimit] = useState(25);
-  const [mailboxSyncing, setMailboxSyncing] = useState(false);
+  const {
+    emailConnection,
+    setEmailConnection,
+    mailboxConnectStatus,
+    setMailboxConnectStatus,
+    mailboxOAuthSecretDraft,
+    setMailboxOAuthSecretDraft,
+    mailboxOAuthStatus,
+    setMailboxOAuthStatus,
+    emailFolder,
+    setEmailFolder,
+    emailSearch,
+    setEmailSearch,
+    emailMessages,
+    setEmailMessages,
+    mailboxSyncLimit,
+    setMailboxSyncLimit,
+    mailboxSyncing,
+    setMailboxSyncing,
+    mailboxSyncingRef,
+    emailCompose,
+    setEmailCompose,
+    emailComposeRequestId,
+    emailComposeAttachments,
+    applyEmailTemplate,
+    resetEmailCompose,
+    openEmailComposeDraft,
+  } = useEmailFeature();
   const {
     billingStatus,
     setBillingStatus,
@@ -611,20 +629,7 @@ export function CompanyPortal({
     openBillingSetup,
     closeBillingSetup,
   } = useBillingFeature();
-  const mailboxSyncingRef = useRef(false);
   const onboardingSaveQueueRef = useRef(Promise.resolve());
-  const [emailCompose, setEmailCompose] = useState<EmailCompose>({
-    to: '',
-    subject: '',
-    body: '',
-    jobNumber: '',
-    includeSignature: true,
-    includePaymentBlock: false,
-    signatureText: '',
-    paymentBlockText: '',
-  });
-  const [emailComposeRequestId, setEmailComposeRequestId] = useState(0);
-  const [emailComposeAttachments, setEmailComposeAttachments] = useState<EmailComposeAttachment[]>([]);
   const {
     financePeriod,
     setFinancePeriod,
@@ -1130,36 +1135,10 @@ export function CompanyPortal({
       setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox connector failed.');
     }
   };
-  const applyEmailTemplate = (template: EmailTemplate) => {
-    setEmailCompose((draft) => ({
-      ...draft,
-      subject: template.subject,
-      body: template.body,
-    }));
-    setEmailFolder('inbox');
-  };
-  const resetEmailCompose = () => {
-    setEmailCompose({
-      to: '',
-      subject: '',
-      body: '',
-      jobNumber: '',
-      includeSignature: true,
-      includePaymentBlock: false,
-      signatureText: companyEmailSignature,
-      paymentBlockText: companyPaymentBlock,
-    });
-  };
   const openEmailCompose = (compose: EmailCompose, attachments: EmailComposeAttachment[] = []) => {
     if (stopCompanyWrite('email', 'opening email composer')) return;
 
-    setEmailCompose({
-      ...compose,
-      signatureText: compose.signatureText || companyEmailSignature,
-      paymentBlockText: compose.paymentBlockText || companyPaymentBlock,
-    });
-    setEmailComposeAttachments(attachments);
-    setEmailComposeRequestId((requestId) => requestId + 1);
+    openEmailComposeDraft(compose, attachments, companyEmailSignature, companyPaymentBlock);
     setClientPage('email');
   };
   const sendEmailDraft = async (attachments: EmailComposeAttachment[]) => {
@@ -1198,7 +1177,7 @@ export function CompanyPortal({
         jobNumber: emailCompose.jobNumber,
         attachments,
       });
-      resetEmailCompose();
+      resetEmailCompose(companyEmailSignature, companyPaymentBlock);
       setMailboxConnectStatus('Email sent.');
       const savedMessages = await loadMailboxMessages(selectedCompanyId);
       setEmailMessages(savedMessages);
