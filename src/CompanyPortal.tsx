@@ -115,8 +115,6 @@ import {
   mailboxOAuthRedirectUrl,
   saveMailboxOAuthSettings,
 } from './services/mailboxOAuthSettings';
-import { loadMailboxMessages } from './services/mailboxMessages';
-import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput } from './services/payrollStore';
 import {
@@ -629,6 +627,7 @@ export function CompanyPortal({
     openEmailComposeDraft,
     syncConnectedMailboxMessages,
     loadMoreMailboxMessages,
+    sendEmailDraft: sendEmailDraftFromFeature,
   } = useEmailFeature();
   const {
     billingStatus,
@@ -1114,47 +1113,12 @@ export function CompanyPortal({
   const sendEmailDraft = async (attachments: EmailComposeAttachment[]) => {
     if (stopCompanyWrite('email', 'sending email')) return;
 
-    if (!selectedCompanyId) {
-      setMailboxConnectStatus('Choose a company before sending email.');
-      return;
-    }
-
-    if (emailConnection?.status !== 'connected') {
-      setMailboxConnectStatus('Connect the mailbox before sending email.');
-      return;
-    }
-
-    const recipients = emailCompose.to.split(',').map((value) => value.trim()).filter(Boolean);
-    if (!recipients.length) {
-      setMailboxConnectStatus('Recipient email is required.');
-      return;
-    }
-
-    const messageBody = [
-      emailCompose.body.trimEnd(),
-      emailCompose.includeSignature ? emailCompose.signatureText || companyEmailSignature : '',
-      emailCompose.includePaymentBlock ? emailCompose.paymentBlockText || companyPaymentBlock : '',
-    ].filter(Boolean).join('\n\n');
-
-    setMailboxConnectStatus('Sending email...');
-
-    try {
-      await sendMailboxEmail({
-        companyId: selectedCompanyId,
-        to: recipients,
-        subject: emailCompose.subject,
-        body: messageBody,
-        jobNumber: emailCompose.jobNumber,
-        attachments,
-      });
-      resetEmailCompose(companyEmailSignature, companyPaymentBlock);
-      setMailboxConnectStatus('Email sent.');
-      const savedMessages = await loadMailboxMessages(selectedCompanyId);
-      setEmailMessages(savedMessages);
-    } catch (error) {
-      setMailboxConnectStatus(error instanceof Error ? error.message : 'Email send failed.');
-      throw error;
-    }
+    await sendEmailDraftFromFeature({
+      companyId: selectedCompanyId,
+      signatureText: companyEmailSignature,
+      paymentBlockText: companyPaymentBlock,
+      attachments,
+    });
   };
   const materialRowsWithJobs = materials
     .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))

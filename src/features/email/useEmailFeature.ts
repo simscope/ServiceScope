@@ -8,6 +8,7 @@ import type {
   EmailTemplate,
 } from '../../appTypes';
 import { loadMailboxMessages, syncMailboxMessages } from '../../services/mailboxMessages';
+import { sendMailboxEmail } from '../../services/mailboxSend';
 
 const emptyEmailCompose: EmailCompose = {
   to: '',
@@ -106,6 +107,60 @@ export function useEmailFeature() {
     });
   };
 
+  const sendEmailDraft = async ({
+    companyId,
+    signatureText,
+    paymentBlockText,
+    attachments,
+  }: {
+    companyId: string;
+    signatureText: string;
+    paymentBlockText: string;
+    attachments: EmailComposeAttachment[];
+  }) => {
+    if (!companyId) {
+      setMailboxConnectStatus('Choose a company before sending email.');
+      return;
+    }
+
+    if (emailConnection?.status !== 'connected') {
+      setMailboxConnectStatus('Connect the mailbox before sending email.');
+      return;
+    }
+
+    const recipients = emailCompose.to.split(',').map((value) => value.trim()).filter(Boolean);
+    if (!recipients.length) {
+      setMailboxConnectStatus('Recipient email is required.');
+      return;
+    }
+
+    const messageBody = [
+      emailCompose.body.trimEnd(),
+      emailCompose.includeSignature ? emailCompose.signatureText || signatureText : '',
+      emailCompose.includePaymentBlock ? emailCompose.paymentBlockText || paymentBlockText : '',
+    ].filter(Boolean).join('\n\n');
+
+    setMailboxConnectStatus('Sending email...');
+
+    try {
+      await sendMailboxEmail({
+        companyId,
+        to: recipients,
+        subject: emailCompose.subject,
+        body: messageBody,
+        jobNumber: emailCompose.jobNumber,
+        attachments,
+      });
+      resetEmailCompose(signatureText, paymentBlockText);
+      setMailboxConnectStatus('Email sent.');
+      const savedMessages = await loadMailboxMessages(companyId);
+      setEmailMessages(savedMessages);
+    } catch (error) {
+      setMailboxConnectStatus(error instanceof Error ? error.message : 'Email send failed.');
+      throw error;
+    }
+  };
+
   return {
     emailConnection,
     setEmailConnection,
@@ -136,5 +191,6 @@ export function useEmailFeature() {
     openEmailComposeDraft,
     syncConnectedMailboxMessages,
     loadMoreMailboxMessages,
+    sendEmailDraft,
   };
 }
