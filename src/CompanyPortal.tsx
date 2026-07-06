@@ -58,6 +58,7 @@ import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
+import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
@@ -113,7 +114,7 @@ import {
 import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput, type PayrollItemRow } from './services/payrollStore';
+import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput } from './services/payrollStore';
 import {
   createJobInvoice,
   createServiceJob,
@@ -191,15 +192,12 @@ import type {
   EmailMessage,
   EmailProvider,
   EmailTemplate,
-  FinancePeriod,
   JobInboxItem,
-  PayrollRules,
 } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
 const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
-const SALARY_PAID_STORAGE_KEY = 'servicescope.finance.salaryPaidJobs';
 const clientPageValues: ClientPage[] = ['jobInbox', 'jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'import', 'portal', 'onboarding'];
 
 type SquareCard = {
@@ -227,18 +225,6 @@ declare global {
 function readSavedClientPage(): ClientPage {
   const saved = window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY);
   return clientPageValues.includes(saved as ClientPage) ? saved as ClientPage : 'jobs';
-}
-
-function readSalaryPaidJobs(): Record<string, string> {
-  const saved = window.localStorage.getItem(SALARY_PAID_STORAGE_KEY);
-  if (!saved) return {};
-
-  try {
-    const parsed = JSON.parse(saved);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, string> : {};
-  } catch {
-    return {};
-  }
 }
 
 function loadSquareScript(environment: 'sandbox' | 'production') {
@@ -640,16 +626,18 @@ export function CompanyPortal({
   });
   const [emailComposeRequestId, setEmailComposeRequestId] = useState(0);
   const [emailComposeAttachments, setEmailComposeAttachments] = useState<EmailComposeAttachment[]>([]);
-  const [financePeriod, setFinancePeriod] = useState<FinancePeriod>('this_month');
-  const [financeTechFilter, setFinanceTechFilter] = useState('all');
-  const [payrollRules, setPayrollRules] = useState<PayrollRules>({
-    commissionPercent: 50,
-    scfOnlyPayout: 50,
-    deductMaterials: true,
-    includeScf: true,
-  });
-  const [salaryPaidJobs, setSalaryPaidJobs] = useState<Record<string, string>>(() => readSalaryPaidJobs());
-  const [payrollItems, setPayrollItems] = useState<PayrollItemRow[]>([]);
+  const {
+    financePeriod,
+    setFinancePeriod,
+    financeTechFilter,
+    setFinanceTechFilter,
+    payrollRules,
+    setPayrollRules,
+    salaryPaidJobs,
+    setSalaryPaidJobs,
+    payrollItems,
+    setPayrollItems,
+  } = useFinanceFeature();
 
   const selectedCompanyId = selectedCompany?.id ?? '';
   const libraryProfile = useMemo(
