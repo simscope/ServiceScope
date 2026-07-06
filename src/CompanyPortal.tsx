@@ -625,6 +625,9 @@ export function CompanyPortal({
     applyEmailTemplate,
     resetEmailCompose,
     openEmailComposeDraft,
+    connectMailbox: connectMailboxInFeature,
+    updateMailbox: updateMailboxInFeature,
+    copyMailboxRedirectUrl: copyMailboxRedirectUrlInFeature,
     syncConnectedMailboxMessages,
     loadMoreMailboxMessages,
     sendEmailDraft: sendEmailDraftFromFeature,
@@ -1010,27 +1013,14 @@ export function CompanyPortal({
   const connectMailbox = (provider: EmailProvider) => {
     const nextConnection = makeDefaultEmailConnection(activeCompany, profile, provider);
 
-    setEmailConnection(nextConnection);
-    setMailboxOAuthSecretDraft('');
-    setMailboxOAuthStatus('');
-    persistOnboardingToBackend(profile, nextConnection);
+    connectMailboxInFeature(nextConnection, (connection) => persistOnboardingToBackend(profile, connection));
   };
   const updateMailbox = (patch: Partial<EmailConnection>) => {
-    setEmailConnection((connection) => {
-      if (!connection) return connection;
-      const nextConnection = { ...connection, ...patch };
-      persistOnboardingToBackend(profile, nextConnection);
-      return nextConnection;
-    });
+    updateMailboxInFeature(patch, (connection) => persistOnboardingToBackend(profile, connection));
   };
   const copyMailboxRedirectUrl = async () => {
     const redirectUrl = emailConnection?.oauthRedirectUrl || mailboxOAuthRedirectUrl;
-    try {
-      await navigator.clipboard.writeText(redirectUrl);
-      setMailboxOAuthStatus('Redirect URL copied.');
-    } catch {
-      setMailboxOAuthStatus(redirectUrl);
-    }
+    await copyMailboxRedirectUrlInFeature(redirectUrl);
   };
   const saveMailboxOAuth = async () => {
     if (!emailConnection || emailConnection.provider === 'smtp') {

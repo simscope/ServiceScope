@@ -69,6 +69,31 @@ export function useEmailFeature() {
     setEmailComposeRequestId((requestId) => requestId + 1);
   };
 
+  const connectMailbox = (nextConnection: EmailConnection, persistConnection: (connection: EmailConnection) => void) => {
+    setEmailConnection(nextConnection);
+    setMailboxOAuthSecretDraft('');
+    setMailboxOAuthStatus('');
+    persistConnection(nextConnection);
+  };
+
+  const updateMailbox = (patch: Partial<EmailConnection>, persistConnection: (connection: EmailConnection) => void) => {
+    setEmailConnection((connection) => {
+      if (!connection) return connection;
+      const nextConnection = { ...connection, ...patch };
+      persistConnection(nextConnection);
+      return nextConnection;
+    });
+  };
+
+  const copyMailboxRedirectUrl = async (redirectUrl: string) => {
+    try {
+      await navigator.clipboard.writeText(redirectUrl);
+      setMailboxOAuthStatus('Redirect URL copied.');
+    } catch {
+      setMailboxOAuthStatus(redirectUrl);
+    }
+  };
+
   const syncConnectedMailboxMessages = async (companyId: string, limit = mailboxSyncLimit) => {
     if (mailboxSyncingRef.current) {
       setMailboxConnectStatus('Mailbox sync is already running. Wait a moment.');
@@ -189,6 +214,9 @@ export function useEmailFeature() {
     applyEmailTemplate,
     resetEmailCompose,
     openEmailComposeDraft,
+    connectMailbox,
+    updateMailbox,
+    copyMailboxRedirectUrl,
     syncConnectedMailboxMessages,
     loadMoreMailboxMessages,
     sendEmailDraft,
