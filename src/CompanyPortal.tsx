@@ -58,7 +58,7 @@ import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
-import { createJobInboxItem, listJobInboxItems, updateJobInboxStatus } from './features/job-inbox/api';
+import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
@@ -188,9 +188,7 @@ import type {
   EmailProvider,
   EmailTemplate,
   FinancePeriod,
-  JobInboxForm,
   JobInboxItem,
-  JobInboxStatus,
   PayrollRules,
 } from './appTypes';
 import { emptyMaterialDraft } from './appTypes';
@@ -567,18 +565,6 @@ export function CompanyPortal({
   const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
   const [jobs, setJobs] = useState<ServiceJob[]>([]);
   const [jobsStatus, setJobsStatus] = useState('');
-  const [jobInboxItems, setJobInboxItems] = useState<JobInboxItem[]>([]);
-  const [jobInboxStatus, setJobInboxStatus] = useState('');
-  const [jobInboxSearch, setJobInboxSearch] = useState('');
-  const [jobInboxStatusFilter, setJobInboxStatusFilter] = useState<'all' | JobInboxStatus>('new');
-  const [jobInboxForm, setJobInboxForm] = useState<JobInboxForm>({
-    source: 'manual',
-    clientName: '',
-    clientPhone: '',
-    clientEmail: '',
-    address: '',
-    message: '',
-  });
   const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
   const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
@@ -649,8 +635,14 @@ export function CompanyPortal({
     [onboardingProfile, selectedCompany],
   );
   const featureAccessRules = selectedCompany ? resolveCompanyAccessRules(selectedCompany) : undefined;
+  const jobInboxAccessLevel = featureAccessRules?.jobInbox ?? (selectedCompany ? 'full' : 'off');
   const libraryAccessLevel = featureAccessRules?.knowledge ?? (selectedCompany ? 'full' : 'off');
   const taskAccessLevel = featureAccessRules?.tasks ?? (selectedCompany ? 'full' : 'off');
+  const jobInboxFeature = useJobInboxFeature({
+    companyId: selectedCompanyId,
+    canWrite: jobInboxAccessLevel === 'full',
+    readOnlyMessage: `Owner access for job inbox is ${accessLevelLabels[jobInboxAccessLevel].toLowerCase()}. Restore full access before`,
+  });
   const libraryFeature = useLibraryFeature({
     companyId: selectedCompanyId,
     profile: libraryProfile,
@@ -672,9 +664,7 @@ export function CompanyPortal({
     if (!selectedCompany) {
       setJobs([]);
       setMaterials([]);
-      setJobInboxItems([]);
       setJobsStatus('');
-      setJobInboxStatus('');
       return undefined;
     }
 
@@ -688,22 +678,14 @@ export function CompanyPortal({
           listCompanyJobs(company.id),
           listCompanyJobMaterials(company.id),
         ]);
-        const savedInboxItems = await listJobInboxItems(company.id).catch((error) => {
-          console.error('Failed to load job inbox', error);
-          setJobInboxStatus(error instanceof Error ? error.message : 'Job Inbox could not be loaded.');
-          return [];
-        });
-
         if (cancelled) return;
         setJobs(savedJobs);
         setMaterials(savedMaterials);
-        setJobInboxItems(savedInboxItems);
         setJobsStatus('');
       } catch (error) {
         if (cancelled) return;
         setJobs([]);
         setMaterials([]);
-        setJobInboxItems([]);
         setJobsStatus(error instanceof Error ? error.message : 'Jobs could not be loaded.');
       }
     }
@@ -1559,45 +1541,6 @@ export function CompanyPortal({
         setJobsStatus(error instanceof Error ? error.message : 'Job could not be created.');
       });
   };
-  const handleCreateJobInboxItem = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (stopCompanyWrite('jobInbox', 'creating job inbox items')) return;
-    if (!jobInboxForm.clientName.trim() && !jobInboxForm.clientPhone.trim() && !jobInboxForm.clientEmail.trim() && !jobInboxForm.message.trim()) {
-      setJobInboxStatus('Add a client, phone, email, or message before saving an inbox item.');
-      return;
-    }
-
-    setJobInboxStatus('Saving inbox item...');
-    createJobInboxItem(selectedCompany.id, jobInboxForm)
-      .then((item) => {
-        setJobInboxItems((items) => [item, ...items]);
-        setJobInboxForm({
-          source: 'manual',
-          clientName: '',
-          clientPhone: '',
-          clientEmail: '',
-          address: '',
-          message: '',
-        });
-        setJobInboxStatus('Inbox item saved.');
-      })
-      .catch((error) => {
-        setJobInboxStatus(error instanceof Error ? error.message : 'Inbox item could not be saved.');
-      });
-  };
-  const handleUpdateJobInboxStatus = (item: JobInboxItem, status: JobInboxStatus) => {
-    if (stopCompanyWrite('jobInbox', 'updating job inbox items')) return;
-
-    setJobInboxStatus('Updating inbox item...');
-    updateJobInboxStatus(selectedCompany.id, item.id, status)
-      .then((savedItem) => {
-        setJobInboxItems((items) => items.map((candidate) => (candidate.id === savedItem.id ? savedItem : candidate)));
-        setJobInboxStatus(`Inbox item marked ${status}.`);
-      })
-      .catch((error) => {
-        setJobInboxStatus(error instanceof Error ? error.message : 'Inbox item could not be updated.');
-      });
-  };
   const handleConvertJobInboxItem = (item: JobInboxItem) => {
     if (stopCompanyWrite('jobInbox', 'converting job inbox items')) return;
     if (stopCompanyWrite('jobs', 'creating jobs')) return;
@@ -1616,18 +1559,17 @@ export function CompanyPortal({
       notes: `Created from Job Inbox (${item.source}).`,
     });
 
-    setJobInboxStatus('Converting inbox item to job...');
+    jobInboxFeature.setStatus('Converting inbox item to job...');
     saveServiceJob(selectedCompany.id, createdJob)
       .then(async (savedJob) => {
-        const savedItem = await updateJobInboxStatus(selectedCompany.id, item.id, 'converted', savedJob.id);
+        await jobInboxFeature.markConverted(item, savedJob.id);
         setJobs((currentJobs) => [savedJob, ...currentJobs.filter((job) => job.id !== savedJob.id)]);
-        setJobInboxItems((items) => items.map((candidate) => (candidate.id === savedItem.id ? savedItem : candidate)));
         setOpenedJob(savedJob);
         setClientPage('jobs');
-        setJobInboxStatus(`Converted to job ${savedJob.jobNumber}.`);
+        jobInboxFeature.setStatus(`Converted to job ${savedJob.jobNumber}.`);
       })
       .catch((error) => {
-        setJobInboxStatus(error instanceof Error ? error.message : 'Inbox item could not be converted.');
+        jobInboxFeature.setStatus(error instanceof Error ? error.message : 'Inbox item could not be converted.');
       });
   };
   const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number, documentType: JobDocumentType) => {
@@ -2175,17 +2117,17 @@ export function CompanyPortal({
         ) : null}
         {renderedClientPage === 'jobInbox' ? (
           <JobInboxPage
-            items={jobInboxItems}
-            form={jobInboxForm}
-            status={jobInboxStatus}
-            search={jobInboxSearch}
-            statusFilter={jobInboxStatusFilter}
-            onFormChange={setJobInboxForm}
-            onCreateItem={handleCreateJobInboxItem}
-            onSearchChange={setJobInboxSearch}
-            onStatusFilterChange={setJobInboxStatusFilter}
+            items={jobInboxFeature.items}
+            form={jobInboxFeature.form}
+            status={jobInboxFeature.status}
+            search={jobInboxFeature.search}
+            statusFilter={jobInboxFeature.statusFilter}
+            onFormChange={jobInboxFeature.setForm}
+            onCreateItem={jobInboxFeature.createItem}
+            onSearchChange={jobInboxFeature.setSearch}
+            onStatusFilterChange={jobInboxFeature.setStatusFilter}
             onConvertToJob={handleConvertJobInboxItem}
-            onUpdateStatus={handleUpdateJobInboxStatus}
+            onUpdateStatus={jobInboxFeature.updateItemStatus}
           />
         ) : renderedClientPage === 'jobs' ? (
           <JobsPage
