@@ -57,6 +57,7 @@ import { MapPage } from './components/portal/MapPage';
 import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
+import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
@@ -568,22 +569,22 @@ export function CompanyPortal({
   const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
   const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
-  const [calendarView, setCalendarView] = useState<'month' | 'week' | 'day'>('week');
-  const [calendarAnchorDate, setCalendarAnchorDate] = useState(() => toLocalIsoDate(new Date()));
-  const [activeCalendarTech, setActiveCalendarTech] = useState('all');
-  const [calendarAssignments, setCalendarAssignments] = useState<Record<string, { assignee: string; dayKey: string; time: string; durationMinutes: number }>>({});
-  const [draggingJobNumber, setDraggingJobNumber] = useState('');
-  const [resizingJob, setResizingJob] = useState<{
-    jobNumber: string;
-    assignee: string;
-    dayKey: string;
-    time: string;
-    edge: 'start' | 'end';
-    startY: number;
-    startDuration: number;
-    startSlotIndex: number;
-  } | null>(null);
-  const [monthDropRequest, setMonthDropRequest] = useState<{ jobNumber: string; assignee: string; dayKey: string; durationMinutes: number; time: string } | null>(null);
+  const {
+    calendarView,
+    setCalendarView,
+    calendarAnchorDate,
+    setCalendarAnchorDate,
+    activeCalendarTech,
+    setActiveCalendarTech,
+    calendarAssignments,
+    setCalendarAssignments,
+    draggingJobNumber,
+    setDraggingJobNumber,
+    resizingJob,
+    setResizingJob,
+    monthDropRequest,
+    setMonthDropRequest,
+  } = useCalendarFeature();
   const [materials, setMaterials] = useState<MaterialRow[]>(initialMaterialRows);
   const [materialStatusFilter, setMaterialStatusFilter] = useState<'all' | MaterialRow['status']>('all');
   const [materialTechFilter, setMaterialTechFilter] = useState('all');
