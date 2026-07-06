@@ -57,6 +57,7 @@ import { MapPage } from './components/portal/MapPage';
 import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
 import { TasksPage } from './components/portal/TasksPage';
+import { useBillingFeature } from './features/billing/useBillingFeature';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
@@ -610,8 +611,13 @@ export function CompanyPortal({
   const [emailMessages, setEmailMessages] = useState<EmailMessage[]>([]);
   const [mailboxSyncLimit, setMailboxSyncLimit] = useState(25);
   const [mailboxSyncing, setMailboxSyncing] = useState(false);
-  const [billingStatus, setBillingStatus] = useState('');
-  const [billingModalOpen, setBillingModalOpen] = useState(false);
+  const {
+    billingStatus,
+    setBillingStatus,
+    billingModalOpen,
+    openBillingSetup,
+    closeBillingSetup,
+  } = useBillingFeature();
   const mailboxSyncingRef = useRef(false);
   const onboardingSaveQueueRef = useRef(Promise.resolve());
   const [emailCompose, setEmailCompose] = useState<EmailCompose>({
@@ -1699,9 +1705,8 @@ export function CompanyPortal({
   }
 
   function connectSubscriptionBilling() {
-    setBillingStatus('Opening Square card form...');
+    openBillingSetup();
     updateProfile({ subscriptionPaymentStatus: 'pending' });
-    setBillingModalOpen(true);
   }
 
   function handleLogoUpload(event: ChangeEvent<HTMLInputElement>) {
@@ -2521,7 +2526,7 @@ export function CompanyPortal({
         <SquareBillingModal
           activeCompany={activeCompany}
           profile={profile}
-          onClose={() => setBillingModalOpen(false)}
+          onClose={closeBillingSetup}
           onConnected={(updates, status) => {
             updateProfile(updates);
             setBillingStatus(status);
