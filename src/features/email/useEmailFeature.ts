@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type {
   EmailCompose,
   EmailComposeAttachment,
@@ -33,6 +33,7 @@ export function useEmailFeature() {
   const [emailCompose, setEmailCompose] = useState<EmailCompose>(emptyEmailCompose);
   const [emailComposeRequestId, setEmailComposeRequestId] = useState(0);
   const [emailComposeAttachments, setEmailComposeAttachments] = useState<EmailComposeAttachment[]>([]);
+  const unreadEmailCount = useMemo(() => emailMessages.filter((message) => message.unread).length, [emailMessages]);
 
   const applyEmailTemplate = (template: EmailTemplate) => {
     setEmailCompose((draft) => ({
@@ -81,6 +82,7 @@ export function useEmailFeature() {
     setEmailSearch,
     emailMessages,
     setEmailMessages,
+    unreadEmailCount,
     mailboxSyncLimit,
     setMailboxSyncLimit,
     mailboxSyncing,

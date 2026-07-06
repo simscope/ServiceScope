@@ -609,6 +609,7 @@ export function CompanyPortal({
     setEmailSearch,
     emailMessages,
     setEmailMessages,
+    unreadEmailCount,
     mailboxSyncLimit,
     setMailboxSyncLimit,
     mailboxSyncing,
@@ -1624,7 +1625,6 @@ export function CompanyPortal({
   const unassignedCalendarJobs = calendarJobs.filter((job) => !job.dayKey || job.assignee === 'No technician');
   const visibleCalendarJobs = scheduledJobs.filter((job) => activeCalendarTech === 'all' || job.assignee === activeCalendarTech);
   const visibleCalendarDays = calendarView === 'day' ? [formatCalendarDay(calendarAnchor)] : calendarDays;
-  const unreadEmailCount = emailMessages.filter((message) => message.unread).length;
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobInbox', label: 'Inbox', icon: <Inbox size={16} /> },
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
