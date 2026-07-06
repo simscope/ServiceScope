@@ -1,0 +1,74 @@
+import { useState } from 'react';
+import { emptyMaterialDraft } from '../../appTypes';
+import type { MaterialRow } from '../../types';
+
+export function normalizeMaterialRows(jobNumber: string, rows: MaterialRow[]) {
+  return rows
+    .filter((row) => row.name.trim() || row.supplier.trim())
+    .map((row) => ({
+      ...row,
+      jobNumber,
+      name: row.name.trim(),
+      supplier: row.supplier.trim(),
+      quantity: Math.max(1, Number(row.quantity) || 1),
+      price: Math.max(0, Number(row.price) || 0),
+    }));
+}
+
+export function useMaterialsFeature(initialRows: MaterialRow[]) {
+  const [materials, setMaterials] = useState<MaterialRow[]>(initialRows);
+  const [materialStatusFilter, setMaterialStatusFilter] = useState<'all' | MaterialRow['status']>('all');
+  const [materialTechFilter, setMaterialTechFilter] = useState('all');
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [editingMaterialsJobNumber, setEditingMaterialsJobNumber] = useState('');
+  const [materialDraftRows, setMaterialDraftRows] = useState<MaterialRow[]>([]);
+
+  const resetMaterialFilters = () => {
+    setMaterialStatusFilter('all');
+    setMaterialTechFilter('all');
+    setMaterialSearch('');
+  };
+
+  const openMaterialEditor = (jobNumber: string) => {
+    const existingRows = materials.filter((material) => material.jobNumber === jobNumber);
+    setEditingMaterialsJobNumber(jobNumber);
+    setMaterialDraftRows(existingRows.length ? existingRows.map((material) => ({ ...material })) : [emptyMaterialDraft(jobNumber)]);
+  };
+
+  const closeMaterialEditor = () => {
+    setEditingMaterialsJobNumber('');
+    setMaterialDraftRows([]);
+  };
+
+  const updateMaterialDraft = (rowId: string, patch: Partial<MaterialRow>) => {
+    setMaterialDraftRows((rows) => rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
+  };
+
+  const addMaterialDraftRow = () => {
+    if (!editingMaterialsJobNumber) return;
+    setMaterialDraftRows((rows) => [...rows, emptyMaterialDraft(editingMaterialsJobNumber)]);
+  };
+
+  const removeMaterialDraftRow = (rowId: string) => {
+    setMaterialDraftRows((rows) => rows.filter((row) => row.id !== rowId));
+  };
+
+  return {
+    materials,
+    setMaterials,
+    materialStatusFilter,
+    setMaterialStatusFilter,
+    materialTechFilter,
+    setMaterialTechFilter,
+    materialSearch,
+    setMaterialSearch,
+    editingMaterialsJobNumber,
+    materialDraftRows,
+    resetMaterialFilters,
+    openMaterialEditor,
+    closeMaterialEditor,
+    updateMaterialDraft,
+    addMaterialDraftRow,
+    removeMaterialDraftRow,
+  };
+}

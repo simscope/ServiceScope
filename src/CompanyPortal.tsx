@@ -62,6 +62,7 @@ import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
+import { normalizeMaterialRows, useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { useSupportFeature } from './features/support/useSupportFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
@@ -194,7 +195,6 @@ import type {
   JobInboxItem,
   PayrollRules,
 } from './appTypes';
-import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
@@ -588,12 +588,24 @@ export function CompanyPortal({
     monthDropRequest,
     setMonthDropRequest,
   } = useCalendarFeature();
-  const [materials, setMaterials] = useState<MaterialRow[]>(initialMaterialRows);
-  const [materialStatusFilter, setMaterialStatusFilter] = useState<'all' | MaterialRow['status']>('all');
-  const [materialTechFilter, setMaterialTechFilter] = useState('all');
-  const [materialSearch, setMaterialSearch] = useState('');
-  const [editingMaterialsJobNumber, setEditingMaterialsJobNumber] = useState('');
-  const [materialDraftRows, setMaterialDraftRows] = useState<MaterialRow[]>([]);
+  const {
+    materials,
+    setMaterials,
+    materialStatusFilter,
+    setMaterialStatusFilter,
+    materialTechFilter,
+    setMaterialTechFilter,
+    materialSearch,
+    setMaterialSearch,
+    editingMaterialsJobNumber,
+    materialDraftRows,
+    resetMaterialFilters,
+    openMaterialEditor,
+    closeMaterialEditor,
+    updateMaterialDraft,
+    addMaterialDraftRow,
+    removeMaterialDraftRow,
+  } = useMaterialsFeature(initialMaterialRows);
   const {
     mapTechFilter,
     setMapTechFilter,
@@ -1235,32 +1247,6 @@ export function CompanyPortal({
   ));
   const selectedMaterialsJob = materialJobMap.get(editingMaterialsJobNumber);
   const materialsTotal = filteredMaterialRows.reduce((sum, { material }) => sum + material.quantity * material.price, 0);
-  const openMaterialEditor = (jobNumber: string) => {
-    const existingRows = materials.filter((material) => material.jobNumber === jobNumber);
-    setEditingMaterialsJobNumber(jobNumber);
-    setMaterialDraftRows(existingRows.length ? existingRows.map((material) => ({ ...material })) : [emptyMaterialDraft(jobNumber)]);
-  };
-  const updateMaterialDraft = (rowId: string, patch: Partial<MaterialRow>) => {
-    setMaterialDraftRows((rows) => rows.map((row) => (row.id === rowId ? { ...row, ...patch } : row)));
-  };
-  const addMaterialDraftRow = () => {
-    if (!editingMaterialsJobNumber) return;
-    setMaterialDraftRows((rows) => [...rows, emptyMaterialDraft(editingMaterialsJobNumber)]);
-  };
-  const removeMaterialDraftRow = (rowId: string) => {
-    setMaterialDraftRows((rows) => rows.filter((row) => row.id !== rowId));
-  };
-  const normalizeMaterialRows = (jobNumber: string, rows: MaterialRow[]) => rows
-      .filter((row) => row.name.trim() || row.supplier.trim())
-      .map((row) => ({
-        ...row,
-        jobNumber,
-        name: row.name.trim(),
-        supplier: row.supplier.trim(),
-        quantity: Math.max(1, Number(row.quantity) || 1),
-        price: Math.max(0, Number(row.price) || 0),
-      }));
-
   const saveMaterialDraftRows = () => {
     if (stopCompanyWrite('materials', 'saving materials')) return;
     if (!editingMaterialsJobNumber) return;
@@ -1271,8 +1257,7 @@ export function CompanyPortal({
       ...rows.filter((row) => row.jobNumber !== jobNumber),
       ...cleanRows,
     ]);
-    setEditingMaterialsJobNumber('');
-    setMaterialDraftRows([]);
+    closeMaterialEditor();
 
     if (!selectedCompanyId) return;
     setJobsStatus('Saving materials...');
@@ -2249,16 +2234,12 @@ export function CompanyPortal({
             profile={profile}
             materialSearch={materialSearch}
             onMaterialSearchChange={setMaterialSearch}
-            onResetFilters={() => {
-              setMaterialStatusFilter('all');
-              setMaterialTechFilter('all');
-              setMaterialSearch('');
-            }}
+            onResetFilters={resetMaterialFilters}
             onOpenMaterialEditor={openMaterialEditor}
             onOpenJob={setOpenedJob}
             filteredMaterialRows={filteredMaterialRows}
             selectedMaterialsJob={selectedMaterialsJob}
-            onCloseMaterialEditor={() => setEditingMaterialsJobNumber('')}
+            onCloseMaterialEditor={closeMaterialEditor}
             materialDraftRows={materialDraftRows}
             onUpdateMaterialDraft={updateMaterialDraft}
             onRemoveMaterialDraftRow={removeMaterialDraftRow}
