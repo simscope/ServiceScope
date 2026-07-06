@@ -61,6 +61,7 @@ import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
+import { useMapFeature } from './features/map/useMapFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
 import {
@@ -591,9 +592,15 @@ export function CompanyPortal({
   const [materialSearch, setMaterialSearch] = useState('');
   const [editingMaterialsJobNumber, setEditingMaterialsJobNumber] = useState('');
   const [materialDraftRows, setMaterialDraftRows] = useState<MaterialRow[]>([]);
-  const [mapTechFilter, setMapTechFilter] = useState('all');
-  const [mapStatusFilter, setMapStatusFilter] = useState('all');
-  const [mapSearch, setMapSearch] = useState('');
+  const {
+    mapTechFilter,
+    setMapTechFilter,
+    mapStatusFilter,
+    setMapStatusFilter,
+    mapSearch,
+    setMapSearch,
+    resetMapFilters,
+  } = useMapFeature();
   const [emailConnection, setEmailConnection] = useState<EmailConnection | null>(null);
   const [mailboxConnectStatus, setMailboxConnectStatus] = useState('');
   const [mailboxOAuthSecretDraft, setMailboxOAuthSecretDraft] = useState('');
@@ -2331,11 +2338,7 @@ export function CompanyPortal({
             onMapStatusFilterChange={setMapStatusFilter}
             mapSearch={mapSearch}
             onMapSearchChange={setMapSearch}
-            onResetFilters={() => {
-              setMapTechFilter('all');
-              setMapStatusFilter('all');
-              setMapSearch('');
-            }}
+            onResetFilters={resetMapFilters}
             profile={profile}
           />
         ) : renderedClientPage === 'import' ? (
