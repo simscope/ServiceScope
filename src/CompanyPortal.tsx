@@ -115,7 +115,7 @@ import {
   mailboxOAuthRedirectUrl,
   saveMailboxOAuthSettings,
 } from './services/mailboxOAuthSettings';
-import { loadMailboxMessages, syncMailboxMessages } from './services/mailboxMessages';
+import { loadMailboxMessages } from './services/mailboxMessages';
 import { sendMailboxEmail } from './services/mailboxSend';
 import { deleteJobTypeFromBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput } from './services/payrollStore';
@@ -619,11 +619,7 @@ export function CompanyPortal({
     emailMessages,
     setEmailMessages,
     unreadEmailCount,
-    mailboxSyncLimit,
-    setMailboxSyncLimit,
     mailboxSyncing,
-    setMailboxSyncing,
-    mailboxSyncingRef,
     emailCompose,
     setEmailCompose,
     emailComposeRequestId,
@@ -631,6 +627,8 @@ export function CompanyPortal({
     applyEmailTemplate,
     resetEmailCompose,
     openEmailComposeDraft,
+    syncConnectedMailboxMessages,
+    loadMoreMailboxMessages,
   } = useEmailFeature();
   const {
     billingStatus,
@@ -847,44 +845,6 @@ export function CompanyPortal({
       window.removeEventListener('pointerup', handlePointerUp);
     };
   }, [resizingJob]);
-
-  async function syncConnectedMailboxMessages(companyId: string, limit = mailboxSyncLimit) {
-    if (mailboxSyncingRef.current) {
-      setMailboxConnectStatus('Mailbox sync is already running. Wait a moment.');
-      return;
-    }
-
-    mailboxSyncingRef.current = true;
-    setMailboxSyncing(true);
-
-    try {
-      const savedMessages = await loadMailboxMessages(companyId);
-      setEmailMessages(savedMessages);
-      setMailboxConnectStatus('Syncing mailbox...');
-
-      const result = await syncMailboxMessages(companyId, limit);
-      const syncedMessages = await loadMailboxMessages(companyId);
-      setEmailMessages(syncedMessages);
-
-      if (result.count) {
-        setMailboxConnectStatus(`Synced ${result.count} messages (${result.inbox} inbox, ${result.sent} sent).`);
-      } else {
-        setMailboxConnectStatus('Mailbox synced. No messages found.');
-      }
-    } finally {
-      mailboxSyncingRef.current = false;
-      setMailboxSyncing(false);
-    }
-  }
-
-  const loadMoreMailboxMessages = () => {
-    if (!selectedCompanyId || mailboxSyncingRef.current) return;
-    const nextLimit = Math.min(100, mailboxSyncLimit + 25);
-    setMailboxSyncLimit(nextLimit);
-    syncConnectedMailboxMessages(selectedCompanyId, nextLimit).catch((error) => {
-      setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox sync failed.');
-    });
-  };
 
   useEffect(() => {
     if (!selectedCompanyId || emailConnection?.status !== 'connected') {
@@ -2257,7 +2217,7 @@ export function CompanyPortal({
             emailProviderLabels={emailProviderLabels}
             onOpenOnboarding={() => setClientPage('onboarding')}
             onStartMailboxConnection={startMailboxConnector}
-            onLoadMoreMailbox={loadMoreMailboxMessages}
+            onLoadMoreMailbox={() => loadMoreMailboxMessages(selectedCompanyId)}
             mailboxSyncing={mailboxSyncing}
             mailboxConnectStatus={mailboxConnectStatus}
             emailFolder={emailFolder}
