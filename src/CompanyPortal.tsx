@@ -62,6 +62,7 @@ import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
+import { useSupportFeature } from './features/support/useSupportFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
 import {
@@ -549,14 +550,15 @@ export function CompanyPortal({
   onReplyToTicket?: (ticketId: string, body: string) => void;
 }) {
   const [clientPage, setClientPage] = useState<ClientPage>(() => readSavedClientPage());
-  const [request, setRequest] = useState<Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>>({
-    kind: 'change',
-    priority: 'normal',
-    subject: '',
-    message: '',
-  });
-  const [requestTouched, setRequestTouched] = useState(false);
-  const [supportReplyDrafts, setSupportReplyDrafts] = useState<Record<string, string>>({});
+  const {
+    request,
+    setRequest,
+    requestTouched,
+    setRequestTouched,
+    supportReplyDrafts,
+    setSupportReplyDrafts,
+    resetRequest,
+  } = useSupportFeature();
   const [technicianForm, setTechnicianForm] = useState<NewCompanyTechnicianForm>(emptyTechnicianForm);
   const [technicianAccessStatusById, setTechnicianAccessStatusById] = useState<Record<string, string>>({});
   const [technicianAccessPasswordById, setTechnicianAccessPasswordById] = useState<Record<string, string>>({});
@@ -1705,13 +1707,7 @@ export function CompanyPortal({
     if (!request.subject.trim() || !request.message.trim()) return;
 
     onCreateRequest(request);
-    setRequestTouched(false);
-    setRequest({
-      kind: 'change',
-      priority: 'normal',
-      subject: '',
-      message: '',
-    });
+    resetRequest();
   }
 
   function handleSupportReply(event: FormEvent<HTMLFormElement>, ticketId: string) {
