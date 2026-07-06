@@ -65,6 +65,7 @@ import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
 import { normalizeMaterialRows, useMaterialsFeature } from './features/materials/useMaterialsFeature';
+import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { useSupportFeature } from './features/support/useSupportFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
@@ -198,9 +199,6 @@ import type {
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
-const CLIENT_PAGE_STORAGE_KEY = 'servicescope.portal.clientPage';
-const clientPageValues: ClientPage[] = ['jobInbox', 'jobs', 'allJobs', 'debtors', 'calendar', 'materials', 'tasks', 'map', 'email', 'finances', 'knowledge', 'import', 'portal', 'onboarding'];
-
 type SquareCard = {
   attach: (selector: string) => Promise<void>;
   tokenize: (details: Record<string, unknown>) => Promise<{
@@ -221,11 +219,6 @@ declare global {
       payments: (applicationId: string, locationId: string) => SquarePayments;
     };
   }
-}
-
-function readSavedClientPage(): ClientPage {
-  const saved = window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY);
-  return clientPageValues.includes(saved as ClientPage) ? saved as ClientPage : 'jobs';
 }
 
 function loadSquareScript(environment: 'sandbox' | 'production') {
@@ -536,7 +529,7 @@ export function CompanyPortal({
   onCreateRequest: (request: Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>) => void;
   onReplyToTicket?: (ticketId: string, body: string) => void;
 }) {
-  const [clientPage, setClientPage] = useState<ClientPage>(() => readSavedClientPage());
+  const { clientPage, setClientPage } = useClientPageFeature();
   const {
     request,
     setRequest,
@@ -712,10 +705,6 @@ export function CompanyPortal({
       cancelled = true;
     };
   }, [selectedCompany]);
-
-  useEffect(() => {
-    window.localStorage.setItem(CLIENT_PAGE_STORAGE_KEY, clientPage);
-  }, [clientPage]);
 
   useEffect(() => {
     if (!selectedCompany) {
