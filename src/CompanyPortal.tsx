@@ -63,6 +63,7 @@ import { useEmailFeature } from './features/email/useEmailFeature';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
+import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
 import { normalizeMaterialRows, useMaterialsFeature } from './features/materials/useMaterialsFeature';
@@ -545,12 +546,20 @@ export function CompanyPortal({
   const [ownerAccessPasswordConfirm, setOwnerAccessPasswordConfirm] = useState('');
   const [ownerAccessStatus, setOwnerAccessStatus] = useState('');
   const [jobTypeForm, setJobTypeForm] = useState<NewCompanyJobTypeForm>(emptyJobTypeForm);
-  const [openedJob, setOpenedJob] = useState<JobCardData | null>(null);
-  const [jobs, setJobs] = useState<ServiceJob[]>([]);
-  const [jobsStatus, setJobsStatus] = useState('');
-  const [inlineJobDrafts, setInlineJobDrafts] = useState<Record<string, Partial<ServiceJob>>>({});
-  const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
-  const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
+  const {
+    openedJob,
+    setOpenedJob,
+    jobs,
+    setJobs,
+    jobsStatus,
+    setJobsStatus,
+    inlineJobDrafts,
+    setInlineJobDrafts,
+    allJobsVisibility,
+    setAllJobsVisibility,
+    selectedJobTypeId,
+    setSelectedJobTypeId,
+  } = useJobsFeature();
   const {
     calendarView,
     setCalendarView,
