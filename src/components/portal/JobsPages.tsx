@@ -91,6 +91,10 @@ function jobNumberText(job: ServiceJob) {
     .toLowerCase();
 }
 
+function isInteractiveRowTarget(target: EventTarget | null) {
+  return target instanceof Element && Boolean(target.closest('input, select, textarea, button, a'));
+}
+
 function escapeExcelCell(value: string | number | null | undefined) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -630,7 +634,16 @@ export function AllJobsPage({
                     const visibleStatus = inlineJobDrafts[job.id]?.status ?? job.status;
 
                     return (
-                    <tr className={`all-jobs-row ${statusClassName(visibleStatus)}`} key={job.jobNumber}>
+                    <tr
+                      className={`all-jobs-row ${statusClassName(visibleStatus)}`}
+                      key={job.jobNumber}
+                      onDoubleClick={(event) => {
+                        if (!isInteractiveRowTarget(event.target)) {
+                          onOpenJob(job);
+                        }
+                      }}
+                      title="Double-click to open job"
+                    >
                       <td>
                         <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
                           {job.jobNumber}
