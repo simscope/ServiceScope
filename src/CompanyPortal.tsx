@@ -21,7 +21,6 @@ import {
   Plus,
   Rocket,
   Search,
-  ShieldCheck,
   SlidersHorizontal,
   UploadCloud,
   UserPlus,
@@ -43,7 +42,6 @@ import {
   updateSupportTicketStatus,
 } from './services/supportStore';
 import { applyPlan, plans } from './services/billingCatalog';
-import { confirmSubscriptionBillingSetup, startSubscriptionBillingSetup } from './services/billingConnector';
 import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CalendarPage } from './components/portal/CalendarPage';
@@ -56,6 +54,8 @@ import { KnowledgePage } from './components/portal/KnowledgePage';
 import { MapPage } from './components/portal/MapPage';
 import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
+import { CompanyLogin } from './components/portal/CompanyLogin';
+import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { TasksPage } from './components/portal/TasksPage';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
@@ -80,7 +80,6 @@ import {
   DashboardOverview,
   MetricCard,
   MiniStat,
-  StatusPill,
   SupportPanel,
 } from './components/OwnerPages';
 import {
@@ -196,271 +195,6 @@ import type {
 } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
-
-type SquareCard = {
-  attach: (selector: string) => Promise<void>;
-  tokenize: (details: Record<string, unknown>) => Promise<{
-    status: string;
-    token?: string;
-    errors?: Array<{ message?: string; detail?: string }>;
-  }>;
-  destroy?: () => Promise<void>;
-};
-
-type SquarePayments = {
-  card: () => Promise<SquareCard>;
-};
-
-declare global {
-  interface Window {
-    Square?: {
-      payments: (applicationId: string, locationId: string) => SquarePayments;
-    };
-  }
-}
-
-function loadSquareScript(environment: 'sandbox' | 'production') {
-  const scriptUrl = environment === 'production'
-    ? 'https://web.squarecdn.com/v1/square.js'
-    : 'https://sandbox.web.squarecdn.com/v1/square.js';
-
-  const existingScript = document.querySelector<HTMLScriptElement>(`script[src="${scriptUrl}"]`);
-  if (existingScript) {
-    return new Promise<void>((resolve, reject) => {
-      if (window.Square) {
-        resolve();
-        return;
-      }
-      existingScript.addEventListener('load', () => resolve(), { once: true });
-      existingScript.addEventListener('error', () => reject(new Error('Square.js failed to load.')), { once: true });
-    });
-  }
-
-  return new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = scriptUrl;
-    script.async = true;
-    script.addEventListener('load', () => resolve(), { once: true });
-    script.addEventListener('error', () => reject(new Error('Square.js failed to load.')), { once: true });
-    document.head.appendChild(script);
-  });
-}
-
-function SquareBillingModal({
-  activeCompany,
-  profile,
-  onClose,
-  onConnected,
-}: {
-  activeCompany: Company;
-  profile: CompanyOnboardingProfile;
-  onClose: () => void;
-  onConnected: (updates: Partial<CompanyOnboardingProfile>, status: string) => void;
-}) {
-  const cardRef = useRef<SquareCard | null>(null);
-  const [status, setStatus] = useState('Loading Square card form...');
-  const [submitting, setSubmitting] = useState(false);
-  const [ready, setReady] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function setupSquareCard() {
-      try {
-        const config = await startSubscriptionBillingSetup({
-          companyId: activeCompany.id,
-          billingName: profile.subscriptionBillingName || activeCompany.ownerName || activeCompany.name,
-          billingZip: profile.subscriptionBillingZip,
-          email: profile.billingEmail || activeCompany.ownerEmail,
-        });
-
-        await loadSquareScript(config.environment);
-        if (!window.Square) {
-          throw new Error('Square.js is not available.');
-        }
-
-        const payments = window.Square.payments(config.applicationId, config.locationId);
-        const card = await payments.card();
-        if (cancelled) {
-          await card.destroy?.();
-          return;
-        }
-
-        await card.attach('#square-card-container');
-        cardRef.current = card;
-        setReady(true);
-        setStatus('Enter a card to connect automatic billing.');
-      } catch (error) {
-        setStatus(error instanceof Error ? error.message : 'Square card form failed to load.');
-      }
-    }
-
-    setupSquareCard();
-
-    return () => {
-      cancelled = true;
-      void cardRef.current?.destroy?.();
-      cardRef.current = null;
-    };
-  }, [activeCompany.id]);
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!cardRef.current || submitting) return;
-
-    setSubmitting(true);
-    setStatus('Saving card in Square...');
-
-    try {
-      const tokenResult = await cardRef.current.tokenize({
-        intent: 'STORE',
-        customerInitiated: true,
-        sellerKeyedIn: false,
-        currencyCode: 'USD',
-        billingContact: {
-          givenName: profile.subscriptionBillingName || activeCompany.ownerName || activeCompany.name,
-          email: profile.billingEmail || activeCompany.ownerEmail,
-          addressLines: profile.serviceAddress ? [profile.serviceAddress] : [],
-          postalCode: profile.subscriptionBillingZip || undefined,
-          countryCode: 'US',
-        },
-      });
-
-      if (tokenResult.status !== 'OK' || !tokenResult.token) {
-        const detail = tokenResult.errors?.map((error) => error.message || error.detail).filter(Boolean).join(' ');
-        throw new Error(detail || 'Square could not tokenize this card.');
-      }
-
-      const result = await confirmSubscriptionBillingSetup({
-        companyId: activeCompany.id,
-        sourceId: tokenResult.token,
-        billingName: profile.subscriptionBillingName || activeCompany.ownerName || activeCompany.name,
-        billingZip: profile.subscriptionBillingZip,
-        email: profile.billingEmail || activeCompany.ownerEmail,
-      });
-
-      onConnected({
-        subscriptionPaymentStatus: 'active',
-        subscriptionCardBrand: result.brand,
-        subscriptionCardLast4: result.last4,
-        subscriptionCardExpMonth: result.expMonth,
-        subscriptionCardExpYear: result.expYear,
-        subscriptionBillingName: result.billingName || profile.subscriptionBillingName,
-        subscriptionBillingZip: result.billingZip || profile.subscriptionBillingZip,
-        autoPayEnabled: true,
-      }, 'Square payment method connected.');
-      onClose();
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Square billing setup failed.');
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <div className="email-message-modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="email-message-modal square-billing-modal" role="dialog" aria-modal="true" aria-label="Connect Square billing" onClick={(event) => event.stopPropagation()}>
-        <div className="email-message-detail-header">
-          <div>
-            <p className="eyebrow">ServiceScope subscription</p>
-            <h2>Connect Square card</h2>
-          </div>
-          <button className="secondary-button compact" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        <form className="square-billing-form" onSubmit={handleSubmit}>
-          <div className="square-billing-summary">
-            <strong>{activeCompany.plan} plan</strong>
-            <span>ServiceScope will use this card for automatic monthly charges.</span>
-          </div>
-
-          <div id="square-card-container" className="square-card-container" />
-
-          <p className="subscription-safe-note">
-            Card entry is handled by Square. ServiceScope stores only the Square card id and card summary.
-          </p>
-          {status ? <p className="access-status">{status}</p> : null}
-
-          <div className="email-message-modal-actions">
-            <button className="secondary-button" type="button" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="primary-button" type="submit" disabled={!ready || submitting}>
-              {submitting ? 'Saving card...' : 'Save Square card'}
-            </button>
-          </div>
-        </form>
-      </section>
-    </div>
-  );
-}
-
-export function CompanyLogin({
-  companies,
-  email,
-  onEmailChange,
-  onSelectCompany,
-}: {
-  companies: Company[];
-  email: string;
-  onEmailChange: (email: string) => void;
-  onSelectCompany: (companyId: string) => void;
-}) {
-  const matchingCompanies = companies.filter((company) =>
-    !email.trim() || company.ownerEmail.toLowerCase().includes(email.trim().toLowerCase()),
-  );
-
-  return (
-    <div className="company-login">
-      <section className="company-login-card">
-        <div className="brand-lockup company-brand">
-          <div className="brand-mark">
-            <ShieldCheck size={22} aria-hidden="true" />
-          </div>
-          <div>
-            <strong>ServiceScope</strong>
-            <span>Company Access</span>
-          </div>
-        </div>
-
-        <div className="login-heading">
-          <p className="eyebrow">Company login</p>
-          <h1>Enter your workspace</h1>
-          <p>Companies use this separate entrance to send requests, check launch status, and track support replies.</p>
-        </div>
-
-        <label>
-          Owner email
-          <input type="email" value={email} onChange={(event) => onEmailChange(event.target.value)} placeholder="Owner email" />
-        </label>
-
-        <div className="login-company-list">
-          {matchingCompanies.map((company) => (
-            <button className="login-company-row" type="button" key={company.id} onClick={() => onSelectCompany(company.id)}>
-              <div className="company-main">
-                <div className="company-avatar">{company.name.slice(0, 2).toUpperCase()}</div>
-                <div>
-                  <h3>{company.name}</h3>
-                  <p>{company.ownerEmail}</p>
-                </div>
-              </div>
-              <StatusPill status={company.status} />
-            </button>
-          ))}
-          {!matchingCompanies.length ? (
-            <div className="empty-state compact-empty">
-              <Building2 size={24} aria-hidden="true" />
-              <h3>No company found</h3>
-              <p>Check the owner email or ask ServiceScope support to verify access.</p>
-            </div>
-          ) : null}
-        </div>
-      </section>
-    </div>
-  );
-}
 
 function makeCompanyEmailDomain(company: Company) {
   const rawDomain = company.domain?.trim();
