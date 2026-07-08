@@ -1,5 +1,4 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import type { DragEvent, PointerEvent } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -58,6 +57,7 @@ import { CompanyLogin } from './components/portal/CompanyLogin';
 import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { TasksPage } from './components/portal/TasksPage';
 import { useBillingFeature } from './features/billing/useBillingFeature';
+import { calendarAppointmentFromParts, makeCalendarActions } from './features/calendar/calendarActions';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeDefaultEmailConnection } from './features/email/emailDefaults';
 import { useEmailFeature } from './features/email/useEmailFeature';
@@ -187,7 +187,7 @@ import type {
   EmailTemplate,
   JobInboxItem,
 } from './appTypes';
-import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
+import { addDays, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
 
 export function CompanyPortal({
@@ -1231,6 +1231,24 @@ export function CompanyPortal({
   const unassignedCalendarJobs = calendarJobs.filter((job) => !job.dayKey || job.assignee === 'No technician');
   const visibleCalendarJobs = scheduledJobs.filter((job) => activeCalendarTech === 'all' || job.assignee === activeCalendarTech);
   const visibleCalendarDays = calendarView === 'day' ? [formatCalendarDay(calendarAnchor)] : calendarDays;
+  const calendarActions = makeCalendarActions({
+    calendarView,
+    calendarAnchorDate,
+    setCalendarAnchorDate,
+    activeCalendarTech,
+    calendarAssignments,
+    setCalendarAssignments,
+    draggingJobNumber,
+    setDraggingJobNumber,
+    monthDropRequest,
+    setMonthDropRequest,
+    setResizingJob,
+    calendarDropSlots,
+    calendarJobs,
+    stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
+    setOpenedJob,
+    persistCalendarAssignment,
+  });
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobInbox', label: 'Inbox', icon: <Inbox size={16} /> },
     { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
@@ -1283,37 +1301,11 @@ export function CompanyPortal({
     updateProfile({ subscriptionPaymentStatus: 'pending' });
   }
 
-  function handleCalendarDragStart(event: DragEvent<HTMLElement>, jobNumber: string) {
-    setDraggingJobNumber(jobNumber);
-    event.dataTransfer.setData('text/plain', jobNumber);
-    event.dataTransfer.effectAllowed = 'move';
-  }
-
-  function moveCalendar(direction: -1 | 1) {
-    const anchor = parseLocalDate(calendarAnchorDate);
-    const nextDate =
-      calendarView === 'month'
-        ? addMonths(anchor, direction)
-        : addDays(anchor, direction * (calendarView === 'week' ? 7 : 1));
-
-    setCalendarAnchorDate(toLocalIsoDate(nextDate));
-  }
-
-  function showTodayInCalendar() {
-    setCalendarAnchorDate(toLocalIsoDate(new Date()));
-  }
-
-  function calendarAppointmentFromParts(dayKey: string, slotKey: string) {
-    const appointmentSlot = calendarDropSlots.find((slot) => slot.key === slotKey);
-    if (!appointmentSlot) return '';
-    return `${dayKey}T${String(appointmentSlot.hour).padStart(2, '0')}:${String(appointmentSlot.minute).padStart(2, '0')}`;
-  }
-
   function persistCalendarAssignment(jobNumber: string, assignee: string, dayKey: string, slotKey: string, durationMinutes: number) {
     if (stopCompanyWrite('calendar', 'saving calendar appointments')) return;
 
     const baseJob = jobs.find((job) => job.jobNumber === jobNumber);
-    const appointment = calendarAppointmentFromParts(dayKey, slotKey);
+    const appointment = calendarAppointmentFromParts(dayKey, slotKey, calendarDropSlots);
     if (!baseJob || !appointment) return;
 
     const nextJob = {
@@ -1346,105 +1338,6 @@ export function CompanyPortal({
       .catch((error) => {
         setJobsStatus(error instanceof Error ? error.message : 'Calendar appointment could not be saved.');
       });
-  }
-
-  function handleCalendarDrop(event: DragEvent<HTMLDivElement>, dayKey: string, slotKey: string) {
-    event.preventDefault();
-    if (stopCompanyWrite('calendar', 'moving calendar appointments')) return;
-
-    const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
-    if (!jobNumber) return;
-    const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
-    const assignee = activeCalendarTech !== 'all' ? activeCalendarTech : movedJob?.assignee;
-    if (!assignee || assignee === 'No technician') return;
-    const appointment = calendarAppointmentFromParts(dayKey, slotKey);
-    const durationMinutes = calendarAssignments[jobNumber]?.durationMinutes ?? movedJob?.durationMinutes ?? 120;
-
-    setCalendarAssignments((assignments) => ({
-      ...assignments,
-      [jobNumber]: {
-        assignee,
-        dayKey,
-        time: slotKey,
-        durationMinutes,
-      },
-    }));
-    setOpenedJob((job) => job?.jobNumber === jobNumber ? { ...job, technician: assignee, appointment } : job);
-    persistCalendarAssignment(jobNumber, assignee, dayKey, slotKey, durationMinutes);
-    setDraggingJobNumber('');
-  }
-
-  function handleCalendarMonthDrop(event: DragEvent<HTMLDivElement>, dayKey: string) {
-    event.preventDefault();
-    if (stopCompanyWrite('calendar', 'moving calendar appointments')) return;
-
-    const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
-    if (!jobNumber) return;
-    const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
-    const assignee = activeCalendarTech !== 'all' ? activeCalendarTech : movedJob?.assignee;
-    if (!assignee || assignee === 'No technician') return;
-
-    setMonthDropRequest({
-      jobNumber,
-      assignee,
-      dayKey,
-      time: movedJob?.time ?? '9 AM:00',
-      durationMinutes: calendarAssignments[jobNumber]?.durationMinutes ?? movedJob?.durationMinutes ?? 120,
-    });
-    setDraggingJobNumber('');
-  }
-
-  function confirmCalendarMonthDrop() {
-    if (stopCompanyWrite('calendar', 'saving calendar appointments')) return;
-    if (!monthDropRequest) return;
-    const appointment = calendarAppointmentFromParts(monthDropRequest.dayKey, monthDropRequest.time);
-
-    setCalendarAssignments((assignments) => ({
-      ...assignments,
-      [monthDropRequest.jobNumber]: {
-        assignee: monthDropRequest.assignee,
-        dayKey: monthDropRequest.dayKey,
-        time: monthDropRequest.time,
-        durationMinutes: monthDropRequest.durationMinutes,
-      },
-    }));
-    setOpenedJob((job) => job?.jobNumber === monthDropRequest.jobNumber ? { ...job, technician: monthDropRequest.assignee, appointment } : job);
-    persistCalendarAssignment(monthDropRequest.jobNumber, monthDropRequest.assignee, monthDropRequest.dayKey, monthDropRequest.time, monthDropRequest.durationMinutes);
-    setMonthDropRequest(null);
-  }
-
-  function handleCalendarResizeStart(
-    event: PointerEvent<HTMLSpanElement>,
-    job: { jobNumber: string; assignee: string; dayKey?: string; time?: string; durationMinutes: number },
-    edge: 'start' | 'end',
-  ) {
-    event.preventDefault();
-    event.stopPropagation();
-    if (stopCompanyWrite('calendar', 'resizing calendar appointments')) return;
-
-    if (!job.dayKey || !job.time) return;
-    const startSlotIndex = calendarDropSlots.findIndex((slot) => slot.key === job.time);
-    if (startSlotIndex < 0) return;
-
-    setCalendarAssignments((assignments) => ({
-      ...assignments,
-      [job.jobNumber]: assignments[job.jobNumber] ?? {
-        assignee: job.assignee,
-        dayKey: job.dayKey ?? '',
-        time: job.time ?? '',
-        durationMinutes: job.durationMinutes,
-      },
-    }));
-    setResizingJob({
-      jobNumber: job.jobNumber,
-      assignee: job.assignee,
-      dayKey: job.dayKey,
-      time: job.time,
-      edge,
-      startY: event.clientY,
-      startDuration: job.durationMinutes,
-      startSlotIndex,
-    });
   }
 
   function togglePaymentMethod(method: CompanyPaymentMethod) {
@@ -1598,29 +1491,29 @@ export function CompanyPortal({
             onDeleteInvoice={handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             calendarRangeTitle={calendarRangeTitle}
-            onMoveCalendar={moveCalendar}
-            onShowToday={showTodayInCalendar}
+            onMoveCalendar={calendarActions.moveCalendar}
+            onShowToday={calendarActions.showTodayInCalendar}
             activeCalendarTech={activeCalendarTech}
             onActiveCalendarTechChange={setActiveCalendarTech}
             calendarView={calendarView}
             onCalendarViewChange={setCalendarView}
             unassignedCalendarJobs={unassignedCalendarJobs}
-            onCalendarDragStart={handleCalendarDragStart}
+            onCalendarDragStart={calendarActions.handleCalendarDragStart}
             onOpenJob={setOpenedJob}
             calendarMonthDays={calendarMonthDays}
             visibleCalendarJobs={visibleCalendarJobs}
             calendarAnchor={calendarAnchor}
-            onCalendarMonthDrop={handleCalendarMonthDrop}
+            onCalendarMonthDrop={calendarActions.handleCalendarMonthDrop}
             visibleCalendarDays={visibleCalendarDays}
             calendarSlots={calendarSlots}
             calendarDropSlots={calendarDropSlots}
-            onCalendarDrop={handleCalendarDrop}
-            onCalendarResizeStart={handleCalendarResizeStart}
+            onCalendarDrop={calendarActions.handleCalendarDrop}
+            onCalendarResizeStart={calendarActions.handleCalendarResizeStart}
             jobStatusFilters={jobStatusFilters}
             monthDropRequest={monthDropRequest}
             allCalendarDays={allCalendarDays}
             onMonthDropRequestChange={setMonthDropRequest}
-            onConfirmCalendarMonthDrop={confirmCalendarMonthDrop}
+            onConfirmCalendarMonthDrop={calendarActions.confirmCalendarMonthDrop}
           />
         ) : renderedClientPage === 'materials' ? (
           <MaterialsPage
