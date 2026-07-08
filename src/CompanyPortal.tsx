@@ -60,6 +60,7 @@ import { calendarAppointmentFromParts, makeCalendarActions } from './features/ca
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeDefaultEmailConnection } from './features/email/emailDefaults';
 import { useEmailFeature } from './features/email/useEmailFeature';
+import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
 import { makeInvoiceActions } from './features/finance/invoiceActions';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
@@ -115,7 +116,6 @@ import {
   saveMailboxOAuthSettings,
 } from './services/mailboxOAuthSettings';
 import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput } from './services/payrollStore';
 import {
   listCompanyJobMaterials,
   listCompanyJobs,
@@ -802,116 +802,18 @@ export function CompanyPortal({
     closeMaterialEditor,
     stopMaterialsWrite: (action) => stopCompanyWrite('materials', action),
   });
-  const payrollItemByJobId = new globalThis.Map(payrollItems.map((item) => [item.jobId, item]));
-  const makePayrollItemInput = (job: ServiceJob & { paidScf: number; paidLabor: number; materialsCost: number; salaryBase: number; salary: number; warnings: string[]; payrollArchived?: boolean }, paidAt?: string | null): PayrollItemInput | null => {
-    const technicianId = findTechnicianId(profile, job.assignee);
-    if (!job.id || !technicianId) return null;
-
-    return {
-      jobId: job.id,
-      technicianId,
-      collectedCents: dollarsToCents(job.paidScf + job.paidLabor),
-      materialsCents: dollarsToCents(job.materialsCost),
-      payrollBaseCents: dollarsToCents(job.salaryBase),
-      salaryCents: dollarsToCents(job.salary),
-      reviewNote: job.warnings.join(' - '),
-      selectedForPayment: false,
-      paidAt: paidAt ?? payrollItemByJobId.get(job.id)?.paidAt ?? null,
-      archivedAt: job.payrollArchived ? new Date().toISOString() : null,
-    };
-  };
-  const financeRows = allJobsRows.map((job) => {
-    const materialsCost = materials
-      .filter((material) => material.jobNumber === job.jobNumber)
-      .reduce((sum, material) => sum + material.quantity * material.price, 0);
-    const scf = Number(job.serviceCallFee || 0);
-    const labor = Number(job.labor || 0);
-    const paidScf = job.scfPayment ? scf : 0;
-    const paidLabor = job.laborPayment ? labor : 0;
-    const onlyScf = paidScf > 0 && paidLabor === 0;
-    const salaryBase = Math.max(0, (payrollRules.includeScf ? paidScf : 0) + paidLabor - (payrollRules.deductMaterials ? materialsCost : 0));
-    const salary = onlyScf ? payrollRules.scfOnlyPayout : salaryBase * (payrollRules.commissionPercent / 100);
-    const paidAt = payrollItemByJobId.get(job.id)?.paidAt?.slice(0, 10) ?? salaryPaidJobs[job.jobNumber] ?? '';
-    const paid = Boolean(paidAt);
-    const warrantyEndTime = new Date(job.createdAt).getTime() + profile.warrantyDays * 24 * 60 * 60 * 1000;
-    const warrantyPassed = warrantyEndTime <= Date.now();
-    const payrollArchived = paid && warrantyPassed;
-    const warnings = [
-      job.assignee === 'No technician' ? 'No technician assigned' : '',
-      scf > 0 && !job.scfPayment ? 'SCF payment is missing' : '',
-      labor > 0 && !job.laborPayment ? 'Labor payment is missing' : '',
-      materialsCost > paidScf + paidLabor ? 'Materials exceed collected payments' : '',
-      !paid && salary === 0 ? 'No payable payroll yet' : '',
-    ].filter(Boolean);
-    const needsAttention = warnings.length > 0;
-
-    return {
-      ...job,
-      materialsCost,
-      paidScf,
-      paidLabor,
-      salaryBase,
-      salary,
-      paid,
-      paidAt,
-      warrantyPassed,
-      payrollArchived,
-      warnings,
-      needsAttention,
-    };
+  const financeWorkflow = makeFinanceWorkflow({
+    profile,
+    jobs: allJobsRows,
+    materials,
+    payrollRules,
+    payrollItems,
+    salaryPaidJobs,
+    financeTechFilter,
+    financePeriod,
+    setSalaryPaidJobs,
+    stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
   });
-  const financeBaseRows = financeRows.filter((job) => {
-    const matchesTech = financeTechFilter === 'all' || job.assignee === financeTechFilter;
-    const matchesPeriod =
-      financePeriod === 'all' ||
-      (financePeriod === 'this_week' ? job.createdAt >= '2026-06-07' : job.createdAt >= '2026-06-01');
-
-    return matchesTech && matchesPeriod;
-  });
-  const financeSummary = financeBaseRows.reduce(
-    (summary, job) => {
-      summary.paidRevenue += job.paidScf + job.paidLabor;
-      summary.materials += job.materialsCost;
-      summary.salary += job.salary;
-      summary.unpaidSalary += job.paid ? 0 : job.salary;
-      return summary;
-    },
-    { paidRevenue: 0, materials: 0, salary: 0, unpaidSalary: 0 },
-  );
-  const technicianPayroll = profile.technicians.map((technician) => {
-    const rows = financeBaseRows.filter((job) => job.assignee === technician.name);
-    return {
-      technician,
-      jobs: rows.length,
-      revenue: rows.reduce((sum, job) => sum + job.paidScf + job.paidLabor, 0),
-      materials: rows.reduce((sum, job) => sum + job.materialsCost, 0),
-      salary: rows.reduce((sum, job) => sum + job.salary, 0),
-      unpaid: rows.reduce((sum, job) => sum + (job.paid ? 0 : job.salary), 0),
-      attention: rows.filter((job) => job.needsAttention).length,
-    };
-  });
-  const toggleSalaryPaid = (jobNumber: string) => {
-    if (stopCompanyWrite('finances', 'updating payroll')) return;
-
-    setSalaryPaidJobs((jobs) => {
-      if (jobs[jobNumber]) {
-        const nextJobs = { ...jobs };
-        delete nextJobs[jobNumber];
-        return nextJobs;
-      }
-
-      return { ...jobs, [jobNumber]: new Date().toISOString().slice(0, 10) };
-    });
-  };
-  const markSalaryJobsPaid = (jobNumbers: string[]) => {
-    if (stopCompanyWrite('finances', 'updating payroll')) return;
-    if (!jobNumbers.length) return;
-    const paidAt = new Date().toISOString().slice(0, 10);
-    setSalaryPaidJobs((jobs) => ({
-      ...jobs,
-      ...Object.fromEntries(jobNumbers.map((jobNumber) => [jobNumber, paidAt])),
-    }));
-  };
   const paymentMethodOptions = profile.acceptedPayments.map((method) => ({
     value: method,
     label: paymentMethodLabels[method],
@@ -1418,18 +1320,18 @@ export function CompanyPortal({
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
-            financeSummary={financeSummary}
+            financeSummary={financeWorkflow.financeSummary}
             financePeriod={financePeriod}
             onFinancePeriodChange={setFinancePeriod}
             financeTechFilter={financeTechFilter}
             onFinanceTechFilterChange={setFinanceTechFilter}
             payrollRules={payrollRules}
             onPayrollRulesChange={setPayrollRules}
-            technicianPayroll={technicianPayroll}
-            financeBaseRows={financeBaseRows}
+            technicianPayroll={financeWorkflow.technicianPayroll}
+            financeBaseRows={financeWorkflow.financeBaseRows}
             onOpenJob={setOpenedJob}
-            onToggleSalaryPaid={toggleSalaryPaid}
-            onMarkSalaryJobsPaid={markSalaryJobsPaid}
+            onToggleSalaryPaid={financeWorkflow.toggleSalaryPaid}
+            onMarkSalaryJobsPaid={financeWorkflow.markSalaryJobsPaid}
           />
         ) : renderedClientPage === 'knowledge' ? (
           <KnowledgePage
