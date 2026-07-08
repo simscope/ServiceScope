@@ -41,7 +41,6 @@ import {
   updateSupportTicketStatus,
 } from './services/supportStore';
 import { applyPlan, plans } from './services/billingCatalog';
-import { JobCard, type JobCardData } from './components/JobCard';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CalendarPage } from './components/portal/CalendarPage';
 import { DebtorsPage } from './components/portal/DebtorsPage';
@@ -65,6 +64,7 @@ import { makeInvoiceActions } from './features/finance/invoiceActions';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
+import { makeJobActions } from './features/jobs/jobActions';
 import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
@@ -116,10 +116,8 @@ import {
 import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput } from './services/payrollStore';
 import {
-  createServiceJob,
   listCompanyJobMaterials,
   listCompanyJobs,
-  saveCustomerBlacklist,
   saveJobAppointment,
   saveJobMaterials as saveJobMaterialsToBackend,
   saveServiceJob,
@@ -149,7 +147,6 @@ import type {
   CompanyTechnicianRole,
   JobInvoice,
   MaterialRow,
-  NewServiceJobForm,
   ServiceJob,
   ServiceJobStatus,
 } from './types';
@@ -183,7 +180,6 @@ import type {
   EmailConnection,
   EmailProvider,
   EmailTemplate,
-  JobInboxItem,
 } from './appTypes';
 import { addDays, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
@@ -986,154 +982,6 @@ export function CompanyPortal({
       },
     }));
   };
-  const handleSaveJob = (updatedJob: JobCardData, openJobAfterSave = true, accessPage: CompanyPortalAccessPage = 'jobs') => {
-    if (stopCompanyWrite(accessPage, 'saving jobs')) return;
-
-    setJobs((currentJobs) => {
-      const nextJobs = currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job));
-      return nextJobs;
-    });
-    if (openJobAfterSave) {
-      setOpenedJob(updatedJob);
-    } else {
-      setOpenedJob((currentJob) => (currentJob?.id === updatedJob.id ? updatedJob : currentJob));
-    }
-    setJobsStatus('Saving job...');
-
-    saveServiceJob(selectedCompany.id, updatedJob)
-      .then((savedJob) => {
-        setJobs((currentJobs) => currentJobs.map((job) => (job.id === updatedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job)));
-        if (openJobAfterSave) {
-          setOpenedJob(savedJob);
-        } else {
-          setOpenedJob((currentJob) => (currentJob?.id === savedJob.id ? savedJob : currentJob));
-        }
-        setJobsStatus('Job saved.');
-      })
-      .catch((error) => {
-        setJobsStatus(error instanceof Error ? error.message : 'Job could not be saved.');
-      });
-  };
-  const handleSaveCustomerBlacklist = async (job: ServiceJob, blacklist: string) => {
-    if (stopCompanyWrite('debtors', 'updating customer blacklist')) {
-      throw new Error('Debtors access is read-only.');
-    }
-    if (!job.customerId) {
-      throw new Error('Customer record was not found for this job.');
-    }
-
-    const cleanBlacklist = blacklist.trim();
-    setJobs((currentJobs) => currentJobs.map((currentJob) => (
-      currentJob.customerId === job.customerId ? { ...currentJob, customerBlacklist: cleanBlacklist } : currentJob
-    )));
-    await saveCustomerBlacklist(selectedCompany.id, job.customerId, cleanBlacklist);
-  };
-  const handleImportJobs = async (importedJobs: ServiceJob[]) => {
-    if (stopCompanyWrite('import', 'importing jobs')) return;
-    setJobsStatus(`Importing ${importedJobs.length} migration jobs...`);
-
-    const savedJobs: ServiceJob[] = [];
-    for (const importedJob of importedJobs) {
-      const savedJob = await saveServiceJob(selectedCompany.id, importedJob);
-      savedJobs.push(savedJob);
-      setJobs((currentJobs) => {
-        const exists = currentJobs.some((job) => job.id === savedJob.id || job.jobNumber === savedJob.jobNumber);
-        return exists
-          ? currentJobs.map((job) => (job.id === savedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job))
-          : [savedJob, ...currentJobs];
-      });
-      setJobsStatus(`Imported ${savedJobs.length}/${importedJobs.length} migration jobs...`);
-    }
-
-    setJobsStatus(`Migration import complete: ${savedJobs.length} jobs saved.`);
-  };
-  const handleSaveInlineJob = (job: ServiceJob) => {
-    const draft = inlineJobDrafts[job.id] ?? {};
-    const updatedJob = {
-      ...job,
-      ...draft,
-      assignee: draft.technician ?? job.technician,
-    };
-
-    handleSaveJob(updatedJob, false);
-    setInlineJobDrafts((drafts) => {
-      const nextDrafts = { ...drafts };
-      delete nextDrafts[job.id];
-      return nextDrafts;
-    });
-  };
-  const handleCreateJob = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (stopCompanyWrite('jobs', 'creating jobs')) return;
-
-    const form = new FormData(event.currentTarget);
-    const rawJobNumber = String(form.get('jobNumber') ?? '').trim();
-    const technicianName = String(form.get('technician') ?? '').trim();
-    const jobForm: NewServiceJobForm = {
-      jobNumber: rawJobNumber && rawJobNumber.toLowerCase() !== 'automatic' ? rawJobNumber : generatedJobNumber,
-      system: selectedJobType?.name ?? String(form.get('system') ?? 'General'),
-      clientName: String(form.get('clientName') ?? '').trim() || 'Unknown client',
-      organization: String(form.get('organization') ?? '').trim() || 'Unknown company',
-      phone: String(form.get('phone') ?? '').trim(),
-      email: String(form.get('email') ?? '').trim(),
-      address: String(form.get('address') ?? '').trim(),
-      technician: technicianName,
-      serviceCallFee: String(form.get('serviceCallFee') ?? profile.serviceCallFee).trim() || String(profile.serviceCallFee),
-      issue: String(form.get('issue') ?? '').trim() || 'Service request',
-      notes: String(form.get('notes') ?? '').trim(),
-    };
-    const createdJob = createServiceJob(selectedCompany.id, jobForm);
-
-    setJobs((currentJobs) => {
-      const nextJobs = [createdJob, ...currentJobs];
-      return nextJobs;
-    });
-    setOpenedJob(createdJob);
-    setJobsStatus('Creating job...');
-
-    saveServiceJob(selectedCompany.id, createdJob)
-      .then((savedJob) => {
-        setJobs((currentJobs) => currentJobs.map((job) => (job.id === createdJob.id ? savedJob : job)));
-        setOpenedJob(savedJob);
-        setJobsStatus('Job created.');
-      })
-      .catch((error) => {
-        setJobs((currentJobs) => currentJobs.filter((job) => job.id !== createdJob.id));
-        setOpenedJob(null);
-        setJobsStatus(error instanceof Error ? error.message : 'Job could not be created.');
-      });
-  };
-  const handleConvertJobInboxItem = (item: JobInboxItem) => {
-    if (stopCompanyWrite('jobInbox', 'converting job inbox items')) return;
-    if (stopCompanyWrite('jobs', 'creating jobs')) return;
-
-    const createdJob = createServiceJob(selectedCompany.id, {
-      jobNumber: generatedJobNumber,
-      system: selectedJobType?.name ?? 'General',
-      clientName: item.clientName.trim() || 'Unknown client',
-      organization: item.clientName.trim() || 'Unknown company',
-      phone: item.clientPhone,
-      email: item.clientEmail,
-      address: item.address,
-      technician: '',
-      serviceCallFee: String(profile.serviceCallFee),
-      issue: item.message.trim() || 'Service request',
-      notes: `Created from Job Inbox (${item.source}).`,
-    });
-
-    jobInboxFeature.setStatus('Converting inbox item to job...');
-    saveServiceJob(selectedCompany.id, createdJob)
-      .then(async (savedJob) => {
-        await jobInboxFeature.markConverted(item, savedJob.id);
-        setJobs((currentJobs) => [savedJob, ...currentJobs.filter((job) => job.id !== savedJob.id)]);
-        setOpenedJob(savedJob);
-        setClientPage('jobs');
-        jobInboxFeature.setStatus(`Converted to job ${savedJob.jobNumber}.`);
-      })
-      .catch((error) => {
-        jobInboxFeature.setStatus(error instanceof Error ? error.message : 'Inbox item could not be converted.');
-      });
-  };
   const calendarAnchor = parseLocalDate(calendarAnchorDate);
   const calendarWeekStart = startOfWeek(calendarAnchor);
   const calendarDays = Array.from({ length: 7 }, (_, index) => formatCalendarDay(addDays(calendarWeekStart, index)));
@@ -1223,6 +1071,20 @@ export function CompanyPortal({
     setJobs,
     setOpenedJob,
     stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
+  });
+  const jobActions = makeJobActions({
+    companyId: selectedCompany.id,
+    profile,
+    generatedJobNumber,
+    selectedJobType,
+    inlineJobDrafts,
+    setInlineJobDrafts,
+    setJobs,
+    setOpenedJob,
+    setJobsStatus,
+    setClientPage,
+    jobInboxFeature,
+    stopCompanyWrite,
   });
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobInbox', label: 'Inbox', icon: <Inbox size={16} /> },
@@ -1384,7 +1246,7 @@ export function CompanyPortal({
             onCreateItem={jobInboxFeature.createItem}
             onSearchChange={jobInboxFeature.setSearch}
             onStatusFilterChange={jobInboxFeature.setStatusFilter}
-            onConvertToJob={handleConvertJobInboxItem}
+            onConvertToJob={jobActions.handleConvertJobInboxItem}
             onUpdateStatus={jobInboxFeature.updateItemStatus}
           />
         ) : renderedClientPage === 'jobs' ? (
@@ -1396,12 +1258,12 @@ export function CompanyPortal({
             materials={materials}
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={handleSaveJob}
+            onSaveJob={jobActions.handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
-            onCreateJob={handleCreateJob}
+            onCreateJob={jobActions.handleCreateJob}
             selectedJobPrefix={selectedJobPrefix}
             nextJobNumber={nextJobNumber}
             selectedJobType={selectedJobType}
@@ -1416,7 +1278,7 @@ export function CompanyPortal({
             materials={materials}
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={handleSaveJob}
+            onSaveJob={jobActions.handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
@@ -1430,7 +1292,7 @@ export function CompanyPortal({
             totalJobsCount={allJobsRows.length}
             inlineJobDrafts={inlineJobDrafts}
             onUpdateInlineJobDraft={updateInlineJobDraft}
-            onSaveInlineJob={handleSaveInlineJob}
+            onSaveInlineJob={jobActions.handleSaveInlineJob}
             onOpenJob={setOpenedJob}
           />
         ) : renderedClientPage === 'debtors' ? (
@@ -1441,15 +1303,15 @@ export function CompanyPortal({
             materials={materials}
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={(job) => handleSaveJob(job, true, 'debtors')}
+            onSaveJob={(job) => jobActions.handleSaveJob(job, true, 'debtors')}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             allJobsRows={allJobsRows}
             onOpenJob={setOpenedJob}
-            onSaveDebtorJob={(job) => handleSaveJob(job, false, 'debtors')}
-            onSaveCustomerBlacklist={handleSaveCustomerBlacklist}
+            onSaveDebtorJob={(job) => jobActions.handleSaveJob(job, false, 'debtors')}
+            onSaveCustomerBlacklist={jobActions.handleSaveCustomerBlacklist}
             readOnly={activePageReadOnly}
           />
         ) : renderedClientPage === 'calendar' ? (
@@ -1460,7 +1322,7 @@ export function CompanyPortal({
             materials={materials}
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={handleSaveJob}
+            onSaveJob={jobActions.handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
@@ -1523,7 +1385,7 @@ export function CompanyPortal({
             materials={materials}
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={handleSaveJob}
+            onSaveJob={jobActions.handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
@@ -1593,7 +1455,7 @@ export function CompanyPortal({
             profile={profile}
             existingJobs={allJobsRows}
             nextJobNumber={nextJobNumber}
-            onImportJobs={handleImportJobs}
+            onImportJobs={jobActions.handleImportJobs}
             readOnly={activePageReadOnly}
           />
         ) : renderedClientPage === 'finances' ? (
@@ -1604,7 +1466,7 @@ export function CompanyPortal({
             materials={materials}
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={handleSaveJob}
+            onSaveJob={jobActions.handleSaveJob}
             onSaveMaterials={saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
