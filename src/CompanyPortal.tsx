@@ -59,6 +59,7 @@ import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { TasksPage } from './components/portal/TasksPage';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
+import { makeDefaultEmailConnection } from './features/email/emailDefaults';
 import { useEmailFeature } from './features/email/useEmailFeature';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
@@ -195,52 +196,6 @@ import type {
 } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
-
-function makeCompanyEmailDomain(company: Company) {
-  const rawDomain = company.domain?.trim();
-  if (rawDomain) {
-    try {
-      const url = new URL(rawDomain.startsWith('http') ? rawDomain : `https://${rawDomain}`);
-      return url.hostname.replace(/^www\./, '');
-    } catch {
-      return rawDomain.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
-    }
-  }
-
-  return `${String(company.name ?? 'company').toLowerCase().replace(/[^a-z0-9]+/g, '').replace(/^$/, 'company')}.com`;
-}
-
-function makeDefaultEmailConnection(
-  company: Company,
-  profile: CompanyOnboardingProfile,
-  provider: EmailProvider,
-): EmailConnection {
-  const domain = makeCompanyEmailDomain(company);
-  const address = provider === 'smtp' ? `dispatch@${domain}` : '';
-
-  return {
-    provider,
-    address,
-    status: 'backend_required',
-    oauthClientId: '',
-    oauthClientSecretSaved: false,
-    oauthRedirectUrl: mailboxOAuthRedirectUrl,
-    lastSync: 'Not synced',
-    syncRange: '30',
-    autoLinkJobNumber: true,
-    autoLinkClientEmail: true,
-    createTaskFromUnread: true,
-    senderName: profile.displayName || company.name,
-    replyTo: address,
-    signature: `${profile.displayName || company.name}\n${profile.phone || profile.billingEmail || company.ownerEmail}`,
-    imapHost: provider === 'smtp' ? `imap.${domain}` : '',
-    imapPort: provider === 'smtp' ? '993' : '',
-    smtpHost: provider === 'smtp' ? `smtp.${domain}` : '',
-    smtpPort: provider === 'smtp' ? '587' : '',
-    security: provider === 'smtp' ? 'tls' : 'ssl',
-    username: provider === 'smtp' ? address : '',
-  };
-}
 
 export function CompanyPortal({
   selectedCompany,
