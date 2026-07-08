@@ -61,6 +61,7 @@ import { calendarAppointmentFromParts, makeCalendarActions } from './features/ca
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeDefaultEmailConnection } from './features/email/emailDefaults';
 import { useEmailFeature } from './features/email/useEmailFeature';
+import { makeInvoiceActions } from './features/finance/invoiceActions';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
@@ -115,9 +116,7 @@ import {
 import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { dollarsToCents, findTechnicianId, listCompanyPayrollItems, upsertCompanyPayrollItems, type PayrollItemInput } from './services/payrollStore';
 import {
-  createJobInvoice,
   createServiceJob,
-  deleteJobInvoice,
   listCompanyJobMaterials,
   listCompanyJobs,
   saveCustomerBlacklist,
@@ -148,7 +147,6 @@ import type {
   CompanyOnboardingProfile,
   CompanyPaymentMethod,
   CompanyTechnicianRole,
-  JobDocumentType,
   JobInvoice,
   MaterialRow,
   NewServiceJobForm,
@@ -1136,35 +1134,6 @@ export function CompanyPortal({
         jobInboxFeature.setStatus(error instanceof Error ? error.message : 'Inbox item could not be converted.');
       });
   };
-  const handleCreateInvoice = async (job: JobCardData, invoiceMaterials: MaterialRow[], amount: number, documentType: JobDocumentType) => {
-    if (stopCompanyWrite('finances', 'creating invoices')) {
-      throw new Error('Finance access is read-only.');
-    }
-
-    const invoice = await createJobInvoice(selectedCompany.id, job, invoiceMaterials, amount, documentType);
-    setJobs((currentJobs) => currentJobs.map((currentJob) => (
-      currentJob.id === job.id
-        ? { ...currentJob, invoices: [invoice, ...(currentJob.invoices ?? [])] }
-        : currentJob
-    )));
-    setOpenedJob((currentJob) => currentJob?.id === job.id ? { ...currentJob, invoices: [invoice, ...(currentJob.invoices ?? [])] } : currentJob);
-    return invoice;
-  };
-  const handleDeleteInvoice = async (job: JobCardData, invoiceId: string) => {
-    if (stopCompanyWrite('finances', 'deleting invoices')) {
-      throw new Error('Finance access is read-only.');
-    }
-
-    await deleteJobInvoice(selectedCompany.id, job.id, invoiceId);
-    const removeInvoice = (currentJob: ServiceJob) => (
-      currentJob.id === job.id
-        ? { ...currentJob, invoices: (currentJob.invoices ?? []).filter((invoice) => invoice.id !== invoiceId) }
-        : currentJob
-    );
-
-    setJobs((currentJobs) => currentJobs.map(removeInvoice));
-    setOpenedJob((currentJob) => (currentJob?.id === job.id ? removeInvoice(currentJob) : currentJob));
-  };
   const calendarAnchor = parseLocalDate(calendarAnchorDate);
   const calendarWeekStart = startOfWeek(calendarAnchor);
   const calendarDays = Array.from({ length: 7 }, (_, index) => formatCalendarDay(addDays(calendarWeekStart, index)));
@@ -1248,6 +1217,12 @@ export function CompanyPortal({
     stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
     setOpenedJob,
     persistCalendarAssignment,
+  });
+  const invoiceActions = makeInvoiceActions({
+    companyId: selectedCompany.id,
+    setJobs,
+    setOpenedJob,
+    stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
   });
   const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
     { page: 'jobInbox', label: 'Inbox', icon: <Inbox size={16} /> },
@@ -1423,8 +1398,8 @@ export function CompanyPortal({
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
-            onCreateInvoice={handleCreateInvoice}
-            onDeleteInvoice={handleDeleteInvoice}
+            onCreateInvoice={invoiceActions.handleCreateInvoice}
+            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             onCreateJob={handleCreateJob}
             selectedJobPrefix={selectedJobPrefix}
@@ -1443,8 +1418,8 @@ export function CompanyPortal({
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
-            onCreateInvoice={handleCreateInvoice}
-            onDeleteInvoice={handleDeleteInvoice}
+            onCreateInvoice={invoiceActions.handleCreateInvoice}
+            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             jobStatusFilters={jobStatusFilters}
             allJobsGroups={allJobsGroups}
@@ -1468,8 +1443,8 @@ export function CompanyPortal({
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={(job) => handleSaveJob(job, true, 'debtors')}
             onSaveMaterials={saveJobMaterials}
-            onCreateInvoice={handleCreateInvoice}
-            onDeleteInvoice={handleDeleteInvoice}
+            onCreateInvoice={invoiceActions.handleCreateInvoice}
+            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             allJobsRows={allJobsRows}
             onOpenJob={setOpenedJob}
@@ -1487,8 +1462,8 @@ export function CompanyPortal({
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
-            onCreateInvoice={handleCreateInvoice}
-            onDeleteInvoice={handleDeleteInvoice}
+            onCreateInvoice={invoiceActions.handleCreateInvoice}
+            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             calendarRangeTitle={calendarRangeTitle}
             onMoveCalendar={calendarActions.moveCalendar}
@@ -1550,8 +1525,8 @@ export function CompanyPortal({
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
-            onCreateInvoice={handleCreateInvoice}
-            onDeleteInvoice={handleDeleteInvoice}
+            onCreateInvoice={invoiceActions.handleCreateInvoice}
+            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             openTaskCount={tasksFeature.openTaskCount}
             autoTaskCount={tasksFeature.autoTaskCount}
@@ -1631,8 +1606,8 @@ export function CompanyPortal({
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={handleSaveJob}
             onSaveMaterials={saveJobMaterials}
-            onCreateInvoice={handleCreateInvoice}
-            onDeleteInvoice={handleDeleteInvoice}
+            onCreateInvoice={invoiceActions.handleCreateInvoice}
+            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
             financeSummary={financeSummary}
             financePeriod={financePeriod}
