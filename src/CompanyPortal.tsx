@@ -68,7 +68,8 @@ import { makeJobActions } from './features/jobs/jobActions';
 import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
-import { normalizeMaterialRows, useMaterialsFeature } from './features/materials/useMaterialsFeature';
+import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
+import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { useOnboardingAdminFeature } from './features/onboarding/useOnboardingAdminFeature';
 import { useSupportFeature } from './features/support/useSupportFeature';
@@ -119,7 +120,6 @@ import {
   listCompanyJobMaterials,
   listCompanyJobs,
   saveJobAppointment,
-  saveJobMaterials as saveJobMaterialsToBackend,
   saveServiceJob,
 } from './services/jobsStore';
 import type {
@@ -787,74 +787,21 @@ export function CompanyPortal({
       attachments,
     });
   };
-  const materialRowsWithJobs = materials
-    .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))
-    .filter((row): row is { material: MaterialRow; job: typeof allJobsRows[number] } => Boolean(row.job));
-  const normalizedMaterialSearch = materialSearch.trim().toLowerCase();
-  const materialJobMatchesSearch = (job: ServiceJob, extras: string[] = []) => {
-    if (!normalizedMaterialSearch) return true;
-    return [job.jobNumber, job.organization, job.clientName, job.phone, job.email, job.address, job.system, job.issue, job.notes, ...extras]
-      .join(' ')
-      .toLowerCase()
-      .includes(normalizedMaterialSearch);
-  };
-  const materialJobMatchesTechnician = (job: ServiceJob) => materialTechFilter === 'all' || job.assignee === materialTechFilter;
-  const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
-    const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
-
-    return matchesStatus && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
+  const materialWorkflow = makeMaterialWorkflow({
+    companyId: selectedCompanyId,
+    materials,
+    materialStatusFilter,
+    materialTechFilter,
+    materialSearch,
+    editingMaterialsJobNumber,
+    materialDraftRows,
+    allJobsRows,
+    activeJobsRows,
+    setMaterials,
+    setJobsStatus,
+    closeMaterialEditor,
+    stopMaterialsWrite: (action) => stopCompanyWrite('materials', action),
   });
-  const jobsWithoutMaterials = activeJobsRows.filter((job) => !materials.some((material) => material.jobNumber === job.jobNumber));
-  const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
-    materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
-  ));
-  const selectedMaterialsJob = materialJobMap.get(editingMaterialsJobNumber);
-  const materialsTotal = filteredMaterialRows.reduce((sum, { material }) => sum + material.quantity * material.price, 0);
-  const saveMaterialDraftRows = () => {
-    if (stopCompanyWrite('materials', 'saving materials')) return;
-    if (!editingMaterialsJobNumber) return;
-    const jobNumber = editingMaterialsJobNumber;
-    const cleanRows = normalizeMaterialRows(jobNumber, materialDraftRows);
-
-    setMaterials((rows) => [
-      ...rows.filter((row) => row.jobNumber !== jobNumber),
-      ...cleanRows,
-    ]);
-    closeMaterialEditor();
-
-    if (!selectedCompanyId) return;
-    setJobsStatus('Saving materials...');
-    saveJobMaterialsToBackend(selectedCompanyId, jobNumber, cleanRows)
-      .then((savedMaterials) => {
-        setMaterials(savedMaterials);
-        setJobsStatus('Materials saved.');
-      })
-      .catch((error) => {
-        setJobsStatus(error instanceof Error ? error.message : 'Materials could not be saved.');
-      });
-  };
-  const saveJobMaterials = (jobNumber: string, rows: MaterialRow[]) => {
-    if (stopCompanyWrite('materials', 'saving materials')) return Promise.resolve();
-
-    const cleanRows = normalizeMaterialRows(jobNumber, rows);
-
-    setMaterials((currentRows) => [
-      ...currentRows.filter((row) => row.jobNumber !== jobNumber),
-      ...cleanRows,
-    ]);
-
-    if (!selectedCompanyId) return Promise.resolve();
-    setJobsStatus('Saving materials...');
-    return saveJobMaterialsToBackend(selectedCompanyId, jobNumber, cleanRows)
-      .then((savedMaterials) => {
-        setMaterials(savedMaterials);
-        setJobsStatus('Materials saved.');
-      })
-      .catch((error) => {
-        setJobsStatus(error instanceof Error ? error.message : 'Materials could not be saved.');
-        throw error;
-      });
-  };
   const payrollItemByJobId = new globalThis.Map(payrollItems.map((item) => [item.jobId, item]));
   const makePayrollItemInput = (job: ServiceJob & { paidScf: number; paidLabor: number; materialsCost: number; salaryBase: number; salary: number; warnings: string[]; payrollArchived?: boolean }, paidAt?: string | null): PayrollItemInput | null => {
     const technicianId = findTechnicianId(profile, job.assignee);
@@ -1259,7 +1206,7 @@ export function CompanyPortal({
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={saveJobMaterials}
+            onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
@@ -1279,7 +1226,7 @@ export function CompanyPortal({
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={saveJobMaterials}
+            onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
@@ -1304,7 +1251,7 @@ export function CompanyPortal({
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={(job) => jobActions.handleSaveJob(job, true, 'debtors')}
-            onSaveMaterials={saveJobMaterials}
+            onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
@@ -1323,7 +1270,7 @@ export function CompanyPortal({
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={saveJobMaterials}
+            onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
@@ -1355,8 +1302,8 @@ export function CompanyPortal({
         ) : renderedClientPage === 'materials' ? (
           <MaterialsPage
             materials={materials}
-            jobsWithoutMaterials={filteredJobsWithoutMaterials}
-            materialsTotal={materialsTotal}
+            jobsWithoutMaterials={materialWorkflow.filteredJobsWithoutMaterials}
+            materialsTotal={materialWorkflow.materialsTotal}
             materialStatusFilter={materialStatusFilter}
             onMaterialStatusFilterChange={setMaterialStatusFilter}
             materialStatuses={materialStatuses}
@@ -1368,14 +1315,14 @@ export function CompanyPortal({
             onResetFilters={resetMaterialFilters}
             onOpenMaterialEditor={openMaterialEditor}
             onOpenJob={setOpenedJob}
-            filteredMaterialRows={filteredMaterialRows}
-            selectedMaterialsJob={selectedMaterialsJob}
+            filteredMaterialRows={materialWorkflow.filteredMaterialRows}
+            selectedMaterialsJob={materialWorkflow.selectedMaterialsJob}
             onCloseMaterialEditor={closeMaterialEditor}
             materialDraftRows={materialDraftRows}
             onUpdateMaterialDraft={updateMaterialDraft}
             onRemoveMaterialDraftRow={removeMaterialDraftRow}
             onAddMaterialDraftRow={addMaterialDraftRow}
-            onSaveMaterialDraftRows={saveMaterialDraftRows}
+            onSaveMaterialDraftRows={materialWorkflow.saveMaterialDraftRows}
           />
         ) : renderedClientPage === 'tasks' ? (
           <TasksPage
@@ -1386,7 +1333,7 @@ export function CompanyPortal({
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={saveJobMaterials}
+            onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
@@ -1467,7 +1414,7 @@ export function CompanyPortal({
             currentPortalUser={currentPortalUser}
             onCloseJob={() => setOpenedJob(null)}
             onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={saveJobMaterials}
+            onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
             onComposeEmail={openEmailCompose}
