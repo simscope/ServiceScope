@@ -68,6 +68,7 @@ import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { makeJobActions } from './features/jobs/jobActions';
+import { makeJobModel } from './features/jobs/jobModel';
 import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { useMapFeature } from './features/map/useMapFeature';
@@ -148,7 +149,6 @@ import type {
   JobInvoice,
   MaterialRow,
   ServiceJob,
-  ServiceJobStatus,
 } from './types';
 import {
   auditCategoryLabels,
@@ -181,7 +181,7 @@ import type {
   EmailProvider,
   EmailTemplate,
 } from './appTypes';
-import { googleRouteUrl, isCustomerJobPaid, money, statusClassName } from './utils/format';
+import { googleRouteUrl, money, statusClassName } from './utils/format';
 
 export function CompanyPortal({
   selectedCompany,
@@ -635,26 +635,25 @@ export function CompanyPortal({
       .map((jobType) => String(jobType.name ?? '').trim().toLowerCase())
       .filter(Boolean),
   );
-  const defaultJobType = profile.jobTypes.find((jobType) => jobType.name === 'HVAC') ?? profile.jobTypes[0];
-  const selectedJobType = profile.jobTypes.find((jobType) => jobType.id === selectedJobTypeId) ?? defaultJobType;
-  const selectedJobPrefix = profile.useJobNumberPrefixes ? selectedJobType?.jobNumberPrefix || profile.jobNumberPrefix || 'JOB' : '';
-  const highestJobNumber = jobs.reduce((highest, job) => {
-    const lastPart = job.jobNumber.split('-').pop() ?? job.jobNumber;
-    const numericJobNumber = Number(lastPart);
-    return Number.isFinite(numericJobNumber) ? Math.max(highest, numericJobNumber) : highest;
-  }, selectedCompany.openJobs);
-  const nextJobNumber = String(highestJobNumber + 1).padStart(4, '0');
-  const generatedJobNumber = selectedJobPrefix ? `${selectedJobPrefix}-${nextJobNumber}` : nextJobNumber;
-  const jobStatusFilters: ServiceJobStatus[] = ['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Completed', 'Warranty', 'Cancelled'];
-  const allJobsRows = jobs;
-  const closedJobStatuses = new Set<ServiceJobStatus>(['Completed', 'Warranty', 'Cancelled']);
-  const activeJobsRows = allJobsRows.filter((job) => !closedJobStatuses.has(job.status) && !isCustomerJobPaid(job));
-  const paidJobsRows = allJobsRows.filter(isCustomerJobPaid);
-  const visibleAllJobsRows = allJobsVisibility === 'paid' ? paidJobsRows : allJobsVisibility === 'all' ? allJobsRows : activeJobsRows;
-  const allJobsGroups = Array.from(new Set(['No technician', ...allJobsRows.map((job) => job.assignee)])).map((technician) => ({
-    technician,
-    jobs: visibleAllJobsRows.filter((job) => job.assignee === technician),
-  })).filter((group) => group.jobs.length > 0);
+  const jobModel = makeJobModel({
+    jobs,
+    openJobs: selectedCompany.openJobs,
+    profile,
+    selectedJobTypeId,
+    allJobsVisibility,
+  });
+  const {
+    selectedJobType,
+    selectedJobPrefix,
+    nextJobNumber,
+    generatedJobNumber,
+    jobStatusFilters,
+    allJobsRows,
+    activeJobsRows,
+    paidJobsRows,
+    visibleAllJobsRows,
+    allJobsGroups,
+  } = jobModel;
   const technicianLocations = profile.technicians.map((technician) => ({
     ...technician,
     online: false,
