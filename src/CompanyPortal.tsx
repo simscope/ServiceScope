@@ -57,8 +57,9 @@ import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { TasksPage } from './components/portal/TasksPage';
 import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
-import { calendarAppointmentFromParts, makeCalendarActions } from './features/calendar/calendarActions';
+import { makeCalendarActions } from './features/calendar/calendarActions';
 import { makeCalendarModel } from './features/calendar/calendarModel';
+import { makeCalendarPersistence } from './features/calendar/calendarPersistence';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeDefaultEmailConnection } from './features/email/emailDefaults';
@@ -125,7 +126,6 @@ import {
 import {
   listCompanyJobMaterials,
   listCompanyJobs,
-  saveJobAppointment,
   saveServiceJob,
 } from './services/jobsStore';
 import type {
@@ -311,6 +311,13 @@ export function CompanyPortal({
     closeBillingSetup,
   } = useBillingFeature();
   const onboardingSaveQueueRef = useRef(Promise.resolve());
+  const persistCalendarAssignmentRef = useRef((
+    _jobNumber: string,
+    _assignee: string,
+    _dayKey: string,
+    _slotKey: string,
+    _durationMinutes: number,
+  ) => undefined);
   const {
     financePeriod,
     setFinancePeriod,
@@ -522,7 +529,7 @@ export function CompanyPortal({
 
     function handlePointerUp(event: globalThis.PointerEvent) {
       const resized = getResizedAssignment(event.clientY);
-      persistCalendarAssignment(activeResize.jobNumber, activeResize.assignee, activeResize.dayKey, resized.time, resized.durationMinutes);
+      persistCalendarAssignmentRef.current(activeResize.jobNumber, activeResize.assignee, activeResize.dayKey, resized.time, resized.durationMinutes);
       setResizingJob(null);
     }
 
@@ -702,6 +709,17 @@ export function CompanyPortal({
     visibleCalendarJobs,
     visibleCalendarDays,
   } = calendarModel;
+  const calendarPersistence = makeCalendarPersistence({
+    companyId: activeCompany.id,
+    jobs,
+    calendarDropSlots,
+    setJobs,
+    setOpenedJob,
+    setCalendarAssignments,
+    setStatus: setJobsStatus,
+    stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
+  });
+  persistCalendarAssignmentRef.current = calendarPersistence.persistCalendarAssignment;
   const calendarActions = makeCalendarActions({
     calendarView,
     calendarAnchorDate,
@@ -718,7 +736,7 @@ export function CompanyPortal({
     calendarJobs,
     stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
     setOpenedJob,
-    persistCalendarAssignment,
+    persistCalendarAssignment: calendarPersistence.persistCalendarAssignment,
   });
   const invoiceActions = makeInvoiceActions({
     companyId: selectedCompany.id,
@@ -770,45 +788,6 @@ export function CompanyPortal({
     onReplyToTicket,
     stopPortalWrite: (action) => stopCompanyWrite('portal', action),
   });
-
-  function persistCalendarAssignment(jobNumber: string, assignee: string, dayKey: string, slotKey: string, durationMinutes: number) {
-    if (stopCompanyWrite('calendar', 'saving calendar appointments')) return;
-
-    const baseJob = jobs.find((job) => job.jobNumber === jobNumber);
-    const appointment = calendarAppointmentFromParts(dayKey, slotKey, calendarDropSlots);
-    if (!baseJob || !appointment) return;
-
-    const nextJob = {
-      ...baseJob,
-      technician: assignee,
-      assignee,
-      appointment,
-      calendarDurationMinutes: durationMinutes,
-    };
-
-    setJobs((currentJobs) => currentJobs.map((job) => (job.id === nextJob.id ? nextJob : job)));
-    setOpenedJob((job) => job?.id === nextJob.id ? { ...job, ...nextJob } : job);
-    setJobsStatus('Saving calendar appointment...');
-
-    saveJobAppointment(activeCompany.id, nextJob, appointment, durationMinutes)
-      .then((savedJob) => {
-        setJobs((currentJobs) => currentJobs.map((job) => (job.id === savedJob.id ? savedJob : job)));
-        setOpenedJob((job) => job?.id === savedJob.id ? { ...job, ...savedJob } : job);
-        setCalendarAssignments((assignments) => ({
-          ...assignments,
-          [savedJob.jobNumber]: {
-            assignee: savedJob.assignee,
-            dayKey,
-            time: slotKey,
-            durationMinutes: savedJob.calendarDurationMinutes ?? durationMinutes,
-          },
-        }));
-        setJobsStatus('Calendar appointment saved.');
-      })
-      .catch((error) => {
-        setJobsStatus(error instanceof Error ? error.message : 'Calendar appointment could not be saved.');
-      });
-  }
 
   return (
     <div className="client-app">
