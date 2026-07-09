@@ -58,6 +58,7 @@ import { TasksPage } from './components/portal/TasksPage';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { calendarAppointmentFromParts, makeCalendarActions } from './features/calendar/calendarActions';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
+import { makeEmailActions } from './features/email/emailActions';
 import { makeDefaultEmailConnection } from './features/email/emailDefaults';
 import { useEmailFeature } from './features/email/useEmailFeature';
 import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
@@ -108,12 +109,10 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
-import { startMailboxConnection } from './services/mailboxConnector';
 import {
   loadMailboxEmailConnection,
   loadMailboxOAuthSettings,
   mailboxOAuthRedirectUrl,
-  saveMailboxOAuthSettings,
 } from './services/mailboxOAuthSettings';
 import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import {
@@ -687,106 +686,28 @@ export function CompanyPortal({
 
     return message.folder === emailFolder && (!normalizedSearch || haystack.includes(normalizedSearch));
   });
-  const connectMailbox = (provider: EmailProvider) => {
-    const nextConnection = makeDefaultEmailConnection(activeCompany, profile, provider);
-
-    connectMailboxInFeature(nextConnection, (connection) => persistOnboardingToBackend(profile, connection));
-  };
-  const updateMailbox = (patch: Partial<EmailConnection>) => {
-    updateMailboxInFeature(patch, (connection) => persistOnboardingToBackend(profile, connection));
-  };
-  const copyMailboxRedirectUrl = async () => {
-    const redirectUrl = emailConnection?.oauthRedirectUrl || mailboxOAuthRedirectUrl;
-    await copyMailboxRedirectUrlInFeature(redirectUrl);
-  };
-  const saveMailboxOAuth = async () => {
-    if (!emailConnection || emailConnection.provider === 'smtp') {
-      setMailboxOAuthStatus('Choose Google Workspace or Microsoft 365 first.');
-      return;
-    }
-
-    if (!emailConnection.oauthClientId.trim()) {
-      setMailboxOAuthStatus('Client ID is required.');
-      return;
-    }
-
-    if (!mailboxOAuthSecretDraft.trim() && !emailConnection.oauthClientSecretSaved) {
-      setMailboxOAuthStatus('Client secret is required.');
-      return;
-    }
-
-    setMailboxOAuthStatus('Saving OAuth settings...');
-
-    try {
-      const result = await saveMailboxOAuthSettings({
-        companyId: activeCompany.id,
-        provider: emailConnection.provider,
-        clientId: emailConnection.oauthClientId.trim(),
-        clientSecret: mailboxOAuthSecretDraft.trim(),
-        redirectUrl: emailConnection.oauthRedirectUrl || mailboxOAuthRedirectUrl,
-      });
-      const nextConnection = {
-        ...emailConnection,
-        oauthRedirectUrl: result.redirectUrl,
-        oauthClientSecretSaved: true,
-      };
-      setEmailConnection(nextConnection);
-      persistOnboardingToBackend(profile, nextConnection);
-      setMailboxOAuthSecretDraft('');
-      setMailboxOAuthStatus('OAuth settings saved. You can connect the mailbox now.');
-    } catch (error) {
-      setMailboxOAuthStatus(error instanceof Error ? error.message : 'OAuth settings could not be saved.');
-    }
-  };
-  const startMailboxConnector = async () => {
-    if (!emailConnection) {
-      setMailboxConnectStatus('Choose a mailbox provider first.');
-      return;
-    }
-
-    if (!emailConnection.address.trim()) {
-      setMailboxConnectStatus('Mailbox address is required.');
-      return;
-    }
-
-    if (emailConnection.status === 'connected') {
-      setMailboxConnectStatus('');
-      return;
-    }
-
-    setMailboxConnectStatus('Checking mailbox connector...');
-
-    try {
-      const result = await startMailboxConnection({
-        companyId: activeCompany.id,
-        provider: emailConnection.provider,
-        mailboxAddress: emailConnection.address,
-      });
-      setMailboxConnectStatus(result.message);
-
-      if (result.authUrl) {
-        window.location.href = result.authUrl;
-      }
-    } catch (error) {
-      setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox connector failed.');
-    }
-  };
-  const openEmailCompose = (compose: EmailCompose, attachments: EmailComposeAttachment[] = []) => {
-    if (stopCompanyWrite('email', 'opening email composer')) return;
-
-    openEmailComposeDraft(compose, attachments, companyEmailSignature, companyPaymentBlock);
-    setClientPage('email');
-  };
-  const sendEmailDraft = async (attachments: EmailComposeAttachment[]) => {
-    if (stopCompanyWrite('email', 'sending email')) return;
-
-    await sendEmailDraftFromFeature({
-      companyId: selectedCompanyId,
-      signatureText: companyEmailSignature,
-      paymentBlockText: companyPaymentBlock,
-      attachments,
-    });
-  };
+  const emailActions = makeEmailActions({
+    activeCompany,
+    profile,
+    emailConnection,
+    mailboxOAuthSecretDraft,
+    companyEmailSignature,
+    companyPaymentBlock,
+    mailboxOAuthRedirectUrl,
+    selectedCompanyId,
+    setClientPage,
+    setEmailConnection,
+    setMailboxOAuthSecretDraft,
+    setMailboxOAuthStatus,
+    setMailboxConnectStatus,
+    connectMailboxInFeature,
+    updateMailboxInFeature,
+    copyMailboxRedirectUrlInFeature,
+    openEmailComposeDraft,
+    sendEmailDraftFromFeature,
+    persistOnboardingToBackend,
+    stopEmailWrite: (action) => stopCompanyWrite('email', action),
+  });
   const materialWorkflow = makeMaterialWorkflow({
     companyId: selectedCompanyId,
     materials,
@@ -1111,7 +1032,7 @@ export function CompanyPortal({
             onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={openEmailCompose}
+            onComposeEmail={emailActions.openEmailCompose}
             onCreateJob={jobActions.handleCreateJob}
             selectedJobPrefix={selectedJobPrefix}
             nextJobNumber={nextJobNumber}
@@ -1131,7 +1052,7 @@ export function CompanyPortal({
             onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={openEmailCompose}
+            onComposeEmail={emailActions.openEmailCompose}
             jobStatusFilters={jobStatusFilters}
             allJobsGroups={allJobsGroups}
             allJobsVisibility={allJobsVisibility}
@@ -1156,7 +1077,7 @@ export function CompanyPortal({
             onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={openEmailCompose}
+            onComposeEmail={emailActions.openEmailCompose}
             allJobsRows={allJobsRows}
             onOpenJob={setOpenedJob}
             onSaveDebtorJob={(job) => jobActions.handleSaveJob(job, false, 'debtors')}
@@ -1175,7 +1096,7 @@ export function CompanyPortal({
             onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={openEmailCompose}
+            onComposeEmail={emailActions.openEmailCompose}
             calendarRangeTitle={calendarRangeTitle}
             onMoveCalendar={calendarActions.moveCalendar}
             onShowToday={calendarActions.showTodayInCalendar}
@@ -1238,7 +1159,7 @@ export function CompanyPortal({
             onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={openEmailCompose}
+            onComposeEmail={emailActions.openEmailCompose}
             openTaskCount={tasksFeature.openTaskCount}
             autoTaskCount={tasksFeature.autoTaskCount}
             urgentTaskCount={tasksFeature.urgentTaskCount}
@@ -1266,7 +1187,7 @@ export function CompanyPortal({
             emailTemplates={initialEmailTemplates}
             emailProviderLabels={emailProviderLabels}
             onOpenOnboarding={() => setClientPage('onboarding')}
-            onStartMailboxConnection={startMailboxConnector}
+            onStartMailboxConnection={emailActions.startMailboxConnector}
             onLoadMoreMailbox={() => loadMoreMailboxMessages(selectedCompanyId)}
             mailboxSyncing={mailboxSyncing}
             mailboxConnectStatus={mailboxConnectStatus}
@@ -1284,7 +1205,7 @@ export function CompanyPortal({
             companyPaymentBlock={companyPaymentBlock}
             composeRequestId={emailComposeRequestId}
             composeAttachmentRequest={emailComposeAttachments}
-            onSendEmailDraft={sendEmailDraft}
+            onSendEmailDraft={emailActions.sendEmailDraft}
           />
         ) : renderedClientPage === 'map' ? (
           <MapPage
@@ -1319,7 +1240,7 @@ export function CompanyPortal({
             onSaveMaterials={materialWorkflow.saveJobMaterials}
             onCreateInvoice={invoiceActions.handleCreateInvoice}
             onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={openEmailCompose}
+            onComposeEmail={emailActions.openEmailCompose}
             financeSummary={financeWorkflow.financeSummary}
             financePeriod={financePeriod}
             onFinancePeriodChange={setFinancePeriod}
@@ -1457,9 +1378,9 @@ export function CompanyPortal({
             emailConnection={emailConnection}
             handleLogoUpload={onboardingAdminFeature.handleLogoUpload}
             updateProfile={updateProfile}
-            connectMailbox={connectMailbox}
+            connectMailbox={emailActions.connectMailbox}
             emailProviderLabels={emailProviderLabels}
-            updateMailbox={updateMailbox}
+            updateMailbox={emailActions.updateMailbox}
             togglePaymentMethod={togglePaymentMethod}
             professionTemplates={professionTemplates}
             configuredProfessionNames={configuredProfessionNames}
@@ -1488,9 +1409,9 @@ export function CompanyPortal({
             mailboxOAuthStatus={mailboxOAuthStatus}
             mailboxOAuthRedirectUrl={mailboxOAuthRedirectUrl}
             setMailboxOAuthSecretDraft={setMailboxOAuthSecretDraft}
-            onCopyMailboxRedirectUrl={copyMailboxRedirectUrl}
-            onSaveMailboxOAuth={saveMailboxOAuth}
-            onStartMailboxConnection={startMailboxConnector}
+            onCopyMailboxRedirectUrl={emailActions.copyMailboxRedirectUrl}
+            onSaveMailboxOAuth={emailActions.saveMailboxOAuth}
+            onStartMailboxConnection={emailActions.startMailboxConnector}
             billingStatus={billingStatus}
             onConnectSubscriptionBilling={connectSubscriptionBilling}
           />
