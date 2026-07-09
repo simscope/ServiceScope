@@ -55,6 +55,7 @@ import { OnboardingPage } from './components/portal/OnboardingPage';
 import { CompanyLogin } from './components/portal/CompanyLogin';
 import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { TasksPage } from './components/portal/TasksPage';
+import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { calendarAppointmentFromParts, makeCalendarActions } from './features/calendar/calendarActions';
 import { makeCalendarModel } from './features/calendar/calendarModel';
@@ -568,16 +569,16 @@ export function CompanyPortal({
   const openTickets = tickets.filter((ticket) => ticket.status !== 'resolved');
   const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(activeCompany);
   const companyAccessRules = resolveCompanyAccessRules(activeCompany);
-  const accessLevelForPage = (page: CompanyPortalAccessPage): CompanyPortalAccessLevel => companyAccessRules[page] ?? 'full';
-  const canViewPage = (page: CompanyPortalAccessPage) => accessLevelForPage(page) !== 'off';
-  const canWritePage = (page: CompanyPortalAccessPage) => accessLevelForPage(page) === 'full';
-  const stopCompanyWrite = (page: CompanyPortalAccessPage, action: string) => {
-    const level = accessLevelForPage(page);
-    if (level === 'full') return false;
-
-    setJobsStatus(`Owner access for ${page} is ${accessLevelLabels[level].toLowerCase()}. Restore full access before ${action}.`);
-    return true;
-  };
+  const {
+    accessLevelForPage,
+    canViewPage,
+    canWritePage,
+    stopCompanyWrite,
+  } = makeCompanyPortalAccess({
+    rules: companyAccessRules,
+    accessLevelLabels,
+    setStatus: setJobsStatus,
+  });
   const companyCommunication = makeCompanyCommunicationModel({
     company: activeCompany,
     profile,
