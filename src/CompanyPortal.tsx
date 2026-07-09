@@ -79,6 +79,7 @@ import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { makeCompanyCommunicationModel } from './features/onboarding/companyCommunicationModel';
+import { makeOnboardingProfileActions } from './features/onboarding/onboardingProfileActions';
 import { useOnboardingAdminFeature } from './features/onboarding/useOnboardingAdminFeature';
 import { makeSupportActions } from './features/support/supportActions';
 import { useSupportFeature } from './features/support/useSupportFeature';
@@ -121,7 +122,6 @@ import {
   loadMailboxOAuthSettings,
   mailboxOAuthRedirectUrl,
 } from './services/mailboxOAuthSettings';
-import { saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import {
   listCompanyJobMaterials,
   listCompanyJobs,
@@ -134,7 +134,6 @@ import type {
   BillingStatus,
   Company,
   CompanyPlan,
-  CompanyPortalAccessLevel,
   CompanyPortalAccessPage,
   CompanyStatus,
   NewPlatformUserForm,
@@ -149,7 +148,6 @@ import type {
   PlatformUserRole,
   PlatformUserStatus,
   CompanyOnboardingProfile,
-  CompanyPaymentMethod,
   CompanyTechnicianRole,
   JobInvoice,
   MaterialRow,
@@ -331,12 +329,20 @@ export function CompanyPortal({
     () => selectedCompany ? onboardingProfile ?? createDefaultCompanyOnboardingProfile(selectedCompany) : undefined,
     [onboardingProfile, selectedCompany],
   );
+  const onboardingProfileActions = makeOnboardingProfileActions({
+    activeCompany: selectedCompany,
+    profile: libraryProfile,
+    emailConnection,
+    onboardingSaveQueueRef,
+    openBillingSetup,
+    onUpdateOnboardingProfile,
+  });
   const featureAccessRules = selectedCompany ? resolveCompanyAccessRules(selectedCompany) : undefined;
   const onboardingAdminFeature = useOnboardingAdminFeature({
     activeCompany: selectedCompany,
     profile: libraryProfile,
     signedInUser,
-    updateProfile,
+    updateProfile: onboardingProfileActions.updateProfile,
     selectedJobTypeId,
     setSelectedJobTypeId,
   });
@@ -585,20 +591,6 @@ export function CompanyPortal({
     emailConnection,
   });
   const { companyEmailSignature, companyPaymentBlock, paymentMethodOptions } = companyCommunication;
-  function persistOnboardingToBackend(nextProfile: CompanyOnboardingProfile, nextEmailConnection = emailConnection) {
-    onboardingSaveQueueRef.current = onboardingSaveQueueRef.current
-      .catch(() => undefined)
-      .then(() =>
-        saveOnboardingProfileToBackend(activeCompany, nextProfile, nextEmailConnection, {
-          saveCompanyCore: false,
-          saveOnboardingSteps: false,
-          saveSubscriptionPaymentMethod: false,
-        }),
-      )
-      .catch((error) => {
-        console.error('Failed to save onboarding to backend', error);
-      });
-  }
 
   const professionTemplates = makeJobTypes();
   const configuredProfessionNames = new Set(
@@ -657,7 +649,7 @@ export function CompanyPortal({
     copyMailboxRedirectUrlInFeature,
     openEmailComposeDraft,
     sendEmailDraftFromFeature,
-    persistOnboardingToBackend,
+    persistOnboardingToBackend: onboardingProfileActions.persistOnboardingToBackend,
     stopEmailWrite: (action) => stopCompanyWrite('email', action),
   });
   const materialWorkflow = makeMaterialWorkflow({
@@ -779,17 +771,6 @@ export function CompanyPortal({
     stopPortalWrite: (action) => stopCompanyWrite('portal', action),
   });
 
-  function updateProfile(updates: Partial<CompanyOnboardingProfile>) {
-    const nextProfile = { ...profile, ...updates };
-    onUpdateOnboardingProfile(nextProfile);
-    persistOnboardingToBackend(nextProfile);
-  }
-
-  function connectSubscriptionBilling() {
-    openBillingSetup();
-    updateProfile({ subscriptionPaymentStatus: 'pending' });
-  }
-
   function persistCalendarAssignment(jobNumber: string, assignee: string, dayKey: string, slotKey: string, durationMinutes: number) {
     if (stopCompanyWrite('calendar', 'saving calendar appointments')) return;
 
@@ -827,14 +808,6 @@ export function CompanyPortal({
       .catch((error) => {
         setJobsStatus(error instanceof Error ? error.message : 'Calendar appointment could not be saved.');
       });
-  }
-
-  function togglePaymentMethod(method: CompanyPaymentMethod) {
-    const acceptedPayments = profile.acceptedPayments.includes(method)
-      ? profile.acceptedPayments.filter((paymentMethod) => paymentMethod !== method)
-      : [...profile.acceptedPayments, method];
-
-    updateProfile({ acceptedPayments });
   }
 
   return (
@@ -1259,11 +1232,11 @@ export function CompanyPortal({
             profile={profile}
             emailConnection={emailConnection}
             handleLogoUpload={onboardingAdminFeature.handleLogoUpload}
-            updateProfile={updateProfile}
+            updateProfile={onboardingProfileActions.updateProfile}
             connectMailbox={emailActions.connectMailbox}
             emailProviderLabels={emailProviderLabels}
             updateMailbox={emailActions.updateMailbox}
-            togglePaymentMethod={togglePaymentMethod}
+            togglePaymentMethod={onboardingProfileActions.togglePaymentMethod}
             professionTemplates={professionTemplates}
             configuredProfessionNames={configuredProfessionNames}
             addProfessionTemplate={onboardingAdminFeature.addProfessionTemplate}
@@ -1295,7 +1268,7 @@ export function CompanyPortal({
             onSaveMailboxOAuth={emailActions.saveMailboxOAuth}
             onStartMailboxConnection={emailActions.startMailboxConnector}
             billingStatus={billingStatus}
-            onConnectSubscriptionBilling={connectSubscriptionBilling}
+            onConnectSubscriptionBilling={onboardingProfileActions.connectSubscriptionBilling}
           />
         ) : (
           <section className="client-placeholder">
@@ -1318,7 +1291,7 @@ export function CompanyPortal({
           profile={profile}
           onClose={closeBillingSetup}
           onConnected={(updates, status) => {
-            updateProfile(updates);
+            onboardingProfileActions.updateProfile(updates);
             setBillingStatus(status);
           }}
         />
