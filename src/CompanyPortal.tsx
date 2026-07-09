@@ -72,6 +72,7 @@ import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { makeJobActions } from './features/jobs/jobActions';
 import { makeJobModel } from './features/jobs/jobModel';
+import { useCompanyJobsLoader } from './features/jobs/useCompanyJobsLoader';
 import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { makeMapModel } from './features/map/mapModel';
@@ -124,8 +125,6 @@ import {
   mailboxOAuthRedirectUrl,
 } from './services/mailboxOAuthSettings';
 import {
-  listCompanyJobMaterials,
-  listCompanyJobs,
   saveServiceJob,
 } from './services/jobsStore';
 import type {
@@ -377,43 +376,12 @@ export function CompanyPortal({
     readOnlyMessage: `Owner access for tasks is ${accessLevelLabels[taskAccessLevel].toLowerCase()}. Restore full access before`,
     setStatus: setJobsStatus,
   });
-
-  useEffect(() => {
-    if (!selectedCompany) {
-      setJobs([]);
-      setMaterials([]);
-      setJobsStatus('');
-      return undefined;
-    }
-
-    let cancelled = false;
-    const company = selectedCompany;
-    setJobsStatus('Loading jobs...');
-
-    async function loadJobsAndCustomers() {
-      try {
-        const [savedJobs, savedMaterials] = await Promise.all([
-          listCompanyJobs(company.id),
-          listCompanyJobMaterials(company.id),
-        ]);
-        if (cancelled) return;
-        setJobs(savedJobs);
-        setMaterials(savedMaterials);
-        setJobsStatus('');
-      } catch (error) {
-        if (cancelled) return;
-        setJobs([]);
-        setMaterials([]);
-        setJobsStatus(error instanceof Error ? error.message : 'Jobs could not be loaded.');
-      }
-    }
-
-    void loadJobsAndCustomers();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedCompany]);
+  useCompanyJobsLoader({
+    selectedCompany,
+    setJobs,
+    setMaterials,
+    setStatus: setJobsStatus,
+  });
 
   useEffect(() => {
     if (!selectedCompany) {
