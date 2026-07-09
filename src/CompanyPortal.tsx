@@ -75,6 +75,7 @@ import { useMapFeature } from './features/map/useMapFeature';
 import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
+import { makeCompanyCommunicationModel } from './features/onboarding/companyCommunicationModel';
 import { useOnboardingAdminFeature } from './features/onboarding/useOnboardingAdminFeature';
 import { useSupportFeature } from './features/support/useSupportFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
@@ -153,7 +154,6 @@ import type {
 import {
   auditCategoryLabels,
   billingLabels,
-  paymentMethodLabels,
   platformRoleLabels,
   platformStatusLabels,
   statusLabels,
@@ -574,46 +574,12 @@ export function CompanyPortal({
     setJobsStatus(`Owner access for ${page} is ${accessLevelLabels[level].toLowerCase()}. Restore full access before ${action}.`);
     return true;
   };
-  const generatedCompanyEmailSignature = [
-    '--',
-    profile.displayName || activeCompany.name,
-    profile.serviceAddress,
-    profile.phone ? `Phone: ${profile.phone}` : '',
-    profile.website ? `Website: ${profile.website}` : '',
-    'HVAC and Appliance Repair',
-    profile.serviceArea ? `Services Licensed & Insured | Serving ${profile.serviceArea}` : 'Services Licensed & Insured',
-  ].filter(Boolean).join('\n');
-  const companyEmailSignature = emailConnection?.signature.trim() || generatedCompanyEmailSignature;
-  const paymentLines = profile.acceptedPayments.flatMap((method) => {
-    if (method === 'zelle') return [`Zelle: ${profile.zelleContact || profile.billingEmail || emailConnection?.address || activeCompany.ownerEmail}`];
-    if (method === 'ach') {
-      return [
-        'ACH Transfer',
-        profile.achAccountNumber ? `Account number: ${profile.achAccountNumber}` : '',
-        profile.achRoutingNumber ? `Routing number: ${profile.achRoutingNumber}` : '',
-      ].filter(Boolean);
-    }
-    if (method === 'credit_card') return ['Credit Card'];
-    if (method === 'debit_card') return ['Debit Card'];
-    if (method === 'check') return [`Check payable to: ${profile.achAccountName || profile.legalName || activeCompany.name}`];
-    if (method === 'cash') return ['Cash'];
-    if (method === 'paypal') return [`PayPal: ${profile.paypalEmail || profile.billingEmail || emailConnection?.address || activeCompany.ownerEmail}`];
-    if (method === 'venmo') return [`Venmo: ${profile.venmoContact || 'available on request'}`];
-    if (method === 'cash_app') return [`Cash App: ${profile.cashAppCashtag || 'available on request'}`];
-    if (method === 'stripe') return ['Stripe payment link available on request'];
-    if (method === 'square') return ['Square invoice/payment link available on request'];
-    if (method === 'wire_transfer') return ['Wire transfer details available on request'];
-    if (method === 'apple_pay') return ['Apple Pay available'];
-    if (method === 'google_pay') return ['Google Pay available'];
-    if (method === 'financing') return ['Financing options available on request'];
-    return [paymentMethodLabels[method]];
+  const companyCommunication = makeCompanyCommunicationModel({
+    company: activeCompany,
+    profile,
+    emailConnection,
   });
-  const companyPaymentBlock = [
-    'Payment Options:',
-    ...paymentLines,
-    profile.serviceAddress ? `Mailing address: ${profile.serviceAddress}` : '',
-    profile.paymentNotes,
-  ].filter(Boolean).join('\n');
+  const { companyEmailSignature, companyPaymentBlock, paymentMethodOptions } = companyCommunication;
   function persistOnboardingToBackend(nextProfile: CompanyOnboardingProfile, nextEmailConnection = emailConnection) {
     onboardingSaveQueueRef.current = onboardingSaveQueueRef.current
       .catch(() => undefined)
@@ -734,10 +700,6 @@ export function CompanyPortal({
     setSalaryPaidJobs,
     stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
   });
-  const paymentMethodOptions = profile.acceptedPayments.map((method) => ({
-    value: method,
-    label: paymentMethodLabels[method],
-  }));
   const currentPortalUser = {
     name: signedInUser?.name ?? selectedCompany.ownerName,
     role: signedInUser?.role ?? 'Admin' as const,
