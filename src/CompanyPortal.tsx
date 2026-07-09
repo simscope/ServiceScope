@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -79,6 +79,7 @@ import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { makeCompanyCommunicationModel } from './features/onboarding/companyCommunicationModel';
 import { useOnboardingAdminFeature } from './features/onboarding/useOnboardingAdminFeature';
+import { makeSupportActions } from './features/support/supportActions';
 import { useSupportFeature } from './features/support/useSupportFeature';
 import { useTasksFeature } from './features/tasks/useTasksFeature';
 import { accessLevelLabels, resolveCompanyAccessRules } from './components/CompanyAccessPage';
@@ -223,6 +224,7 @@ export function CompanyPortal({
     setJobsStatus,
     inlineJobDrafts,
     setInlineJobDrafts,
+    updateInlineJobDraft,
     allJobsVisibility,
     setAllJobsVisibility,
     selectedJobTypeId,
@@ -688,15 +690,6 @@ export function CompanyPortal({
     name: signedInUser?.name ?? selectedCompany.ownerName,
     role: signedInUser?.role ?? 'Admin' as const,
   };
-  const updateInlineJobDraft = (jobId: string, patch: Partial<ServiceJob>) => {
-    setInlineJobDrafts((drafts) => ({
-      ...drafts,
-      [jobId]: {
-        ...drafts[jobId],
-        ...patch,
-      },
-    }));
-  };
   const calendarModel = makeCalendarModel({
     calendarAnchorDate,
     calendarView,
@@ -774,26 +767,16 @@ export function CompanyPortal({
   const renderedClientPage = canViewPage(clientPage as CompanyPortalAccessPage) ? clientPage : visibleClientNavItems[0]?.page ?? 'portal';
   const activePageAccessLevel = accessLevelForPage(renderedClientPage as CompanyPortalAccessPage);
   const activePageReadOnly = !canWritePage(renderedClientPage as CompanyPortalAccessPage);
-
-  function handleRequestSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (stopCompanyWrite('portal', 'sending support requests')) return;
-
-    setRequestTouched(true);
-    if (!request.subject.trim() || !request.message.trim()) return;
-
-    onCreateRequest(request);
-    resetRequest();
-  }
-
-  function handleSupportReply(event: FormEvent<HTMLFormElement>, ticketId: string) {
-    event.preventDefault();
-    const body = supportReplyDrafts[ticketId]?.trim() ?? '';
-    if (!body || !onReplyToTicket) return;
-
-    onReplyToTicket(ticketId, body);
-    setSupportReplyDrafts((drafts) => ({ ...drafts, [ticketId]: '' }));
-  }
+  const supportActions = makeSupportActions({
+    request,
+    setRequestTouched,
+    resetRequest,
+    supportReplyDrafts,
+    setSupportReplyDrafts,
+    onCreateRequest,
+    onReplyToTicket,
+    stopPortalWrite: (action) => stopCompanyWrite('portal', action),
+  });
 
   function updateProfile(updates: Partial<CompanyOnboardingProfile>) {
     const nextProfile = { ...profile, ...updates };
@@ -1205,7 +1188,7 @@ export function CompanyPortal({
                   </div>
                   <MailPlus size={20} aria-hidden="true" />
                 </div>
-                <form className="portal-request-form" onSubmit={handleRequestSubmit}>
+                <form className="portal-request-form" onSubmit={supportActions.handleRequestSubmit}>
                   <div className="form-row">
                     <label>
                       Type

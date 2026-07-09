@@ -10,6 +10,16 @@ export function useJobsFeature() {
   const [allJobsVisibility, setAllJobsVisibility] = useState<'active' | 'paid' | 'all'>('active');
   const [selectedJobTypeId, setSelectedJobTypeId] = useState('');
 
+  const updateInlineJobDraft = (jobId: string, patch: Partial<ServiceJob>) => {
+    setInlineJobDrafts((drafts) => ({
+      ...drafts,
+      [jobId]: {
+        ...drafts[jobId],
+        ...patch,
+      },
+    }));
+  };
+
   return {
     openedJob,
     setOpenedJob,
@@ -19,6 +29,7 @@ export function useJobsFeature() {
     setJobsStatus,
     inlineJobDrafts,
     setInlineJobDrafts,
+    updateInlineJobDraft,
     allJobsVisibility,
     setAllJobsVisibility,
     selectedJobTypeId,
