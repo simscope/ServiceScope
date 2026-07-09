@@ -61,6 +61,7 @@ import { makeCalendarModel } from './features/calendar/calendarModel';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeDefaultEmailConnection } from './features/email/emailDefaults';
+import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
 import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
 import { makeInvoiceActions } from './features/finance/invoiceActions';
@@ -628,15 +629,11 @@ export function CompanyPortal({
     mapStatusFilter,
   });
   const materialStatuses: MaterialRow['status'][] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
-  const materialJobMap = new globalThis.Map(allJobsRows.map((job) => [job.jobNumber, job]));
-  const visibleEmailMessages = emailMessages.filter((message) => {
-    const normalizedSearch = emailSearch.trim().toLowerCase();
-    const job = materialJobMap.get(message.jobNumber);
-    const haystack = [message.from, message.to, message.subject, message.preview, message.jobNumber, job?.organization, job?.clientName]
-      .join(' ')
-      .toLowerCase();
-
-    return message.folder === emailFolder && (!normalizedSearch || haystack.includes(normalizedSearch));
+  const emailModel = makeEmailModel({
+    emailMessages,
+    emailFolder,
+    emailSearch,
+    jobs: allJobsRows,
   });
   const emailActions = makeEmailActions({
     activeCompany,
@@ -1096,9 +1093,9 @@ export function CompanyPortal({
             onEmailFolderChange={setEmailFolder}
             emailSearch={emailSearch}
             onEmailSearchChange={setEmailSearch}
-            visibleEmailMessages={visibleEmailMessages}
+            visibleEmailMessages={emailModel.visibleEmailMessages}
             onApplyEmailTemplate={applyEmailTemplate}
-            jobMap={materialJobMap}
+            jobMap={emailModel.jobMap}
             onEmailComposeChange={setEmailCompose}
             emailCompose={emailCompose}
             allJobsRows={allJobsRows}
