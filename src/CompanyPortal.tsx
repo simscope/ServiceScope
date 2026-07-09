@@ -64,6 +64,7 @@ import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
+import { useMailboxAutoSync } from './features/email/useMailboxAutoSync';
 import { useMailboxSettingsLoader } from './features/email/useMailboxSettingsLoader';
 import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
 import { makeInvoiceActions } from './features/finance/invoiceActions';
@@ -453,30 +454,13 @@ export function CompanyPortal({
     };
   }, [resizingJob]);
 
-  useEffect(() => {
-    if (!selectedCompanyId || emailConnection?.status !== 'connected') {
-      setEmailMessages([]);
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    async function loadAndSyncMessages() {
-      try {
-        await syncConnectedMailboxMessages(selectedCompanyId);
-        if (cancelled) return;
-      } catch (error) {
-        if (cancelled) return;
-        setMailboxConnectStatus(error instanceof Error ? error.message : 'Mailbox sync failed.');
-      }
-    }
-
-    void loadAndSyncMessages();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [emailConnection?.status, selectedCompanyId]);
+  useMailboxAutoSync({
+    emailConnection,
+    selectedCompanyId,
+    setEmailMessages,
+    syncConnectedMailboxMessages,
+    setMailboxConnectStatus,
+  });
 
   if (!selectedCompany) {
     return (
