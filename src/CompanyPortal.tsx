@@ -62,9 +62,9 @@ import { makeCalendarModel } from './features/calendar/calendarModel';
 import { makeCalendarPersistence } from './features/calendar/calendarPersistence';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { makeEmailActions } from './features/email/emailActions';
-import { makeDefaultEmailConnection } from './features/email/emailDefaults';
 import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
+import { useMailboxSettingsLoader } from './features/email/useMailboxSettingsLoader';
 import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
 import { makeInvoiceActions } from './features/finance/invoiceActions';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
@@ -119,11 +119,7 @@ import {
   makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
-import {
-  loadMailboxEmailConnection,
-  loadMailboxOAuthSettings,
-  mailboxOAuthRedirectUrl,
-} from './services/mailboxOAuthSettings';
+import { mailboxOAuthRedirectUrl } from './services/mailboxOAuthSettings';
 import {
   saveServiceJob,
 } from './services/jobsStore';
@@ -383,68 +379,15 @@ export function CompanyPortal({
     setStatus: setJobsStatus,
   });
 
-  useEffect(() => {
-    if (!selectedCompany) {
-      setEmailConnection(null);
-      setMailboxOAuthSecretDraft('');
-      setMailboxOAuthStatus('');
-      return undefined;
-    }
-
-    let cancelled = false;
-    const company = selectedCompany;
-    const currentProfile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(company);
-
-    async function loadMailboxSettings() {
-      try {
-        const [savedConnection, oauthSettings] = await Promise.all([
-          loadMailboxEmailConnection(company.id),
-          loadMailboxOAuthSettings(company.id),
-        ]);
-
-        if (cancelled) return;
-
-        const savedOAuth = savedConnection
-          ? savedConnection.provider !== 'smtp'
-            ? oauthSettings.find((settings) => settings.provider === savedConnection.provider)
-            : undefined
-          : oauthSettings[0];
-
-        if (!savedConnection && !savedOAuth) {
-          setEmailConnection(null);
-          setMailboxOAuthSecretDraft('');
-          setMailboxOAuthStatus('');
-          setMailboxConnectStatus('');
-          return;
-        }
-
-        const baseConnection =
-          savedConnection ??
-          makeDefaultEmailConnection(company, currentProfile, savedOAuth?.provider ?? 'google');
-        const nextConnection: EmailConnection = {
-          ...baseConnection,
-          oauthClientId: savedOAuth?.clientId ?? baseConnection.oauthClientId,
-          oauthClientSecretSaved: savedOAuth?.clientSecretSaved ?? baseConnection.oauthClientSecretSaved,
-          oauthRedirectUrl: savedOAuth?.redirectUrl ?? baseConnection.oauthRedirectUrl,
-        };
-
-        setEmailConnection(nextConnection);
-        setMailboxOAuthSecretDraft('');
-        setMailboxOAuthStatus(savedOAuth ? 'OAuth settings loaded.' : '');
-        setMailboxConnectStatus(nextConnection.status === 'connected' ? '' : '');
-      } catch (error) {
-        if (cancelled) return;
-        console.error('Failed to load mailbox settings', error);
-        setMailboxOAuthStatus(error instanceof Error ? error.message : 'Mailbox settings could not be loaded.');
-      }
-    }
-
-    void loadMailboxSettings();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedCompanyId]);
+  useMailboxSettingsLoader({
+    selectedCompany,
+    selectedCompanyId,
+    onboardingProfile,
+    setEmailConnection,
+    setMailboxOAuthSecretDraft,
+    setMailboxOAuthStatus,
+    setMailboxConnectStatus,
+  });
 
   useEffect(() => {
     if (!resizingJob) return undefined;
