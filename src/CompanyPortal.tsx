@@ -71,6 +71,7 @@ import { makeJobActions } from './features/jobs/jobActions';
 import { makeJobModel } from './features/jobs/jobModel';
 import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
+import { makeMapModel } from './features/map/mapModel';
 import { useMapFeature } from './features/map/useMapFeature';
 import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
@@ -620,25 +621,11 @@ export function CompanyPortal({
     visibleAllJobsRows,
     allJobsGroups,
   } = jobModel;
-  const technicianLocations = profile.technicians.map((technician) => ({
-    ...technician,
-    online: false,
-    lastSeen: 'No GPS data',
-    area: 'Not reported',
-    lat: '',
-    lng: '',
-    x: null,
-    y: null,
-  }));
-  const filteredTechnicianLocations = technicianLocations.filter((technician) => {
-    const normalizedSearch = mapSearch.trim().toLowerCase();
-    const matchesTech = mapTechFilter === 'all' || technician.name === mapTechFilter;
-    const matchesGps = mapStatusFilter === 'all' || (mapStatusFilter === 'online' ? technician.online : !technician.online);
-    const haystack = [technician.name, technician.email, technician.phone, technician.area, technician.lat, technician.lng]
-      .join(' ')
-      .toLowerCase();
-
-    return matchesTech && matchesGps && (!normalizedSearch || haystack.includes(normalizedSearch));
+  const mapModel = makeMapModel({
+    profile,
+    mapSearch,
+    mapTechFilter,
+    mapStatusFilter,
   });
   const materialStatuses: MaterialRow['status'][] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
   const materialJobMap = new globalThis.Map(allJobsRows.map((job) => [job.jobNumber, job]));
@@ -1123,7 +1110,7 @@ export function CompanyPortal({
           />
         ) : renderedClientPage === 'map' ? (
           <MapPage
-            filteredTechnicianLocations={filteredTechnicianLocations}
+            filteredTechnicianLocations={mapModel.filteredTechnicianLocations}
             mapTechFilter={mapTechFilter}
             onMapTechFilterChange={setMapTechFilter}
             mapStatusFilter={mapStatusFilter}
