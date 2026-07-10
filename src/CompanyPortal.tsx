@@ -2,26 +2,18 @@ import { useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
-  BookOpen,
-  Box,
   Building2,
-  CalendarDays,
   CheckCircle2,
-  CircleDollarSign,
   ClipboardList,
   CreditCard,
   Database,
   FileClock,
   Inbox,
-  LayoutDashboard,
   MailPlus,
-  Map,
   PackageCheck,
   Plus,
-  Rocket,
   Search,
   SlidersHorizontal,
-  UploadCloud,
   UserPlus,
   Users,
 } from 'lucide-react';
@@ -81,6 +73,7 @@ import { makeMapModel } from './features/map/mapModel';
 import { useMapFeature } from './features/map/useMapFeature';
 import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
+import { resolveClientNavigation } from './features/navigation/clientNavigation';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { makeCompanyCommunicationModel } from './features/onboarding/companyCommunicationModel';
 import { makeOnboardingProfileActions } from './features/onboarding/onboardingProfileActions';
@@ -172,7 +165,6 @@ import {
 } from './appSeeds';
 import type {
   AppPage,
-  ClientPage,
   CompanyOnboardingStepKey,
   EmailCompose,
   EmailComposeAttachment,
@@ -599,24 +591,14 @@ export function CompanyPortal({
     jobInboxFeature,
     stopCompanyWrite,
   });
-  const clientNavItems: { page: ClientPage; label: string; icon: React.ReactNode; adminOnly?: boolean }[] = [
-    { page: 'jobInbox', label: 'Inbox', icon: <Inbox size={16} /> },
-    { page: 'jobs', label: 'Jobs', icon: <ClipboardList size={16} /> },
-    { page: 'allJobs', label: 'All Jobs', icon: <LayoutDashboard size={16} /> },
-    { page: 'debtors', label: 'Debtors', icon: <CircleDollarSign size={16} /> },
-    { page: 'calendar', label: 'Calendar', icon: <CalendarDays size={16} /> },
-    { page: 'materials', label: 'Materials', icon: <Box size={16} /> },
-    { page: 'tasks', label: 'Tasks', icon: <CheckCircle2 size={16} /> },
-    { page: 'map', label: 'Map', icon: <Map size={16} /> },
-    { page: 'email', label: 'Email', icon: <MailPlus size={16} /> },
-    { page: 'finances', label: 'Finance', icon: <CreditCard size={16} /> },
-    { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
-    { page: 'import', label: 'Import', icon: <UploadCloud size={16} /> },
-    { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },
-    { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
-  ];
-  const visibleClientNavItems = clientNavItems.filter((item) => canViewPage(item.page as CompanyPortalAccessPage));
-  const renderedClientPage = canViewPage(clientPage as CompanyPortalAccessPage) ? clientPage : visibleClientNavItems[0]?.page ?? 'portal';
+  const {
+    visibleClientNavItems,
+    renderedClientPage,
+    activeClientNavItem,
+  } = resolveClientNavigation({
+    clientPage,
+    canViewPage,
+  });
   const activePageAccessLevel = accessLevelForPage(renderedClientPage as CompanyPortalAccessPage);
   const activePageReadOnly = !canWritePage(renderedClientPage as CompanyPortalAccessPage);
   const supportActions = makeSupportActions({
@@ -676,7 +658,7 @@ export function CompanyPortal({
         {jobsStatus ? <p className="access-status portal-status">{jobsStatus}</p> : null}
         {activePageReadOnly ? (
           <div className={'company-access-banner ' + activePageAccessLevel}>
-            <strong>{visibleClientNavItems.find((item) => item.page === renderedClientPage)?.label ?? 'This page'} is {accessLevelLabels[activePageAccessLevel].toLowerCase()}</strong>
+            <strong>{activeClientNavItem?.label ?? 'This page'} is {accessLevelLabels[activePageAccessLevel].toLowerCase()}</strong>
             <span>Owner access controls are active for this company.</span>
           </div>
         ) : null}
@@ -1093,9 +1075,9 @@ export function CompanyPortal({
         ) : (
           <section className="client-placeholder">
             <div className="client-placeholder-icon">
-              {visibleClientNavItems.find((item) => item.page === renderedClientPage)?.icon}
+              {activeClientNavItem?.icon}
             </div>
-            <h1>{visibleClientNavItems.find((item) => item.page === renderedClientPage)?.label}</h1>
+            <h1>{activeClientNavItem?.label}</h1>
             <p>This module is ready to be connected to live company data.</p>
             <div className="client-placeholder-grid">
               <MetricCard icon={<Activity size={20} />} label="Company" value={selectedCompany.name} detail={selectedCompany.market} />
