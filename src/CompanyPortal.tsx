@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -58,9 +58,10 @@ import { TasksPage } from './components/portal/TasksPage';
 import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { makeCalendarActions } from './features/calendar/calendarActions';
-import { makeCalendarModel } from './features/calendar/calendarModel';
+import { makeCalendarModel, type CalendarDropSlot } from './features/calendar/calendarModel';
 import { makeCalendarPersistence } from './features/calendar/calendarPersistence';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
+import { useCalendarResizeEffect } from './features/calendar/useCalendarResizeEffect';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
@@ -307,6 +308,7 @@ export function CompanyPortal({
     closeBillingSetup,
   } = useBillingFeature();
   const onboardingSaveQueueRef = useRef(Promise.resolve());
+  const calendarDropSlotsRef = useRef<CalendarDropSlot[]>([]);
   const persistCalendarAssignmentRef = useRef((
     _jobNumber: string,
     _assignee: string,
@@ -389,70 +391,13 @@ export function CompanyPortal({
     setMailboxOAuthStatus,
     setMailboxConnectStatus,
   });
-
-  useEffect(() => {
-    if (!resizingJob) return undefined;
-    const activeResize = resizingJob;
-
-    function getResizedAssignment(clientY: number) {
-      const deltaSlots = Math.round((clientY - activeResize.startY) / 32);
-      const startDurationSlots = Math.max(1, Math.round(activeResize.startDuration / 30));
-      const lastStartSlot = Math.max(0, activeResize.startSlotIndex + startDurationSlots - 1);
-      const maxDurationSlots = Math.max(1, calendarDropSlots.length - activeResize.startSlotIndex);
-      let nextSlotIndex = activeResize.startSlotIndex;
-      let durationSlots = startDurationSlots;
-
-      if (activeResize.edge === 'start') {
-        nextSlotIndex = Math.min(lastStartSlot, Math.max(0, activeResize.startSlotIndex + deltaSlots));
-        durationSlots = startDurationSlots + (activeResize.startSlotIndex - nextSlotIndex);
-      } else {
-        durationSlots = Math.min(maxDurationSlots, Math.max(1, startDurationSlots + deltaSlots));
-      }
-
-      const nextSlot = calendarDropSlots[nextSlotIndex];
-
-      return {
-        durationMinutes: durationSlots * 30,
-        time: nextSlot?.key ?? activeResize.time,
-      };
-    }
-
-    function handlePointerMove(event: globalThis.PointerEvent) {
-      const resized = getResizedAssignment(event.clientY);
-
-      setCalendarAssignments((assignments) => {
-        const assignment = assignments[activeResize.jobNumber] ?? {
-          assignee: activeResize.assignee,
-          dayKey: activeResize.dayKey,
-          time: activeResize.time,
-          durationMinutes: activeResize.startDuration,
-        };
-
-        return {
-          ...assignments,
-          [activeResize.jobNumber]: {
-            ...assignment,
-            time: resized.time,
-            durationMinutes: resized.durationMinutes,
-          },
-        };
-      });
-    }
-
-    function handlePointerUp(event: globalThis.PointerEvent) {
-      const resized = getResizedAssignment(event.clientY);
-      persistCalendarAssignmentRef.current(activeResize.jobNumber, activeResize.assignee, activeResize.dayKey, resized.time, resized.durationMinutes);
-      setResizingJob(null);
-    }
-
-    window.addEventListener('pointermove', handlePointerMove);
-    window.addEventListener('pointerup', handlePointerUp, { once: true });
-
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', handlePointerUp);
-    };
-  }, [resizingJob]);
+  useCalendarResizeEffect({
+    resizingJob,
+    calendarDropSlotsRef,
+    setCalendarAssignments,
+    setResizingJob,
+    persistCalendarAssignmentRef,
+  });
 
   useMailboxAutoSync({
     emailConnection,
@@ -604,6 +549,7 @@ export function CompanyPortal({
     visibleCalendarJobs,
     visibleCalendarDays,
   } = calendarModel;
+  calendarDropSlotsRef.current = calendarDropSlots;
   const calendarPersistence = makeCalendarPersistence({
     companyId: activeCompany.id,
     jobs,
