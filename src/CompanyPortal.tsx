@@ -1,9 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import {
-  Activity,
   Building2,
-  Database,
-  Users,
 } from 'lucide-react';
 import {
   completeOnboardingStep,
@@ -23,6 +20,7 @@ import {
 import { applyPlan, plans } from './services/billingCatalog';
 import { JobDetailPanel } from './components/JobDetailPanel';
 import { CalendarPage } from './components/portal/CalendarPage';
+import { ClientPlaceholderPage } from './components/portal/ClientPlaceholderPage';
 import { DebtorsPage } from './components/portal/DebtorsPage';
 import { EmailPage } from './components/portal/EmailPage';
 import { FinancePage } from './components/portal/FinancePage';
@@ -78,7 +76,6 @@ import {
   CompanyDetail,
   CompanyRow,
   DashboardOverview,
-  MetricCard,
   MiniStat,
   SupportPanel,
 } from './components/OwnerPages';
@@ -974,18 +971,11 @@ export function CompanyPortal({
             onConnectSubscriptionBilling={onboardingProfileActions.connectSubscriptionBilling}
           />
         ) : (
-          <section className="client-placeholder">
-            <div className="client-placeholder-icon">
-              {activeClientNavItem?.icon}
-            </div>
-            <h1>{activeClientNavItem?.label}</h1>
-            <p>This module is ready to be connected to live company data.</p>
-            <div className="client-placeholder-grid">
-              <MetricCard icon={<Activity size={20} />} label="Company" value={selectedCompany.name} detail={selectedCompany.market} />
-              <MetricCard icon={<Users size={20} />} label="Technicians" value={selectedCompany.technicians.toString()} detail="Assigned team" />
-              <MetricCard icon={<Database size={20} />} label="Storage" value={`${selectedCompany.usage.storageGb} GB`} detail="Current usage" />
-            </div>
-          </section>
+          <ClientPlaceholderPage
+            company={selectedCompany}
+            icon={activeClientNavItem?.icon}
+            label={activeClientNavItem?.label}
+          />
         )}
       </main>
       {billingModalOpen ? (
