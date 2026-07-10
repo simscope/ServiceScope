@@ -19,21 +19,9 @@ import {
 } from './services/supportStore';
 import { applyPlan, plans } from './services/billingCatalog';
 import { JobDetailPanel } from './components/JobDetailPanel';
-import { CalendarPage } from './components/portal/CalendarPage';
-import { ClientPlaceholderPage } from './components/portal/ClientPlaceholderPage';
-import { DebtorsPage } from './components/portal/DebtorsPage';
-import { EmailPage } from './components/portal/EmailPage';
-import { FinancePage } from './components/portal/FinancePage';
-import { ImportPage } from './components/portal/ImportPage';
-import { AllJobsPage, JobsPage } from './components/portal/JobsPages';
-import { KnowledgePage } from './components/portal/KnowledgePage';
-import { MapPage } from './components/portal/MapPage';
-import { MaterialsPage } from './components/portal/MaterialsPage';
-import { OnboardingPage } from './components/portal/OnboardingPage';
-import { PortalAccountPage } from './components/portal/PortalAccountPage';
+import { ClientPageRenderer } from './components/portal/ClientPageRenderer';
 import { CompanyLogin } from './components/portal/CompanyLogin';
 import { SquareBillingModal } from './components/portal/SquareBillingModal';
-import { TasksPage } from './components/portal/TasksPage';
 import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import { makeCalendarActions } from './features/calendar/calendarActions';
@@ -49,7 +37,6 @@ import { useMailboxSettingsLoader } from './features/email/useMailboxSettingsLoa
 import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
 import { makeInvoiceActions } from './features/finance/invoiceActions';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
-import { JobInboxPage } from './features/job-inbox/JobInboxPage';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { makeJobActions } from './features/jobs/jobActions';
 import { makeJobModel } from './features/jobs/jobModel';
@@ -136,14 +123,10 @@ import {
   ticketPriorityLabels,
 } from './appLabels';
 import {
-  emailProviderLabels,
   emptyAccessForm,
   emptyCompany,
   emptySupportForm,
-  initialEmailTemplates,
   initialMaterialRows,
-  libraryCategories,
-  libraryFormats,
 } from './appSeeds';
 import type {
   AppPage,
@@ -644,339 +627,121 @@ export function CompanyPortal({
             <span>Owner access controls are active for this company.</span>
           </div>
         ) : null}
-        {renderedClientPage === 'jobInbox' ? (
-          <JobInboxPage
-            items={jobInboxFeature.items}
-            form={jobInboxFeature.form}
-            status={jobInboxFeature.status}
-            search={jobInboxFeature.search}
-            statusFilter={jobInboxFeature.statusFilter}
-            onFormChange={jobInboxFeature.setForm}
-            onCreateItem={jobInboxFeature.createItem}
-            onSearchChange={jobInboxFeature.setSearch}
-            onStatusFilterChange={jobInboxFeature.setStatusFilter}
-            onConvertToJob={jobActions.handleConvertJobInboxItem}
-            onUpdateStatus={jobInboxFeature.updateItemStatus}
-          />
-        ) : renderedClientPage === 'jobs' ? (
-          <JobsPage
-            openedJob={openedJob}
-            jobs={allJobsRows}
-            profile={profile}
-            paymentMethodOptions={paymentMethodOptions}
-            materials={materials}
-            currentPortalUser={currentPortalUser}
-            onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={materialWorkflow.saveJobMaterials}
-            onCreateInvoice={invoiceActions.handleCreateInvoice}
-            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={emailActions.openEmailCompose}
-            onCreateJob={jobActions.handleCreateJob}
-            selectedJobPrefix={selectedJobPrefix}
-            nextJobNumber={nextJobNumber}
-            selectedJobType={selectedJobType}
-            selectedJobTypeId={selectedJobTypeId}
-            onSelectedJobTypeIdChange={setSelectedJobTypeId}
-          />
-        ) : renderedClientPage === 'allJobs' ? (
-          <AllJobsPage
-            openedJob={openedJob}
-            profile={profile}
-            paymentMethodOptions={paymentMethodOptions}
-            materials={materials}
-            currentPortalUser={currentPortalUser}
-            onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={materialWorkflow.saveJobMaterials}
-            onCreateInvoice={invoiceActions.handleCreateInvoice}
-            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={emailActions.openEmailCompose}
-            jobStatusFilters={jobStatusFilters}
-            allJobsGroups={allJobsGroups}
-            allJobsVisibility={allJobsVisibility}
-            onAllJobsVisibilityChange={setAllJobsVisibility}
-            activeJobsCount={activeJobsRows.length}
-            paidJobsCount={paidJobsRows.length}
-            totalJobsCount={allJobsRows.length}
-            inlineJobDrafts={inlineJobDrafts}
-            onUpdateInlineJobDraft={updateInlineJobDraft}
-            onSaveInlineJob={jobActions.handleSaveInlineJob}
-            onOpenJob={setOpenedJob}
-          />
-        ) : renderedClientPage === 'debtors' ? (
-          <DebtorsPage
-            openedJob={openedJob}
-            profile={profile}
-            paymentMethodOptions={paymentMethodOptions}
-            materials={materials}
-            currentPortalUser={currentPortalUser}
-            onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={(job) => jobActions.handleSaveJob(job, true, 'debtors')}
-            onSaveMaterials={materialWorkflow.saveJobMaterials}
-            onCreateInvoice={invoiceActions.handleCreateInvoice}
-            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={emailActions.openEmailCompose}
-            allJobsRows={allJobsRows}
-            onOpenJob={setOpenedJob}
-            onSaveDebtorJob={(job) => jobActions.handleSaveJob(job, false, 'debtors')}
-            onSaveCustomerBlacklist={jobActions.handleSaveCustomerBlacklist}
-            readOnly={activePageReadOnly}
-          />
-        ) : renderedClientPage === 'calendar' ? (
-          <CalendarPage
-            openedJob={openedJob}
-            profile={profile}
-            paymentMethodOptions={paymentMethodOptions}
-            materials={materials}
-            currentPortalUser={currentPortalUser}
-            onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={materialWorkflow.saveJobMaterials}
-            onCreateInvoice={invoiceActions.handleCreateInvoice}
-            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={emailActions.openEmailCompose}
-            calendarRangeTitle={calendarRangeTitle}
-            onMoveCalendar={calendarActions.moveCalendar}
-            onShowToday={calendarActions.showTodayInCalendar}
-            activeCalendarTech={activeCalendarTech}
-            onActiveCalendarTechChange={setActiveCalendarTech}
-            calendarView={calendarView}
-            onCalendarViewChange={setCalendarView}
-            unassignedCalendarJobs={unassignedCalendarJobs}
-            onCalendarDragStart={calendarActions.handleCalendarDragStart}
-            onOpenJob={setOpenedJob}
-            calendarMonthDays={calendarMonthDays}
-            visibleCalendarJobs={visibleCalendarJobs}
-            calendarAnchor={calendarAnchor}
-            onCalendarMonthDrop={calendarActions.handleCalendarMonthDrop}
-            visibleCalendarDays={visibleCalendarDays}
-            calendarSlots={calendarSlots}
-            calendarDropSlots={calendarDropSlots}
-            onCalendarDrop={calendarActions.handleCalendarDrop}
-            onCalendarResizeStart={calendarActions.handleCalendarResizeStart}
-            jobStatusFilters={jobStatusFilters}
-            monthDropRequest={monthDropRequest}
-            allCalendarDays={allCalendarDays}
-            onMonthDropRequestChange={setMonthDropRequest}
-            onConfirmCalendarMonthDrop={calendarActions.confirmCalendarMonthDrop}
-          />
-        ) : renderedClientPage === 'materials' ? (
-          <MaterialsPage
-            materials={materials}
-            jobsWithoutMaterials={materialWorkflow.filteredJobsWithoutMaterials}
-            materialsTotal={materialWorkflow.materialsTotal}
-            materialStatusFilter={materialStatusFilter}
-            onMaterialStatusFilterChange={setMaterialStatusFilter}
-            materialStatuses={materialStatuses}
-            materialTechFilter={materialTechFilter}
-            onMaterialTechFilterChange={setMaterialTechFilter}
-            profile={profile}
-            materialSearch={materialSearch}
-            onMaterialSearchChange={setMaterialSearch}
-            onResetFilters={resetMaterialFilters}
-            onOpenMaterialEditor={openMaterialEditor}
-            onOpenJob={setOpenedJob}
-            filteredMaterialRows={materialWorkflow.filteredMaterialRows}
-            selectedMaterialsJob={materialWorkflow.selectedMaterialsJob}
-            onCloseMaterialEditor={closeMaterialEditor}
-            materialDraftRows={materialDraftRows}
-            onUpdateMaterialDraft={updateMaterialDraft}
-            onRemoveMaterialDraftRow={removeMaterialDraftRow}
-            onAddMaterialDraftRow={addMaterialDraftRow}
-            onSaveMaterialDraftRows={materialWorkflow.saveMaterialDraftRows}
-          />
-        ) : renderedClientPage === 'tasks' ? (
-          <TasksPage
-            openedJob={openedJob}
-            profile={profile}
-            paymentMethodOptions={paymentMethodOptions}
-            materials={materials}
-            currentPortalUser={currentPortalUser}
-            onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={materialWorkflow.saveJobMaterials}
-            onCreateInvoice={invoiceActions.handleCreateInvoice}
-            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={emailActions.openEmailCompose}
-            openTaskCount={tasksFeature.openTaskCount}
-            autoTaskCount={tasksFeature.autoTaskCount}
-            urgentTaskCount={tasksFeature.urgentTaskCount}
-            taskForm={tasksFeature.taskForm}
-            onTaskFormChange={tasksFeature.setTaskForm}
-            onCreateManualTask={tasksFeature.createManualTask}
-            allJobsRows={allJobsRows}
-            taskAssignees={tasksFeature.taskAssignees}
-            taskStatusFilter={tasksFeature.taskStatusFilter}
-            onTaskStatusFilterChange={tasksFeature.setTaskStatusFilter}
-            taskOwnerFilter={tasksFeature.taskOwnerFilter}
-            onTaskOwnerFilterChange={tasksFeature.setTaskOwnerFilter}
-            taskSearch={tasksFeature.taskSearch}
-            onTaskSearchChange={tasksFeature.setTaskSearch}
-            onResetFilters={tasksFeature.resetTaskFilters}
-            filteredTaskRows={tasksFeature.filteredTaskRows}
-            jobMap={tasksFeature.jobMap}
-            onOpenJob={setOpenedJob}
-            onUpdateTaskStatus={tasksFeature.updateTaskStatus}
-          />
-        ) : renderedClientPage === 'email' ? (
-          <EmailPage
-            emailConnection={emailConnection}
-            emailMessages={emailMessages}
-            emailTemplates={initialEmailTemplates}
-            emailProviderLabels={emailProviderLabels}
-            onOpenOnboarding={() => setClientPage('onboarding')}
-            onStartMailboxConnection={emailActions.startMailboxConnector}
-            onLoadMoreMailbox={() => loadMoreMailboxMessages(selectedCompanyId)}
-            mailboxSyncing={mailboxSyncing}
-            mailboxConnectStatus={mailboxConnectStatus}
-            emailFolder={emailFolder}
-            onEmailFolderChange={setEmailFolder}
-            emailSearch={emailSearch}
-            onEmailSearchChange={setEmailSearch}
-            visibleEmailMessages={emailModel.visibleEmailMessages}
-            onApplyEmailTemplate={applyEmailTemplate}
-            jobMap={emailModel.jobMap}
-            onEmailComposeChange={setEmailCompose}
-            emailCompose={emailCompose}
-            allJobsRows={allJobsRows}
-            companySignature={companyEmailSignature}
-            companyPaymentBlock={companyPaymentBlock}
-            composeRequestId={emailComposeRequestId}
-            composeAttachmentRequest={emailComposeAttachments}
-            onSendEmailDraft={emailActions.sendEmailDraft}
-          />
-        ) : renderedClientPage === 'map' ? (
-          <MapPage
-            filteredTechnicianLocations={mapModel.filteredTechnicianLocations}
-            mapTechFilter={mapTechFilter}
-            onMapTechFilterChange={setMapTechFilter}
-            mapStatusFilter={mapStatusFilter}
-            onMapStatusFilterChange={setMapStatusFilter}
-            mapSearch={mapSearch}
-            onMapSearchChange={setMapSearch}
-            onResetFilters={resetMapFilters}
-            profile={profile}
-          />
-        ) : renderedClientPage === 'import' ? (
-          <ImportPage
-            companyId={selectedCompany.id}
-            profile={profile}
-            existingJobs={allJobsRows}
-            nextJobNumber={nextJobNumber}
-            onImportJobs={jobActions.handleImportJobs}
-            readOnly={activePageReadOnly}
-          />
-        ) : renderedClientPage === 'finances' ? (
-          <FinancePage
-            openedJob={openedJob}
-            profile={profile}
-            paymentMethodOptions={paymentMethodOptions}
-            materials={materials}
-            currentPortalUser={currentPortalUser}
-            onCloseJob={() => setOpenedJob(null)}
-            onSaveJob={jobActions.handleSaveJob}
-            onSaveMaterials={materialWorkflow.saveJobMaterials}
-            onCreateInvoice={invoiceActions.handleCreateInvoice}
-            onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-            onComposeEmail={emailActions.openEmailCompose}
-            financeSummary={financeWorkflow.financeSummary}
-            financePeriod={financePeriod}
-            onFinancePeriodChange={setFinancePeriod}
-            financeTechFilter={financeTechFilter}
-            onFinanceTechFilterChange={setFinanceTechFilter}
-            payrollRules={payrollRules}
-            onPayrollRulesChange={setPayrollRules}
-            technicianPayroll={financeWorkflow.technicianPayroll}
-            financeBaseRows={financeWorkflow.financeBaseRows}
-            onOpenJob={setOpenedJob}
-            onToggleSalaryPaid={financeWorkflow.toggleSalaryPaid}
-            onMarkSalaryJobsPaid={financeWorkflow.markSalaryJobsPaid}
-          />
-        ) : renderedClientPage === 'knowledge' ? (
-          <KnowledgePage
-            libraryDocuments={libraryFeature.libraryDocuments}
-            libraryStatus={libraryFeature.libraryStatus}
-            librarySystems={libraryFeature.librarySystems}
-            filteredLibraryDocuments={libraryFeature.filteredLibraryDocuments}
-            libraryDraft={libraryFeature.libraryDraft}
-            onLibraryDraftChange={libraryFeature.setLibraryDraft}
-            libraryCategories={libraryCategories}
-            libraryFormats={libraryFormats}
-            librarySearch={libraryFeature.librarySearch}
-            onLibrarySearchChange={libraryFeature.setLibrarySearch}
-            libraryCategoryFilter={libraryFeature.libraryCategoryFilter}
-            onLibraryCategoryFilterChange={libraryFeature.setLibraryCategoryFilter}
-            librarySystemFilter={libraryFeature.librarySystemFilter}
-            onLibrarySystemFilterChange={libraryFeature.setLibrarySystemFilter}
-            libraryFormatFilter={libraryFeature.libraryFormatFilter}
-            onLibraryFormatFilterChange={libraryFeature.setLibraryFormatFilter}
-            onLibraryFileChange={libraryFeature.handleLibraryFileChange}
-            onAddLibraryDocument={libraryFeature.addLibraryDocument}
-            onOpenLibraryDocument={libraryFeature.handleOpenLibraryDocument}
-            onDeleteLibraryDocument={libraryFeature.handleDeleteLibraryDocument}
-          />
-        ) : renderedClientPage === 'portal' ? (
-          <PortalAccountPage
-            selectedCompany={selectedCompany}
-            tickets={tickets}
-            openTicketsCount={openTickets.length}
-            request={request}
-            requestTouched={requestTouched}
-            onRequestChange={setRequest}
-            onRequestSubmit={supportActions.handleRequestSubmit}
-          />
-        ) : renderedClientPage === 'onboarding' ? (
-          <OnboardingPage
-            completedSteps={completedSteps}
-            profile={profile}
-            emailConnection={emailConnection}
-            handleLogoUpload={onboardingAdminFeature.handleLogoUpload}
-            updateProfile={onboardingProfileActions.updateProfile}
-            connectMailbox={emailActions.connectMailbox}
-            emailProviderLabels={emailProviderLabels}
-            updateMailbox={emailActions.updateMailbox}
-            togglePaymentMethod={onboardingProfileActions.togglePaymentMethod}
-            professionTemplates={professionTemplates}
-            configuredProfessionNames={configuredProfessionNames}
-            addProfessionTemplate={onboardingAdminFeature.addProfessionTemplate}
-            jobTypeForm={onboardingAdminFeature.jobTypeForm}
-            setJobTypeForm={onboardingAdminFeature.setJobTypeForm}
-            handleJobTypeSubmit={onboardingAdminFeature.handleJobTypeSubmit}
-            removeJobType={onboardingAdminFeature.removeJobType}
-            technicianForm={onboardingAdminFeature.technicianForm}
-            setTechnicianForm={onboardingAdminFeature.setTechnicianForm}
-            selectedCompany={selectedCompany}
-            handleTechnicianSubmit={onboardingAdminFeature.handleTechnicianSubmit}
-            onSendTechnicianAccess={onboardingAdminFeature.sendTechnicianAccess}
-            technicianAccessStatusById={onboardingAdminFeature.technicianAccessStatusById}
-            technicianAccessPasswordById={onboardingAdminFeature.technicianAccessPasswordById}
-            setTechnicianAccessPasswordById={onboardingAdminFeature.setTechnicianAccessPasswordById}
-            ownerAccessPassword={onboardingAdminFeature.ownerAccessPassword}
-            ownerAccessPasswordConfirm={onboardingAdminFeature.ownerAccessPasswordConfirm}
-            ownerAccessStatus={onboardingAdminFeature.ownerAccessStatus}
-            setOwnerAccessPassword={onboardingAdminFeature.setOwnerAccessPassword}
-            setOwnerAccessPasswordConfirm={onboardingAdminFeature.setOwnerAccessPasswordConfirm}
-            onGenerateOwnerPassword={onboardingAdminFeature.generateOwnerPassword}
-            onSaveOwnerPassword={onboardingAdminFeature.saveOwnerPassword}
-            mailboxConnectStatus={mailboxConnectStatus}
-            mailboxOAuthSecretDraft={mailboxOAuthSecretDraft}
-            mailboxOAuthStatus={mailboxOAuthStatus}
-            mailboxOAuthRedirectUrl={mailboxOAuthRedirectUrl}
-            setMailboxOAuthSecretDraft={setMailboxOAuthSecretDraft}
-            onCopyMailboxRedirectUrl={emailActions.copyMailboxRedirectUrl}
-            onSaveMailboxOAuth={emailActions.saveMailboxOAuth}
-            onStartMailboxConnection={emailActions.startMailboxConnector}
-            billingStatus={billingStatus}
-            onConnectSubscriptionBilling={onboardingProfileActions.connectSubscriptionBilling}
-          />
-        ) : (
-          <ClientPlaceholderPage
-            company={selectedCompany}
-            icon={activeClientNavItem?.icon}
-            label={activeClientNavItem?.label}
-          />
-        )}
+        <ClientPageRenderer
+          renderedClientPage={renderedClientPage}
+          context={{
+            activeCalendarTech,
+            activeClientNavItem,
+            activeJobsRows,
+            activePageReadOnly,
+            allCalendarDays,
+            allJobsGroups,
+            allJobsRows,
+            allJobsVisibility,
+            applyEmailTemplate,
+            calendarActions,
+            calendarAnchor,
+            calendarDropSlots,
+            calendarMonthDays,
+            calendarRangeTitle,
+            calendarSlots,
+            calendarView,
+            closeMaterialEditor,
+            companyEmailSignature,
+            companyPaymentBlock,
+            completedSteps,
+            configuredProfessionNames,
+            currentPortalUser,
+            emailActions,
+            emailCompose,
+            emailComposeAttachments,
+            emailComposeRequestId,
+            emailConnection,
+            emailFolder,
+            emailMessages,
+            emailModel,
+            emailSearch,
+            financePeriod,
+            financeTechFilter,
+            financeWorkflow,
+            inlineJobDrafts,
+            invoiceActions,
+            jobActions,
+            jobInboxFeature,
+            jobStatusFilters,
+            libraryFeature,
+            loadMoreMailboxMessages,
+            mailBoxStatusProps: {
+              mailboxConnectStatus,
+              mailboxOAuthSecretDraft,
+              mailboxOAuthStatus,
+              mailboxSyncing,
+              setMailboxOAuthSecretDraft,
+            },
+            mapModel,
+            mapSearch,
+            mapStatusFilter,
+            mapTechFilter,
+            materialDraftRows,
+            materialSearch,
+            materialStatusFilter,
+            materialStatuses,
+            materialTechFilter,
+            materialWorkflow,
+            materials,
+            monthDropRequest,
+            nextJobNumber,
+            onboardingAdminFeature,
+            onboardingProfileActions,
+            openMaterialEditor,
+            openedJob,
+            openTickets,
+            paidJobsRows,
+            paymentMethodOptions,
+            payrollRules,
+            professionTemplates,
+            profile,
+            request,
+            requestTouched,
+            resetMapFilters,
+            resetMaterialFilters,
+            selectedCompany,
+            selectedCompanyId,
+            selectedJobPrefix,
+            selectedJobType,
+            selectedJobTypeId,
+            setActiveCalendarTech,
+            setAllJobsVisibility,
+            setCalendarView,
+            setClientPage,
+            setEmailCompose,
+            setEmailFolder,
+            setEmailSearch,
+            setFinancePeriod,
+            setFinanceTechFilter,
+            setMapSearch,
+            setMapStatusFilter,
+            setMapTechFilter,
+            setMaterialSearch,
+            setMaterialStatusFilter,
+            setMaterialTechFilter,
+            setMonthDropRequest,
+            setOpenedJob,
+            setPayrollRules,
+            setRequest,
+            setSelectedJobTypeId,
+            supportActions,
+            tasksFeature,
+            tickets,
+            unassignedCalendarJobs,
+            updateInlineJobDraft,
+            updateMaterialDraft,
+            removeMaterialDraftRow,
+            addMaterialDraftRow,
+            visibleCalendarDays,
+            visibleCalendarJobs,
+          }}
+        />
       </main>
       {billingModalOpen ? (
         <SquareBillingModal
