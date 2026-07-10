@@ -639,6 +639,7 @@ export function CompanyPortal({
             allJobsRows,
             allJobsVisibility,
             applyEmailTemplate,
+            billingStatus,
             calendarActions,
             calendarAnchor,
             calendarDropSlots,
