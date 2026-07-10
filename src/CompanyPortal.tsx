@@ -1,20 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import {
   Activity,
-  AlertTriangle,
   Building2,
-  CheckCircle2,
-  ClipboardList,
-  CreditCard,
   Database,
-  FileClock,
-  Inbox,
-  MailPlus,
-  PackageCheck,
-  Plus,
-  Search,
-  SlidersHorizontal,
-  UserPlus,
   Users,
 } from 'lucide-react';
 import {
@@ -44,6 +32,7 @@ import { KnowledgePage } from './components/portal/KnowledgePage';
 import { MapPage } from './components/portal/MapPage';
 import { MaterialsPage } from './components/portal/MaterialsPage';
 import { OnboardingPage } from './components/portal/OnboardingPage';
+import { PortalAccountPage } from './components/portal/PortalAccountPage';
 import { CompanyLogin } from './components/portal/CompanyLogin';
 import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { TasksPage } from './components/portal/TasksPage';
@@ -131,8 +120,6 @@ import type {
   NewCompanyForm,
   OnboardingStepKey,
   SupportTicket,
-  SupportTicketKind,
-  SupportTicketPriority,
   SupportTicketStatus,
   PlatformUser,
   PlatformUserRole,
@@ -149,9 +136,7 @@ import {
   platformRoleLabels,
   platformStatusLabels,
   statusLabels,
-  ticketKindLabels,
   ticketPriorityLabels,
-  ticketStatusLabels,
 } from './appLabels';
 import {
   emailProviderLabels,
@@ -935,99 +920,15 @@ export function CompanyPortal({
             onDeleteLibraryDocument={libraryFeature.handleDeleteLibraryDocument}
           />
         ) : renderedClientPage === 'portal' ? (
-          <section className="portal-page">
-            <div className="portal-hero">
-              <div className="portal-identity">
-                <div className="company-avatar large">{selectedCompany.name.slice(0, 2).toUpperCase()}</div>
-                <div>
-                  <p className="eyebrow">Company portal</p>
-                  <h2>{selectedCompany.name}</h2>
-                  <p>{selectedCompany.ownerName} - {selectedCompany.ownerEmail}</p>
-                </div>
-              </div>
-              <span className={`billing-pill ${selectedCompany.billingStatus}`}>{billingLabels[selectedCompany.billingStatus]}</span>
-            </div>
-
-            <section className="portal-metrics">
-              <MetricCard icon={<Building2 size={20} />} label="Account" value={selectedCompany.status} detail="Company portal" />
-              <MetricCard icon={<CreditCard size={20} />} label="Plan" value={selectedCompany.plan} detail={billingLabels[selectedCompany.billingStatus]} />
-              <MetricCard icon={<ClipboardList size={20} />} label="Jobs" value={selectedCompany.usage.jobsThisMonth.toString()} detail="This month" />
-              <MetricCard icon={<Inbox size={20} />} label="Support" value={openTickets.length.toString()} detail="Open requests" />
-            </section>
-
-            <div className="portal-grid">
-              <section className="panel portal-support-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">Direct support</p>
-                    <h2>Request a change</h2>
-                  </div>
-                  <MailPlus size={20} aria-hidden="true" />
-                </div>
-                <form className="portal-request-form" onSubmit={supportActions.handleRequestSubmit}>
-                  <div className="form-row">
-                    <label>
-                      Type
-                      <select value={request.kind} onChange={(event) => setRequest({ ...request, kind: event.target.value as SupportTicketKind })}>
-                        <option value="change">Change</option>
-                        <option value="bug">Bug</option>
-                        <option value="question">Question</option>
-                      </select>
-                    </label>
-                    <label>
-                      Priority
-                      <select value={request.priority} onChange={(event) => setRequest({ ...request, priority: event.target.value as SupportTicketPriority })}>
-                        <option value="normal">Normal</option>
-                        <option value="urgent">Urgent</option>
-                        <option value="low">Low</option>
-                      </select>
-                    </label>
-                  </div>
-                  <label>
-                    Subject
-                    <input className={requestTouched && !request.subject.trim() ? 'field-error' : undefined} value={request.subject} onChange={(event) => setRequest({ ...request, subject: event.target.value })} placeholder="What should be fixed or changed?" />
-                  </label>
-                  <label>
-                    Message
-                    <textarea className={requestTouched && !request.message.trim() ? 'field-error' : undefined} value={request.message} onChange={(event) => setRequest({ ...request, message: event.target.value })} placeholder="Describe the issue, request, or missing detail." />
-                  </label>
-                  <button className="primary-button" type="submit">
-                    <MailPlus size={18} aria-hidden="true" />
-                    Send request
-                  </button>
-                </form>
-              </section>
-
-              <section className="panel portal-ticket-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="eyebrow">Recent communication</p>
-                    <h2>Support history</h2>
-                  </div>
-                  <Inbox size={20} aria-hidden="true" />
-                </div>
-                <div className="portal-ticket-list">
-                  {tickets.slice(0, 4).map((ticket) => (
-                    <article className="portal-ticket-row" key={ticket.id}>
-                      <div>
-                        <span className={`ticket-kind ${ticket.kind}`}>{ticketKindLabels[ticket.kind]}</span>
-                        <h3>{ticket.subject}</h3>
-                        <p>{ticket.lastUpdate}</p>
-                      </div>
-                      <strong>{ticketStatusLabels[ticket.status]}</strong>
-                    </article>
-                  ))}
-                  {!tickets.length ? (
-                    <div className="empty-state compact-empty">
-                      <CheckCircle2 size={24} aria-hidden="true" />
-                      <h3>No requests yet</h3>
-                      <p>New requests from this portal will appear in owner support.</p>
-                    </div>
-                  ) : null}
-                </div>
-              </section>
-            </div>
-          </section>
+          <PortalAccountPage
+            selectedCompany={selectedCompany}
+            tickets={tickets}
+            openTicketsCount={openTickets.length}
+            request={request}
+            requestTouched={requestTouched}
+            onRequestChange={setRequest}
+            onRequestSubmit={supportActions.handleRequestSubmit}
+          />
         ) : renderedClientPage === 'onboarding' ? (
           <OnboardingPage
             completedSteps={completedSteps}
