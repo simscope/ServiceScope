@@ -1,17 +1,15 @@
 import { mailboxOAuthRedirectUrl } from '../../services/mailboxOAuthSettings';
 import { emailProviderLabels, initialEmailTemplates, libraryCategories, libraryFormats } from '../../appSeeds';
 import type { ClientPage } from '../../appTypes';
-import { CalendarPage } from './CalendarPage';
 import { ClientPlaceholderPage } from './ClientPlaceholderPage';
 import { EmailPage } from './EmailPage';
 import { FinancePage } from './FinancePage';
 import { KnowledgePage } from './KnowledgePage';
 import { MapPage } from './MapPage';
-import { MaterialsPage } from './MaterialsPage';
 import { OnboardingPage } from './OnboardingPage';
 import { PortalAccountPage } from './PortalAccountPage';
-import { TasksPage } from './TasksPage';
 import { ClientJobsPageRenderer } from './ClientJobsPageRenderer';
+import { ClientOperationsPageRenderer } from './ClientOperationsPageRenderer';
 import type { ClientPageRendererContext } from './clientPageRendererTypes';
 
 type ClientPageRendererProps = {
@@ -21,23 +19,9 @@ type ClientPageRendererProps = {
 
 export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRendererProps) {
   const {
-    activeCalendarTech,
     activeClientNavItem,
-    activeJobsRows,
-    activePageReadOnly,
-    allCalendarDays,
-    allJobsGroups,
     allJobsRows,
-    allJobsVisibility,
     applyEmailTemplate,
-    calendarActions,
-    calendarAnchor,
-    calendarDropSlots,
-    calendarMonthDays,
-    calendarRangeTitle,
-    calendarSlots,
-    calendarView,
-    closeMaterialEditor,
     companyEmailSignature,
     companyPaymentBlock,
     configuredProfessionNames,
@@ -54,11 +38,8 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     financePeriod,
     financeTechFilter,
     financeWorkflow,
-    inlineJobDrafts,
     invoiceActions,
     jobActions,
-    jobInboxFeature,
-    jobStatusFilters,
     libraryFeature,
     loadMoreMailboxMessages,
     mailBoxStatusProps,
@@ -66,21 +47,12 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     mapSearch,
     mapStatusFilter,
     mapTechFilter,
-    materialDraftRows,
-    materialSearch,
-    materialStatusFilter,
-    materialStatuses,
-    materialTechFilter,
     materialWorkflow,
     materials,
-    monthDropRequest,
-    nextJobNumber,
     onboardingAdminFeature,
     onboardingProfileActions,
-    openMaterialEditor,
     openedJob,
     openTickets,
-    paidJobsRows,
     paymentMethodOptions,
     payrollRules,
     professionTemplates,
@@ -91,39 +63,18 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     resetMaterialFilters,
     selectedCompany,
     selectedCompanyId,
-    selectedJobPrefix,
-    selectedJobType,
-    selectedJobTypeId,
-    setActiveCalendarTech,
-    setAllJobsVisibility,
-    setCalendarView,
     setClientPage,
     setEmailCompose,
-    setEmailFolder,
-    setEmailSearch,
     setFinancePeriod,
     setFinanceTechFilter,
     setMapSearch,
     setMapStatusFilter,
     setMapTechFilter,
-    setMaterialSearch,
-    setMaterialStatusFilter,
-    setMaterialTechFilter,
-    setMonthDropRequest,
     setOpenedJob,
     setPayrollRules,
     setRequest,
-    setSelectedJobTypeId,
     supportActions,
-    tasksFeature,
     tickets,
-    unassignedCalendarJobs,
-    updateInlineJobDraft,
-    updateMaterialDraft,
-    removeMaterialDraftRow,
-    addMaterialDraftRow,
-    visibleCalendarDays,
-    visibleCalendarJobs,
   } = context;
 
   const jobsPage = ClientJobsPageRenderer({ renderedClientPage, context });
@@ -131,112 +82,9 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     return jobsPage;
   }
 
-  if (renderedClientPage === 'calendar') {
-    return (
-      <CalendarPage
-        openedJob={openedJob}
-        profile={profile}
-        paymentMethodOptions={paymentMethodOptions}
-        materials={materials}
-        currentPortalUser={currentPortalUser}
-        onCloseJob={() => setOpenedJob(null)}
-        onSaveJob={jobActions.handleSaveJob}
-        onSaveMaterials={materialWorkflow.saveJobMaterials}
-        onCreateInvoice={invoiceActions.handleCreateInvoice}
-        onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-        onComposeEmail={emailActions.openEmailCompose}
-        calendarRangeTitle={calendarRangeTitle}
-        onMoveCalendar={calendarActions.moveCalendar}
-        onShowToday={calendarActions.showTodayInCalendar}
-        activeCalendarTech={activeCalendarTech}
-        onActiveCalendarTechChange={setActiveCalendarTech}
-        calendarView={calendarView}
-        onCalendarViewChange={setCalendarView}
-        unassignedCalendarJobs={unassignedCalendarJobs}
-        onCalendarDragStart={calendarActions.handleCalendarDragStart}
-        onOpenJob={setOpenedJob}
-        calendarMonthDays={calendarMonthDays}
-        visibleCalendarJobs={visibleCalendarJobs}
-        calendarAnchor={calendarAnchor}
-        onCalendarMonthDrop={calendarActions.handleCalendarMonthDrop}
-        visibleCalendarDays={visibleCalendarDays}
-        calendarSlots={calendarSlots}
-        calendarDropSlots={calendarDropSlots}
-        onCalendarDrop={calendarActions.handleCalendarDrop}
-        onCalendarResizeStart={calendarActions.handleCalendarResizeStart}
-        jobStatusFilters={jobStatusFilters}
-        monthDropRequest={monthDropRequest}
-        allCalendarDays={allCalendarDays}
-        onMonthDropRequestChange={setMonthDropRequest}
-        onConfirmCalendarMonthDrop={calendarActions.confirmCalendarMonthDrop}
-      />
-    );
-  }
-
-  if (renderedClientPage === 'materials') {
-    return (
-      <MaterialsPage
-        materials={materials}
-        jobsWithoutMaterials={materialWorkflow.filteredJobsWithoutMaterials}
-        materialsTotal={materialWorkflow.materialsTotal}
-        materialStatusFilter={materialStatusFilter}
-        onMaterialStatusFilterChange={setMaterialStatusFilter}
-        materialStatuses={materialStatuses}
-        materialTechFilter={materialTechFilter}
-        onMaterialTechFilterChange={setMaterialTechFilter}
-        profile={profile}
-        materialSearch={materialSearch}
-        onMaterialSearchChange={setMaterialSearch}
-        onResetFilters={resetMaterialFilters}
-        onOpenMaterialEditor={openMaterialEditor}
-        onOpenJob={setOpenedJob}
-        filteredMaterialRows={materialWorkflow.filteredMaterialRows}
-        selectedMaterialsJob={materialWorkflow.selectedMaterialsJob}
-        onCloseMaterialEditor={closeMaterialEditor}
-        materialDraftRows={materialDraftRows}
-        onUpdateMaterialDraft={updateMaterialDraft}
-        onRemoveMaterialDraftRow={removeMaterialDraftRow}
-        onAddMaterialDraftRow={addMaterialDraftRow}
-        onSaveMaterialDraftRows={materialWorkflow.saveMaterialDraftRows}
-      />
-    );
-  }
-
-  if (renderedClientPage === 'tasks') {
-    return (
-      <TasksPage
-        openedJob={openedJob}
-        profile={profile}
-        paymentMethodOptions={paymentMethodOptions}
-        materials={materials}
-        currentPortalUser={currentPortalUser}
-        onCloseJob={() => setOpenedJob(null)}
-        onSaveJob={jobActions.handleSaveJob}
-        onSaveMaterials={materialWorkflow.saveJobMaterials}
-        onCreateInvoice={invoiceActions.handleCreateInvoice}
-        onDeleteInvoice={invoiceActions.handleDeleteInvoice}
-        onComposeEmail={emailActions.openEmailCompose}
-        openTaskCount={tasksFeature.openTaskCount}
-        autoTaskCount={tasksFeature.autoTaskCount}
-        urgentTaskCount={tasksFeature.urgentTaskCount}
-        taskForm={tasksFeature.taskForm}
-        onTaskFormChange={tasksFeature.setTaskForm}
-        onCreateManualTask={tasksFeature.createManualTask}
-        allJobsRows={allJobsRows}
-        taskAssignees={tasksFeature.taskAssignees}
-        taskStatusFilter={tasksFeature.taskStatusFilter}
-        onTaskStatusFilterChange={tasksFeature.setTaskStatusFilter}
-        taskOwnerFilter={tasksFeature.taskOwnerFilter}
-        onTaskOwnerFilterChange={tasksFeature.setTaskOwnerFilter}
-        taskSearch={tasksFeature.taskSearch}
-        onTaskSearchChange={tasksFeature.setTaskSearch}
-        onResetFilters={tasksFeature.resetTaskFilters}
-        filteredTaskRows={tasksFeature.filteredTaskRows}
-        jobMap={tasksFeature.jobMap}
-        onOpenJob={setOpenedJob}
-        onUpdateTaskStatus={tasksFeature.updateTaskStatus}
-      />
-    );
+  const operationsPage = ClientOperationsPageRenderer({ renderedClientPage, context });
+  if (operationsPage) {
+    return operationsPage;
   }
 
   if (renderedClientPage === 'email') {
