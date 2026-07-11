@@ -31,6 +31,7 @@ import { makeCalendarPersistence } from './features/calendar/calendarPersistence
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { useCalendarResizeEffect } from './features/calendar/useCalendarResizeEffect';
 import { makeCompanyPortalModel } from './features/company-portal/companyPortalModel';
+import { makeCompanyPortalNavigationModel } from './features/company-portal/companyPortalNavigationModel';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
@@ -49,7 +50,6 @@ import { makeMapModel } from './features/map/mapModel';
 import { useMapFeature } from './features/map/useMapFeature';
 import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
-import { resolveClientNavigation } from './features/navigation/clientNavigation';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { makeOnboardingProfileActions } from './features/onboarding/onboardingProfileActions';
 import { useOnboardingAdminFeature } from './features/onboarding/useOnboardingAdminFeature';
@@ -557,12 +557,14 @@ export function CompanyPortal({
     visibleClientNavItems,
     renderedClientPage,
     activeClientNavItem,
-  } = resolveClientNavigation({
+    activePageAccessLevel,
+    activePageReadOnly,
+  } = makeCompanyPortalNavigationModel({
     clientPage,
     canViewPage,
+    canWritePage,
+    accessLevelForPage,
   });
-  const activePageAccessLevel = accessLevelForPage(renderedClientPage as CompanyPortalAccessPage);
-  const activePageReadOnly = !canWritePage(renderedClientPage as CompanyPortalAccessPage);
   const supportActions = makeSupportActions({
     request,
     setRequestTouched,
