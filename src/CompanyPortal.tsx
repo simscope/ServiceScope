@@ -30,6 +30,7 @@ import { makeCalendarModel, type CalendarDropSlot } from './features/calendar/ca
 import { makeCalendarPersistence } from './features/calendar/calendarPersistence';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { useCalendarResizeEffect } from './features/calendar/useCalendarResizeEffect';
+import { makeCompanyPortalModel } from './features/company-portal/companyPortalModel';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
@@ -50,7 +51,6 @@ import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { resolveClientNavigation } from './features/navigation/clientNavigation';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
-import { makeCompanyCommunicationModel } from './features/onboarding/companyCommunicationModel';
 import { makeOnboardingProfileActions } from './features/onboarding/onboardingProfileActions';
 import { useOnboardingAdminFeature } from './features/onboarding/useOnboardingAdminFeature';
 import { makeSupportActions } from './features/support/supportActions';
@@ -85,7 +85,6 @@ import {
 import {
   createDefaultCompanyOnboardingProfile,
   listCompanyOnboardingProfiles,
-  makeJobTypes,
   saveCompanyOnboardingProfiles,
 } from './services/companyOnboardingStore';
 import { mailboxOAuthRedirectUrl } from './services/mailboxOAuthSettings';
@@ -375,11 +374,23 @@ export function CompanyPortal({
     );
   }
 
-  const activeCompany = selectedCompany;
-  const completedSteps = Object.values(activeCompany.onboarding).filter((step) => step === 'done').length;
-  const openTickets = tickets.filter((ticket) => ticket.status !== 'resolved');
-  const profile = onboardingProfile ?? createDefaultCompanyOnboardingProfile(activeCompany);
-  const companyAccessRules = resolveCompanyAccessRules(activeCompany);
+  const {
+    activeCompany,
+    completedSteps,
+    companyAccessRules,
+    companyCommunication,
+    configuredProfessionNames,
+    currentPortalUser,
+    openTickets,
+    professionTemplates,
+    profile,
+  } = makeCompanyPortalModel({
+    selectedCompany,
+    onboardingProfile,
+    signedInUser,
+    tickets,
+    emailConnection,
+  });
   const {
     accessLevelForPage,
     canViewPage,
@@ -390,19 +401,8 @@ export function CompanyPortal({
     accessLevelLabels,
     setStatus: setJobsStatus,
   });
-  const companyCommunication = makeCompanyCommunicationModel({
-    company: activeCompany,
-    profile,
-    emailConnection,
-  });
   const { companyEmailSignature, companyPaymentBlock, paymentMethodOptions } = companyCommunication;
 
-  const professionTemplates = makeJobTypes();
-  const configuredProfessionNames = new Set(
-    profile.jobTypes
-      .map((jobType) => String(jobType.name ?? '').trim().toLowerCase())
-      .filter(Boolean),
-  );
   const jobModel = makeJobModel({
     jobs,
     openJobs: selectedCompany.openJobs,
@@ -484,10 +484,6 @@ export function CompanyPortal({
     setSalaryPaidJobs,
     stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
   });
-  const currentPortalUser = {
-    name: signedInUser?.name ?? selectedCompany.ownerName,
-    role: signedInUser?.role ?? 'Admin' as const,
-  };
   const calendarModel = makeCalendarModel({
     calendarAnchorDate,
     calendarView,
