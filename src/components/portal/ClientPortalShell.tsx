@@ -3,7 +3,7 @@ import type { Company, CompanyOnboardingProfile, CompanyPortalAccessLevel } from
 import { accessLevelLabels } from '../CompanyAccessPage';
 import { ClientPageRenderer } from './ClientPageRenderer';
 import { SquareBillingModal } from './SquareBillingModal';
-import type { ClientPageRendererContext } from './clientPageRendererTypes';
+import type { ClientPageRendererContextGroups } from './clientPageRendererTypes';
 import type { ClientNavItem } from '../../features/navigation/clientNavigation';
 
 type ClientPortalShellProps = {
@@ -12,7 +12,7 @@ type ClientPortalShellProps = {
   activePageAccessLevel: CompanyPortalAccessLevel;
   activePageReadOnly: boolean;
   billingModalOpen: boolean;
-  clientPageRendererContext: ClientPageRendererContext;
+  clientPageRendererContext: ClientPageRendererContextGroups;
   jobsStatus: string;
   onBillingConnected: (updates: Partial<CompanyOnboardingProfile>, status: string) => void;
   onCloseBillingSetup: () => void;

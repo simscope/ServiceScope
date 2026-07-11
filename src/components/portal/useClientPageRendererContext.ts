@@ -1,239 +1,116 @@
 import { useMemo } from 'react';
-import type { ClientPageRendererContext } from './clientPageRendererTypes';
+import type { ClientPageRendererContextGroups } from './clientPageRendererTypes';
 
-type ClientPageRendererContextGroups = {
-  business: Pick<ClientPageRendererContext,
-    | 'applyEmailTemplate'
-    | 'companyEmailSignature'
-    | 'companyPaymentBlock'
-    | 'configuredProfessionNames'
-    | 'emailActions'
-    | 'emailCompose'
-    | 'emailComposeAttachments'
-    | 'emailComposeRequestId'
-    | 'emailConnection'
-    | 'emailFolder'
-    | 'emailMessages'
-    | 'emailModel'
-    | 'emailSearch'
-    | 'financePeriod'
-    | 'financeTechFilter'
-    | 'financeWorkflow'
-    | 'libraryFeature'
-    | 'loadMoreMailboxMessages'
-    | 'mailBoxStatusProps'
-    | 'onboardingAdminFeature'
-    | 'onboardingProfileActions'
-    | 'paymentMethodOptions'
-    | 'payrollRules'
-    | 'professionTemplates'
-    | 'setClientPage'
-    | 'setEmailCompose'
-    | 'setEmailFolder'
-    | 'setEmailSearch'
-    | 'setFinancePeriod'
-    | 'setFinanceTechFilter'
-    | 'setPayrollRules'
-  >;
-  map: Pick<ClientPageRendererContext,
-    | 'mapModel'
-    | 'mapSearch'
-    | 'mapStatusFilter'
-    | 'mapTechFilter'
-    | 'resetMapFilters'
-    | 'setMapSearch'
-    | 'setMapStatusFilter'
-    | 'setMapTechFilter'
-  >;
-  operations: Pick<ClientPageRendererContext,
-    | 'activeCalendarTech'
-    | 'activeJobsRows'
-    | 'allCalendarDays'
-    | 'allJobsGroups'
-    | 'allJobsRows'
-    | 'allJobsVisibility'
-    | 'calendarActions'
-    | 'calendarAnchor'
-    | 'calendarDropSlots'
-    | 'calendarMonthDays'
-    | 'calendarRangeTitle'
-    | 'calendarSlots'
-    | 'calendarView'
-    | 'closeMaterialEditor'
-    | 'inlineJobDrafts'
-    | 'invoiceActions'
-    | 'jobActions'
-    | 'jobInboxFeature'
-    | 'jobStatusFilters'
-    | 'materialDraftRows'
-    | 'materialSearch'
-    | 'materialStatusFilter'
-    | 'materialStatuses'
-    | 'materialTechFilter'
-    | 'materialWorkflow'
-    | 'materials'
-    | 'monthDropRequest'
-    | 'nextJobNumber'
-    | 'openMaterialEditor'
-    | 'openedJob'
-    | 'paidJobsRows'
-    | 'resetMaterialFilters'
-    | 'selectedJobPrefix'
-    | 'selectedJobType'
-    | 'selectedJobTypeId'
-    | 'setActiveCalendarTech'
-    | 'setAllJobsVisibility'
-    | 'setCalendarView'
-    | 'setMaterialSearch'
-    | 'setMaterialStatusFilter'
-    | 'setMaterialTechFilter'
-    | 'setMonthDropRequest'
-    | 'setOpenedJob'
-    | 'setSelectedJobTypeId'
-    | 'tasksFeature'
-    | 'unassignedCalendarJobs'
-    | 'updateInlineJobDraft'
-    | 'updateMaterialDraft'
-    | 'removeMaterialDraftRow'
-    | 'addMaterialDraftRow'
-    | 'visibleCalendarDays'
-    | 'visibleCalendarJobs'
-  >;
-  shell: Pick<ClientPageRendererContext,
-    | 'activeClientNavItem'
-    | 'activePageReadOnly'
-    | 'billingStatus'
-    | 'completedSteps'
-    | 'currentPortalUser'
-    | 'openTickets'
-    | 'profile'
-    | 'request'
-    | 'requestTouched'
-    | 'selectedCompany'
-    | 'selectedCompanyId'
-    | 'setRequest'
-    | 'supportActions'
-    | 'tickets'
-  >;
-};
-
-export function useClientPageRendererContext(groups: ClientPageRendererContextGroups): ClientPageRendererContext {
-  const context: ClientPageRendererContext = {
-    ...groups.shell,
-    ...groups.operations,
-    ...groups.business,
-    ...groups.map,
-  };
-
-  return useMemo(() => context, [
-    context.activeCalendarTech,
-    context.activeClientNavItem,
-    context.activeJobsRows,
-    context.activePageReadOnly,
-    context.allCalendarDays,
-    context.allJobsGroups,
-    context.allJobsRows,
-    context.allJobsVisibility,
-    context.applyEmailTemplate,
-    context.billingStatus,
-    context.calendarActions,
-    context.calendarAnchor,
-    context.calendarDropSlots,
-    context.calendarMonthDays,
-    context.calendarRangeTitle,
-    context.calendarSlots,
-    context.calendarView,
-    context.closeMaterialEditor,
-    context.companyEmailSignature,
-    context.companyPaymentBlock,
-    context.completedSteps,
-    context.configuredProfessionNames,
-    context.currentPortalUser,
-    context.emailActions,
-    context.emailCompose,
-    context.emailComposeAttachments,
-    context.emailComposeRequestId,
-    context.emailConnection,
-    context.emailFolder,
-    context.emailMessages,
-    context.emailModel,
-    context.emailSearch,
-    context.financePeriod,
-    context.financeTechFilter,
-    context.financeWorkflow,
-    context.inlineJobDrafts,
-    context.invoiceActions,
-    context.jobActions,
-    context.jobInboxFeature,
-    context.jobStatusFilters,
-    context.libraryFeature,
-    context.loadMoreMailboxMessages,
-    context.mailBoxStatusProps.mailboxConnectStatus,
-    context.mailBoxStatusProps.mailboxOAuthSecretDraft,
-    context.mailBoxStatusProps.mailboxOAuthStatus,
-    context.mailBoxStatusProps.mailboxSyncing,
-    context.mailBoxStatusProps.setMailboxOAuthSecretDraft,
-    context.mapModel,
-    context.mapSearch,
-    context.mapStatusFilter,
-    context.mapTechFilter,
-    context.materialDraftRows,
-    context.materialSearch,
-    context.materialStatusFilter,
-    context.materialStatuses,
-    context.materialTechFilter,
-    context.materialWorkflow,
-    context.materials,
-    context.monthDropRequest,
-    context.nextJobNumber,
-    context.onboardingAdminFeature,
-    context.onboardingProfileActions,
-    context.openMaterialEditor,
-    context.openedJob,
-    context.openTickets,
-    context.paidJobsRows,
-    context.paymentMethodOptions,
-    context.payrollRules,
-    context.professionTemplates,
-    context.profile,
-    context.request,
-    context.requestTouched,
-    context.resetMapFilters,
-    context.resetMaterialFilters,
-    context.selectedCompany,
-    context.selectedCompanyId,
-    context.selectedJobPrefix,
-    context.selectedJobType,
-    context.selectedJobTypeId,
-    context.setActiveCalendarTech,
-    context.setAllJobsVisibility,
-    context.setCalendarView,
-    context.setClientPage,
-    context.setEmailCompose,
-    context.setEmailFolder,
-    context.setEmailSearch,
-    context.setFinancePeriod,
-    context.setFinanceTechFilter,
-    context.setMapSearch,
-    context.setMapStatusFilter,
-    context.setMapTechFilter,
-    context.setMaterialSearch,
-    context.setMaterialStatusFilter,
-    context.setMaterialTechFilter,
-    context.setMonthDropRequest,
-    context.setOpenedJob,
-    context.setPayrollRules,
-    context.setRequest,
-    context.setSelectedJobTypeId,
-    context.supportActions,
-    context.tasksFeature,
-    context.tickets,
-    context.unassignedCalendarJobs,
-    context.updateInlineJobDraft,
-    context.updateMaterialDraft,
-    context.removeMaterialDraftRow,
-    context.addMaterialDraftRow,
-    context.visibleCalendarDays,
-    context.visibleCalendarJobs,
+export function useClientPageRendererContext(groups: ClientPageRendererContextGroups): ClientPageRendererContextGroups {
+  return useMemo(() => groups, [
+    groups.business.applyEmailTemplate,
+    groups.business.companyEmailSignature,
+    groups.business.companyPaymentBlock,
+    groups.business.configuredProfessionNames,
+    groups.business.emailActions,
+    groups.business.emailCompose,
+    groups.business.emailComposeAttachments,
+    groups.business.emailComposeRequestId,
+    groups.business.emailConnection,
+    groups.business.emailFolder,
+    groups.business.emailMessages,
+    groups.business.emailModel,
+    groups.business.emailSearch,
+    groups.business.financePeriod,
+    groups.business.financeTechFilter,
+    groups.business.financeWorkflow,
+    groups.business.libraryFeature,
+    groups.business.loadMoreMailboxMessages,
+    groups.business.mailBoxStatusProps.mailboxConnectStatus,
+    groups.business.mailBoxStatusProps.mailboxOAuthSecretDraft,
+    groups.business.mailBoxStatusProps.mailboxOAuthStatus,
+    groups.business.mailBoxStatusProps.mailboxSyncing,
+    groups.business.mailBoxStatusProps.setMailboxOAuthSecretDraft,
+    groups.business.onboardingAdminFeature,
+    groups.business.onboardingProfileActions,
+    groups.business.paymentMethodOptions,
+    groups.business.payrollRules,
+    groups.business.professionTemplates,
+    groups.business.setClientPage,
+    groups.business.setEmailCompose,
+    groups.business.setEmailFolder,
+    groups.business.setEmailSearch,
+    groups.business.setFinancePeriod,
+    groups.business.setFinanceTechFilter,
+    groups.business.setPayrollRules,
+    groups.map.mapModel,
+    groups.map.mapSearch,
+    groups.map.mapStatusFilter,
+    groups.map.mapTechFilter,
+    groups.map.resetMapFilters,
+    groups.map.setMapSearch,
+    groups.map.setMapStatusFilter,
+    groups.map.setMapTechFilter,
+    groups.operations.activeCalendarTech,
+    groups.operations.activeJobsRows,
+    groups.operations.allCalendarDays,
+    groups.operations.allJobsGroups,
+    groups.operations.allJobsRows,
+    groups.operations.allJobsVisibility,
+    groups.operations.calendarActions,
+    groups.operations.calendarAnchor,
+    groups.operations.calendarDropSlots,
+    groups.operations.calendarMonthDays,
+    groups.operations.calendarRangeTitle,
+    groups.operations.calendarSlots,
+    groups.operations.calendarView,
+    groups.operations.closeMaterialEditor,
+    groups.operations.inlineJobDrafts,
+    groups.operations.invoiceActions,
+    groups.operations.jobActions,
+    groups.operations.jobInboxFeature,
+    groups.operations.jobStatusFilters,
+    groups.operations.materialDraftRows,
+    groups.operations.materialSearch,
+    groups.operations.materialStatusFilter,
+    groups.operations.materialStatuses,
+    groups.operations.materialTechFilter,
+    groups.operations.materialWorkflow,
+    groups.operations.materials,
+    groups.operations.monthDropRequest,
+    groups.operations.nextJobNumber,
+    groups.operations.openMaterialEditor,
+    groups.operations.openedJob,
+    groups.operations.paidJobsRows,
+    groups.operations.resetMaterialFilters,
+    groups.operations.selectedJobPrefix,
+    groups.operations.selectedJobType,
+    groups.operations.selectedJobTypeId,
+    groups.operations.setActiveCalendarTech,
+    groups.operations.setAllJobsVisibility,
+    groups.operations.setCalendarView,
+    groups.operations.setMaterialSearch,
+    groups.operations.setMaterialStatusFilter,
+    groups.operations.setMaterialTechFilter,
+    groups.operations.setMonthDropRequest,
+    groups.operations.setOpenedJob,
+    groups.operations.setSelectedJobTypeId,
+    groups.operations.tasksFeature,
+    groups.operations.unassignedCalendarJobs,
+    groups.operations.updateInlineJobDraft,
+    groups.operations.updateMaterialDraft,
+    groups.operations.removeMaterialDraftRow,
+    groups.operations.addMaterialDraftRow,
+    groups.operations.visibleCalendarDays,
+    groups.operations.visibleCalendarJobs,
+    groups.shell.activeClientNavItem,
+    groups.shell.activePageReadOnly,
+    groups.shell.billingStatus,
+    groups.shell.completedSteps,
+    groups.shell.currentPortalUser,
+    groups.shell.openTickets,
+    groups.shell.profile,
+    groups.shell.request,
+    groups.shell.requestTouched,
+    groups.shell.selectedCompany,
+    groups.shell.selectedCompanyId,
+    groups.shell.setRequest,
+    groups.shell.supportActions,
+    groups.shell.tickets,
   ]);
 }

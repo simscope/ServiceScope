@@ -2,14 +2,25 @@ import type { ClientPage } from '../../appTypes';
 import { CalendarPage } from './CalendarPage';
 import { MaterialsPage } from './MaterialsPage';
 import { TasksPage } from './TasksPage';
-import type { ClientPageRendererContext } from './clientPageRendererTypes';
+import type {
+  ClientPageRendererBusinessContext,
+  ClientPageRendererOperationsContext,
+  ClientPageRendererShellContext,
+} from './clientPageRendererTypes';
 
 type ClientOperationsPageRendererProps = {
   renderedClientPage: ClientPage;
-  context: ClientPageRendererContext;
+  operations: ClientPageRendererOperationsContext;
+  business: ClientPageRendererBusinessContext;
+  shell: ClientPageRendererShellContext;
 };
 
-export function ClientOperationsPageRenderer({ renderedClientPage, context }: ClientOperationsPageRendererProps) {
+export function ClientOperationsPageRenderer({
+  renderedClientPage,
+  operations,
+  business,
+  shell,
+}: ClientOperationsPageRendererProps) {
   const {
     activeCalendarTech,
     allCalendarDays,
@@ -22,8 +33,6 @@ export function ClientOperationsPageRenderer({ renderedClientPage, context }: Cl
     calendarSlots,
     calendarView,
     closeMaterialEditor,
-    currentPortalUser,
-    emailActions,
     invoiceActions,
     jobActions,
     jobStatusFilters,
@@ -37,8 +46,6 @@ export function ClientOperationsPageRenderer({ renderedClientPage, context }: Cl
     monthDropRequest,
     openMaterialEditor,
     openedJob,
-    paymentMethodOptions,
-    profile,
     resetMaterialFilters,
     setActiveCalendarTech,
     setCalendarView,
@@ -54,7 +61,9 @@ export function ClientOperationsPageRenderer({ renderedClientPage, context }: Cl
     addMaterialDraftRow,
     visibleCalendarDays,
     visibleCalendarJobs,
-  } = context;
+  } = operations;
+  const { emailActions, paymentMethodOptions } = business;
+  const { currentPortalUser, profile } = shell;
 
   if (renderedClientPage === 'calendar') {
     return (

@@ -3,22 +3,30 @@ import { JobInboxPage } from '../../features/job-inbox/JobInboxPage';
 import { DebtorsPage } from './DebtorsPage';
 import { ImportPage } from './ImportPage';
 import { AllJobsPage, JobsPage } from './JobsPages';
-import type { ClientPageRendererContext } from './clientPageRendererTypes';
+import type {
+  ClientPageRendererBusinessContext,
+  ClientPageRendererOperationsContext,
+  ClientPageRendererShellContext,
+} from './clientPageRendererTypes';
 
 type ClientJobsPageRendererProps = {
   renderedClientPage: ClientPage;
-  context: ClientPageRendererContext;
+  operations: ClientPageRendererOperationsContext;
+  business: ClientPageRendererBusinessContext;
+  shell: ClientPageRendererShellContext;
 };
 
-export function ClientJobsPageRenderer({ renderedClientPage, context }: ClientJobsPageRendererProps) {
+export function ClientJobsPageRenderer({
+  renderedClientPage,
+  operations,
+  business,
+  shell,
+}: ClientJobsPageRendererProps) {
   const {
     activeJobsRows,
-    activePageReadOnly,
     allJobsGroups,
     allJobsRows,
     allJobsVisibility,
-    currentPortalUser,
-    emailActions,
     inlineJobDrafts,
     invoiceActions,
     jobActions,
@@ -29,9 +37,6 @@ export function ClientJobsPageRenderer({ renderedClientPage, context }: ClientJo
     nextJobNumber,
     openedJob,
     paidJobsRows,
-    paymentMethodOptions,
-    profile,
-    selectedCompany,
     selectedJobPrefix,
     selectedJobType,
     selectedJobTypeId,
@@ -39,7 +44,9 @@ export function ClientJobsPageRenderer({ renderedClientPage, context }: ClientJo
     setOpenedJob,
     setSelectedJobTypeId,
     updateInlineJobDraft,
-  } = context;
+  } = operations;
+  const { emailActions, paymentMethodOptions } = business;
+  const { activePageReadOnly, currentPortalUser, profile, selectedCompany } = shell;
 
   if (renderedClientPage === 'jobInbox') {
     return (

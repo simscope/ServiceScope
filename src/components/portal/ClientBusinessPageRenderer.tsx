@@ -6,21 +6,30 @@ import { FinancePage } from './FinancePage';
 import { KnowledgePage } from './KnowledgePage';
 import { OnboardingPage } from './OnboardingPage';
 import { PortalAccountPage } from './PortalAccountPage';
-import type { ClientPageRendererContext } from './clientPageRendererTypes';
+import type {
+  ClientPageRendererBusinessContext,
+  ClientPageRendererOperationsContext,
+  ClientPageRendererShellContext,
+} from './clientPageRendererTypes';
 
 type ClientBusinessPageRendererProps = {
   renderedClientPage: ClientPage;
-  context: ClientPageRendererContext;
+  business: ClientPageRendererBusinessContext;
+  operations: ClientPageRendererOperationsContext;
+  shell: ClientPageRendererShellContext;
 };
 
-export function ClientBusinessPageRenderer({ renderedClientPage, context }: ClientBusinessPageRendererProps) {
+export function ClientBusinessPageRenderer({
+  renderedClientPage,
+  business,
+  operations,
+  shell,
+}: ClientBusinessPageRendererProps) {
   const {
-    allJobsRows,
     applyEmailTemplate,
     companyEmailSignature,
     companyPaymentBlock,
     configuredProfessionNames,
-    currentPortalUser,
     emailActions,
     emailCompose,
     emailComposeAttachments,
@@ -33,35 +42,45 @@ export function ClientBusinessPageRenderer({ renderedClientPage, context }: Clie
     financePeriod,
     financeTechFilter,
     financeWorkflow,
-    invoiceActions,
     libraryFeature,
     loadMoreMailboxMessages,
     mailBoxStatusProps,
-    materialWorkflow,
-    materials,
     onboardingAdminFeature,
     onboardingProfileActions,
-    openedJob,
-    openTickets,
     paymentMethodOptions,
     payrollRules,
     professionTemplates,
+    setClientPage,
+    setEmailCompose,
+    setEmailFolder,
+    setEmailSearch,
+    setFinancePeriod,
+    setFinanceTechFilter,
+    setPayrollRules,
+  } = business;
+  const {
+    allJobsRows,
+    invoiceActions,
+    jobActions,
+    materialWorkflow,
+    materials,
+    openedJob,
+    setOpenedJob,
+  } = operations;
+  const {
+    billingStatus,
+    completedSteps,
+    currentPortalUser,
+    openTickets,
     profile,
     request,
     requestTouched,
+    setRequest,
     selectedCompany,
     selectedCompanyId,
-    setClientPage,
-    setEmailCompose,
-    setFinancePeriod,
-    setFinanceTechFilter,
-    setOpenedJob,
-    setPayrollRules,
-    setRequest,
     supportActions,
     tickets,
-    jobActions,
-  } = context;
+  } = shell;
 
   if (renderedClientPage === 'email') {
     return (
@@ -76,9 +95,9 @@ export function ClientBusinessPageRenderer({ renderedClientPage, context }: Clie
         mailboxSyncing={mailBoxStatusProps.mailboxSyncing}
         mailboxConnectStatus={mailBoxStatusProps.mailboxConnectStatus}
         emailFolder={emailFolder}
-        onEmailFolderChange={context.setEmailFolder}
+        onEmailFolderChange={setEmailFolder}
         emailSearch={emailSearch}
-        onEmailSearchChange={context.setEmailSearch}
+        onEmailSearchChange={setEmailSearch}
         visibleEmailMessages={emailModel.visibleEmailMessages}
         onApplyEmailTemplate={applyEmailTemplate}
         jobMap={emailModel.jobMap}
@@ -168,7 +187,7 @@ export function ClientBusinessPageRenderer({ renderedClientPage, context }: Clie
   if (renderedClientPage === 'onboarding') {
     return (
       <OnboardingPage
-        completedSteps={context.completedSteps}
+        completedSteps={completedSteps}
         profile={profile}
         emailConnection={emailConnection}
         handleLogoUpload={onboardingAdminFeature.handleLogoUpload}
@@ -207,7 +226,7 @@ export function ClientBusinessPageRenderer({ renderedClientPage, context }: Clie
         onCopyMailboxRedirectUrl={emailActions.copyMailboxRedirectUrl}
         onSaveMailboxOAuth={emailActions.saveMailboxOAuth}
         onStartMailboxConnection={emailActions.startMailboxConnector}
-        billingStatus={context.billingStatus}
+        billingStatus={billingStatus}
         onConnectSubscriptionBilling={onboardingProfileActions.connectSubscriptionBilling}
       />
     );
