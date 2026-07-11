@@ -24,30 +24,25 @@ import { CompanyLogin } from './components/portal/CompanyLogin';
 import { useClientPageRendererContext } from './components/portal/useClientPageRendererContext';
 import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
-import { makeCalendarActions } from './features/calendar/calendarActions';
-import { makeCalendarModel, type CalendarDropSlot } from './features/calendar/calendarModel';
-import { makeCalendarPersistence } from './features/calendar/calendarPersistence';
+import type { CalendarDropSlot } from './features/calendar/calendarModel';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { useCalendarResizeEffect } from './features/calendar/useCalendarResizeEffect';
 import { makeCompanyPortalModel } from './features/company-portal/companyPortalModel';
 import { makeCompanyPortalNavigationModel } from './features/company-portal/companyPortalNavigationModel';
+import { makeCompanyPortalOperationsModel } from './features/company-portal/companyPortalOperationsModel';
 import { makeEmailActions } from './features/email/emailActions';
 import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
 import { useMailboxAutoSync } from './features/email/useMailboxAutoSync';
 import { useMailboxSettingsLoader } from './features/email/useMailboxSettingsLoader';
 import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
-import { makeInvoiceActions } from './features/finance/invoiceActions';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
-import { makeJobActions } from './features/jobs/jobActions';
-import { makeJobModel } from './features/jobs/jobModel';
 import { useCompanyJobsLoader } from './features/jobs/useCompanyJobsLoader';
 import { useJobsFeature } from './features/jobs/useJobsFeature';
 import { useLibraryFeature } from './features/library/useLibraryFeature';
 import { makeMapModel } from './features/map/mapModel';
 import { useMapFeature } from './features/map/useMapFeature';
-import { makeMaterialWorkflow } from './features/materials/materialWorkflow';
 import { useMaterialsFeature } from './features/materials/useMaterialsFeature';
 import { useClientPageFeature } from './features/navigation/useClientPageFeature';
 import { makeOnboardingProfileActions } from './features/onboarding/onboardingProfileActions';
@@ -402,25 +397,6 @@ export function CompanyPortal({
   });
   const { companyEmailSignature, companyPaymentBlock, paymentMethodOptions } = companyCommunication;
 
-  const jobModel = makeJobModel({
-    jobs,
-    openJobs: selectedCompany.openJobs,
-    profile,
-    selectedJobTypeId,
-    allJobsVisibility,
-  });
-  const {
-    selectedJobType,
-    selectedJobPrefix,
-    nextJobNumber,
-    generatedJobNumber,
-    jobStatusFilters,
-    allJobsRows,
-    activeJobsRows,
-    paidJobsRows,
-    visibleAllJobsRows,
-    allJobsGroups,
-  } = jobModel;
   const mapModel = makeMapModel({
     profile,
     mapSearch,
@@ -428,12 +404,6 @@ export function CompanyPortal({
     mapStatusFilter,
   });
   const materialStatuses: MaterialRow['status'][] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
-  const emailModel = makeEmailModel({
-    emailMessages,
-    emailFolder,
-    emailSearch,
-    jobs: allJobsRows,
-  });
   const emailActions = makeEmailActions({
     activeCompany,
     profile,
@@ -456,20 +426,71 @@ export function CompanyPortal({
     persistOnboardingToBackend: onboardingProfileActions.persistOnboardingToBackend,
     stopEmailWrite: (action) => stopCompanyWrite('email', action),
   });
-  const materialWorkflow = makeMaterialWorkflow({
-    companyId: selectedCompanyId,
-    materials,
+  const operationsModel = makeCompanyPortalOperationsModel({
+    activeCalendarTech,
+    activeCompanyId: selectedCompanyId,
+    allJobsVisibility,
+    calendarAnchorDate,
+    calendarAssignments,
+    calendarView,
+    closeMaterialEditor,
+    draggingJobNumber,
+    editingMaterialsJobNumber,
+    inlineJobDrafts,
+    jobInboxFeature,
+    jobs,
+    materialDraftRows,
+    materialSearch,
     materialStatusFilter,
     materialTechFilter,
-    materialSearch,
-    editingMaterialsJobNumber,
-    materialDraftRows,
-    allJobsRows,
-    activeJobsRows,
-    setMaterials,
+    materials,
+    monthDropRequest,
+    openJobs: selectedCompany.openJobs,
+    profile,
+    selectedJobTypeId,
+    setCalendarAnchorDate,
+    setCalendarAssignments,
+    setClientPage,
+    setDraggingJobNumber,
+    setInlineJobDrafts,
+    setJobs,
     setJobsStatus,
-    closeMaterialEditor,
-    stopMaterialsWrite: (action) => stopCompanyWrite('materials', action),
+    setMaterials,
+    setMonthDropRequest,
+    setOpenedJob,
+    setResizingJob,
+    stopCompanyWrite,
+  });
+  const {
+    activeJobsRows,
+    allCalendarDays,
+    allJobsGroups,
+    allJobsRows,
+    calendarActions,
+    calendarAnchor,
+    calendarDropSlots,
+    calendarMonthDays,
+    calendarPersistence,
+    calendarRangeTitle,
+    calendarSlots,
+    invoiceActions,
+    jobActions,
+    jobStatusFilters,
+    materialWorkflow,
+    nextJobNumber,
+    paidJobsRows,
+    selectedJobPrefix,
+    selectedJobType,
+    unassignedCalendarJobs,
+    visibleAllJobsRows,
+    visibleCalendarDays,
+    visibleCalendarJobs,
+  } = operationsModel;
+  const emailModel = makeEmailModel({
+    emailMessages,
+    emailFolder,
+    emailSearch,
+    jobs: allJobsRows,
   });
   const financeWorkflow = makeFinanceWorkflow({
     profile,
@@ -483,75 +504,8 @@ export function CompanyPortal({
     setSalaryPaidJobs,
     stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
   });
-  const calendarModel = makeCalendarModel({
-    calendarAnchorDate,
-    calendarView,
-    activeCalendarTech,
-    calendarAssignments,
-    activeJobsRows,
-  });
-  const {
-    calendarAnchor,
-    calendarMonthDays,
-    allCalendarDays,
-    calendarRangeTitle,
-    calendarSlots,
-    calendarDropSlots,
-    calendarJobs,
-    unassignedCalendarJobs,
-    visibleCalendarJobs,
-    visibleCalendarDays,
-  } = calendarModel;
   calendarDropSlotsRef.current = calendarDropSlots;
-  const calendarPersistence = makeCalendarPersistence({
-    companyId: activeCompany.id,
-    jobs,
-    calendarDropSlots,
-    setJobs,
-    setOpenedJob,
-    setCalendarAssignments,
-    setStatus: setJobsStatus,
-    stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
-  });
   persistCalendarAssignmentRef.current = calendarPersistence.persistCalendarAssignment;
-  const calendarActions = makeCalendarActions({
-    calendarView,
-    calendarAnchorDate,
-    setCalendarAnchorDate,
-    activeCalendarTech,
-    calendarAssignments,
-    setCalendarAssignments,
-    draggingJobNumber,
-    setDraggingJobNumber,
-    monthDropRequest,
-    setMonthDropRequest,
-    setResizingJob,
-    calendarDropSlots,
-    calendarJobs,
-    stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
-    setOpenedJob,
-    persistCalendarAssignment: calendarPersistence.persistCalendarAssignment,
-  });
-  const invoiceActions = makeInvoiceActions({
-    companyId: selectedCompany.id,
-    setJobs,
-    setOpenedJob,
-    stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
-  });
-  const jobActions = makeJobActions({
-    companyId: selectedCompany.id,
-    profile,
-    generatedJobNumber,
-    selectedJobType,
-    inlineJobDrafts,
-    setInlineJobDrafts,
-    setJobs,
-    setOpenedJob,
-    setJobsStatus,
-    setClientPage,
-    jobInboxFeature,
-    stopCompanyWrite,
-  });
   const {
     visibleClientNavItems,
     renderedClientPage,
