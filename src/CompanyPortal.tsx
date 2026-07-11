@@ -27,15 +27,13 @@ import { useBillingFeature } from './features/billing/useBillingFeature';
 import type { CalendarDropSlot } from './features/calendar/calendarModel';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
 import { useCalendarResizeEffect } from './features/calendar/useCalendarResizeEffect';
+import { makeCompanyPortalBusinessModel } from './features/company-portal/companyPortalBusinessModel';
 import { makeCompanyPortalModel } from './features/company-portal/companyPortalModel';
 import { makeCompanyPortalNavigationModel } from './features/company-portal/companyPortalNavigationModel';
 import { makeCompanyPortalOperationsModel } from './features/company-portal/companyPortalOperationsModel';
-import { makeEmailActions } from './features/email/emailActions';
-import { makeEmailModel } from './features/email/emailModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
 import { useMailboxAutoSync } from './features/email/useMailboxAutoSync';
 import { useMailboxSettingsLoader } from './features/email/useMailboxSettingsLoader';
-import { makeFinanceWorkflow } from './features/finance/financeWorkflow';
 import { useFinanceFeature } from './features/finance/useFinanceFeature';
 import { useJobInboxFeature } from './features/job-inbox/useJobInboxFeature';
 import { useCompanyJobsLoader } from './features/jobs/useCompanyJobsLoader';
@@ -404,28 +402,6 @@ export function CompanyPortal({
     mapStatusFilter,
   });
   const materialStatuses: MaterialRow['status'][] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
-  const emailActions = makeEmailActions({
-    activeCompany,
-    profile,
-    emailConnection,
-    mailboxOAuthSecretDraft,
-    companyEmailSignature,
-    companyPaymentBlock,
-    mailboxOAuthRedirectUrl,
-    selectedCompanyId,
-    setClientPage,
-    setEmailConnection,
-    setMailboxOAuthSecretDraft,
-    setMailboxOAuthStatus,
-    setMailboxConnectStatus,
-    connectMailboxInFeature,
-    updateMailboxInFeature,
-    copyMailboxRedirectUrlInFeature,
-    openEmailComposeDraft,
-    sendEmailDraftFromFeature,
-    persistOnboardingToBackend: onboardingProfileActions.persistOnboardingToBackend,
-    stopEmailWrite: (action) => stopCompanyWrite('email', action),
-  });
   const operationsModel = makeCompanyPortalOperationsModel({
     activeCalendarTech,
     activeCompanyId: selectedCompanyId,
@@ -486,24 +462,40 @@ export function CompanyPortal({
     visibleCalendarDays,
     visibleCalendarJobs,
   } = operationsModel;
-  const emailModel = makeEmailModel({
-    emailMessages,
+  const businessModel = makeCompanyPortalBusinessModel({
+    activeCompany,
+    allJobsRows,
+    companyEmailSignature,
+    companyPaymentBlock,
+    connectMailboxInFeature,
+    copyMailboxRedirectUrlInFeature,
+    emailConnection,
     emailFolder,
+    emailMessages,
     emailSearch,
-    jobs: allJobsRows,
-  });
-  const financeWorkflow = makeFinanceWorkflow({
-    profile,
-    jobs: allJobsRows,
-    materials,
-    payrollRules,
-    payrollItems,
-    salaryPaidJobs,
-    financeTechFilter,
     financePeriod,
+    financeTechFilter,
+    mailboxOAuthRedirectUrl,
+    mailboxOAuthSecretDraft,
+    materials,
+    openEmailComposeDraft,
+    payrollItems,
+    payrollRules,
+    persistOnboardingToBackend: onboardingProfileActions.persistOnboardingToBackend,
+    profile,
+    salaryPaidJobs,
+    selectedCompanyId,
+    sendEmailDraftFromFeature,
+    setClientPage,
+    setEmailConnection,
+    setMailboxConnectStatus,
+    setMailboxOAuthSecretDraft,
+    setMailboxOAuthStatus,
     setSalaryPaidJobs,
-    stopFinanceWrite: (action) => stopCompanyWrite('finances', action),
+    stopCompanyWrite,
+    updateMailboxInFeature,
   });
+  const { emailActions, emailModel, financeWorkflow } = businessModel;
   calendarDropSlotsRef.current = calendarDropSlots;
   persistCalendarAssignmentRef.current = calendarPersistence.persistCalendarAssignment;
   const {
