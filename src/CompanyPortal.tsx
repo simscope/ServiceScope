@@ -19,9 +19,8 @@ import {
 } from './services/supportStore';
 import { applyPlan, plans } from './services/billingCatalog';
 import { JobDetailPanel } from './components/JobDetailPanel';
-import { ClientPageRenderer } from './components/portal/ClientPageRenderer';
+import { ClientPortalShell } from './components/portal/ClientPortalShell';
 import { CompanyLogin } from './components/portal/CompanyLogin';
-import { SquareBillingModal } from './components/portal/SquareBillingModal';
 import { useClientPageRendererContext } from './components/portal/useClientPageRendererContext';
 import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
@@ -691,72 +690,30 @@ export function CompanyPortal({
   });
 
   return (
-    <div className="client-app">
-      <header className="client-topbar">
-        <div className="client-brand">
-          <div className="client-logo">{selectedCompany.name.slice(0, 1).toUpperCase()}</div>
-          <div>
-            <strong>{selectedCompany.name}</strong>
-            <span>ServiceScope</span>
-          </div>
-        </div>
-
-        <nav className="client-nav" aria-label="Company navigation">
-          {visibleClientNavItems.map((item) => (
-            <button
-              className={`client-nav-item ${renderedClientPage === item.page ? 'active' : ''} ${item.adminOnly ? 'admin' : ''}`}
-              type="button"
-              key={item.page}
-              onClick={() => {
-                setOpenedJob(null);
-                setClientPage(item.page);
-              }}
-            >
-              {item.icon}
-              {item.label}
-              {item.page === 'email' && unreadEmailCount > 0 ? (
-                <span className="client-nav-badge" aria-label={`${unreadEmailCount} unread emails`}>
-                  {unreadEmailCount > 99 ? '99+' : unreadEmailCount}
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </nav>
-
-        <div className="client-user">
-          <span>ADMIN</span>
-          <strong>{selectedCompany.ownerName.slice(0, 1).toUpperCase()}</strong>
-          <button type="button" onClick={onSignOut}>
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      <main className="client-workspace">
-        {jobsStatus ? <p className="access-status portal-status">{jobsStatus}</p> : null}
-        {activePageReadOnly ? (
-          <div className={'company-access-banner ' + activePageAccessLevel}>
-            <strong>{activeClientNavItem?.label ?? 'This page'} is {accessLevelLabels[activePageAccessLevel].toLowerCase()}</strong>
-            <span>Owner access controls are active for this company.</span>
-          </div>
-        ) : null}
-        <ClientPageRenderer
-          renderedClientPage={renderedClientPage}
-          context={clientPageRendererContext}
-        />
-      </main>
-      {billingModalOpen ? (
-        <SquareBillingModal
-          activeCompany={activeCompany}
-          profile={profile}
-          onClose={closeBillingSetup}
-          onConnected={(updates, status) => {
-            onboardingProfileActions.updateProfile(updates);
-            setBillingStatus(status);
-          }}
-        />
-      ) : null}
-    </div>
+    <ClientPortalShell
+      activeClientNavItem={activeClientNavItem}
+      activeCompany={activeCompany}
+      activePageAccessLevel={activePageAccessLevel}
+      activePageReadOnly={activePageReadOnly}
+      billingModalOpen={billingModalOpen}
+      clientPageRendererContext={clientPageRendererContext}
+      jobsStatus={jobsStatus}
+      onBillingConnected={(updates, status) => {
+        onboardingProfileActions.updateProfile(updates);
+        setBillingStatus(status);
+      }}
+      onCloseBillingSetup={closeBillingSetup}
+      onNavigateClientPage={(page) => {
+        setOpenedJob(null);
+        setClientPage(page);
+      }}
+      onSignOut={onSignOut}
+      profile={profile}
+      renderedClientPage={renderedClientPage}
+      selectedCompany={selectedCompany}
+      unreadEmailCount={unreadEmailCount}
+      visibleClientNavItems={visibleClientNavItems}
+    />
   );
 }
 
