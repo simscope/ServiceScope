@@ -1,7 +1,130 @@
 import { useMemo } from 'react';
 import type { ClientPageRendererContext } from './clientPageRendererTypes';
 
-export function useClientPageRendererContext(context: ClientPageRendererContext): ClientPageRendererContext {
+type ClientPageRendererContextGroups = {
+  business: Pick<ClientPageRendererContext,
+    | 'applyEmailTemplate'
+    | 'companyEmailSignature'
+    | 'companyPaymentBlock'
+    | 'configuredProfessionNames'
+    | 'emailActions'
+    | 'emailCompose'
+    | 'emailComposeAttachments'
+    | 'emailComposeRequestId'
+    | 'emailConnection'
+    | 'emailFolder'
+    | 'emailMessages'
+    | 'emailModel'
+    | 'emailSearch'
+    | 'financePeriod'
+    | 'financeTechFilter'
+    | 'financeWorkflow'
+    | 'libraryFeature'
+    | 'loadMoreMailboxMessages'
+    | 'mailBoxStatusProps'
+    | 'onboardingAdminFeature'
+    | 'onboardingProfileActions'
+    | 'paymentMethodOptions'
+    | 'payrollRules'
+    | 'professionTemplates'
+    | 'setClientPage'
+    | 'setEmailCompose'
+    | 'setEmailFolder'
+    | 'setEmailSearch'
+    | 'setFinancePeriod'
+    | 'setFinanceTechFilter'
+    | 'setPayrollRules'
+  >;
+  map: Pick<ClientPageRendererContext,
+    | 'mapModel'
+    | 'mapSearch'
+    | 'mapStatusFilter'
+    | 'mapTechFilter'
+    | 'resetMapFilters'
+    | 'setMapSearch'
+    | 'setMapStatusFilter'
+    | 'setMapTechFilter'
+  >;
+  operations: Pick<ClientPageRendererContext,
+    | 'activeCalendarTech'
+    | 'activeJobsRows'
+    | 'allCalendarDays'
+    | 'allJobsGroups'
+    | 'allJobsRows'
+    | 'allJobsVisibility'
+    | 'calendarActions'
+    | 'calendarAnchor'
+    | 'calendarDropSlots'
+    | 'calendarMonthDays'
+    | 'calendarRangeTitle'
+    | 'calendarSlots'
+    | 'calendarView'
+    | 'closeMaterialEditor'
+    | 'inlineJobDrafts'
+    | 'invoiceActions'
+    | 'jobActions'
+    | 'jobInboxFeature'
+    | 'jobStatusFilters'
+    | 'materialDraftRows'
+    | 'materialSearch'
+    | 'materialStatusFilter'
+    | 'materialStatuses'
+    | 'materialTechFilter'
+    | 'materialWorkflow'
+    | 'materials'
+    | 'monthDropRequest'
+    | 'nextJobNumber'
+    | 'openMaterialEditor'
+    | 'openedJob'
+    | 'paidJobsRows'
+    | 'resetMaterialFilters'
+    | 'selectedJobPrefix'
+    | 'selectedJobType'
+    | 'selectedJobTypeId'
+    | 'setActiveCalendarTech'
+    | 'setAllJobsVisibility'
+    | 'setCalendarView'
+    | 'setMaterialSearch'
+    | 'setMaterialStatusFilter'
+    | 'setMaterialTechFilter'
+    | 'setMonthDropRequest'
+    | 'setOpenedJob'
+    | 'setSelectedJobTypeId'
+    | 'tasksFeature'
+    | 'unassignedCalendarJobs'
+    | 'updateInlineJobDraft'
+    | 'updateMaterialDraft'
+    | 'removeMaterialDraftRow'
+    | 'addMaterialDraftRow'
+    | 'visibleCalendarDays'
+    | 'visibleCalendarJobs'
+  >;
+  shell: Pick<ClientPageRendererContext,
+    | 'activeClientNavItem'
+    | 'activePageReadOnly'
+    | 'billingStatus'
+    | 'completedSteps'
+    | 'currentPortalUser'
+    | 'openTickets'
+    | 'profile'
+    | 'request'
+    | 'requestTouched'
+    | 'selectedCompany'
+    | 'selectedCompanyId'
+    | 'setRequest'
+    | 'supportActions'
+    | 'tickets'
+  >;
+};
+
+export function useClientPageRendererContext(groups: ClientPageRendererContextGroups): ClientPageRendererContext {
+  const context: ClientPageRendererContext = {
+    ...groups.shell,
+    ...groups.operations,
+    ...groups.business,
+    ...groups.map,
+  };
+
   return useMemo(() => context, [
     context.activeCalendarTech,
     context.activeClientNavItem,
