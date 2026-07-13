@@ -131,16 +131,7 @@ import type {
 } from './appTypes';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 
-export function CompanyPortal({
-  selectedCompany,
-  onboardingProfile,
-  signedInUser,
-  tickets,
-  onSignOut,
-  onUpdateOnboardingProfile,
-  onCreateRequest,
-  onReplyToTicket,
-}: {
+type CompanyPortalProps = {
   selectedCompany?: Company;
   onboardingProfile?: CompanyOnboardingProfile;
   signedInUser?: { name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
@@ -149,7 +140,32 @@ export function CompanyPortal({
   onUpdateOnboardingProfile: (profile: CompanyOnboardingProfile) => void;
   onCreateRequest: (request: Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>) => void;
   onReplyToTicket?: (ticketId: string, body: string) => void;
-}) {
+};
+
+export function CompanyPortal(props: CompanyPortalProps) {
+  if (!props.selectedCompany) {
+    return (
+      <div className="empty-state">
+        <Building2 size={28} aria-hidden="true" />
+        <h3>No tenant selected</h3>
+        <p>Add a company first, then open the portal preview.</p>
+      </div>
+    );
+  }
+
+  return <CompanyPortalWithTenant {...props} selectedCompany={props.selectedCompany} />;
+}
+
+function CompanyPortalWithTenant({
+  selectedCompany,
+  onboardingProfile,
+  signedInUser,
+  tickets,
+  onSignOut,
+  onUpdateOnboardingProfile,
+  onCreateRequest,
+  onReplyToTicket,
+}: Omit<CompanyPortalProps, 'selectedCompany'> & { selectedCompany: Company }) {
   const { clientPage, setClientPage } = useClientPageFeature();
   const {
     request,
@@ -355,16 +371,6 @@ export function CompanyPortal({
     syncConnectedMailboxMessages,
     setMailboxConnectStatus,
   });
-
-  if (!selectedCompany) {
-    return (
-      <div className="empty-state">
-        <Building2 size={28} aria-hidden="true" />
-        <h3>No tenant selected</h3>
-        <p>Add a company first, then open the portal preview.</p>
-      </div>
-    );
-  }
 
   const {
     activeCompany,
