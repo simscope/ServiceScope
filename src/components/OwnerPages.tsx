@@ -71,12 +71,11 @@ export function DashboardOverview({
   const activeCompanies = companies.filter((company) => company.status === 'active');
   const setupCompanies = companies.filter((company) => company.status === 'setup');
   const monthlyRevenue = companies.reduce((total, company) => total + (plans.find((plan) => plan.name === company.plan)?.price ?? 0), 0);
-  const storageUsed = companies.reduce((total, company) => total + company.usage.storageGb, 0);
-  const averageHealth = companies.length ? Math.round(companies.reduce((total, company) => total + company.health, 0) / companies.length) : 0;
-  const lowHealthCompanies = companies.filter((company) => company.health < 70);
+  // Operational health is intentionally visible only in an individual company card.
+  const platformHealthAlerts: Company[] = [];
   const companyRows = [...companies].sort((left, right) => {
-    const leftRisk = (left.billingStatus === 'overdue' ? 3 : 0) + (left.health < 70 ? 2 : 0) + (left.status === 'setup' ? 1 : 0);
-    const rightRisk = (right.billingStatus === 'overdue' ? 3 : 0) + (right.health < 70 ? 2 : 0) + (right.status === 'setup' ? 1 : 0);
+    const leftRisk = (left.billingStatus === 'overdue' ? 3 : 0) + (left.status === 'setup' ? 1 : 0);
+    const rightRisk = (right.billingStatus === 'overdue' ? 3 : 0) + (right.status === 'setup' ? 1 : 0);
     return rightRisk - leftRisk || left.name.localeCompare(right.name);
   });
   const recentTickets = supportTickets.slice(0, 5);
@@ -99,7 +98,7 @@ export function DashboardOverview({
       action: onOpenSupport,
       actionLabel: 'Open support',
     })),
-    ...lowHealthCompanies.slice(0, 4).map((company) => ({
+    ...platformHealthAlerts.map((company) => ({
       key: 'health-' + company.id,
       tone: 'warning',
       title: company.name + ' health is low',
@@ -126,8 +125,7 @@ export function DashboardOverview({
         <MetricCard icon={<CircleDollarSign size={20} />} label="MRR" value={money(monthlyRevenue) + '/mo'} detail={overdueCompanies.length ? overdueCompanies.length + ' payment risk' : 'No payment risk'} />
         <MetricCard icon={<CreditCard size={20} />} label="Billing risk" value={overdueCompanies.length.toString()} detail={overdueCompanies.length ? 'Overdue tenants' : 'All accounts current'} />
         <MetricCard icon={<Inbox size={20} />} label="New support" value={newTickets.length.toString()} detail={openTickets.length + ' open · ' + urgentTickets.length + ' urgent'} />
-        <MetricCard icon={<CheckCircle2 size={20} />} label="Health" value={averageHealth + '%'} detail={lowHealthCompanies.length ? lowHealthCompanies.length + ' tenant needs review' : 'Portfolio stable'} />
-        <MetricCard icon={<Database size={20} />} label="Storage" value={storageUsed.toFixed(1) + ' GB'} detail="Tenant document usage" />
+        <MetricCard icon={<Rocket size={20} />} label="Setup" value={setupCompanies.length.toString()} detail={setupCompanies.length ? 'Accounts still launching' : 'All accounts launched'} />
       </section>
 
       <div className="owner-dashboard-main">
@@ -208,8 +206,7 @@ export function DashboardOverview({
             <span>Plan</span>
             <span>Billing</span>
             <span>Support</span>
-            <span>Jobs</span>
-            <span>Health</span>
+            <span>Status</span>
             <span>Sync</span>
             <span>Action</span>
           </div>
@@ -231,11 +228,7 @@ export function DashboardOverview({
                   <button className={companyNewTickets.length ? 'owner-support-count hot' : 'owner-support-count'} type="button" onClick={onOpenSupport}>
                     {companyNewTickets.length ? companyNewTickets.length + ' new' : companyOpenTickets.length + ' open'}
                   </button>
-                  <strong>{company.openJobs}</strong>
-                  <div className="owner-health-cell">
-                    <strong>{company.health}%</strong>
-                    <div className="health-track"><span style={{ width: company.health + '%' }} /></div>
-                  </div>
+                  <StatusPill status={company.status} />
                   <span className="owner-sync-cell">{company.lastSync}</span>
                   <button className="secondary-button compact" type="button" onClick={onOpenCompanies}>Open</button>
                 </div>
@@ -1377,17 +1370,8 @@ export function CompanyRow({
         <strong>{company.plan}</strong>
       </div>
       <div className="company-stat">
-        <span>Jobs</span>
-        <strong>{company.openJobs}</strong>
-      </div>
-      <div className="health-cell">
-        <div className="health-label">
-          <span>Health</span>
-          <strong>{company.health}%</strong>
-        </div>
-        <div className="health-track">
-          <span style={{ width: `${company.health}%` }} />
-        </div>
+        <span>Billing</span>
+        <strong>{billingLabels[company.billingStatus]}</strong>
       </div>
       <div className="sync-cell">
         <CheckCircle2 size={16} aria-hidden="true" />
@@ -1444,6 +1428,8 @@ export function CompanyDetail({
       <div className="detail-grid">
         <MiniStat icon={<Users size={17} />} label="Seats" value={company.seats.toString()} />
         <MiniStat icon={<ServerCog size={17} />} label="Techs" value={company.technicians.toString()} />
+        <MiniStat icon={<ClipboardList size={17} />} label="Open jobs" value={company.openJobs.toString()} />
+        <MiniStat icon={<CircleDollarSign size={17} />} label="Revenue tracked" value={money(company.revenue)} />
         <MiniStat icon={<ClipboardList size={17} />} label="Jobs" value={company.usage.jobsThisMonth.toString()} />
         <MiniStat icon={<CreditCard size={17} />} label="Invoices" value={company.usage.invoicesThisMonth.toString()} />
       </div>

@@ -8,10 +8,8 @@ import {
   Building2,
   CalendarDays,
   CheckCircle2,
-  CircleDollarSign,
   ClipboardList,
   CreditCard,
-  Database,
   FileClock,
   Inbox,
   LayoutDashboard,
@@ -25,7 +23,6 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   UserPlus,
-  Users,
   Eye,
   EyeOff,
 } from 'lucide-react';
@@ -55,7 +52,6 @@ import {
   CompanyDetail,
   CompanyRow,
   DashboardOverview,
-  MetricCard,
   MiniStat,
   MonitoringPage,
   StatusPill,
@@ -446,7 +442,6 @@ export function App() {
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId) ?? companies[0];
   const selectedOnboardingProfile = onboardingProfiles.find((profile) => profile.companyId === selectedCompany?.id);
   const selectedTicket = supportTickets.find((ticket) => ticket.id === selectedTicketId) ?? supportTickets[0];
-  const openSupportCount = supportTickets.filter((ticket) => ticket.status !== 'resolved').length;
   const currentOwnerUser = authSession?.kind === 'owner'
     ? platformUsers.find((user) => user.email.toLowerCase() === authSession.email.toLowerCase())
     : undefined;
@@ -638,20 +633,6 @@ export function App() {
       window.history.replaceState(null, '', '#dashboard');
     }
   }, [authRestoring, authSession, backendLoaded, companies, page]);
-
-  const totals = useMemo(() => {
-    return companies.reduce(
-      (acc, company) => {
-        acc.revenue += company.revenue;
-        acc.openJobs += company.openJobs;
-        acc.technicians += company.technicians;
-        acc.alerts += company.alerts.length;
-        if (company.status === 'active') acc.active += 1;
-        return acc;
-      },
-      { active: 0, alerts: 0, openJobs: 0, revenue: 0, technicians: 0 },
-    );
-  }, [companies]);
 
   const filteredCompanies = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -948,14 +929,6 @@ export function App() {
 
         {page === 'dashboard' ? (
           <>
-        <section className="metrics-grid" aria-label="Platform metrics">
-          <MetricCard icon={<Building2 size={20} />} label="Companies" value={companies.length.toString()} detail={`${totals.active} active tenants`} />
-          <MetricCard icon={<Users size={20} />} label="Technicians" value={totals.technicians.toString()} detail="Across all tenants" />
-          <MetricCard icon={<Activity size={20} />} label="Open jobs" value={totals.openJobs.toString()} detail="Live workload" />
-          <MetricCard icon={<CircleDollarSign size={20} />} label="Revenue tracked" value={money(totals.revenue)} detail={`${totals.alerts} owner alerts`} />
-          <MetricCard icon={<Inbox size={20} />} label="Support" value={openSupportCount.toString()} detail="Open company requests" />
-        </section>
-
         <DashboardOverview
           companies={companies}
           supportTickets={supportTickets}
