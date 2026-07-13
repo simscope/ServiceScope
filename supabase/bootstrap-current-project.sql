@@ -14,7 +14,7 @@ insert into public.plans (
 values
   ('Launch', 14900, 5, 8, 10, 'Email', array['Jobs', 'Invoices', 'Customer records', 'Basic support'], true),
   ('Growth', 29900, 15, 25, 50, 'Priority', array['Everything in Launch', 'Technician map', 'Finance view', 'Priority support'], true),
-  ('Scale', 54900, 35, 75, 150, 'Dedicated', array['Everything in Growth', 'Advanced monitoring', 'Custom onboarding', 'Dedicated support'], true)
+  ('Scale', 54900, 20, 30, 100, 'Dedicated', array['Everything in Growth', 'Advanced monitoring', 'Custom onboarding', 'Dedicated support'], true)
 on conflict (name) do update
 set
   monthly_price_cents = excluded.monthly_price_cents,

@@ -130,7 +130,7 @@ insert into plans (name, monthly_price_cents, seats_limit, technicians_limit, st
 values
   ('Launch', 14900, 5, 8, 10, 'Email', array['Jobs', 'Invoices', 'Customer records', 'Basic support']),
   ('Growth', 29900, 15, 25, 50, 'Priority', array['Everything in Launch', 'Technician map', 'Finance view', 'Priority support']),
-  ('Scale', 54900, 35, 75, 150, 'Dedicated', array['Everything in Growth', 'Advanced monitoring', 'Custom onboarding', 'Dedicated support']);
+  ('Scale', 54900, 20, 30, 100, 'Dedicated', array['Everything in Growth', 'Advanced monitoring', 'Custom onboarding', 'Dedicated support']);
 
 create table companies (
   id uuid primary key default gen_random_uuid(),

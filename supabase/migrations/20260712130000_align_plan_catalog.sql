@@ -10,7 +10,7 @@ set
   technicians_limit = case name
     when 'Launch' then 8
     when 'Growth' then 15
-    when 'Scale' then 50
+    when 'Scale' then 30
     else technicians_limit
   end,
   storage_gb_limit = case name

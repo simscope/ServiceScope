@@ -23,7 +23,7 @@ export const plans: PlanDefinition[] = [
     name: 'Scale',
     price: 549,
     seats: 20,
-    technicians: 50,
+    technicians: 30,
     storageGb: 100,
     support: 'Dedicated',
     entitlements: ['Everything in Growth', 'Advanced monitoring', 'Custom onboarding', 'Dedicated support'],
