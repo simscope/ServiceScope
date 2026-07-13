@@ -368,7 +368,17 @@ export async function loadOwnerWorkspaceFromBackend() {
   const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
   const companies = companyRows.map((companyRow) => {
     const companyInvoiceCount = invoices.filter((invoice) => invoice.company_id === companyRow.id).length;
-    const companyRegisteredSeats = companyUsers.filter((user) => user.company_id === companyRow.id && user.status === 'active' && user.role !== 'technician').length;
+    const nonTechnicianRows = technicians.filter((technician) => technician.company_id === companyRow.id && technician.status === 'active' && technician.role !== 'technician');
+    const representedNonTechnicianEmails = new Set(nonTechnicianRows.map((technician) => technician.email?.trim().toLowerCase()).filter(Boolean));
+    const additionalCompanyUsers = companyUsers.filter((user) => {
+      const email = user.email.trim().toLowerCase();
+      return user.company_id === companyRow.id
+        && user.status === 'active'
+        && user.role !== 'technician'
+        && email !== companyRow.owner_email.trim().toLowerCase()
+        && !representedNonTechnicianEmails.has(email);
+    });
+    const companyRegisteredSeats = 1 + nonTechnicianRows.length + additionalCompanyUsers.length;
     const companyTechnicianCount = technicians.filter((technician) => technician.company_id === companyRow.id && technician.role === 'technician' && technician.status === 'active').length;
     const companyJobs = jobs.filter((job) => job.company_id === companyRow.id);
     const companyOpenJobs = companyJobs.filter((job) => activeJobStatuses.has(job.status)).length;
