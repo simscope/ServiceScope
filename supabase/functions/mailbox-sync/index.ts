@@ -194,6 +194,27 @@ function textFromPayload(payload: GmailMessage['payload'] | undefined): string {
   return '';
 }
 
+function htmlFromPayload(payload: GmailMessage['payload'] | undefined): string {
+  if (!payload) return '';
+
+  if (payload.body?.data && payload.mimeType === 'text/html') {
+    return decodeBase64Url(payload.body.data);
+  }
+
+  const parts = payload.parts ?? [];
+  const htmlPart = parts.find((part) => part.mimeType === 'text/html' && part.body?.data);
+  if (htmlPart?.body?.data) {
+    return decodeBase64Url(htmlPart.body.data);
+  }
+
+  for (const part of parts) {
+    const nested = htmlFromPayload(part);
+    if (nested) return nested;
+  }
+
+  return '';
+}
+
 function collectAttachments(payload: GmailMessage['payload'] | undefined, attachments: SyncAttachment[] = []) {
   if (!payload) return attachments;
 
