@@ -94,6 +94,15 @@ export async function saveCompanyOnboardingStepsToBackend(company: Company) {
   );
 }
 
+export async function saveCompanyAccessRulesToBackend(company: Company) {
+  if (!canUseOnboardingBackend()) return;
+
+  await upsert('company_profiles', 'company_id', [{
+    company_id: company.id,
+    access_rules: company.accessRules ?? {},
+  }]);
+}
+
 type SaveOnboardingProfileOptions = {
   saveCompanyCore?: boolean;
   saveOnboardingSteps?: boolean;

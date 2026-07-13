@@ -151,7 +151,7 @@ export function OnboardingPage({
   <div id="servicescope-widget-panel" class="servicescope-widget-panel" hidden>
     <div class="servicescope-widget-header">
       <strong>Request service</strong>
-      <button id="servicescope-widget-close" type="button" aria-label="Close request form">×</button>
+      <button id="servicescope-widget-close" type="button" aria-label="Close request form">&times;</button>
     </div>
     <form id="servicescope-request-form" class="servicescope-request-form">
       <input name="name" placeholder="Name" required>

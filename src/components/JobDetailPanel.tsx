@@ -305,7 +305,7 @@ export function JobDetailPanel({
     const assignee = draft.technician || 'No technician';
     const nextJob = {
       ...draft,
-      status: 'Cancelled' as ServiceJobStatus,
+      status: 'Archived' as ServiceJobStatus,
       technician: assignee,
       assignee,
       attachments: draft.attachments ?? [],
@@ -836,8 +836,8 @@ export function JobDetailPanel({
         <section className="job-detail-card">
           <div className="job-detail-card-header">
             <h2>Parameters</h2>
-            <button className="archive-button" type="button" onClick={archiveDraft} disabled={draft.status === 'Cancelled'}>
-              {draft.status === 'Cancelled' ? 'Archived' : 'Archive'}
+            <button className="archive-button" type="button" onClick={archiveDraft} disabled={draft.status === 'Archived'}>
+              {draft.status === 'Archived' ? 'Archived' : 'Archive'}
             </button>
           </div>
           <div className="job-detail-form">

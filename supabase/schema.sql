@@ -171,6 +171,7 @@ create table company_profiles (
   website_intake_enabled boolean not null default false,
   website_intake_token text,
   website_intake_allowed_origins text,
+  access_rules jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -670,6 +671,7 @@ create table tasks (
   priority priority_level not null default 'normal',
   status task_status not null default 'To do',
   source task_source not null default 'Manual',
+  auto_key text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -908,6 +910,7 @@ create index idx_job_payments_job on job_payments(job_id);
 create index idx_payroll_items_technician on payroll_items(company_id, technician_id, paid_at);
 create index idx_tasks_company_status on tasks(company_id, status);
 create index idx_tasks_company_source on tasks(company_id, source, created_at desc);
+create unique index idx_tasks_company_auto_key on tasks(company_id, auto_key) where auto_key is not null;
 create index idx_technician_locations_latest on technician_locations(technician_id, recorded_at desc);
 create index idx_email_messages_company_folder on email_messages(company_id, folder, created_at desc);
 create index idx_email_message_attachments_message on email_message_attachments(email_message_id);

@@ -1,0 +1,3 @@
+-- Legacy migration marker. Version 20260628 was already recorded in production
+-- before timestamped migrations were introduced; keep this file so local and
+-- remote migration histories remain aligned.

@@ -4,7 +4,9 @@ import type { MaterialRow, ServiceJob } from '../../types';
 import { emptyTaskForm } from '../../appSeeds';
 import {
   createManualTask as createManualTaskInBackend,
+  listCompletedAutoTaskKeys,
   listManualTasks,
+  saveAutoTaskStatus,
   updateManualTaskStatus,
 } from './api';
 
@@ -42,10 +44,11 @@ export function useTasksFeature({
     }
 
     let cancelled = false;
-    listManualTasks(companyId, jobs)
-      .then((tasks) => {
+    Promise.all([listManualTasks(companyId, jobs), listCompletedAutoTaskKeys(companyId)])
+      .then(([tasks, completedAutoKeys]) => {
         if (cancelled) return;
         setManualTasks(tasks);
+        setCompletedAutoTaskIds(completedAutoKeys);
       })
       .catch((error) => {
         if (cancelled) return;
@@ -174,7 +177,14 @@ export function useTasksFeature({
     }
 
     if (task.source === 'Auto') {
+      const previousIds = completedAutoTaskIds;
       setCompletedAutoTaskIds((ids) => (status === 'Done' ? Array.from(new Set([...ids, task.id])) : ids.filter((id) => id !== task.id)));
+      saveAutoTaskStatus(companyId, task, status, jobs)
+        .then(() => setStatus('Task updated.'))
+        .catch((error) => {
+          setCompletedAutoTaskIds(previousIds);
+          setStatus(error instanceof Error ? error.message : 'Task could not be updated.');
+        });
       return;
     }
 

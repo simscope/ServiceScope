@@ -26,7 +26,7 @@ export async function signInAndResolveSession(email: string, password: string): 
   await signInWithSupabasePassword(email, password);
 
   let lastError: unknown;
-  for (const delay of [0, 250, 700]) {
+  for (const delay of [0, 300, 800, 1600]) {
     if (delay) await wait(delay);
     try {
       return await resolveCurrentAuthSession();

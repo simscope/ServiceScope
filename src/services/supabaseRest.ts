@@ -31,6 +31,12 @@ type SupabaseAuthResponse = {
   };
 };
 
+type PersistedSupabaseSession = {
+  accessToken: string;
+  refreshToken?: string;
+  expiresAt?: number;
+};
+
 export function isSupabaseConfigured() {
   return Boolean(supabaseUrl && supabaseAnonKey);
 }
@@ -50,7 +56,49 @@ export function setSupabaseAccessToken(token: string | null) {
 }
 
 export function getSupabaseAccessToken() {
-  return window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  const saved = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  if (!saved) return null;
+
+  try {
+    const session = JSON.parse(saved) as PersistedSupabaseSession;
+    return session.accessToken || null;
+  } catch {
+    // Keeps existing browser sessions valid while upgrading from the old token-only format.
+    return saved;
+  }
+}
+
+function saveSupabaseSession(auth: SupabaseAuthResponse) {
+  const session: PersistedSupabaseSession = {
+    accessToken: auth.access_token,
+    refreshToken: auth.refresh_token,
+    expiresAt: auth.expires_in ? Date.now() + auth.expires_in * 1000 : undefined,
+  };
+  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, JSON.stringify(session));
+}
+
+export function setSupabaseAuthTokens(accessToken: string, refreshToken?: string | null, expiresIn?: number | string | null) {
+  const parsedExpiresIn = Number(expiresIn);
+  const session: PersistedSupabaseSession = {
+    accessToken,
+    refreshToken: refreshToken || undefined,
+    expiresAt: Number.isFinite(parsedExpiresIn) && parsedExpiresIn > 0
+      ? Date.now() + parsedExpiresIn * 1000
+      : undefined,
+  };
+  window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, JSON.stringify(session));
+}
+
+function readPersistedSupabaseSession(): PersistedSupabaseSession | null {
+  const saved = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  if (!saved) return null;
+
+  try {
+    const session = JSON.parse(saved) as PersistedSupabaseSession;
+    return session.accessToken ? session : null;
+  } catch {
+    return { accessToken: saved };
+  }
 }
 
 function makeSupabaseHeaders(contentType?: string) {
@@ -99,8 +147,33 @@ export async function signInWithSupabasePassword(email: string, password: string
   }
 
   const auth = (await response.json()) as SupabaseAuthResponse;
-  setSupabaseAccessToken(auth.access_token);
+  saveSupabaseSession(auth);
   return auth;
+}
+
+export async function restoreSupabaseAccessToken() {
+  const saved = readPersistedSupabaseSession();
+  if (!saved) return false;
+
+  // Refresh shortly before expiry. Legacy token-only sessions remain usable until Supabase rejects them.
+  if (!saved.refreshToken || !saved.expiresAt || saved.expiresAt > Date.now() + 60_000) return true;
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      apikey: supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ refresh_token: saved.refreshToken }),
+  });
+
+  if (!response.ok) {
+    setSupabaseAccessToken(null);
+    return false;
+  }
+
+  saveSupabaseSession((await response.json()) as SupabaseAuthResponse);
+  return true;
 }
 
 export async function supabaseRequest<T>(path: string, options: SupabaseRequestOptions = {}): Promise<T> {

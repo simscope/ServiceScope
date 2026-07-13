@@ -230,7 +230,8 @@ export type ServiceJobStatus =
   | 'To finish'
   | 'Completed'
   | 'Warranty'
-  | 'Cancelled';
+  | 'Cancelled'
+  | 'Archived';
 
 export type JobAttachment = {
   id: string;

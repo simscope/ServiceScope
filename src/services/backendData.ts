@@ -1,6 +1,7 @@
 import type {
   BillingStatus,
   Company,
+  CompanyAccessRules,
   CompanyJobPriority,
   CompanyJobType,
   CompanyOnboardingProfile,
@@ -59,6 +60,7 @@ type DbCompanyProfile = {
   website_intake_enabled: boolean | null;
   website_intake_token: string | null;
   website_intake_allowed_origins: string | null;
+  access_rules: CompanyAccessRules | null;
 };
 
 type DbWorkflow = {
@@ -342,7 +344,11 @@ export async function loadOwnerWorkspaceFromBackend() {
     const company = companyFromDb(companyRow, onboardingSteps, alerts);
     const profileRow = profileRows.find((profile) => profile.company_id === company.id);
 
-    return { ...company, phone: profileRow?.phone ?? company.phone ?? '' };
+    return {
+      ...company,
+      phone: profileRow?.phone ?? company.phone ?? '',
+      accessRules: profileRow?.access_rules ?? {},
+    };
   });
   const onboardingProfiles = companies.map((company) => profileFromDb(
     company,

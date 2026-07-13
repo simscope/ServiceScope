@@ -18,6 +18,7 @@ type TaskRowDb = {
   priority: TaskDbPriority;
   status: TaskStatus;
   source: TaskSource;
+  auto_key?: string | null;
   created_at: string;
 };
 
@@ -64,6 +65,13 @@ export async function listManualTasks(companyId: string, jobs: ServiceJob[]) {
   return rows.map((row) => rowToTask(row, jobsById));
 }
 
+export async function listCompletedAutoTaskKeys(companyId: string) {
+  const rows = await supabaseRequest<Array<Pick<TaskRowDb, 'auto_key' | 'status'>>>(
+    `tasks?company_id=${sqlEq(companyId)}&source=${sqlEq('Auto')}&status=${sqlEq('Done')}&select=auto_key&limit=500`,
+  );
+  return rows.flatMap((row) => row.auto_key ? [row.auto_key] : []);
+}
+
 export async function createManualTask(companyId: string, form: TaskForm, jobs: ServiceJob[]) {
   const jobNumber = form.jobNumber.trim();
   const rows = await supabaseRequest<TaskRowDb[]>('tasks?select=*', {
@@ -98,5 +106,31 @@ export async function updateManualTaskStatus(companyId: string, taskId: string, 
   );
   const jobsById = new Map(jobs.map((job) => [job.id, job]));
 
+  return rowToTask(rows[0], jobsById);
+}
+
+export async function saveAutoTaskStatus(companyId: string, task: TaskRow, status: TaskStatus, jobs: ServiceJob[]) {
+  const rows = await supabaseRequest<TaskRowDb[]>(
+    'tasks?on_conflict=company_id,auto_key&select=*',
+    {
+      method: 'POST',
+      select: true,
+      prefer: 'resolution=merge-duplicates,return=representation',
+      body: [{
+        company_id: companyId,
+        auto_key: task.id,
+        job_id: findJobId(jobs, task.jobNumber),
+        job_number: task.jobNumber,
+        assigned_to: task.assignedTo || 'Office',
+        title: task.title,
+        notes: task.notes,
+        due_at: task.dueDate ? `${task.dueDate}T12:00:00.000Z` : null,
+        priority: uiPriorityToDb[task.priority] ?? 'normal',
+        status,
+        source: 'Auto' as TaskSource,
+      }],
+    },
+  );
+  const jobsById = new Map(jobs.map((job) => [job.id, job]));
   return rowToTask(rows[0], jobsById);
 }

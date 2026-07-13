@@ -249,7 +249,8 @@ function paymentValue(value: string, amount: string) {
 function statusValue(value: string): ServiceJobStatus {
   const normalized = value.trim().toLowerCase();
   if (['complete', 'completed', 'done', 'closed'].includes(normalized)) return 'Completed';
-  if (['canceled', 'cancelled', 'archived'].includes(normalized)) return 'Cancelled';
+  if (['archived', 'archive'].includes(normalized)) return 'Archived';
+  if (['canceled', 'cancelled'].includes(normalized)) return 'Cancelled';
   if (normalized.includes('part')) return normalized.includes('wait') ? 'Waiting for parts' : 'Parts ordered';
   if (normalized.includes('progress')) return 'In progress';
   if (normalized.includes('diagnos')) return 'Diagnosis';

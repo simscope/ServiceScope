@@ -6,5 +6,5 @@ update public.email_messages
 set body = null,
     body_html = null;
 
-vacuum full public.email_messages;
-analyze public.email_messages;
+-- Routine table maintenance must run outside the migration pipeline.
+-- VACUUM FULL also takes an exclusive lock, so it is intentionally not part of deploys.

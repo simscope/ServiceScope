@@ -45,6 +45,20 @@ supabase/schema.sql
 
 Run it in a clean Supabase project, then create the first Auth user and insert that user into `platform_users` as `owner`. For an existing database, also run `supabase/auth-session-rpc.sql`. Company owners, managers, dispatchers, and technicians must have matching active rows in `company_users`.
 
+For an existing production project, apply the SQL files in `supabase/migrations/` in filename order before deploying the matching frontend. The current production-critical migrations are:
+
+- `20260703010000_technician_mobile_compat.sql`
+- `20260705090000_audit_events_frontend_columns.sql`
+- `20260705100000_job_inbox.sql`
+- `20260705110000_tasks_ui_fields.sql`
+- `20260705120000_fix_can_manage_company_grants.sql`
+- `20260705130000_website_intake_settings.sql`
+- `20260710100000_persist_auto_task_status.sql`
+- `20260710110000_add_archived_job_status.sql`
+- `20260710120000_company_access_rules.sql`
+
+`20260705120000_fix_can_manage_company_grants.sql` is required for Job Inbox, task, library, file, and other manager writes. If the browser reports `permission denied for function can_manage_company`, that migration has not yet been applied to the production database.
+
 Create `.env.local` from `.env.example`:
 
 ```text
@@ -83,6 +97,13 @@ supabase functions deploy mailbox-connect
 supabase functions deploy mailbox-sync
 supabase functions deploy mailbox-oauth-callback
 supabase secrets set APP_URL=http://127.0.0.1:5173/#portal
+```
+
+Website request intake requires its public Edge Function as well:
+
+```bash
+supabase functions deploy website-intake
+supabase secrets set SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
 Company logos are stored in the public `company-logos` storage bucket defined in `supabase/schema.sql`; apply the schema before relying on logo uploads.

@@ -87,7 +87,10 @@ create trigger sync_technician_mobile_job_columns
 before insert or update on public.jobs
 for each row execute function public.sync_technician_mobile_job_columns();
 
-create or replace view public.profiles
+-- Compatibility views may exist with an older column layout. PostgreSQL cannot
+-- remove view columns through CREATE OR REPLACE, so recreate them explicitly.
+drop view if exists public.profiles;
+create view public.profiles
 with (security_invoker = true)
 as
 select
@@ -107,7 +110,8 @@ from public.company_users
 left join public.company_technicians
   on company_technicians.company_user_id = company_users.id;
 
-create or replace view public.technicians
+drop view if exists public.technicians;
+create view public.technicians
 with (security_invoker = true)
 as
 select
@@ -131,7 +135,8 @@ from public.company_technicians
 left join public.company_users
   on company_users.id = company_technicians.company_user_id;
 
-create or replace view public.clients
+drop view if exists public.clients;
+create view public.clients
 with (security_invoker = true)
 as
 select
@@ -230,7 +235,8 @@ create trigger clients_compat_update
 instead of update on public.clients
 for each row execute function public.clients_compat_update();
 
-create or replace view public.materials
+drop view if exists public.materials;
+create view public.materials
 with (security_invoker = true)
 as
 select
@@ -311,7 +317,8 @@ create trigger materials_compat_delete
 instead of delete on public.materials
 for each row execute function public.materials_compat_delete();
 
-create or replace view public.comments
+drop view if exists public.comments;
+create view public.comments
 with (security_invoker = true)
 as
 select
@@ -349,7 +356,8 @@ create trigger comments_compat_insert
 instead of insert on public.comments
 for each row execute function public.comments_compat_insert();
 
-create or replace view public.invoices
+drop view if exists public.invoices;
+create view public.invoices
 with (security_invoker = true)
 as
 select
@@ -379,7 +387,8 @@ create trigger invoices_compat_delete
 instead of delete on public.invoices
 for each row execute function public.invoices_compat_delete();
 
-create or replace view public.tech_locations_latest
+drop view if exists public.tech_locations_latest;
+create view public.tech_locations_latest
 with (security_invoker = true)
 as
 select distinct on (technician_id)

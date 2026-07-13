@@ -91,8 +91,8 @@ import {
 import { resolveCurrentAuthSession, signInAndResolveSession } from './services/authBackend';
 import { saveUserAccess, type AccessActionMode } from './services/accessInvite';
 import { clearLegacyLocalBusinessData, loadOwnerWorkspaceFromBackend } from './services/backendData';
-import { saveCompanyCoreToBackend, saveCompanyOnboardingStepsToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { getSupabaseAccessToken, isSupabaseConfigured, setSupabaseAccessToken, SUPABASE_AUTH_EXPIRED_CODE } from './services/supabaseRest';
+import { saveCompanyAccessRulesToBackend, saveCompanyCoreToBackend, saveCompanyOnboardingStepsToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
+import { getSupabaseAccessToken, isSupabaseConfigured, restoreSupabaseAccessToken, setSupabaseAccessToken, setSupabaseAuthTokens, SUPABASE_AUTH_EXPIRED_CODE } from './services/supabaseRest';
 import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
@@ -179,31 +179,6 @@ import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toL
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 
 const AUTH_STORAGE_KEY = 'servicescope.authSession';
-const COMPANY_ACCESS_RULES_STORAGE_KEY = 'servicescope.companyAccessRules';
-
-function readCompanyAccessRulesOverlay(): Record<string, CompanyAccessRules> {
-  const saved = window.localStorage.getItem(COMPANY_ACCESS_RULES_STORAGE_KEY);
-  if (!saved) return {};
-
-  try {
-    const parsed = JSON.parse(saved);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, CompanyAccessRules> : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveCompanyAccessRulesOverlay(rules: Record<string, CompanyAccessRules>) {
-  window.localStorage.setItem(COMPANY_ACCESS_RULES_STORAGE_KEY, JSON.stringify(rules));
-}
-
-function applyCompanyAccessRulesOverlay(companies: Company[], overlay = readCompanyAccessRulesOverlay()) {
-  return companies.map((company) => ({
-    ...company,
-    accessRules: overlay[company.id] ?? company.accessRules,
-  }));
-}
-
 function readAuthSession(): AuthSession | null {
   const hashParams = getAuthHashParams();
   if (hashParams.has('error') || hashParams.has('access_token')) return null;
@@ -433,7 +408,7 @@ function titleForPage(page: AppPage) {
 }
 
 export function App() {
-  const initialCompanies = useMemo(() => applyCompanyAccessRulesOverlay(listCompanies()), []);
+  const initialCompanies = useMemo(() => listCompanies(), []);
   const initialSupportTickets = useMemo(() => listSupportTickets(initialCompanies), [initialCompanies]);
   const initialPlatformUsers = useMemo(() => listPlatformUsers(), []);
   const initialAuditEvents = useMemo(() => listAuditEvents(), []);
@@ -457,6 +432,7 @@ export function App() {
   const [accessForm, setAccessForm] = useState<NewPlatformUserForm>(emptyAccessForm);
   const [page, setPage] = useState<AppPage>(initialPage);
   const [authSession, setAuthSession] = useState<AuthSession | null>(() => (window.location.hash === '#login' ? null : readAuthSession()));
+  const [authRestoring, setAuthRestoring] = useState(() => Boolean(readAuthSession()));
   const [authNotice, setAuthNotice] = useState(() => getAuthLinkError());
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | CompanyStatus>('all');
@@ -489,6 +465,30 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (!authSession) {
+      setAuthRestoring(false);
+      return;
+    }
+
+    let cancelled = false;
+    restoreSupabaseAccessToken()
+      .then((restored) => {
+        if (cancelled) return;
+        if (!restored) {
+          setAuthSession(null);
+          window.localStorage.removeItem(AUTH_STORAGE_KEY);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAuthRestoring(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authSession]);
+
+  useEffect(() => {
     let ignore = false;
 
     function processAuthCallback() {
@@ -507,7 +507,7 @@ export function App() {
       const accessToken = hashParams.get('access_token');
       if (!accessToken) return;
 
-      setSupabaseAccessToken(accessToken);
+      setSupabaseAuthTokens(accessToken, hashParams.get('refresh_token'), hashParams.get('expires_in'));
       setAuthNotice('Opening your ServiceScope workspace...');
 
       resolveCurrentAuthSession()
@@ -544,7 +544,7 @@ export function App() {
   }, [authSession]);
 
   useEffect(() => {
-    if (!authSession) return;
+    if (!authSession || authRestoring) return;
 
     let ignore = false;
     setBackendLoading(true);
@@ -554,8 +554,7 @@ export function App() {
     loadOwnerWorkspaceFromBackend()
       .then(({ companies: backendCompanies, onboardingProfiles: backendProfiles }) => {
         if (ignore) return;
-        const companiesWithAccessRules = applyCompanyAccessRulesOverlay(backendCompanies);
-        setCompanies(companiesWithAccessRules);
+        setCompanies(backendCompanies);
         setOnboardingProfiles(backendProfiles);
         if (authSession.kind === 'owner') {
           loadPlatformUsersFromBackend()
@@ -568,7 +567,7 @@ export function App() {
               console.error('Failed to load platform users from Supabase', error);
             });
         }
-        setSupportTickets(listSupportTickets(companiesWithAccessRules));
+        setSupportTickets(listSupportTickets(backendCompanies));
         loadAuditEventsFromBackend(authSession.kind === 'company' ? authSession.companyId : undefined)
           .then((events) => {
             if (ignore) return;
@@ -581,11 +580,11 @@ export function App() {
           });
         setCompanyCreateStatus('');
         setSelectedCompanyId((currentId) => {
-          if (companiesWithAccessRules.some((company) => company.id === currentId)) return currentId;
-          if (authSession.kind === 'company' && companiesWithAccessRules.some((company) => company.id === authSession.companyId)) {
+          if (backendCompanies.some((company) => company.id === currentId)) return currentId;
+          if (authSession.kind === 'company' && backendCompanies.some((company) => company.id === authSession.companyId)) {
             return authSession.companyId;
           }
-          return companiesWithAccessRules[0]?.id ?? '';
+          return backendCompanies[0]?.id ?? '';
         });
       })
       .catch((error) => {
@@ -609,10 +608,10 @@ export function App() {
     return () => {
       ignore = true;
     };
-  }, [authSession]);
+  }, [authRestoring, authSession]);
 
   useEffect(() => {
-    if (!authSession) return;
+    if (!authSession || authRestoring) return;
 
     if (authSession.kind === 'company') {
       const companyExists = companies.some((company) => company.id === authSession.companyId);
@@ -638,7 +637,7 @@ export function App() {
       setPage('dashboard');
       window.history.replaceState(null, '', '#dashboard');
     }
-  }, [authSession, backendLoaded, companies, page]);
+  }, [authRestoring, authSession, backendLoaded, companies, page]);
 
   const totals = useMemo(() => {
     return companies.reduce(
@@ -671,13 +670,13 @@ export function App() {
   }, [companies, query, status]);
 
   function persist(nextCompanies: Company[]) {
-    const overlay = readCompanyAccessRulesOverlay();
-    nextCompanies.forEach((company) => {
-      if (company.accessRules) overlay[company.id] = company.accessRules;
-    });
-    saveCompanyAccessRulesOverlay(overlay);
     setCompanies(nextCompanies);
     saveCompanies(nextCompanies);
+    nextCompanies.forEach((company) => {
+      void saveCompanyAccessRulesToBackend(company).catch((error) => {
+        console.error('Failed to save company access rules to backend', error);
+      });
+    });
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -853,6 +852,10 @@ export function App() {
       resource: selectedCompany.name,
       details: 'Customer reply sent from company portal.',
     });
+  }
+
+  if (authRestoring) {
+    return <main className="auth-shell"><p className="auth-notice">Restoring your secure session...</p></main>;
   }
 
   if (!authSession) {
