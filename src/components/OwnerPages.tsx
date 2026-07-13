@@ -28,7 +28,7 @@ import {
   ticketPriorityLabels,
   ticketStatusLabels,
 } from '../appLabels';
-import { plans } from '../services/billingCatalog';
+import { getPlan, plans } from '../services/billingCatalog';
 import { ownerPageLabels, ownerPagePermissions, SYSTEM_OWNER_ID } from '../services/accessStore';
 import { filterAuditEvents } from '../services/auditStore';
 import { onboardingStepOrder } from '../services/tenantStore';
@@ -1426,7 +1426,7 @@ export function CompanyDetail({
       </div>
 
       <div className="detail-grid">
-        <MiniStat icon={<Users size={17} />} label="Seats" value={company.seats.toString()} />
+        <MiniStat icon={<Users size={17} />} label="Seat limit" value={getPlan(company.plan).seats.toString()} />
         <MiniStat icon={<ServerCog size={17} />} label="Techs" value={company.technicians.toString()} />
         <MiniStat icon={<ClipboardList size={17} />} label="Open jobs" value={company.openJobs.toString()} />
         <MiniStat icon={<CircleDollarSign size={17} />} label="Revenue tracked" value={money(company.revenue)} />

@@ -16,8 +16,8 @@ export const plans: PlanDefinition[] = [
     seats: 10,
     technicians: 15,
     storageGb: 30,
-    support: 'Dedicated',
-    entitlements: ['Everything in Launch', 'Technician map', 'Finance view', 'Dedicated support'],
+    support: 'Priority',
+    entitlements: ['Everything in Launch', 'Technician map', 'Finance view', 'Priority support'],
   },
   {
     name: 'Scale',
