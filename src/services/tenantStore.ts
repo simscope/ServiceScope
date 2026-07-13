@@ -55,6 +55,7 @@ export function createCompany(form: NewCompanyForm): Company {
     domain: form.domain || `${slug}.servicescope.app`,
     billingStatus: form.status === 'trial' ? 'trialing' : 'not_started',
     seats: plan.seats,
+    registeredSeats: 0,
     technicians: 0,
     openJobs: 0,
     revenue: 0,

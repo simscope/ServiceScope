@@ -933,6 +933,7 @@ export function App() {
           companies={companies}
           supportTickets={supportTickets}
           onOpenCompanies={() => navigate('companies')}
+          onOpenCompany={(companyId) => setSelectedCompanyId(companyId)}
           onOpenSupport={() => navigate('support')}
         />
           </>
@@ -1251,6 +1252,18 @@ export function App() {
           />
         )}
       </section>
+      {page !== 'companies' && selectedCompanyId && selectedCompany ? (
+        <div className="company-detail-modal-backdrop" role="presentation" onClick={() => setSelectedCompanyId('')}>
+          <div className="company-detail-modal" role="dialog" aria-modal="true" aria-label={selectedCompany.name + ' company details'} onClick={(event) => event.stopPropagation()}>
+            <button className="modal-close-button" type="button" onClick={() => setSelectedCompanyId('')} aria-label="Close company details">Г—</button>
+            <CompanyDetail
+              company={selectedCompany}
+              onSaveOwnerAccess={(mode, password) => sendCompanyOwnerAccess(selectedCompany, mode, password)}
+              ownerInviteStatus={ownerAccessStatusByCompany[selectedCompany.id] ?? ''}
+            />
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

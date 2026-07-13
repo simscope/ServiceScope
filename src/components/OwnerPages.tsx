@@ -56,11 +56,13 @@ export function DashboardOverview({
   companies,
   supportTickets,
   onOpenCompanies,
+  onOpenCompany,
   onOpenSupport,
 }: {
   companies: Company[];
   supportTickets: SupportTicket[];
   onOpenCompanies: () => void;
+  onOpenCompany: (companyId: string) => void;
   onOpenSupport: () => void;
 }) {
   const openTickets = supportTickets.filter((ticket) => ticket.status !== 'resolved');
@@ -230,7 +232,7 @@ export function DashboardOverview({
                   </button>
                   <StatusPill status={company.status} />
                   <span className="owner-sync-cell">{company.lastSync}</span>
-                  <button className="secondary-button compact" type="button" onClick={onOpenCompanies}>Open</button>
+                  <button className="secondary-button compact" type="button" onClick={() => onOpenCompany(company.id)}>Open</button>
                 </div>
               );
             })
@@ -1426,11 +1428,11 @@ export function CompanyDetail({
       </div>
 
       <div className="detail-grid">
-        <MiniStat icon={<Users size={17} />} label="Seat limit" value={getPlan(company.plan).seats.toString()} />
-        <MiniStat icon={<ServerCog size={17} />} label="Techs" value={company.technicians.toString()} />
+        <MiniStat icon={<Users size={17} />} label="Seats" value={`${getPlan(company.plan).seats}/${company.registeredSeats}`} />
+        <MiniStat icon={<ServerCog size={17} />} label="Techs" value={`${getPlan(company.plan).technicians}/${company.technicians}`} />
         <MiniStat icon={<ClipboardList size={17} />} label="Open jobs" value={company.openJobs.toString()} />
         <MiniStat icon={<CircleDollarSign size={17} />} label="Revenue tracked" value={money(company.revenue)} />
-        <MiniStat icon={<ClipboardList size={17} />} label="Jobs" value={company.usage.jobsThisMonth.toString()} />
+        <MiniStat icon={<ClipboardList size={17} />} label="Jobs this month" value={company.usage.jobsThisMonth.toString()} />
         <MiniStat icon={<CreditCard size={17} />} label="Invoices total" value={company.usage.invoicesThisMonth.toString()} />
       </div>
 

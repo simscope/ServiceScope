@@ -45,6 +45,7 @@ export type Company = {
   status: CompanyStatus;
   billingStatus: BillingStatus;
   seats: number;
+  registeredSeats: number;
   technicians: number;
   openJobs: number;
   revenue: number;

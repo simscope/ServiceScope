@@ -187,6 +187,7 @@ function companyFromDb(
   steps: DbOnboardingStep[],
   alerts: DbAlert[],
   invoiceCount: number,
+  registeredSeats: number,
   technicianCount: number,
   openJobsCount: number,
   jobsThisMonth: number,
@@ -210,6 +211,7 @@ function companyFromDb(
     status: mapStatus(row.status),
     billingStatus: mapBillingStatus(row.billing_status),
     seats: row.seats_count,
+    registeredSeats,
     technicians: technicianCount,
     openJobs: openJobsCount,
     revenue: dollars(row.revenue_cents),
@@ -366,11 +368,12 @@ export async function loadOwnerWorkspaceFromBackend() {
   const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
   const companies = companyRows.map((companyRow) => {
     const companyInvoiceCount = invoices.filter((invoice) => invoice.company_id === companyRow.id).length;
+    const companyRegisteredSeats = companyUsers.filter((user) => user.company_id === companyRow.id && user.status === 'active' && user.role !== 'technician').length;
     const companyTechnicianCount = technicians.filter((technician) => technician.company_id === companyRow.id && technician.role === 'technician' && technician.status === 'active').length;
     const companyJobs = jobs.filter((job) => job.company_id === companyRow.id);
     const companyOpenJobs = companyJobs.filter((job) => activeJobStatuses.has(job.status)).length;
     const companyJobsThisMonth = companyJobs.filter((job) => job.created_at >= monthStart).length;
-    const company = companyFromDb(companyRow, onboardingSteps, alerts, companyInvoiceCount, companyTechnicianCount, companyOpenJobs, companyJobsThisMonth);
+    const company = companyFromDb(companyRow, onboardingSteps, alerts, companyInvoiceCount, companyRegisteredSeats, companyTechnicianCount, companyOpenJobs, companyJobsThisMonth);
     const profileRow = profileRows.find((profile) => profile.company_id === company.id);
 
     return {
