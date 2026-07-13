@@ -1431,7 +1431,7 @@ export function CompanyDetail({
         <MiniStat icon={<ClipboardList size={17} />} label="Open jobs" value={company.openJobs.toString()} />
         <MiniStat icon={<CircleDollarSign size={17} />} label="Revenue tracked" value={money(company.revenue)} />
         <MiniStat icon={<ClipboardList size={17} />} label="Jobs" value={company.usage.jobsThisMonth.toString()} />
-        <MiniStat icon={<CreditCard size={17} />} label="Invoices" value={company.usage.invoicesThisMonth.toString()} />
+        <MiniStat icon={<CreditCard size={17} />} label="Invoices total" value={company.usage.invoicesThisMonth.toString()} />
       </div>
 
       <section className="detail-section company-access-panel">

@@ -45,6 +45,10 @@ type DbAlert = {
   title: string;
 };
 
+type DbInvoiceSummary = {
+  company_id: string;
+};
+
 type DbCompanyProfile = {
   company_id: string;
   legal_name: string;
@@ -172,7 +176,7 @@ function companyFilter(companyIds: string[]) {
   return `&company_id=in.(${companyIds.map((id) => encodeURIComponent(id)).join(',')})`;
 }
 
-function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAlert[]): Company {
+function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAlert[], invoiceCount: number): Company {
   const onboarding = onboardingStepOrder.reduce((acc, step) => {
     const savedStep = steps.find((candidate) => candidate.company_id === row.id && candidate.step_key === step);
     acc[step] = savedStep ? mapOnboardingStatus(savedStep.status) : step === 'workspace' ? 'current' : 'todo';
@@ -201,7 +205,7 @@ function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAler
     alerts: alerts.filter((alert) => alert.company_id === row.id).map((alert) => alert.title),
     usage: {
       jobsThisMonth: row.open_jobs_count,
-      invoicesThisMonth: 0,
+      invoicesThisMonth: invoiceCount,
       storageGb: 0,
     },
   };
@@ -328,6 +332,7 @@ export async function loadOwnerWorkspaceFromBackend() {
     technicians,
     companyUsers,
     subscriptionPayments,
+    invoices,
   ] = await Promise.all([
     supabaseRequest<DbOnboardingStep[]>(`company_onboarding_steps?select=company_id,step_key,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbAlert[]>(`company_alerts?select=company_id,title&resolved_at=is.null${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
@@ -338,10 +343,12 @@ export async function loadOwnerWorkspaceFromBackend() {
     supabaseRequest<DbTechnician[]>(`company_technicians?select=*${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbSubscriptionPayment[]>(`subscription_payment_methods?select=*&is_default=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbInvoiceSummary[]>(`job_invoices?select=company_id${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
   ]);
 
   const companies = companyRows.map((companyRow) => {
-    const company = companyFromDb(companyRow, onboardingSteps, alerts);
+    const companyInvoiceCount = invoices.filter((invoice) => invoice.company_id === companyRow.id).length;
+    const company = companyFromDb(companyRow, onboardingSteps, alerts, companyInvoiceCount);
     const profileRow = profileRows.find((profile) => profile.company_id === company.id);
 
     return {
