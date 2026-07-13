@@ -21,6 +21,7 @@ type DbEmailConnection = {
   auto_link_job_number: boolean;
   auto_link_client_email: boolean;
   create_task_from_unread: boolean;
+  import_leads_from_email: boolean;
   sender_name: string | null;
   reply_to: string | null;
   signature: string | null;
@@ -57,7 +58,7 @@ export async function loadMailboxEmailConnection(companyId: string): Promise<Ema
   }
 
   const rows = await supabaseRequest<DbEmailConnection[]>(
-    `email_connections?select=provider,address,status,last_sync_at,sync_range_days,auto_link_job_number,auto_link_client_email,create_task_from_unread,sender_name,reply_to,signature,imap_host,imap_port,smtp_host,smtp_port,security,username&company_id=${sqlEq(companyId)}&limit=1`,
+    `email_connections?select=provider,address,status,last_sync_at,sync_range_days,auto_link_job_number,auto_link_client_email,create_task_from_unread,import_leads_from_email,sender_name,reply_to,signature,imap_host,imap_port,smtp_host,smtp_port,security,username&company_id=${sqlEq(companyId)}&limit=1`,
     { select: true },
   );
   const row = rows[0];
@@ -75,6 +76,7 @@ export async function loadMailboxEmailConnection(companyId: string): Promise<Ema
     autoLinkJobNumber: row.auto_link_job_number,
     autoLinkClientEmail: row.auto_link_client_email,
     createTaskFromUnread: row.create_task_from_unread,
+    importLeadsFromEmail: row.import_leads_from_email,
     senderName: row.sender_name ?? '',
     replyTo: row.reply_to ?? '',
     signature: row.signature ?? '',

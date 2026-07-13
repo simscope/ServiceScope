@@ -24,7 +24,7 @@ export type TaskRow = {
 
 export type TaskForm = Pick<TaskRow, 'title' | 'jobNumber' | 'assignedTo' | 'dueDate' | 'priority' | 'notes'>;
 
-export type JobInboxSource = 'call' | 'missed_call' | 'website' | 'online_booking' | 'email' | 'sms' | 'manual';
+export type JobInboxSource = 'call' | 'missed_call' | 'website' | 'online_booking' | 'email' | 'sms' | 'partner' | 'manual';
 export type JobInboxStatus = 'new' | 'converted' | 'ignored' | 'duplicate' | 'spam';
 
 export type JobInboxItem = {
@@ -39,6 +39,7 @@ export type JobInboxItem = {
   status: JobInboxStatus;
   jobId: string;
   createdAt: string;
+  externalSource?: string;
 };
 
 export type JobInboxForm = Pick<JobInboxItem, 'source' | 'clientName' | 'clientPhone' | 'clientEmail' | 'address' | 'message'>;
@@ -58,6 +59,7 @@ export type EmailConnection = {
   autoLinkJobNumber: boolean;
   autoLinkClientEmail: boolean;
   createTaskFromUnread: boolean;
+  importLeadsFromEmail: boolean;
   senderName: string;
   replyTo: string;
   signature: string;

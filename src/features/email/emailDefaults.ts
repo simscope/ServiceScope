@@ -36,6 +36,7 @@ export function makeDefaultEmailConnection(
     autoLinkJobNumber: true,
     autoLinkClientEmail: true,
     createTaskFromUnread: true,
+    importLeadsFromEmail: false,
     senderName: profile.displayName || company.name,
     replyTo: address,
     signature: `${profile.displayName || company.name}\n${profile.phone || profile.billingEmail || company.ownerEmail}`,

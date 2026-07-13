@@ -177,6 +177,8 @@ export type CompanyOnboardingProfile = {
   websiteIntakeEnabled: boolean;
   websiteIntakeToken: string;
   websiteIntakeAllowedOrigins: string;
+  leadApiEnabled: boolean;
+  leadApiToken: string;
   jobAssignmentMode: 'manual' | 'auto' | 'round_robin';
   acceptedPayments: CompanyPaymentMethod[];
   achRoutingNumber: string;

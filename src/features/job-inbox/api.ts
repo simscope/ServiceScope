@@ -13,6 +13,7 @@ type JobInboxRow = {
   status: JobInboxStatus;
   job_id: string | null;
   created_at: string;
+  external_source: string | null;
 };
 
 function rowToJobInboxItem(row: JobInboxRow): JobInboxItem {
@@ -28,6 +29,7 @@ function rowToJobInboxItem(row: JobInboxRow): JobInboxItem {
     status: row.status,
     jobId: row.job_id ?? '',
     createdAt: row.created_at,
+    externalSource: row.external_source ?? undefined,
   };
 }
 

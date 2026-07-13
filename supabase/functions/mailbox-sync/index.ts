@@ -130,6 +130,21 @@ function parseEmailAddress(value: string) {
   return (match?.[1] ?? value).trim();
 }
 
+function parseEmailName(value: string) {
+  const name = value.replace(/<[^>]+>/g, '').replace(/[\"']/g, '').trim();
+  return name || parseEmailAddress(value);
+}
+
+function isLikelyLead(subject: string, body: string) {
+  const text = `${subject} ${body}`.toLowerCase();
+  const leadTerms = [
+    'service request', 'repair', 'broken', 'not working', 'maintenance', 'estimate',
+    'quote', 'appointment', 'technician', 'hvac', 'plumbing', 'appliance', 'emergency',
+    'service call', 'need help', 'schedule',
+  ];
+  return leadTerms.some((term) => text.includes(term));
+}
+
 function normalizeContentId(value: string) {
   return value.trim().replace(/^</, '').replace(/>$/, '');
 }
@@ -349,7 +364,7 @@ Deno.serve(async (request) => {
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   const { data: connection, error: connectionError } = await adminClient
     .from('email_connections')
-    .select('id, provider, address, token_encrypted, refresh_token_encrypted')
+    .select('id, provider, address, token_encrypted, refresh_token_encrypted, import_leads_from_email')
     .eq('company_id', companyId)
     .eq('status', 'connected')
     .maybeSingle();
@@ -432,6 +447,37 @@ Deno.serve(async (request) => {
       if (insertError) throw new Error(insertError.message);
 
       const insertedByProviderId = new Map((insertedMessages ?? []).map((message: { id: string; provider_message_id: string }) => [message.provider_message_id, message.id]));
+
+      if (connection.import_leads_from_email) {
+        const emailLeadRows = syncMessages
+          .filter((message) => message.folder === 'inbox' && isLikelyLead(String(message.row.subject ?? ''), String(message.row.body ?? '')))
+          .map((message) => {
+            const fromHeader = String(message.row.from_email ?? '');
+            const body = String(message.row.body ?? '');
+            const phone = body.match(/(?:\+?\d[\d\s().-]{7,}\d)/)?.[0]?.trim() ?? '';
+            return {
+              company_id: companyId,
+              source: 'email',
+              client_name: parseEmailName(fromHeader),
+              client_phone: phone,
+              client_email: parseEmailAddress(fromHeader).toLowerCase() || null,
+              address: '',
+              message: `${String(message.row.subject ?? '(No subject)')}\n\n${body}`.trim().slice(0, 5000),
+              status: 'new',
+              external_source: 'gmail',
+              external_id: message.providerMessageId,
+              metadata: { provider: 'google', provider_message_id: message.providerMessageId },
+            };
+          });
+
+        if (emailLeadRows.length) {
+          const { error: emailLeadError } = await adminClient
+            .from('job_inbox')
+            .upsert(emailLeadRows, { onConflict: 'company_id,external_source,external_id', ignoreDuplicates: true });
+          if (emailLeadError) throw new Error(emailLeadError.message);
+        }
+      }
+
       const attachmentRows = [];
 
       for (const message of syncMessages) {

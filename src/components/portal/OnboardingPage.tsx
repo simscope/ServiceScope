@@ -144,6 +144,9 @@ export function OnboardingPage({
     ? `${viteEnv.VITE_SUPABASE_URL.replace(/\/$/, '')}/functions/v1/website-intake`
     : 'https://YOUR-PROJECT.supabase.co/functions/v1/website-intake';
   const websiteIntakeToken = profile.websiteIntakeToken || 'generate-a-token-first';
+  const leadWebhookEndpoint = viteEnv.VITE_SUPABASE_URL
+    ? `${viteEnv.VITE_SUPABASE_URL.replace(/\/$/, '')}/functions/v1/lead-webhook`
+    : 'https://YOUR-PROJECT.supabase.co/functions/v1/lead-webhook';
   const websiteIntakeSnippet = `<div id="servicescope-widget" class="servicescope-widget">
   <button id="servicescope-widget-tab" class="servicescope-widget-tab" type="button" aria-expanded="false">
     <span>Request service</span>
@@ -311,6 +314,20 @@ export function OnboardingPage({
   function copyWebsiteIntakeSnippet() {
     void navigator.clipboard.writeText(websiteIntakeSnippet)
       .then(() => setWebsiteIntakeCopyStatus('Copied.'))
+      .catch(() => setWebsiteIntakeCopyStatus('Copy failed.'));
+  }
+
+  function generateLeadApiToken() {
+    const bytes = new Uint8Array(32);
+    crypto.getRandomValues(bytes);
+    const token = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    updateProfile({ leadApiToken: token, leadApiEnabled: true });
+    setWebsiteIntakeCopyStatus('Lead integration token generated. Save onboarding to activate it.');
+  }
+
+  function copyLeadWebhookEndpoint() {
+    void navigator.clipboard.writeText(leadWebhookEndpoint)
+      .then(() => setWebsiteIntakeCopyStatus('Webhook endpoint copied.'))
       .catch(() => setWebsiteIntakeCopyStatus('Copy failed.'));
   }
 
@@ -574,6 +591,40 @@ export function OnboardingPage({
                 </div>
               </section>
 
+              <section className="panel lead-integrations-panel">
+                <div className="panel-heading">
+                  <div>
+                    <p className="eyebrow">Lead integrations</p>
+                    <h2>Thumbtack, Yelp, Angi and other providers</h2>
+                  </div>
+                  <Globe2 size={20} aria-hidden="true" />
+                </div>
+                <div className="website-intake-grid">
+                  <label className="mailbox-check website-intake-toggle">
+                    <input type="checkbox" checked={profile.leadApiEnabled} onChange={(event) => updateProfile({ leadApiEnabled: event.target.checked })} />
+                    <span>
+                      <strong>Accept partner leads</strong>
+                      <small>External services send new leads here before anyone creates a job.</small>
+                    </span>
+                  </label>
+                  <label>
+                    Webhook endpoint
+                    <div className="copy-field-row">
+                      <input value={leadWebhookEndpoint} readOnly />
+                      <button className="secondary-button compact" type="button" onClick={copyLeadWebhookEndpoint}><Copy size={15} aria-hidden="true" /> Copy</button>
+                    </div>
+                  </label>
+                  <label>
+                    Integration token
+                    <div className="copy-field-row">
+                      <input type="password" value={profile.leadApiToken} onChange={(event) => updateProfile({ leadApiToken: event.target.value.trim() })} placeholder="Generate a token" autoComplete="new-password" />
+                      <button className="secondary-button compact" type="button" onClick={generateLeadApiToken}>Generate</button>
+                    </div>
+                  </label>
+                  <span className="mailbox-helper-text">Use the endpoint and token in a provider's webhook/API integration. Send provider, lead ID, name, phone, email, address, and message. Duplicate lead IDs are ignored.</span>
+                </div>
+              </section>
+
               <section className="panel owner-account-panel">
                 <div className="panel-heading">
                   <div>
@@ -818,6 +869,13 @@ export function OnboardingPage({
                         <span>
                           <strong>Create task from unread client email</strong>
                           <small>Flag new client emails for follow-up.</small>
+                        </span>
+                      </label>
+                      <label className="mailbox-check">
+                        <input type="checkbox" checked={emailConnection?.importLeadsFromEmail ?? false} onChange={(event) => updateMailbox({ importLeadsFromEmail: event.target.checked })} disabled={!emailConnection} />
+                        <span>
+                          <strong>Import likely service requests to Job Inbox</strong>
+                          <small>Only incoming emails matching service-request terms become new leads; they never become jobs automatically.</small>
                         </span>
                       </label>
                     </div>

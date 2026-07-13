@@ -70,6 +70,8 @@ type DbCompanyProfile = {
   website_intake_enabled: boolean | null;
   website_intake_token: string | null;
   website_intake_allowed_origins: string | null;
+  lead_api_enabled: boolean | null;
+  lead_api_token: string | null;
   access_rules: CompanyAccessRules | null;
 };
 
@@ -257,6 +259,8 @@ function profileFromDb(
     websiteIntakeEnabled: profileRow?.website_intake_enabled ?? defaults.websiteIntakeEnabled,
     websiteIntakeToken: profileRow?.website_intake_token ?? defaults.websiteIntakeToken,
     websiteIntakeAllowedOrigins: profileRow?.website_intake_allowed_origins ?? defaults.websiteIntakeAllowedOrigins,
+    leadApiEnabled: profileRow?.lead_api_enabled ?? defaults.leadApiEnabled,
+    leadApiToken: profileRow?.lead_api_token ?? defaults.leadApiToken,
     jobAssignmentMode: workflow?.job_assignment_mode ?? defaults.jobAssignmentMode,
     useJobNumberPrefixes: workflow?.use_job_number_prefixes ?? defaults.useJobNumberPrefixes,
     jobNumberPrefix: workflow?.default_job_number_prefix ?? defaults.jobNumberPrefix,

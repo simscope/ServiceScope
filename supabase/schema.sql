@@ -171,6 +171,8 @@ create table company_profiles (
   website_intake_enabled boolean not null default false,
   website_intake_token text,
   website_intake_allowed_origins text,
+  lead_api_enabled boolean not null default false,
+  lead_api_token text,
   access_rules jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -535,7 +537,7 @@ create table job_inbox (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references companies(id) on delete cascade,
   source text not null default 'manual'
-    check (source in ('call', 'missed_call', 'website', 'online_booking', 'email', 'sms', 'manual')),
+    check (source in ('call', 'missed_call', 'website', 'online_booking', 'email', 'sms', 'partner', 'manual')),
   client_name text not null default '',
   client_phone text not null default '',
   client_email citext,
@@ -544,6 +546,9 @@ create table job_inbox (
   status text not null default 'new'
     check (status in ('new', 'converted', 'ignored', 'duplicate', 'spam')),
   job_id uuid references jobs(id) on delete set null,
+  external_source text,
+  external_id text,
+  metadata jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -702,6 +707,7 @@ create table email_connections (
   auto_link_job_number boolean not null default true,
   auto_link_client_email boolean not null default true,
   create_task_from_unread boolean not null default false,
+  import_leads_from_email boolean not null default false,
   sender_name text not null default '',
   reply_to citext,
   signature text not null default '',

@@ -143,6 +143,8 @@ export async function saveOnboardingProfileToBackend(
       website_intake_enabled: profile.websiteIntakeEnabled,
       website_intake_token: profile.websiteIntakeToken || null,
       website_intake_allowed_origins: profile.websiteIntakeAllowedOrigins || null,
+      lead_api_enabled: profile.leadApiEnabled,
+      lead_api_token: profile.leadApiToken || null,
     },
   ]);
 
@@ -240,6 +242,7 @@ export async function saveOnboardingProfileToBackend(
         auto_link_job_number: emailConnection.autoLinkJobNumber,
         auto_link_client_email: emailConnection.autoLinkClientEmail,
         create_task_from_unread: emailConnection.createTaskFromUnread,
+        import_leads_from_email: emailConnection.importLeadsFromEmail,
         sender_name: emailConnection.senderName,
         reply_to: emailConnection.replyTo || null,
         signature: emailConnection.signature,

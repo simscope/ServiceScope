@@ -9,6 +9,7 @@ const sourceLabels: Record<JobInboxSource, string> = {
   online_booking: 'Online booking',
   email: 'Email',
   sms: 'SMS',
+  partner: 'Partner',
   manual: 'Manual',
 };
 
