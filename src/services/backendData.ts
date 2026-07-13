@@ -49,6 +49,12 @@ type DbInvoiceSummary = {
   company_id: string;
 };
 
+type DbJobSummary = {
+  company_id: string;
+  status: string;
+  created_at: string;
+};
+
 type DbCompanyProfile = {
   company_id: string;
   legal_name: string;
@@ -176,7 +182,15 @@ function companyFilter(companyIds: string[]) {
   return `&company_id=in.(${companyIds.map((id) => encodeURIComponent(id)).join(',')})`;
 }
 
-function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAlert[], invoiceCount: number): Company {
+function companyFromDb(
+  row: DbCompany,
+  steps: DbOnboardingStep[],
+  alerts: DbAlert[],
+  invoiceCount: number,
+  technicianCount: number,
+  openJobsCount: number,
+  jobsThisMonth: number,
+): Company {
   const onboarding = onboardingStepOrder.reduce((acc, step) => {
     const savedStep = steps.find((candidate) => candidate.company_id === row.id && candidate.step_key === step);
     acc[step] = savedStep ? mapOnboardingStatus(savedStep.status) : step === 'workspace' ? 'current' : 'todo';
@@ -196,15 +210,15 @@ function companyFromDb(row: DbCompany, steps: DbOnboardingStep[], alerts: DbAler
     status: mapStatus(row.status),
     billingStatus: mapBillingStatus(row.billing_status),
     seats: row.seats_count,
-    technicians: row.technicians_count,
-    openJobs: row.open_jobs_count,
+    technicians: technicianCount,
+    openJobs: openJobsCount,
     revenue: dollars(row.revenue_cents),
     health: row.health_score,
     lastSync: row.last_sync_label,
     onboarding,
     alerts: alerts.filter((alert) => alert.company_id === row.id).map((alert) => alert.title),
     usage: {
-      jobsThisMonth: row.open_jobs_count,
+      jobsThisMonth,
       invoicesThisMonth: invoiceCount,
       storageGb: 0,
     },
@@ -333,6 +347,7 @@ export async function loadOwnerWorkspaceFromBackend() {
     companyUsers,
     subscriptionPayments,
     invoices,
+    jobs,
   ] = await Promise.all([
     supabaseRequest<DbOnboardingStep[]>(`company_onboarding_steps?select=company_id,step_key,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbAlert[]>(`company_alerts?select=company_id,title&resolved_at=is.null${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
@@ -344,11 +359,18 @@ export async function loadOwnerWorkspaceFromBackend() {
     supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbSubscriptionPayment[]>(`subscription_payment_methods?select=*&is_default=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbInvoiceSummary[]>(`job_invoices?select=company_id${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbJobSummary[]>(`jobs?select=company_id,status,created_at${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
   ]);
 
+  const activeJobStatuses = new Set(['New', 'ReCall', 'Diagnosis', 'In progress', 'Parts ordered', 'Waiting for parts', 'To finish', 'Warranty']);
+  const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
   const companies = companyRows.map((companyRow) => {
     const companyInvoiceCount = invoices.filter((invoice) => invoice.company_id === companyRow.id).length;
-    const company = companyFromDb(companyRow, onboardingSteps, alerts, companyInvoiceCount);
+    const companyTechnicianCount = technicians.filter((technician) => technician.company_id === companyRow.id && technician.role === 'technician' && technician.status === 'active').length;
+    const companyJobs = jobs.filter((job) => job.company_id === companyRow.id);
+    const companyOpenJobs = companyJobs.filter((job) => activeJobStatuses.has(job.status)).length;
+    const companyJobsThisMonth = companyJobs.filter((job) => job.created_at >= monthStart).length;
+    const company = companyFromDb(companyRow, onboardingSteps, alerts, companyInvoiceCount, companyTechnicianCount, companyOpenJobs, companyJobsThisMonth);
     const profileRow = profileRows.find((profile) => profile.company_id === company.id);
 
     return {
