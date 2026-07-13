@@ -265,12 +265,20 @@ async function refreshGoogleToken(clientId: string, clientSecret: string, refres
 }
 
 async function gmailFetch(path: string, accessToken: string) {
-  const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
 
-  const result = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, result };
+    const result = await response.json().catch(() => ({}));
+    if (response.ok || (response.status < 500 && response.status !== 429 && response.status !== 546)) {
+      return { ok: response.ok, status: response.status, result };
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+  }
+
+  return { ok: false, status: 546, result: { error: { message: 'Gmail temporarily unavailable.' } } };
 }
 
 async function deleteStoredEmailFiles(adminClient: ReturnType<typeof createClient>, companyId: string, connectionId: string) {
@@ -340,10 +348,11 @@ async function listGmailMessages(accessToken: string, labelId: 'INBOX' | 'SENT',
   return await mapWithConcurrency(messageRefs, 2, async (message: { id: string }) => {
     const full = await gmailFetch(`messages/${message.id}?format=full`, accessToken);
     if (!full.ok) {
+      if (full.status === 546 || full.status === 429 || full.status >= 500) return null;
       throw new Error(full.result.error?.message || `Gmail message fetch failed with ${full.status}`);
     }
     return full.result as GmailMessage;
-  });
+  }).then((messages) => messages.filter((message): message is GmailMessage => Boolean(message));
 }
 
 Deno.serve(async (request) => {
