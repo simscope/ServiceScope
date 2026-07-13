@@ -28,34 +28,37 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     setMapTechFilter,
   } = context.map;
 
-  const jobsPage = ClientJobsPageRenderer({
-    renderedClientPage,
-    operations: context.operations,
-    business: context.business,
-    shell: context.shell,
-  });
-  if (jobsPage) {
-    return jobsPage;
+  if (['jobInbox', 'jobs', 'allJobs', 'debtors', 'import'].includes(renderedClientPage)) {
+    return (
+      <ClientJobsPageRenderer
+        renderedClientPage={renderedClientPage}
+        operations={context.operations}
+        business={context.business}
+        shell={context.shell}
+      />
+    );
   }
 
-  const operationsPage = ClientOperationsPageRenderer({
-    renderedClientPage,
-    operations: context.operations,
-    business: context.business,
-    shell: context.shell,
-  });
-  if (operationsPage) {
-    return operationsPage;
+  if (['calendar', 'materials', 'tasks'].includes(renderedClientPage)) {
+    return (
+      <ClientOperationsPageRenderer
+        renderedClientPage={renderedClientPage}
+        operations={context.operations}
+        business={context.business}
+        shell={context.shell}
+      />
+    );
   }
 
-  const businessPage = ClientBusinessPageRenderer({
-    renderedClientPage,
-    business: context.business,
-    operations: context.operations,
-    shell: context.shell,
-  });
-  if (businessPage) {
-    return businessPage;
+  if (['email', 'finances', 'knowledge', 'portal', 'onboarding'].includes(renderedClientPage)) {
+    return (
+      <ClientBusinessPageRenderer
+        renderedClientPage={renderedClientPage}
+        business={context.business}
+        operations={context.operations}
+        shell={context.shell}
+      />
+    );
   }
 
   if (renderedClientPage === 'map') {
