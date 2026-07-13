@@ -206,9 +206,16 @@ async function syncAppointment(companyId: string, job: ServiceJob, technicianId:
 }
 
 async function syncComments(companyId: string, job: ServiceJob) {
-  await supabaseRequest(`job_comments?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}`, { method: 'DELETE' });
   const rows = (job.comments ?? []).filter((comment) => comment.message.trim()).map((comment) => ({ id: comment.id, company_id: companyId, job_id: job.id, author_name: comment.authorName || 'User', author_role: comment.authorRole || 'Admin', message: comment.message.trim(), created_at: comment.createdAt || new Date().toISOString() }));
-  if (rows.length) await supabaseRequest<JobCommentRow[]>('job_comments?select=*', { method: 'POST', select: true, body: rows });
+  if (!rows.length) return;
+
+  // RLS deliberately allows adding comments but not deleting the history during
+  // a routine job save. Ignore known IDs and insert only newly created comments.
+  await supabaseRequest('job_comments?on_conflict=id', {
+    method: 'POST',
+    body: rows,
+    prefer: 'resolution=ignore-duplicates,return=minimal',
+  });
 }
 
 function safeFileName(name: string) { return name.trim().replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'file'; }
