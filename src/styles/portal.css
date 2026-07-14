@@ -1116,6 +1116,68 @@
   background: #f7fbff;
 }
 
+.setup-guide {
+  margin: 0 0 16px;
+  border: 1px solid #c5dbfa;
+  border-radius: 8px;
+  background: #f7fbff;
+  color: #17201b;
+}
+
+.setup-guide summary {
+  cursor: pointer;
+  padding: 12px 14px;
+  color: #163b70;
+  font-size: 13px;
+  font-weight: 900;
+  list-style-position: inside;
+}
+
+.setup-guide summary::marker {
+  color: #1f6fd1;
+}
+
+.setup-guide-body {
+  display: grid;
+  gap: 10px;
+  padding: 0 14px 14px;
+  color: #4f5b53;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.setup-guide-body p,
+.setup-guide-body ol {
+  margin: 0;
+}
+
+.setup-guide-body ol {
+  display: grid;
+  gap: 7px;
+  padding-left: 22px;
+}
+
+.setup-guide-callout,
+.setup-guide-complete {
+  display: grid;
+  gap: 2px;
+  border: 1px solid #d6e6fb;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 9px 10px;
+}
+
+.setup-guide-callout strong,
+.setup-guide-complete strong {
+  color: #17201b;
+  font-size: 12px;
+}
+
+.setup-guide-complete {
+  border-color: #cfe6c0;
+  background: #f8fcf5;
+}
+
 .oauth-instructions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -15,6 +15,7 @@ import type {
   NewCompanyTechnicianForm,
 } from '../../types';
 import { MiniStat } from '../OwnerPages';
+import { SetupGuide } from './SetupGuide';
 
 type ProfessionTemplate = NewCompanyJobTypeForm & { id: string };
 
@@ -472,6 +473,19 @@ export function OnboardingPage({
                   </div>
                   <Building2 size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Complete the company profile once. These details appear on invoices, emails, the website request form, and technician screens."
+                  prepare="Company legal name, public business name, main phone, service address, website, and logo."
+                  steps={[
+                    'Enter the legal company name used for documents and billing.',
+                    'Enter the display name customers and technicians should see.',
+                    'Add the website, main phone, billing email, emergency contact, and service address.',
+                    'Choose the service area and the company time zone.',
+                    'Upload a square logo, then review the fields before leaving this page.',
+                  ]}
+                  complete="The company identity is complete and the same information is ready to reuse across the workspace."
+                />
                 <div className="company-profile-layout">
                   <div className="logo-uploader">
                     <div className="logo-preview">
@@ -540,6 +554,19 @@ export function OnboardingPage({
                   </div>
                   <Globe2 size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="The website form creates a Job Inbox request first. The office can review it and convert it into a job later."
+                  prepare="Access to the company website and permission to paste one code snippet before the closing body tag."
+                  steps={[
+                    'Turn on website submissions to enable the public request form.',
+                    'Generate the public token and keep it private from website visitors.',
+                    'Enter every allowed website domain, one per line, including the www version if used.',
+                    'Copy the floating widget code and paste it before the closing body tag on the website.',
+                    'Open the website in a private window, submit a test request, and confirm it appears in Job Inbox.',
+                  ]}
+                  complete="A visitor can open the small Request service tab, submit a request, and the office can see it as a new intake."
+                />
                 <div className="website-intake-grid">
                   <label className="mailbox-check website-intake-toggle">
                     <input
@@ -599,6 +626,19 @@ export function OnboardingPage({
                   </div>
                   <Globe2 size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Partner leads are accepted into Job Inbox before anyone creates a job, so duplicate or spam requests can be reviewed first."
+                  prepare="A provider webhook/API screen and the provider's lead ID, contact, address, and message fields."
+                  steps={[
+                    'Turn on Accept partner leads.',
+                    'Generate an integration token and store it in the provider password manager.',
+                    'Copy the webhook endpoint into Thumbtack, Yelp, Angi, or another lead provider.',
+                    'Map the provider lead ID to externalId and send provider, name, phone, email, address, and message.',
+                    'Send one test lead and confirm it appears in Job Inbox with source Partner.',
+                  ]}
+                  complete="New leads arrive as intake records and repeated provider lead IDs are ignored automatically."
+                />
                 <div className="website-intake-grid">
                   <label className="mailbox-check website-intake-toggle">
                     <input type="checkbox" checked={profile.leadApiEnabled} onChange={(event) => updateProfile({ leadApiEnabled: event.target.checked })} />
@@ -633,6 +673,19 @@ export function OnboardingPage({
                   </div>
                   <ShieldCheck size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Set the company owner's password here so the owner can sign in without waiting for support."
+                  prepare="Use a unique password with at least 12 characters and store it in a password manager."
+                  steps={[
+                    'Confirm the owner email shown in this section.',
+                    'Generate a strong password or enter one manually.',
+                    'Enter the same password in the confirmation field.',
+                    'Click Change password and wait for the success message.',
+                    'Sign out and test the new credentials in a private browser window.',
+                  ]}
+                  complete="The owner can sign in with the displayed email and the new password."
+                />
                 <div className="owner-account-grid">
                   <div className="owner-account-summary">
                     <span>Company owner</span>
@@ -985,6 +1038,18 @@ export function OnboardingPage({
                   </div>
                   <CreditCard size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Connect subscription billing so the selected plan can renew automatically. Card details are handled by Square."
+                  prepare="The billing owner's name, billing ZIP code, and a card authorized for recurring charges."
+                  steps={[
+                    'Enter the billing name and ZIP code exactly as the card statement shows them.',
+                    'Turn on automatic monthly charges when the company is ready to be billed.',
+                    'Click Connect Square billing and complete the secure Square checkout window.',
+                    'Return to ServiceScope and confirm the status changes to Active.',
+                  ]}
+                  complete="The card is stored by Square, the plan status is Active, and the next renewal can run without manual support."
+                />
                 <div className="subscription-payment-layout">
                   <div className="subscription-payment-status">
                     <strong>{subscriptionConnected ? 'Autopay connected' : 'Payment method required'}</strong>
@@ -1054,6 +1119,18 @@ export function OnboardingPage({
                   </div>
                   <CreditCard size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Choose the payment methods your company accepts so staff can record payments consistently on jobs and invoices."
+                  prepare="The company's preferred payment methods and any deposit or financing rules."
+                  steps={[
+                    'Select every payment method the office accepts.',
+                    'Enter only the contact or account details needed to receive that method.',
+                    'Add payment notes such as deposits, due dates, or financing instructions.',
+                    'Review the selected methods before saving the company profile.',
+                  ]}
+                  complete="The accepted methods and instructions are available to the team when recording customer payments."
+                />
                 <div className="payment-method-grid">
                   {(Object.keys(paymentMethodLabels) as CompanyPaymentMethod[]).map((method) => (
                     <label className={`payment-method ${profile.acceptedPayments.includes(method) ? 'selected' : ''}`} key={method}>
@@ -1110,6 +1187,19 @@ export function OnboardingPage({
                   </div>
                   <ClipboardList size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Set the rules that control job numbers, warranty handling, completion requirements, and automatic archiving."
+                  prepare="The default service call fee, warranty duration, archive timing, and professions the company offers."
+                  steps={[
+                    'Set the default service call fee and warranty period.',
+                    'Choose how long completed and cancelled jobs remain active before archiving.',
+                    'Turn on job prefixes if different professions need identifiable job numbers.',
+                    'Enable completion notes and photos when the office needs proof before closing work.',
+                    'Add suggested professions or create a custom profession with its job prefix.',
+                  ]}
+                  complete="New jobs use the selected defaults, technicians know what is required to finish work, and old jobs leave the active board automatically."
+                />
                 <div className="workflow-fields">
                   <label>
                     Default SCF ($)
@@ -1233,6 +1323,19 @@ export function OnboardingPage({
                   </div>
                   <Users size={20} aria-hidden="true" />
                 </div>
+                <SetupGuide
+                  title="Step-by-step setup guide"
+                  intro="Add the people who need access and give technicians only the access they need for their work."
+                  prepare="Each person's name, email, phone, role, and a secure access password or invitation plan."
+                  steps={[
+                    'Choose the default role for the next person: technician, dispatcher, or manager.',
+                    "Click Add technician and enter the person's contact details.",
+                    'Create or generate access credentials, then send them through a secure channel.',
+                    'Edit the person later to update the role, phone, photo, or status.',
+                    'Check the plan counter before adding more people; limits are enforced by the selected plan.',
+                  ]}
+                  complete="Every team member has the correct role, can sign in, and sees only the company work assigned to them."
+                />
                 <div className="team-setup-grid">
                   <MiniStat icon={<Users size={17} />} label="Technicians" value={`${profile.technicians.length}/${technicianLimit}`} />
                   <MiniStat icon={<UserPlus size={17} />} label="Plan limit" value={selectedPlan.name} />
