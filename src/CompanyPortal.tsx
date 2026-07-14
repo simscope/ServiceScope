@@ -351,6 +351,7 @@ function CompanyPortalWithTenant({
     technicianNames: libraryProfile?.technicians.map((technician) => technician.name) ?? [],
     canWrite: taskAccessLevel === 'full',
     readOnlyMessage: `Owner access for tasks is ${accessLevelLabels[taskAccessLevel].toLowerCase()}. Restore full access before`,
+    currentUserLabel: signedInUser ? `${signedInUser.name} (${signedInUser.email})` : `${selectedCompany.ownerName} (${selectedCompany.ownerEmail})`,
     setStatus: setJobsStatus,
   });
   useCompanyJobsLoader({

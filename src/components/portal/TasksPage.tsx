@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react';
 import { Plus } from 'lucide-react';
+import { useState } from 'react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
 import type { EmailCompose, EmailComposeAttachment, TaskForm, TaskPriority, TaskRow, TaskStatus, TaskStatusFilter } from '../../appTypes';
@@ -67,8 +68,23 @@ export function TasksPage({
   filteredTaskRows: TaskRow[];
   jobMap: Map<string, ServiceJob>;
   onOpenJob: (job: ServiceJob) => void;
-  onUpdateTaskStatus: (task: TaskRow, status: TaskStatus) => void;
+  onUpdateTaskStatus: (task: TaskRow, status: TaskStatus, completionNote?: string) => void;
 }) {
+  const [completionTask, setCompletionTask] = useState<TaskRow | null>(null);
+  const [completionNote, setCompletionNote] = useState('');
+
+  const requestCompletion = (task: TaskRow) => {
+    setCompletionTask(task);
+    setCompletionNote('');
+  };
+
+  const saveCompletion = () => {
+    if (!completionTask) return;
+    onUpdateTaskStatus(completionTask, 'Done', completionNote);
+    setCompletionTask(null);
+    setCompletionNote('');
+  };
+
   if (openedJob) {
     return (
       <section className="tasks-page">
@@ -204,6 +220,11 @@ export function TasksPage({
                   <td>
                     <strong>{task.title}</strong>
                     <span>{task.notes || job?.issue || 'No notes'}</span>
+                    {task.status === 'Done' && (task.completedBy || task.completedAt || task.completionNote) ? (
+                      <small className="task-completion-audit">
+                        Completed{task.completedBy ? ` by ${task.completedBy}` : ''}{task.completedAt ? ` on ${new Date(task.completedAt).toLocaleString()}` : ''}{task.completionNote ? ` - ${task.completionNote}` : ''}
+                      </small>
+                    ) : null}
                   </td>
                   <td>
                     {job ? (
@@ -221,10 +242,14 @@ export function TasksPage({
                     <span className={`task-priority ${statusClassName(task.priority)}`}>{task.priority}</span>
                   </td>
                   <td>
-                    <select value={task.status} onChange={(event) => onUpdateTaskStatus(task, event.target.value as TaskStatus)}>
+                      <select value={task.status} onChange={(event) => {
+                        const nextStatus = event.target.value as TaskStatus;
+                        if (nextStatus === 'Done') requestCompletion(task);
+                        else onUpdateTaskStatus(task, nextStatus);
+                      }}>
                       <option value="To do">To do</option>
                       <option value="In progress">In progress</option>
-                      <option value="Done">Done</option>
+                      <option value="Done">Completed</option>
                     </select>
                   </td>
                   <td>
@@ -232,7 +257,7 @@ export function TasksPage({
                   </td>
                   <td>
                     <div className="task-actions">
-                      <button className="secondary-button compact" type="button" onClick={() => onUpdateTaskStatus(task, 'Done')}>
+                      <button className="secondary-button compact" type="button" onClick={() => requestCompletion(task)}>
                         Done
                       </button>
                       {job ? (
@@ -255,6 +280,28 @@ export function TasksPage({
           </tbody>
         </table>
       </div>
+
+      {completionTask ? (
+        <div className="email-message-modal-backdrop" role="presentation" onClick={() => setCompletionTask(null)}>
+          <section className="task-completion-modal" role="dialog" aria-modal="true" aria-labelledby="task-completion-title" onClick={(event) => event.stopPropagation()}>
+            <div className="email-message-detail-header">
+              <div>
+                <p className="eyebrow">Complete task</p>
+                <h2 id="task-completion-title">{completionTask.title}</h2>
+              </div>
+              <button className="secondary-button compact" type="button" onClick={() => setCompletionTask(null)}>Close</button>
+            </div>
+            <div className="task-completion-body">
+              <p>Add a note about what was done. This is optional.</p>
+              <textarea value={completionNote} onChange={(event) => setCompletionNote(event.target.value)} placeholder="Optional completion note" rows={5} autoFocus />
+            </div>
+            <div className="email-message-modal-actions task-completion-actions">
+              <button className="secondary-button" type="button" onClick={() => setCompletionTask(null)}>Cancel</button>
+              <button className="primary-button" type="button" onClick={saveCompletion}>Mark as done</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }

@@ -678,6 +678,9 @@ create table tasks (
   status task_status not null default 'To do',
   source task_source not null default 'Manual',
   auto_key text,
+  completed_by text,
+  completed_at timestamptz,
+  completion_note text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

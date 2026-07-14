@@ -19,6 +19,9 @@ type TaskRowDb = {
   status: TaskStatus;
   source: TaskSource;
   auto_key?: string | null;
+  completed_by?: string | null;
+  completed_at?: string | null;
+  completion_note?: string | null;
   created_at: string;
 };
 
@@ -47,6 +50,9 @@ function rowToTask(row: TaskRowDb, jobsById: Map<string, ServiceJob>): TaskRow {
     status: row.status,
     notes: row.notes,
     source: row.source,
+    completedBy: row.completed_by ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    completionNote: row.completion_note ?? undefined,
   };
 }
 
@@ -66,10 +72,15 @@ export async function listManualTasks(companyId: string, jobs: ServiceJob[]) {
 }
 
 export async function listCompletedAutoTaskKeys(companyId: string) {
-  const rows = await supabaseRequest<Array<Pick<TaskRowDb, 'auto_key' | 'status'>>>(
-    `tasks?company_id=${sqlEq(companyId)}&source=${sqlEq('Auto')}&status=${sqlEq('Done')}&select=auto_key&limit=500`,
+  const rows = await supabaseRequest<Array<Pick<TaskRowDb, 'auto_key' | 'status' | 'completed_by' | 'completed_at' | 'completion_note'>>>(
+    `tasks?company_id=${sqlEq(companyId)}&source=${sqlEq('Auto')}&status=${sqlEq('Done')}&select=auto_key,completed_by,completed_at,completion_note&limit=500`,
   );
-  return rows.flatMap((row) => row.auto_key ? [row.auto_key] : []);
+  return rows.flatMap((row) => row.auto_key ? [{
+    key: row.auto_key,
+    completedBy: row.completed_by ?? undefined,
+    completedAt: row.completed_at ?? undefined,
+    completionNote: row.completion_note ?? undefined,
+  }] : []);
 }
 
 export async function createManualTask(companyId: string, form: TaskForm, jobs: ServiceJob[]) {
@@ -95,13 +106,18 @@ export async function createManualTask(companyId: string, form: TaskForm, jobs: 
   return rowToTask(rows[0], jobsById);
 }
 
-export async function updateManualTaskStatus(companyId: string, taskId: string, status: TaskStatus, jobs: ServiceJob[]) {
+export async function updateManualTaskStatus(companyId: string, taskId: string, status: TaskStatus, jobs: ServiceJob[], completionNote: string, completedBy: string) {
   const rows = await supabaseRequest<TaskRowDb[]>(
     `tasks?company_id=${sqlEq(companyId)}&id=${sqlEq(taskId)}&source=${sqlEq('Manual')}&select=*`,
     {
       method: 'PATCH',
       select: true,
-      body: { status },
+      body: {
+        status,
+        completed_by: status === 'Done' ? completedBy : null,
+        completed_at: status === 'Done' ? new Date().toISOString() : null,
+        completion_note: status === 'Done' ? completionNote.trim() : '',
+      },
     },
   );
   const jobsById = new Map(jobs.map((job) => [job.id, job]));
@@ -109,7 +125,7 @@ export async function updateManualTaskStatus(companyId: string, taskId: string, 
   return rowToTask(rows[0], jobsById);
 }
 
-export async function saveAutoTaskStatus(companyId: string, task: TaskRow, status: TaskStatus, jobs: ServiceJob[]) {
+export async function saveAutoTaskStatus(companyId: string, task: TaskRow, status: TaskStatus, jobs: ServiceJob[], completionNote: string, completedBy: string) {
   const rows = await supabaseRequest<TaskRowDb[]>(
     'tasks?on_conflict=company_id,auto_key&select=*',
     {
@@ -128,6 +144,9 @@ export async function saveAutoTaskStatus(companyId: string, task: TaskRow, statu
         priority: uiPriorityToDb[task.priority] ?? 'normal',
         status,
         source: 'Auto' as TaskSource,
+        completed_by: status === 'Done' ? completedBy : null,
+        completed_at: status === 'Done' ? new Date().toISOString() : null,
+        completion_note: status === 'Done' ? completionNote.trim() : '',
       }],
     },
   );

@@ -17,6 +17,7 @@ type UseTasksFeatureParams = {
   technicianNames: string[];
   canWrite: boolean;
   readOnlyMessage: string;
+  currentUserLabel: string;
   setStatus: (message: string) => void;
 };
 
@@ -27,10 +28,11 @@ export function useTasksFeature({
   technicianNames,
   canWrite,
   readOnlyMessage,
+  currentUserLabel,
   setStatus,
 }: UseTasksFeatureParams) {
   const [manualTasks, setManualTasks] = useState<TaskRow[]>([]);
-  const [completedAutoTaskIds, setCompletedAutoTaskIds] = useState<string[]>([]);
+  const [completedAutoTaskAudits, setCompletedAutoTaskAudits] = useState<Record<string, Pick<TaskRow, 'completedBy' | 'completedAt' | 'completionNote'>>>({});
   const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilter>('active');
   const [taskOwnerFilter, setTaskOwnerFilter] = useState('all');
@@ -39,16 +41,16 @@ export function useTasksFeature({
   useEffect(() => {
     if (!companyId) {
       setManualTasks([]);
-      setCompletedAutoTaskIds([]);
+      setCompletedAutoTaskAudits({});
       return undefined;
     }
 
     let cancelled = false;
     Promise.all([listManualTasks(companyId, jobs), listCompletedAutoTaskKeys(companyId)])
-      .then(([tasks, completedAutoKeys]) => {
+      .then(([tasks, completedAutoAudits]) => {
         if (cancelled) return;
         setManualTasks(tasks);
-        setCompletedAutoTaskIds(completedAutoKeys);
+        setCompletedAutoTaskAudits(Object.fromEntries(completedAutoAudits.map((audit) => [audit.key, audit])));
       })
       .catch((error) => {
         if (cancelled) return;
@@ -78,9 +80,10 @@ export function useTasksFeature({
         assignedTo: job.assignee === 'No technician' ? 'Office' : job.assignee,
         dueDate,
         priority: 'Urgent',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-scf`) ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-scf`] ? 'Done' : 'To do',
         notes: 'Service call fee is still unpaid.',
         source: 'Auto',
+        ...completedAutoTaskAudits[`auto-${job.jobNumber}-scf`],
       });
     }
 
@@ -92,9 +95,10 @@ export function useTasksFeature({
         assignedTo: 'Dispatcher',
         dueDate,
         priority: 'Normal',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-assign-tech`) ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-assign-tech`] ? 'Done' : 'To do',
         notes: 'Job is active but has no technician.',
         source: 'Auto',
+        ...completedAutoTaskAudits[`auto-${job.jobNumber}-assign-tech`],
       });
     }
 
@@ -106,9 +110,10 @@ export function useTasksFeature({
         assignedTo: 'Office',
         dueDate,
         priority: 'Normal',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-order-parts`) ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-order-parts`] ? 'Done' : 'To do',
         notes: 'One or more materials are marked as needed.',
         source: 'Auto',
+        ...completedAutoTaskAudits[`auto-${job.jobNumber}-order-parts`],
       });
     }
 
@@ -120,14 +125,15 @@ export function useTasksFeature({
         assignedTo: job.assignee === 'No technician' ? 'Dispatcher' : job.assignee,
         dueDate,
         priority: 'Normal',
-        status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-return-visit`) ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-return-visit`] ? 'Done' : 'To do',
         notes: 'Parts are received and the job is not completed yet.',
         source: 'Auto',
+        ...completedAutoTaskAudits[`auto-${job.jobNumber}-return-visit`],
       });
     }
 
     return rows;
-  }), [completedAutoTaskIds, jobs, materials]);
+  }), [completedAutoTaskAudits, jobs, materials]);
 
   const taskRows = useMemo(() => [...autoTasks, ...manualTasks], [autoTasks, manualTasks]);
 
@@ -174,26 +180,31 @@ export function useTasksFeature({
       });
   };
 
-  const updateTaskStatus = (task: TaskRow, status: TaskStatus) => {
+  const updateTaskStatus = (task: TaskRow, status: TaskStatus, completionNote = '') => {
     if (!canWrite) {
       setStatus(`${readOnlyMessage} updating tasks.`);
       return;
     }
 
     if (task.source === 'Auto') {
-      const previousIds = completedAutoTaskIds;
-      setCompletedAutoTaskIds((ids) => (status === 'Done' ? Array.from(new Set([...ids, task.id])) : ids.filter((id) => id !== task.id)));
-      saveAutoTaskStatus(companyId, task, status, jobs)
+      const previousAudits = completedAutoTaskAudits;
+      setCompletedAutoTaskAudits((audits) => {
+        const next = { ...audits };
+        if (status === 'Done') next[task.id] = { completedBy: currentUserLabel, completedAt: new Date().toISOString(), completionNote: completionNote.trim() };
+        else delete next[task.id];
+        return next;
+      });
+      saveAutoTaskStatus(companyId, task, status, jobs, completionNote, currentUserLabel)
         .then(() => setStatus('Task updated.'))
         .catch((error) => {
-          setCompletedAutoTaskIds(previousIds);
+          setCompletedAutoTaskAudits(previousAudits);
           setStatus(error instanceof Error ? error.message : 'Task could not be updated.');
         });
       return;
     }
 
     setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? { ...row, status } : row)));
-    updateManualTaskStatus(companyId, task.id, status, jobs)
+    updateManualTaskStatus(companyId, task.id, status, jobs, completionNote, currentUserLabel)
       .then((savedTask) => {
         setManualTasks((tasks) => tasks.map((row) => (row.id === savedTask.id ? savedTask : row)));
         setStatus('Task updated.');

@@ -21,6 +21,9 @@ export type TaskRow = {
   status: TaskStatus;
   notes: string;
   source: 'Manual' | 'Auto';
+  completedBy?: string;
+  completedAt?: string;
+  completionNote?: string;
 };
 
 export type TaskForm = Pick<TaskRow, 'title' | 'jobNumber' | 'assignedTo' | 'dueDate' | 'priority' | 'notes'>;

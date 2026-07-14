@@ -268,6 +268,52 @@
   text-decoration: line-through;
 }
 
+.task-completion-audit {
+  display: block;
+  margin-top: 6px;
+  color: #52665a !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.task-completion-modal {
+  display: grid;
+  width: min(520px, 100%);
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid #bdd1ee;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+.task-completion-modal .email-message-detail-header {
+  padding: 16px 18px 12px;
+}
+
+.task-completion-body {
+  display: grid;
+  gap: 10px;
+  padding: 16px 18px;
+}
+
+.task-completion-body p {
+  margin: 0;
+  color: #667269;
+  font-size: 13px;
+}
+
+.task-completion-body textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.task-completion-actions {
+  border-top: 1px solid #e3e9e4;
+  padding: 12px 18px 16px;
+}
+
 .task-priority,
 .task-source {
   display: inline-flex;
