@@ -145,6 +145,16 @@ type DbSubscriptionPayment = {
 const WORKSPACE_COMPANY_LIMIT = 100;
 const WORKSPACE_CHILD_LIMIT = 500;
 
+async function loadCompanyUsers(filter: string) {
+  try {
+    return await supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status,portal_access_rules${filter}&limit=${WORKSPACE_CHILD_LIMIT}`);
+  } catch (error) {
+    // Keep existing production workspaces usable while the page-access migration is being applied.
+    console.warn('Per-user page access is not available yet; loading company users without it.', error);
+    return supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`);
+  }
+}
+
 function dollars(cents: number | null | undefined) {
   return Math.round(Number(cents ?? 0)) / 100;
 }
@@ -371,7 +381,7 @@ export async function loadOwnerWorkspaceFromBackend() {
     supabaseRequest<DbJobType[]>(`company_job_types?select=*&active=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbPaymentMethod[]>(`company_payment_methods?select=company_id,method,details&enabled=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbTechnician[]>(`company_technicians?select=*${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
-    supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status,portal_access_rules${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    loadCompanyUsers(filter),
     supabaseRequest<DbSubscriptionPayment[]>(`subscription_payment_methods?select=*&is_default=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbInvoiceSummary[]>(`job_invoices?select=company_id${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbJobSummary[]>(`jobs?select=company_id,status,created_at${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
