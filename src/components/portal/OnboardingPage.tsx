@@ -1408,7 +1408,8 @@ export function OnboardingPage({
                 </div>
 
                 <form className="technician-modal-form" onSubmit={saveTechnicianDraft}>
-                  <div className="technician-photo-editor">
+                  <div className="technician-modal-scroll">
+                    <div className="technician-photo-editor">
                     <div className="technician-photo-preview">
                       {technicianDraft.photoUrl ? <img src={technicianDraft.photoUrl} alt="" /> : technicianDraft.name.slice(0, 2).toUpperCase() || 'T'}
                     </div>
@@ -1416,9 +1417,9 @@ export function OnboardingPage({
                       Upload photo
                       <input type="file" accept="image/*" onChange={handleTechnicianPhotoUpload} hidden />
                     </label>
-                  </div>
+                    </div>
 
-                  <div className="technician-modal-fields">
+                    <div className="technician-modal-fields">
                     <label>
                       Name
                       <input value={technicianDraft.name} onChange={(event) => setTechnicianDraft({ ...technicianDraft, name: event.target.value })} placeholder="Technician name" />
@@ -1465,9 +1466,9 @@ export function OnboardingPage({
                         </button>
                       </div>
                     </label>
-                  </div>
+                    </div>
 
-                  <section className="technician-page-access" aria-labelledby="technician-page-access-title">
+                    <section className="technician-page-access" aria-labelledby="technician-page-access-title">
                     <div className="technician-page-access-heading">
                       <div>
                         <p className="eyebrow">Portal permissions</p>
@@ -1508,10 +1509,10 @@ export function OnboardingPage({
                     {technicianDraft.role === 'technician' ? (
                       <p className="access-status">Technicians use the mobile app. Desktop portal access is disabled for this role.</p>
                     ) : null}
-                  </section>
+                    </section>
 
-                  {technicianEditorId ? (
-                    <div className="access-actions technician-modal-actions">
+                    {technicianEditorId ? (
+                      <div className="access-actions technician-modal-actions">
                       <button
                         className="secondary-button compact"
                         type="button"
@@ -1535,8 +1536,9 @@ export function OnboardingPage({
                       {technicianAccessStatusById[technicianEditorId] ? (
                         <p className="access-status">{technicianAccessStatusById[technicianEditorId]}</p>
                       ) : null}
-                    </div>
-                  ) : null}
+                      </div>
+                    ) : null}
+                  </div>
 
                   <div className="email-message-modal-actions">
                     <button className="secondary-button" type="button" onClick={closeTechnicianModal}>
