@@ -225,6 +225,11 @@ export function TasksPage({
                         Completed{task.completedBy ? ` by ${task.completedBy}` : ''}{task.completedAt ? ` on ${new Date(task.completedAt).toLocaleString()}` : ''}{task.completionNote ? ` - ${task.completionNote}` : ''}
                       </small>
                     ) : null}
+                    {task.status !== 'Done' && task.statusChangedBy && task.statusChangedAt ? (
+                      <small className="task-completion-audit">
+                        Status changed to {task.status} by {task.statusChangedBy} on {new Date(task.statusChangedAt).toLocaleString()}
+                      </small>
+                    ) : null}
                   </td>
                   <td>
                     {job ? (

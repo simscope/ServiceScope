@@ -24,6 +24,9 @@ export type TaskRow = {
   completedBy?: string;
   completedAt?: string;
   completionNote?: string;
+  statusChangedBy?: string;
+  statusChangedAt?: string;
+  statusChangedFrom?: TaskStatus;
 };
 
 export type TaskForm = Pick<TaskRow, 'title' | 'jobNumber' | 'assignedTo' | 'dueDate' | 'priority' | 'notes'>;

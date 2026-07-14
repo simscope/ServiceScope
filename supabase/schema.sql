@@ -681,6 +681,9 @@ create table tasks (
   completed_by text,
   completed_at timestamptz,
   completion_note text not null default '',
+  status_changed_by text,
+  status_changed_at timestamptz,
+  status_changed_from text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

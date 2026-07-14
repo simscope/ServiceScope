@@ -32,7 +32,7 @@ export function useTasksFeature({
   setStatus,
 }: UseTasksFeatureParams) {
   const [manualTasks, setManualTasks] = useState<TaskRow[]>([]);
-  const [completedAutoTaskAudits, setCompletedAutoTaskAudits] = useState<Record<string, Pick<TaskRow, 'completedBy' | 'completedAt' | 'completionNote'>>>({});
+  const [completedAutoTaskAudits, setCompletedAutoTaskAudits] = useState<Record<string, Pick<TaskRow, 'status' | 'completedBy' | 'completedAt' | 'completionNote' | 'statusChangedBy' | 'statusChangedAt' | 'statusChangedFrom'>>>({});
   const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
   const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilter>('active');
   const [taskOwnerFilter, setTaskOwnerFilter] = useState('all');
@@ -80,7 +80,7 @@ export function useTasksFeature({
         assignedTo: job.assignee === 'No technician' ? 'Office' : job.assignee,
         dueDate,
         priority: 'Urgent',
-        status: completedAutoTaskAudits[`auto-${job.jobNumber}-scf`] ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-scf`]?.status ?? 'To do',
         notes: 'Service call fee is still unpaid.',
         source: 'Auto',
         ...completedAutoTaskAudits[`auto-${job.jobNumber}-scf`],
@@ -95,7 +95,7 @@ export function useTasksFeature({
         assignedTo: 'Dispatcher',
         dueDate,
         priority: 'Normal',
-        status: completedAutoTaskAudits[`auto-${job.jobNumber}-assign-tech`] ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-assign-tech`]?.status ?? 'To do',
         notes: 'Job is active but has no technician.',
         source: 'Auto',
         ...completedAutoTaskAudits[`auto-${job.jobNumber}-assign-tech`],
@@ -110,7 +110,7 @@ export function useTasksFeature({
         assignedTo: 'Office',
         dueDate,
         priority: 'Normal',
-        status: completedAutoTaskAudits[`auto-${job.jobNumber}-order-parts`] ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-order-parts`]?.status ?? 'To do',
         notes: 'One or more materials are marked as needed.',
         source: 'Auto',
         ...completedAutoTaskAudits[`auto-${job.jobNumber}-order-parts`],
@@ -125,7 +125,7 @@ export function useTasksFeature({
         assignedTo: job.assignee === 'No technician' ? 'Dispatcher' : job.assignee,
         dueDate,
         priority: 'Normal',
-        status: completedAutoTaskAudits[`auto-${job.jobNumber}-return-visit`] ? 'Done' : 'To do',
+        status: completedAutoTaskAudits[`auto-${job.jobNumber}-return-visit`]?.status ?? 'To do',
         notes: 'Parts are received and the job is not completed yet.',
         source: 'Auto',
         ...completedAutoTaskAudits[`auto-${job.jobNumber}-return-visit`],
@@ -190,8 +190,16 @@ export function useTasksFeature({
       const previousAudits = completedAutoTaskAudits;
       setCompletedAutoTaskAudits((audits) => {
         const next = { ...audits };
-        if (status === 'Done') next[task.id] = { completedBy: currentUserLabel, completedAt: new Date().toISOString(), completionNote: completionNote.trim() };
-        else delete next[task.id];
+        next[task.id] = {
+          ...next[task.id],
+          status,
+          statusChangedBy: currentUserLabel,
+          statusChangedAt: new Date().toISOString(),
+          statusChangedFrom: task.status,
+          ...(status === 'Done'
+            ? { completedBy: currentUserLabel, completedAt: new Date().toISOString(), completionNote: completionNote.trim() }
+            : { completedBy: undefined, completedAt: undefined, completionNote: undefined }),
+        };
         return next;
       });
       saveAutoTaskStatus(companyId, task, status, jobs, completionNote, currentUserLabel)
@@ -204,7 +212,7 @@ export function useTasksFeature({
     }
 
     setManualTasks((tasks) => tasks.map((row) => (row.id === task.id ? { ...row, status } : row)));
-    updateManualTaskStatus(companyId, task.id, status, jobs, completionNote, currentUserLabel)
+    updateManualTaskStatus(companyId, task, status, jobs, completionNote, currentUserLabel)
       .then((savedTask) => {
         setManualTasks((tasks) => tasks.map((row) => (row.id === savedTask.id ? savedTask : row)));
         setStatus('Task updated.');
