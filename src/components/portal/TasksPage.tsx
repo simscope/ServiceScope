@@ -2,7 +2,7 @@ import type { FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { JobDetailPanel } from '../JobDetailPanel';
 import type { JobCardData } from '../JobCard';
-import type { EmailCompose, EmailComposeAttachment, TaskForm, TaskPriority, TaskRow, TaskStatus } from '../../appTypes';
+import type { EmailCompose, EmailComposeAttachment, TaskForm, TaskPriority, TaskRow, TaskStatus, TaskStatusFilter } from '../../appTypes';
 import type { CompanyOnboardingProfile, CompanyPaymentMethod, JobDocumentType, JobInvoice, MaterialRow, ServiceJob } from '../../types';
 import { statusClassName } from '../../utils/format';
 
@@ -57,8 +57,8 @@ export function TasksPage({
   onCreateManualTask: (event: FormEvent<HTMLFormElement>) => void;
   allJobsRows: ServiceJob[];
   taskAssignees: string[];
-  taskStatusFilter: 'all' | TaskStatus;
-  onTaskStatusFilterChange: (status: 'all' | TaskStatus) => void;
+  taskStatusFilter: TaskStatusFilter;
+  onTaskStatusFilterChange: (status: TaskStatusFilter) => void;
   taskOwnerFilter: string;
   onTaskOwnerFilterChange: (owner: string) => void;
   taskSearch: string;
@@ -161,10 +161,11 @@ export function TasksPage({
 
       <div className="tasks-toolbar">
         <select value={taskStatusFilter} onChange={(event) => onTaskStatusFilterChange(event.target.value as 'all' | TaskStatus)}>
+          <option value="active">Active</option>
           <option value="all">All statuses</option>
           <option value="To do">To do</option>
           <option value="In progress">In progress</option>
-          <option value="Done">Done</option>
+          <option value="Done">Completed</option>
         </select>
         <select value={taskOwnerFilter} onChange={(event) => onTaskOwnerFilterChange(event.target.value)}>
           <option value="all">All assignees</option>

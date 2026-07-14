@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import type { TaskForm, TaskRow, TaskStatus } from '../../appTypes';
+import type { TaskForm, TaskRow, TaskStatus, TaskStatusFilter } from '../../appTypes';
 import type { MaterialRow, ServiceJob } from '../../types';
 import { emptyTaskForm } from '../../appSeeds';
 import {
@@ -32,7 +32,7 @@ export function useTasksFeature({
   const [manualTasks, setManualTasks] = useState<TaskRow[]>([]);
   const [completedAutoTaskIds, setCompletedAutoTaskIds] = useState<string[]>([]);
   const [taskForm, setTaskForm] = useState<TaskForm>(emptyTaskForm);
-  const [taskStatusFilter, setTaskStatusFilter] = useState<'all' | TaskStatus>('all');
+  const [taskStatusFilter, setTaskStatusFilter] = useState<TaskStatusFilter>('active');
   const [taskOwnerFilter, setTaskOwnerFilter] = useState('all');
   const [taskSearch, setTaskSearch] = useState('');
 
@@ -67,6 +67,8 @@ export function useTasksFeature({
   const autoTasks = useMemo(() => jobs.flatMap((job) => {
     const rows: TaskRow[] = [];
     const jobMaterials = materials.filter((material) => material.jobNumber === job.jobNumber);
+    const isClosedJob = job.status === 'Completed' || job.status === 'Cancelled' || job.status === 'Archived';
+    const dueDate = job.appointment?.slice(0, 10) || job.createdAt;
 
     if (!job.scfPayment) {
       rows.push({
@@ -74,7 +76,7 @@ export function useTasksFeature({
         title: 'Collect SCF payment',
         jobNumber: job.jobNumber,
         assignedTo: job.assignee === 'No technician' ? 'Office' : job.assignee,
-        dueDate: '2026-06-12',
+        dueDate,
         priority: 'Urgent',
         status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-scf`) ? 'Done' : 'To do',
         notes: 'Service call fee is still unpaid.',
@@ -82,13 +84,13 @@ export function useTasksFeature({
       });
     }
 
-    if (job.assignee === 'No technician') {
+    if (!isClosedJob && job.assignee === 'No technician') {
       rows.push({
         id: `auto-${job.jobNumber}-assign-tech`,
         title: 'Assign technician',
         jobNumber: job.jobNumber,
         assignedTo: 'Dispatcher',
-        dueDate: '2026-06-12',
+        dueDate,
         priority: 'Normal',
         status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-assign-tech`) ? 'Done' : 'To do',
         notes: 'Job is active but has no technician.',
@@ -96,13 +98,13 @@ export function useTasksFeature({
       });
     }
 
-    if (jobMaterials.some((material) => material.status === 'Needed')) {
+    if (!isClosedJob && jobMaterials.some((material) => material.status === 'Needed')) {
       rows.push({
         id: `auto-${job.jobNumber}-order-parts`,
         title: 'Order required parts',
         jobNumber: job.jobNumber,
         assignedTo: 'Office',
-        dueDate: '2026-06-12',
+        dueDate,
         priority: 'Normal',
         status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-order-parts`) ? 'Done' : 'To do',
         notes: 'One or more materials are marked as needed.',
@@ -110,13 +112,13 @@ export function useTasksFeature({
       });
     }
 
-    if (jobMaterials.some((material) => material.status === 'Received') && job.status !== 'Completed') {
+    if (!isClosedJob && jobMaterials.some((material) => material.status === 'Received')) {
       rows.push({
         id: `auto-${job.jobNumber}-return-visit`,
         title: 'Schedule return visit',
         jobNumber: job.jobNumber,
         assignedTo: job.assignee === 'No technician' ? 'Dispatcher' : job.assignee,
-        dueDate: '2026-06-13',
+        dueDate,
         priority: 'Normal',
         status: completedAutoTaskIds.includes(`auto-${job.jobNumber}-return-visit`) ? 'Done' : 'To do',
         notes: 'Parts are received and the job is not completed yet.',
@@ -135,7 +137,9 @@ export function useTasksFeature({
     const haystack = [task.title, task.jobNumber, task.assignedTo, task.notes, job?.organization, job?.clientName, job?.issue]
       .join(' ')
       .toLowerCase();
-    const matchesStatus = taskStatusFilter === 'all' || task.status === taskStatusFilter;
+    const matchesStatus = taskStatusFilter === 'active'
+      ? task.status !== 'Done'
+      : taskStatusFilter === 'all' || task.status === taskStatusFilter;
     const matchesOwner = taskOwnerFilter === 'all' || task.assignedTo === taskOwnerFilter;
 
     return matchesStatus && matchesOwner && (!normalizedSearch || haystack.includes(normalizedSearch));
@@ -201,7 +205,7 @@ export function useTasksFeature({
   };
 
   const resetTaskFilters = () => {
-    setTaskStatusFilter('all');
+    setTaskStatusFilter('active');
     setTaskOwnerFilter('all');
     setTaskSearch('');
   };

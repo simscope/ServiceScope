@@ -9,6 +9,7 @@ export type AuthSession =
 
 export type TaskPriority = 'Low' | 'Normal' | 'Urgent';
 export type TaskStatus = 'To do' | 'In progress' | 'Done';
+export type TaskStatusFilter = 'active' | 'all' | TaskStatus;
 
 export type TaskRow = {
   id: string;
