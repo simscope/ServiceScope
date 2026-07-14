@@ -139,7 +139,7 @@ export function MapPage({
       <div className="map-toolbar technician-map-toolbar">
         <select value={mapTechFilter} onChange={(event) => onMapTechFilterChange(event.target.value)}>
           <option value="all">All technicians</option>
-          {profile.technicians.map((technician) => (
+          {profile.technicians.filter((technician) => technician.role === 'technician').map((technician) => (
             <option value={technician.name} key={technician.id}>
               {technician.name}
             </option>

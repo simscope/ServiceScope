@@ -52,6 +52,10 @@ export function makeMaterialWorkflow({
       .includes(normalizedMaterialSearch);
   };
   const materialJobMatchesTechnician = (job: ServiceJob) => materialTechFilter === 'all' || job.assignee === materialTechFilter;
+  const materialJobIsTechnicianWork = (job: ServiceJob) => {
+    const assignee = job.assignee?.trim().toLowerCase();
+    return Boolean(assignee) && assignee !== 'office';
+  };
   const materialJobMatchesStatus = (job: ServiceJob) => materialJobStatusFilter === 'all'
     ? true
     : materialJobStatusFilter === 'active'
@@ -66,10 +70,10 @@ export function makeMaterialWorkflow({
   const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
     const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
 
-    return matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
+    return matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
   const materialJobs = materialJobStatusFilter === 'active' ? activeJobsRows : allJobsRows;
-  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber));
+  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber));
   const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
     materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
   ));

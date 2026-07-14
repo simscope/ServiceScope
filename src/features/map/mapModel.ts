@@ -13,7 +13,9 @@ export function makeMapModel({
   mapTechFilter,
   mapStatusFilter,
 }: MapModelInput) {
-  const technicianLocations = profile.technicians.map((technician) => ({
+  const technicianLocations = profile.technicians
+    .filter((technician) => technician.role === 'technician')
+    .map((technician) => ({
     ...technician,
     online: false,
     lastSeen: 'No GPS data',
@@ -22,7 +24,7 @@ export function makeMapModel({
     lng: '',
     x: null,
     y: null,
-  }));
+    }));
   const filteredTechnicianLocations = technicianLocations.filter((technician) => {
     const normalizedSearch = mapSearch.trim().toLowerCase();
     const matchesTech = mapTechFilter === 'all' || technician.name === mapTechFilter;
