@@ -28,11 +28,16 @@ export const companyUserPageAccessDefinitions: Array<{
 
 const staffPages = companyUserPageAccessDefinitions.filter(({ page }) => page !== 'onboarding');
 
+const dispatcherHiddenPages: CompanyPortalAccessPage[] = ['materials', 'knowledge', 'finances', 'import'];
+const managerHiddenPages: CompanyPortalAccessPage[] = ['finances', 'import'];
+
 export function defaultCompanyUserPageAccess(role: CompanyTechnicianRole): CompanyAccessRules {
   if (role === 'technician') return { onboarding: 'off' };
 
+  const hiddenPages = role === 'dispatcher' ? dispatcherHiddenPages : managerHiddenPages;
+
   return Object.fromEntries([
-    ...staffPages.map(({ page }) => [page, 'full' as const]),
+    ...staffPages.map(({ page }) => [page, hiddenPages.includes(page) ? 'off' : 'full'] as const),
     ['onboarding', 'off' as const],
   ]) as CompanyAccessRules;
 }
