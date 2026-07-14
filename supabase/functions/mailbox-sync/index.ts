@@ -345,14 +345,16 @@ async function listGmailMessages(accessToken: string, labelId: 'INBOX' | 'SENT',
   }
 
   const messageRefs = Array.isArray(list.result.messages) ? list.result.messages : [];
-  return await mapWithConcurrency(messageRefs, 2, async (message: { id: string }) => {
+  const messages = await mapWithConcurrency(messageRefs, 2, async (message: { id: string }) => {
     const full = await gmailFetch(`messages/${message.id}?format=full`, accessToken);
     if (!full.ok) {
       if (full.status === 546 || full.status === 429 || full.status >= 500) return null;
       throw new Error(full.result.error?.message || `Gmail message fetch failed with ${full.status}`);
     }
     return full.result as GmailMessage;
-  }).then((messages) => messages.filter((message): message is GmailMessage => Boolean(message));
+  });
+
+  return messages.filter((message) => message !== null) as GmailMessage[];
 }
 
 Deno.serve(async (request) => {
