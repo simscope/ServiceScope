@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Plus, PackageCheck } from 'lucide-react';
 import type { CompanyOnboardingProfile, MaterialRow, ServiceJob } from '../../types';
+import type { MaterialJobStatusFilter } from '../../features/materials/useMaterialsFeature';
 import { money, statusClassName } from '../../utils/format';
 import { saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
 
@@ -14,6 +15,8 @@ export function MaterialsPage({
   jobsWithoutMaterials,
   materialsTotal,
   materialStatusFilter,
+  materialJobStatusFilter,
+  onMaterialJobStatusFilterChange,
   onMaterialStatusFilterChange,
   materialStatuses,
   materialTechFilter,
@@ -37,6 +40,8 @@ export function MaterialsPage({
   jobsWithoutMaterials: ServiceJob[];
   materialsTotal: number;
   materialStatusFilter: 'all' | MaterialRow['status'];
+  materialJobStatusFilter: MaterialJobStatusFilter;
+  onMaterialJobStatusFilterChange: (value: MaterialJobStatusFilter) => void;
   onMaterialStatusFilterChange: (value: 'all' | MaterialRow['status']) => void;
   materialStatuses: MaterialRow['status'][];
   materialTechFilter: string;
@@ -106,6 +111,16 @@ export function MaterialsPage({
       </div>
 
       <div className="materials-toolbar">
+        <label>
+          Jobs
+          <select value={materialJobStatusFilter} onChange={(event) => onMaterialJobStatusFilterChange(event.target.value as MaterialJobStatusFilter)}>
+            <option value="active">Active jobs</option>
+            <option value="all">All jobs</option>
+            <option value="Completed">Completed</option>
+            <option value="Cancelled">Cancelled</option>
+            <option value="Archived">Archived</option>
+          </select>
+        </label>
         <label>
           Status
           <select value={materialStatusFilter} onChange={(event) => onMaterialStatusFilterChange(event.target.value as 'all' | MaterialRow['status'])}>

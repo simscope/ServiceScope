@@ -11,6 +11,7 @@ import { makeJobActions } from '../jobs/jobActions';
 import { makeJobModel } from '../jobs/jobModel';
 import { makeInvoiceActions } from '../finance/invoiceActions';
 import { makeMaterialWorkflow } from '../materials/materialWorkflow';
+import type { MaterialJobStatusFilter } from '../materials/useMaterialsFeature';
 
 type CompanyPortalOperationsInput = {
   activeCalendarTech: string;
@@ -28,6 +29,7 @@ type CompanyPortalOperationsInput = {
   materialDraftRows: MaterialRow[];
   materialSearch: string;
   materialStatusFilter: 'all' | MaterialRow['status'];
+  materialJobStatusFilter: MaterialJobStatusFilter;
   materialTechFilter: string;
   materials: MaterialRow[];
   monthDropRequest: MonthDropRequest | null;
@@ -64,6 +66,7 @@ export function makeCompanyPortalOperationsModel({
   materialDraftRows,
   materialSearch,
   materialStatusFilter,
+  materialJobStatusFilter,
   materialTechFilter,
   materials,
   monthDropRequest,
@@ -107,6 +110,7 @@ export function makeCompanyPortalOperationsModel({
     companyId: activeCompanyId,
     materials,
     materialStatusFilter,
+    materialJobStatusFilter,
     materialTechFilter,
     materialSearch,
     editingMaterialsJobNumber,

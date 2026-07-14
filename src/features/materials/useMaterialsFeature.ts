@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { emptyMaterialDraft } from '../../appTypes';
-import type { MaterialRow } from '../../types';
+import type { MaterialRow, ServiceJobStatus } from '../../types';
+
+export type MaterialJobStatusFilter = 'active' | 'all' | ServiceJobStatus;
 
 export function normalizeMaterialRows(jobNumber: string, rows: MaterialRow[]) {
   return rows
@@ -17,6 +19,7 @@ export function normalizeMaterialRows(jobNumber: string, rows: MaterialRow[]) {
 
 export function useMaterialsFeature(initialRows: MaterialRow[]) {
   const [materials, setMaterials] = useState<MaterialRow[]>(initialRows);
+  const [materialJobStatusFilter, setMaterialJobStatusFilter] = useState<MaterialJobStatusFilter>('active');
   const [materialStatusFilter, setMaterialStatusFilter] = useState<'all' | MaterialRow['status']>('all');
   const [materialTechFilter, setMaterialTechFilter] = useState('all');
   const [materialSearch, setMaterialSearch] = useState('');
@@ -24,6 +27,7 @@ export function useMaterialsFeature(initialRows: MaterialRow[]) {
   const [materialDraftRows, setMaterialDraftRows] = useState<MaterialRow[]>([]);
 
   const resetMaterialFilters = () => {
+    setMaterialJobStatusFilter('active');
     setMaterialStatusFilter('all');
     setMaterialTechFilter('all');
     setMaterialSearch('');
@@ -56,6 +60,8 @@ export function useMaterialsFeature(initialRows: MaterialRow[]) {
   return {
     materials,
     setMaterials,
+    materialJobStatusFilter,
+    setMaterialJobStatusFilter,
     materialStatusFilter,
     setMaterialStatusFilter,
     materialTechFilter,

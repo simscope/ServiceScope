@@ -32,6 +32,7 @@ import type { makeInvoiceActions } from '../../features/finance/invoiceActions';
 import type { makeJobActions } from '../../features/jobs/jobActions';
 import type { makeMapModel } from '../../features/map/mapModel';
 import type { makeMaterialWorkflow } from '../../features/materials/materialWorkflow';
+import type { MaterialJobStatusFilter } from '../../features/materials/useMaterialsFeature';
 import type { makeOnboardingProfileActions } from '../../features/onboarding/onboardingProfileActions';
 import type { makeSupportActions } from '../../features/support/supportActions';
 import type { useJobInboxFeature } from '../../features/job-inbox/useJobInboxFeature';
@@ -113,6 +114,7 @@ export type ClientPageRendererContext = {
   materialDraftRows: MaterialRow[];
   materialSearch: string;
   materialStatusFilter: MaterialStatus | 'all';
+  materialJobStatusFilter: MaterialJobStatusFilter;
   materialStatuses: MaterialStatus[];
   materialTechFilter: string;
   materialWorkflow: ReturnType<typeof makeMaterialWorkflow>;
@@ -152,6 +154,7 @@ export type ClientPageRendererContext = {
   setMapTechFilter: Dispatch<SetStateAction<string>>;
   setMaterialSearch: Dispatch<SetStateAction<string>>;
   setMaterialStatusFilter: Dispatch<SetStateAction<MaterialStatus | 'all'>>;
+  setMaterialJobStatusFilter: Dispatch<SetStateAction<MaterialJobStatusFilter>>;
   setMaterialTechFilter: Dispatch<SetStateAction<string>>;
   setMonthDropRequest: Dispatch<SetStateAction<MonthDropRequest | null>>;
   setOpenedJob: Dispatch<SetStateAction<JobCardData | null>>;
@@ -237,6 +240,7 @@ export type ClientPageRendererOperationsContext = Pick<ClientPageRendererContext
   | 'jobInboxFeature'
   | 'jobStatusFilters'
   | 'materialDraftRows'
+  | 'materialJobStatusFilter'
   | 'materialSearch'
   | 'materialStatusFilter'
   | 'materialStatuses'
@@ -256,6 +260,7 @@ export type ClientPageRendererOperationsContext = Pick<ClientPageRendererContext
   | 'setAllJobsVisibility'
   | 'setCalendarView'
   | 'setMaterialSearch'
+  | 'setMaterialJobStatusFilter'
   | 'setMaterialStatusFilter'
   | 'setMaterialTechFilter'
   | 'setMonthDropRequest'

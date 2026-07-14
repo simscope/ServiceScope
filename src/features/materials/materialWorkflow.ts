@@ -1,12 +1,14 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
 import type { MaterialRow, ServiceJob } from '../../types';
+import type { MaterialJobStatusFilter } from './useMaterialsFeature';
 import { normalizeMaterialRows } from './useMaterialsFeature';
 
 type MaterialWorkflowInput = {
   companyId: string;
   materials: MaterialRow[];
   materialStatusFilter: 'all' | MaterialRow['status'];
+  materialJobStatusFilter: MaterialJobStatusFilter;
   materialTechFilter: string;
   materialSearch: string;
   editingMaterialsJobNumber: string;
@@ -23,6 +25,7 @@ export function makeMaterialWorkflow({
   companyId,
   materials,
   materialStatusFilter,
+  materialJobStatusFilter,
   materialTechFilter,
   materialSearch,
   editingMaterialsJobNumber,
@@ -47,12 +50,19 @@ export function makeMaterialWorkflow({
       .includes(normalizedMaterialSearch);
   };
   const materialJobMatchesTechnician = (job: ServiceJob) => materialTechFilter === 'all' || job.assignee === materialTechFilter;
+  const materialJobMatchesStatus = (job: ServiceJob) => materialJobStatusFilter === 'all'
+    ? true
+    : materialJobStatusFilter === 'active'
+      ? activeJobsRows.some((activeJob) => activeJob.jobNumber === job.jobNumber)
+      : job.status === materialJobStatusFilter;
+  const materialJobIsAllowed = (job: ServiceJob) => !job.customerBlacklist?.trim();
   const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
     const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
 
-    return matchesStatus && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
+    return matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
-  const jobsWithoutMaterials = activeJobsRows.filter((job) => !materials.some((material) => material.jobNumber === job.jobNumber));
+  const materialJobs = materialJobStatusFilter === 'active' ? activeJobsRows : allJobsRows;
+  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && !materials.some((material) => material.jobNumber === job.jobNumber));
   const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
     materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
   ));

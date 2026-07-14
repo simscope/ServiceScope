@@ -38,6 +38,7 @@ export function ClientOperationsPageRenderer({
     jobStatusFilters,
     materialDraftRows,
     materialSearch,
+    materialJobStatusFilter,
     materialStatusFilter,
     materialStatuses,
     materialTechFilter,
@@ -50,6 +51,7 @@ export function ClientOperationsPageRenderer({
     setActiveCalendarTech,
     setCalendarView,
     setMaterialSearch,
+    setMaterialJobStatusFilter,
     setMaterialStatusFilter,
     setMaterialTechFilter,
     setMonthDropRequest,
@@ -114,6 +116,8 @@ export function ClientOperationsPageRenderer({
         jobsWithoutMaterials={materialWorkflow.filteredJobsWithoutMaterials}
         materialsTotal={materialWorkflow.materialsTotal}
         materialStatusFilter={materialStatusFilter}
+        materialJobStatusFilter={materialJobStatusFilter}
+        onMaterialJobStatusFilterChange={setMaterialJobStatusFilter}
         onMaterialStatusFilterChange={setMaterialStatusFilter}
         materialStatuses={materialStatuses}
         materialTechFilter={materialTechFilter}
