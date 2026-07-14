@@ -23,6 +23,7 @@ import { ClientPortalShell } from './components/portal/ClientPortalShell';
 import { CompanyLogin } from './components/portal/CompanyLogin';
 import { useClientPageRendererContext } from './components/portal/useClientPageRendererContext';
 import { makeCompanyPortalAccess } from './features/access/companyPortalAccess';
+import { combineAccessLevels, normalizeCompanyUserPageAccess } from './features/access/companyUserAccess';
 import { useBillingFeature } from './features/billing/useBillingFeature';
 import type { CalendarDropSlot } from './features/calendar/calendarModel';
 import { useCalendarFeature } from './features/calendar/useCalendarFeature';
@@ -308,6 +309,18 @@ function CompanyPortalWithTenant({
     onUpdateOnboardingProfile,
   });
   const featureAccessRules = selectedCompany ? resolveCompanyAccessRules(selectedCompany) : undefined;
+  const isCompanyOwner = Boolean(
+    signedInUser?.role === 'Admin' &&
+    signedInUser.email.trim().toLowerCase() === selectedCompany.ownerEmail.trim().toLowerCase(),
+  );
+  const signedInStaff = libraryProfile?.technicians.find((technician) => technician.email.trim().toLowerCase() === signedInUser?.email.trim().toLowerCase());
+  const signedInUserRules = signedInStaff ? normalizeCompanyUserPageAccess(signedInStaff.pageAccess, signedInStaff.role) : undefined;
+  const effectiveAccessLevel = (page: CompanyPortalAccessPage) => {
+    if (isCompanyOwner) return 'full' as const;
+    const companyLevel = featureAccessRules?.[page] ?? (selectedCompany ? 'full' : 'off');
+    const userLevel = signedInUserRules?.[page] ?? (page === 'onboarding' ? 'off' : 'full');
+    return combineAccessLevels(companyLevel, userLevel);
+  };
   const onboardingAdminFeature = useOnboardingAdminFeature({
     activeCompany: selectedCompany,
     profile: libraryProfile,
@@ -316,9 +329,9 @@ function CompanyPortalWithTenant({
     selectedJobTypeId,
     setSelectedJobTypeId,
   });
-  const jobInboxAccessLevel = featureAccessRules?.jobInbox ?? (selectedCompany ? 'full' : 'off');
-  const libraryAccessLevel = featureAccessRules?.knowledge ?? (selectedCompany ? 'full' : 'off');
-  const taskAccessLevel = featureAccessRules?.tasks ?? (selectedCompany ? 'full' : 'off');
+  const jobInboxAccessLevel = effectiveAccessLevel('jobInbox');
+  const libraryAccessLevel = effectiveAccessLevel('knowledge');
+  const taskAccessLevel = effectiveAccessLevel('tasks');
   const jobInboxFeature = useJobInboxFeature({
     companyId: selectedCompanyId,
     canWrite: jobInboxAccessLevel === 'full',
@@ -396,6 +409,8 @@ function CompanyPortalWithTenant({
     stopCompanyWrite,
   } = makeCompanyPortalAccess({
     rules: companyAccessRules,
+    userRules: signedInUserRules,
+    isCompanyOwner,
     accessLevelLabels,
     setStatus: setJobsStatus,
   });
@@ -671,6 +686,7 @@ function CompanyPortalWithTenant({
       profile={profile}
       renderedClientPage={renderedClientPage}
       selectedCompany={selectedCompany}
+      signedInUser={signedInUser}
       unreadEmailCount={unreadEmailCount}
       visibleClientNavItems={visibleClientNavItems}
     />

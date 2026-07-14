@@ -56,6 +56,7 @@ For an existing production project, apply the SQL files in `supabase/migrations/
 - `20260710100000_persist_auto_task_status.sql`
 - `20260710110000_add_archived_job_status.sql`
 - `20260710120000_company_access_rules.sql`
+- `20260713190000_company_user_page_access.sql`
 
 `20260705120000_fix_can_manage_company_grants.sql` is required for Job Inbox, task, library, file, and other manager writes. If the browser reports `permission denied for function can_manage_company`, that migration has not yet been applied to the production database.
 
@@ -64,6 +65,7 @@ Create `.env.local` from `.env.example`:
 ```text
 VITE_SUPABASE_URL=https://sizdqtgejoikjlgukbqh.supabase.co
 VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_TECHNICIAN_APP_URL=https://hvac-app-jade.vercel.app
 ```
 
 The current schema uses RLS policies based on Supabase Auth. For writes to succeed, the signed-in Supabase user must be present in `platform_users` or `company_users` with an active role that can manage the company.

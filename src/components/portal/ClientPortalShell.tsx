@@ -23,6 +23,7 @@ type ClientPortalShellProps = {
   selectedCompany: Company;
   unreadEmailCount: number;
   visibleClientNavItems: ClientNavItem[];
+  signedInUser?: { name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
 };
 
 export function ClientPortalShell({
@@ -42,6 +43,7 @@ export function ClientPortalShell({
   selectedCompany,
   unreadEmailCount,
   visibleClientNavItems,
+  signedInUser,
 }: ClientPortalShellProps) {
   return (
     <div className="client-app">
@@ -74,8 +76,8 @@ export function ClientPortalShell({
         </nav>
 
         <div className="client-user">
-          <span>ADMIN</span>
-          <strong>{selectedCompany.ownerName.slice(0, 1).toUpperCase()}</strong>
+          <span>{signedInUser?.role ?? 'Admin'}</span>
+          <strong>{(signedInUser?.name ?? selectedCompany.ownerName).slice(0, 1).toUpperCase()}</strong>
           <button type="button" onClick={onSignOut}>
             Sign out
           </button>

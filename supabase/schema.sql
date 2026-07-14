@@ -211,6 +211,7 @@ create table company_users (
   email citext not null,
   role company_role not null default 'technician',
   status user_status not null default 'invited',
+  portal_access_rules jsonb not null default '{}'::jsonb,
   last_active_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

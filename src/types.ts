@@ -139,6 +139,7 @@ export type AuditEvent = {
 
 export type CompanyTechnician = {
   id: string;
+  companyUserId?: string;
   name: string;
   email: string;
   phone: string;
@@ -147,6 +148,7 @@ export type CompanyTechnician = {
   role: CompanyTechnicianRole;
   status: CompanyTechnicianStatus;
   assignedJobs: number;
+  pageAccess?: CompanyAccessRules;
 };
 
 export type NewCompanyTechnicianForm = Pick<CompanyTechnician, 'name' | 'email' | 'phone' | 'photoUrl' | 'accessPassword' | 'role'>;

@@ -13,6 +13,7 @@ type AccessInviteInput = {
   name?: string;
   companyId?: string;
   role?: string;
+  portalAccessRules?: Record<string, string>;
   mode: AccessActionMode;
 };
 
@@ -43,6 +44,7 @@ export async function saveUserAccess(input: AccessInviteInput) {
     },
     body: JSON.stringify({
       ...input,
+      portalAccessRules: input.portalAccessRules ?? {},
     }),
   });
 

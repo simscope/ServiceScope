@@ -117,6 +117,7 @@ type DbTechnician = {
   role: CompanyTechnician['role'];
   status: CompanyTechnician['status'];
   assigned_jobs_count: number;
+  company_user_id?: string | null;
 };
 
 type DbCompanyUser = {
@@ -126,6 +127,7 @@ type DbCompanyUser = {
   email: string;
   role: 'admin' | 'manager' | 'dispatcher' | 'technician';
   status: CompanyTechnician['status'];
+  portal_access_rules?: CompanyTechnician['pageAccess'] | null;
 };
 
 type DbSubscriptionPayment = {
@@ -300,6 +302,7 @@ function profileFromDb(
     technicians: (() => {
       const technicianRows = technicians.map((technician): CompanyTechnician => ({
         id: technician.id,
+        companyUserId: technician.company_user_id ?? undefined,
         name: technician.name,
         email: technician.email ?? '',
         phone: technician.phone ?? '',
@@ -308,6 +311,10 @@ function profileFromDb(
         role: technician.role,
         status: technician.status,
         assignedJobs: technician.assigned_jobs_count,
+        pageAccess: companyUsers.find((user) => user.id === technician.company_user_id)
+          ?.portal_access_rules
+          ?? companyUsers.find((user) => user.email.trim().toLowerCase() === String(technician.email ?? '').trim().toLowerCase())?.portal_access_rules
+          ?? undefined,
       }));
       const knownEmails = new Set(technicianRows.map((technician) => String(technician.email ?? '').toLowerCase()).filter(Boolean));
       const userTechnicians = companyUsers
@@ -315,6 +322,7 @@ function profileFromDb(
         .filter((user) => !knownEmails.has(String(user.email ?? '').toLowerCase()))
         .map((user): CompanyTechnician => ({
           id: `user-${user.id}`,
+          companyUserId: user.id,
           name: user.name || 'Team member',
           email: user.email || '',
           phone: '',
@@ -323,6 +331,7 @@ function profileFromDb(
           role: user.role === 'manager' ? 'manager' : user.role === 'dispatcher' ? 'dispatcher' : 'technician',
           status: user.status,
           assignedJobs: 0,
+          pageAccess: user.portal_access_rules ?? undefined,
         }));
 
       return [...technicianRows, ...userTechnicians];
@@ -362,7 +371,7 @@ export async function loadOwnerWorkspaceFromBackend() {
     supabaseRequest<DbJobType[]>(`company_job_types?select=*&active=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbPaymentMethod[]>(`company_payment_methods?select=company_id,method,details&enabled=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbTechnician[]>(`company_technicians?select=*${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
-    supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
+    supabaseRequest<DbCompanyUser[]>(`company_users?select=id,company_id,name,email,role,status,portal_access_rules${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbSubscriptionPayment[]>(`subscription_payment_methods?select=*&is_default=eq.true${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbInvoiceSummary[]>(`job_invoices?select=company_id${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),
     supabaseRequest<DbJobSummary[]>(`jobs?select=company_id,status,created_at${filter}&limit=${WORKSPACE_CHILD_LIMIT}`),

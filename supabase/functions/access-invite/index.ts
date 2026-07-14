@@ -8,6 +8,7 @@ type AccessRequest = {
   name?: string;
   companyId?: string;
   role?: string;
+  portalAccessRules?: Record<string, string>;
   mode?: AccessMode;
 };
 
@@ -155,7 +156,7 @@ Deno.serve(async (request) => {
     (callerKind === 'company' &&
       targetCompanyId &&
       callerCompanyId === targetCompanyId &&
-      (callerRole === 'admin' || callerRole === 'manager'));
+      callerRole === 'admin');
 
   if (!callerCanManageAccess) {
     return jsonResponse(
@@ -219,6 +220,7 @@ Deno.serve(async (request) => {
         email,
         role: payload.role || 'technician',
         status: 'active',
+        portal_access_rules: { ...(payload.portalAccessRules ?? {}), onboarding: 'off' },
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'company_id,email',

@@ -174,6 +174,23 @@ import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 
+function TechnicianMobileHandoff({ onSignOut }: { onSignOut: () => void }) {
+  const technicianAppUrl = ((import.meta as unknown as { env?: { VITE_TECHNICIAN_APP_URL?: string } }).env?.VITE_TECHNICIAN_APP_URL
+    || 'https://hvac-app-jade.vercel.app').replace(/\/$/, '');
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <p className="eyebrow">Technician access</p>
+        <h1>Open the technician app</h1>
+        <p className="auth-copy">Technicians work from the mobile app. The company portal is reserved for the owner and authorized office staff.</p>
+        <a className="primary-button" href={technicianAppUrl}>Open technician app</a>
+        <button className="secondary-button" type="button" onClick={onSignOut}>Sign out</button>
+      </section>
+    </main>
+  );
+}
+
 const AUTH_STORAGE_KEY = 'servicescope.authSession';
 function readAuthSession(): AuthSession | null {
   const hashParams = getAuthHashParams();
@@ -846,6 +863,10 @@ export function App() {
   }
 
   if (authSession.kind === 'company') {
+    if (authSession.role === 'Technician') {
+      return <TechnicianMobileHandoff onSignOut={handleSignOut} />;
+    }
+
     return (
       <main className="company-shell">
         <CompanyPortal
@@ -855,6 +876,10 @@ export function App() {
           tickets={supportTickets.filter((ticket) => ticket.companyId === selectedCompany?.id)}
           onSignOut={handleSignOut}
           onUpdateOnboardingProfile={(nextProfile) => {
+            const isCompanyOwner = authSession.role === 'Admin'
+              && authSession.email.trim().toLowerCase() === selectedCompany?.ownerEmail.trim().toLowerCase();
+            if (!isCompanyOwner) return;
+
             const nextProfiles = onboardingProfiles.map((profile) =>
               profile.companyId === nextProfile.companyId ? nextProfile : profile,
             );

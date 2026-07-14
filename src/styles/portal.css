@@ -1573,6 +1573,79 @@
   align-items: center;
 }
 
+.technician-page-access {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8e2dc;
+  border-radius: 10px;
+  background: #f8fbf9;
+}
+
+.technician-page-access-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  color: #4f5b53;
+}
+
+.technician-page-access-heading h3 {
+  margin: 2px 0 4px;
+  color: #10251b;
+  font-size: 17px;
+}
+
+.technician-page-access-heading p:last-child {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.technician-page-access-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.technician-page-access-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid #e0e8e3;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.technician-page-access-row span {
+  display: grid;
+  gap: 3px;
+}
+
+.technician-page-access-row small {
+  color: #68766e;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.technician-page-access-row em {
+  color: #68766e;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.technician-page-access-row select {
+  min-width: 124px;
+}
+
+@media (max-width: 720px) {
+  .technician-page-access-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .profile-fields label,
 .payment-fields label,
 .subscription-payment-fields label,

@@ -152,6 +152,7 @@ export function useOnboardingAdminFeature({
         name: technician.name,
         companyId: activeCompany.id,
         role: technician.role,
+        portalAccessRules: technician.pageAccess,
         mode,
       });
       const message =

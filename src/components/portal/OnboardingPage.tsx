@@ -16,6 +16,7 @@ import type {
 } from '../../types';
 import { MiniStat } from '../OwnerPages';
 import { SetupGuide } from './SetupGuide';
+import { companyUserPageAccessDefinitions, defaultCompanyUserPageAccess, normalizeCompanyUserPageAccess } from '../../features/access/companyUserAccess';
 
 type ProfessionTemplate = NewCompanyJobTypeForm & { id: string };
 
@@ -109,7 +110,7 @@ export function OnboardingPage({
   const technicianLimitReached = profile.technicians.length >= technicianLimit;
   const [technicianEditorId, setTechnicianEditorId] = useState<string | null>('');
   const [websiteIntakeCopyStatus, setWebsiteIntakeCopyStatus] = useState('');
-  const [technicianDraft, setTechnicianDraft] = useState<NewCompanyTechnicianForm & { status: CompanyTechnician['status'] }>({
+  const [technicianDraft, setTechnicianDraft] = useState<NewCompanyTechnicianForm & { status: CompanyTechnician['status']; pageAccess: CompanyTechnician['pageAccess'] }>({
     name: '',
     email: '',
     phone: '',
@@ -117,6 +118,7 @@ export function OnboardingPage({
     accessPassword: '',
     role: technicianForm.role,
     status: 'invited',
+    pageAccess: defaultCompanyUserPageAccess(technicianForm.role),
   });
   const subscriptionConnected = profile.subscriptionPaymentStatus === 'active' && profile.autoPayEnabled;
   const subscriptionStatusLabel =
@@ -352,6 +354,7 @@ export function OnboardingPage({
       accessPassword: '',
       role: technicianForm.role,
       status: 'invited',
+      pageAccess: defaultCompanyUserPageAccess(technicianForm.role),
     });
   }
 
@@ -365,6 +368,7 @@ export function OnboardingPage({
       accessPassword: technicianAccessPasswordById[technician.id] ?? technician.accessPassword ?? '',
       role: technician.role,
       status: technician.status,
+      pageAccess: normalizeCompanyUserPageAccess(technician.pageAccess, technician.role),
     });
   }
 
@@ -388,6 +392,7 @@ export function OnboardingPage({
                 role: technicianDraft.role,
                 status: technicianDraft.status,
                 accessPassword: technicianDraft.accessPassword,
+                pageAccess: technicianDraft.pageAccess,
               }
             : technician,
         ),
@@ -409,6 +414,7 @@ export function OnboardingPage({
         role: technicianDraft.role,
         status: technicianDraft.status,
         assignedJobs: 0,
+        pageAccess: technicianDraft.pageAccess,
       };
       updateProfile({
         technicians: [technician, ...profile.technicians],
@@ -1427,7 +1433,10 @@ export function OnboardingPage({
                     </label>
                     <label>
                       Role
-                      <select value={technicianDraft.role} onChange={(event) => setTechnicianDraft({ ...technicianDraft, role: event.target.value as CompanyTechnicianRole })}>
+                      <select value={technicianDraft.role} onChange={(event) => {
+                        const role = event.target.value as CompanyTechnicianRole;
+                        setTechnicianDraft({ ...technicianDraft, role, pageAccess: defaultCompanyUserPageAccess(role) });
+                      }}>
                         <option value="technician">Technician</option>
                         <option value="dispatcher">Dispatcher</option>
                         <option value="manager">Manager</option>
@@ -1457,6 +1466,49 @@ export function OnboardingPage({
                       </div>
                     </label>
                   </div>
+
+                  <section className="technician-page-access" aria-labelledby="technician-page-access-title">
+                    <div className="technician-page-access-heading">
+                      <div>
+                        <p className="eyebrow">Portal permissions</p>
+                        <h3 id="technician-page-access-title">Pages this person can use</h3>
+                        <p>Full access can edit. Read only can view. Hidden removes the page from navigation and direct links.</p>
+                      </div>
+                      <ShieldCheck size={20} aria-hidden="true" />
+                    </div>
+                    <div className="technician-page-access-grid">
+                      {companyUserPageAccessDefinitions.map(({ page, label, detail }) => {
+                        const ownerOnly = page === 'onboarding';
+                        const level = ownerOnly ? 'off' : technicianDraft.pageAccess?.[page] ?? 'off';
+                        return (
+                          <label className="technician-page-access-row" key={page}>
+                            <span>
+                              <strong>{label}</strong>
+                              <small>{detail}</small>
+                            </span>
+                            {ownerOnly ? (
+                              <em>Owner only</em>
+                            ) : (
+                              <select
+                                value={level}
+                                onChange={(event) => setTechnicianDraft({
+                                  ...technicianDraft,
+                                  pageAccess: { ...technicianDraft.pageAccess, [page]: event.target.value as 'full' | 'readonly' | 'off' },
+                                })}
+                              >
+                                <option value="full">Full access</option>
+                                <option value="readonly">Read only</option>
+                                <option value="off">Hidden</option>
+                              </select>
+                            )}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    {technicianDraft.role === 'technician' ? (
+                      <p className="access-status">Technicians use the mobile app. Desktop portal access is disabled for this role.</p>
+                    ) : null}
+                  </section>
 
                   {technicianEditorId ? (
                     <div className="access-actions technician-modal-actions">

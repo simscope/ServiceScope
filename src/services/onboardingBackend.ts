@@ -227,6 +227,7 @@ export async function saveOnboardingProfileToBackend(
         email: technician.email,
         role: technician.role === 'manager' ? 'manager' : technician.role === 'dispatcher' ? 'dispatcher' : 'technician',
         status: technician.status,
+        portal_access_rules: { ...(technician.pageAccess ?? {}), onboarding: 'off' },
       })),
   );
 
