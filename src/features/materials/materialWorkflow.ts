@@ -51,10 +51,14 @@ export function makeMaterialWorkflow({
       .toLowerCase()
       .includes(normalizedMaterialSearch);
   };
-  const materialJobMatchesTechnician = (job: ServiceJob) => materialTechFilter === 'all' || job.assignee === materialTechFilter;
+  const materialJobMatchesTechnician = (job: ServiceJob) => {
+    if (materialTechFilter === 'all') return true;
+    if (materialTechFilter === 'No technician') return !job.assignee?.trim();
+    return job.assignee === materialTechFilter;
+  };
   const materialJobIsTechnicianWork = (job: ServiceJob) => {
     const assignee = job.assignee?.trim().toLowerCase();
-    return Boolean(assignee) && assignee !== 'office';
+    return assignee !== 'office';
   };
   const materialJobMatchesStatus = (job: ServiceJob) => materialJobStatusFilter === 'all'
     ? true

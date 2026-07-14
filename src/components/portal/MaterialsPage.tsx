@@ -137,7 +137,7 @@ export function MaterialsPage({
           <select value={materialTechFilter} onChange={(event) => onMaterialTechFilterChange(event.target.value)}>
             <option value="all">All technicians</option>
             <option value="No technician">No technician</option>
-            {profile.technicians.map((technician) => (
+            {profile.technicians.filter((technician) => technician.role === 'technician').map((technician) => (
               <option value={technician.name} key={technician.id}>
                 {technician.name}
               </option>
@@ -198,7 +198,7 @@ export function MaterialsPage({
                     <strong>{job.organization}</strong>
                     <span>{job.clientName} - {job.system} - {job.issue}</span>
                   </td>
-                  <td>{job.assignee}</td>
+                  <td>{job.assignee?.trim() || 'Unassigned'}</td>
                   <td>{material.name || '-'}</td>
                   <td>{material.quantity}</td>
                   <td>{money(material.price)}</td>
