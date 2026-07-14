@@ -58,6 +58,7 @@ function mapJob(row: JobRow, customers: CustomerRow[], locations: CustomerLocati
     id: row.id,
     companyId: row.company_id,
     customerId: customer?.id,
+    jobTypeId: row.job_type_id ?? undefined,
     jobNumber: row.job_number,
     status: row.status,
     system: row.system ?? '',

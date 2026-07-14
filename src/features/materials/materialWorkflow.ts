@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
-import type { MaterialRow, ServiceJob } from '../../types';
+import type { CompanyJobType, MaterialRow, ServiceJob } from '../../types';
 import type { MaterialJobStatusFilter } from './useMaterialsFeature';
 import { normalizeMaterialRows } from './useMaterialsFeature';
 
@@ -9,6 +9,7 @@ type MaterialWorkflowInput = {
   materials: MaterialRow[];
   materialStatusFilter: 'all' | MaterialRow['status'];
   materialJobStatusFilter: MaterialJobStatusFilter;
+  jobTypes: CompanyJobType[];
   materialTechFilter: string;
   materialSearch: string;
   editingMaterialsJobNumber: string;
@@ -26,6 +27,7 @@ export function makeMaterialWorkflow({
   materials,
   materialStatusFilter,
   materialJobStatusFilter,
+  jobTypes,
   materialTechFilter,
   materialSearch,
   editingMaterialsJobNumber,
@@ -56,13 +58,18 @@ export function makeMaterialWorkflow({
       ? activeJobsRows.some((activeJob) => activeJob.jobNumber === job.jobNumber)
       : job.status === materialJobStatusFilter;
   const materialJobIsAllowed = (job: ServiceJob) => !job.customerBlacklist?.trim();
+  const materialJobRequiresParts = (job: ServiceJob) => (
+    jobTypes.some((jobType) => jobType.id === job.jobTypeId && jobType.requiresParts)
+    || job.status === 'Parts ordered'
+    || job.status === 'Waiting for parts'
+  );
   const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
     const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
 
     return matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
   const materialJobs = materialJobStatusFilter === 'active' ? activeJobsRows : allJobsRows;
-  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && !materials.some((material) => material.jobNumber === job.jobNumber));
+  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber));
   const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
     materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
   ));

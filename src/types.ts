@@ -279,6 +279,7 @@ export type ServiceJob = {
   id: string;
   companyId: string;
   customerId?: string;
+  jobTypeId?: string;
   jobNumber: string;
   status: ServiceJobStatus;
   system: string;

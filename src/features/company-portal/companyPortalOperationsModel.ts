@@ -111,6 +111,7 @@ export function makeCompanyPortalOperationsModel({
     materials,
     materialStatusFilter,
     materialJobStatusFilter,
+    jobTypes: profile.jobTypes,
     materialTechFilter,
     materialSearch,
     editingMaterialsJobNumber,
