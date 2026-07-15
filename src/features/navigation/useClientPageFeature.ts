@@ -20,17 +20,37 @@ const clientPageValues: ClientPage[] = [
   'onboarding',
 ];
 
-function readSavedClientPage(): ClientPage {
-  const saved = window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY);
-  return clientPageValues.includes(saved as ClientPage) ? saved as ClientPage : 'jobs';
+function parseClientPage(value: string | null): ClientPage | null {
+  return clientPageValues.includes(value as ClientPage) ? value as ClientPage : null;
 }
 
-export function useClientPageFeature() {
-  const [clientPage, setClientPage] = useState<ClientPage>(() => readSavedClientPage());
+function readSavedClientPage(storageKey: string): ClientPage {
+  const urlPage = parseClientPage(new URLSearchParams(window.location.search).get('view'));
+  if (urlPage) return urlPage;
+
+  const saved = parseClientPage(window.localStorage.getItem(storageKey));
+  if (saved) return saved;
+
+  // Keep the existing preference as a one-time migration for current users.
+  return parseClientPage(window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY)) ?? 'jobs';
+}
+
+export function useClientPageFeature(companyId?: string) {
+  const storageKey = `${CLIENT_PAGE_STORAGE_KEY}.${companyId ?? 'default'}`;
+  const [clientPage, setClientPage] = useState<ClientPage>(() => readSavedClientPage(storageKey));
 
   useEffect(() => {
+    setClientPage(readSavedClientPage(storageKey));
+  }, [storageKey]);
+
+  useEffect(() => {
+    window.localStorage.setItem(storageKey, clientPage);
     window.localStorage.setItem(CLIENT_PAGE_STORAGE_KEY, clientPage);
-  }, [clientPage]);
+
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', clientPage);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [clientPage, storageKey]);
 
   return {
     clientPage,
