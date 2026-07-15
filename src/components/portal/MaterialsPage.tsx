@@ -10,18 +10,24 @@ type MaterialRowWithJob = {
   job: ServiceJob;
 };
 
-type MaterialsView = 'materials' | 'warehouse';
+type MaterialsView = 'materials' | 'inventory';
+type InventoryStatusFilter = 'all' | 'available' | 'low' | 'out' | 'incoming';
 
-type WarehouseMaterial = {
+type InventoryStockItem = {
   key: string;
+  sku: string;
   name: string;
   supplier: string;
-  ordered: number;
-  needed: number;
-  received: number;
-  installed: number;
+  location: string;
+  onHand: number;
+  committed: number;
+  available: number;
+  incoming: number;
+  issued: number;
   returned: number;
-  totalCost: number;
+  reorderPoint: number;
+  unitCost: number;
+  stockValue: number;
   jobNumbers: string[];
 };
 
@@ -77,13 +83,14 @@ export function MaterialsPage({
   onSaveMaterialDraftRows: () => void;
 }) {
   const [materialsView, setMaterialsView] = useState<MaterialsView>('materials');
-  const [warehouseSearch, setWarehouseSearch] = useState('');
+  const [inventorySearch, setInventorySearch] = useState('');
+  const [inventoryStatusFilter, setInventoryStatusFilter] = useState<InventoryStatusFilter>('all');
   const [statusOverrides, setStatusOverrides] = useState<Record<string, MaterialRow['status']>>({});
   const [savingStatusId, setSavingStatusId] = useState('');
   const [inlineStatusMessage, setInlineStatusMessage] = useState('');
 
-  const warehouseMaterials = useMemo(() => {
-    const groupedMaterials = new Map<string, WarehouseMaterial>();
+  const inventoryStockItems = useMemo(() => {
+    const groupedMaterials = new Map<string, InventoryStockItem & { costQuantity: number; costTotal: number }>();
 
     materials.forEach((material) => {
       const name = material.name.trim() || 'Unnamed material';
@@ -91,56 +98,94 @@ export function MaterialsPage({
       const key = `${name.toLowerCase()}::${supplier.toLowerCase()}`;
       const existingMaterial = groupedMaterials.get(key) ?? {
         key,
+        sku: `MAT-${String(groupedMaterials.size + 1).padStart(4, '0')}`,
         name,
         supplier,
-        ordered: 0,
-        needed: 0,
-        received: 0,
-        installed: 0,
+        location: 'Main stock',
+        onHand: 0,
+        committed: 0,
+        available: 0,
+        incoming: 0,
+        issued: 0,
         returned: 0,
-        totalCost: 0,
+        reorderPoint: 0,
+        unitCost: 0,
+        stockValue: 0,
         jobNumbers: [],
+        costQuantity: 0,
+        costTotal: 0,
       };
       const quantity = Number(material.quantity) || 0;
+      const price = Number(material.price) || 0;
 
-      if (material.status === 'Needed') existingMaterial.needed += quantity;
-      if (material.status === 'Ordered') existingMaterial.ordered += quantity;
-      if (material.status === 'Received') existingMaterial.received += quantity;
-      if (material.status === 'Installed') existingMaterial.installed += quantity;
+      if (material.status === 'Needed') existingMaterial.committed += quantity;
+      if (material.status === 'Ordered') existingMaterial.incoming += quantity;
+      if (material.status === 'Received') existingMaterial.onHand += quantity;
+      if (material.status === 'Installed') existingMaterial.issued += quantity;
       if (material.status === 'Returned') existingMaterial.returned += quantity;
 
-      existingMaterial.totalCost += quantity * (Number(material.price) || 0);
+      if (price > 0 && quantity > 0) {
+        existingMaterial.costQuantity += quantity;
+        existingMaterial.costTotal += quantity * price;
+      }
       if (!existingMaterial.jobNumbers.includes(material.jobNumber)) existingMaterial.jobNumbers.push(material.jobNumber);
       groupedMaterials.set(key, existingMaterial);
     });
 
-    return Array.from(groupedMaterials.values()).sort((left, right) => left.name.localeCompare(right.name));
+    return Array.from(groupedMaterials.values()).map((item) => {
+      const onHand = Math.max(0, item.onHand - item.issued - item.returned);
+      const available = Math.max(0, onHand - item.committed);
+      const unitCost = item.costQuantity ? item.costTotal / item.costQuantity : 0;
+      const reorderPoint = item.committed > 0 ? Math.max(1, Math.ceil(item.committed * 0.5)) : 0;
+
+      return {
+        ...item,
+        onHand,
+        available,
+        unitCost,
+        reorderPoint,
+        stockValue: onHand * unitCost,
+      };
+    }).sort((left, right) => left.name.localeCompare(right.name));
   }, [materials]);
 
-  const filteredWarehouseMaterials = useMemo(() => {
-    const query = warehouseSearch.trim().toLowerCase();
-    if (!query) return warehouseMaterials;
+  const filteredInventoryItems = useMemo(() => {
+    const query = inventorySearch.trim().toLowerCase();
 
-    return warehouseMaterials.filter((item) => (
-      item.name.toLowerCase().includes(query)
-      || item.supplier.toLowerCase().includes(query)
-      || item.jobNumbers.some((jobNumber) => jobNumber.toLowerCase().includes(query))
-    ));
-  }, [warehouseMaterials, warehouseSearch]);
+    return inventoryStockItems.filter((item) => {
+      const matchesQuery = !query
+        || item.name.toLowerCase().includes(query)
+        || item.supplier.toLowerCase().includes(query)
+        || item.sku.toLowerCase().includes(query)
+        || item.location.toLowerCase().includes(query)
+        || item.jobNumbers.some((jobNumber) => jobNumber.toLowerCase().includes(query));
+      const matchesStatus = inventoryStatusFilter === 'all'
+        || (inventoryStatusFilter === 'available' && item.available > 0)
+        || (inventoryStatusFilter === 'low' && item.onHand > 0 && item.onHand <= item.reorderPoint)
+        || (inventoryStatusFilter === 'out' && item.onHand <= 0)
+        || (inventoryStatusFilter === 'incoming' && item.incoming > 0);
 
-  const warehouseSummary = useMemo(() => warehouseMaterials.reduce((summary, item) => ({
+      return matchesQuery && matchesStatus;
+    });
+  }, [inventorySearch, inventoryStatusFilter, inventoryStockItems]);
+
+  const inventorySummary = useMemo(() => inventoryStockItems.reduce((summary, item) => ({
     uniqueItems: summary.uniqueItems + 1,
-    onHand: summary.onHand + Math.max(0, item.received - item.installed - item.returned),
-    incoming: summary.incoming + item.ordered,
-    reserved: summary.reserved + item.needed,
-    value: summary.value + item.totalCost,
+    onHand: summary.onHand + item.onHand,
+    available: summary.available + item.available,
+    incoming: summary.incoming + item.incoming,
+    committed: summary.committed + item.committed,
+    value: summary.value + item.stockValue,
+    reorderAlerts: summary.reorderAlerts + (item.onHand <= item.reorderPoint && (item.committed > 0 || item.incoming > 0) ? 1 : 0),
   }), {
     uniqueItems: 0,
     onHand: 0,
+    available: 0,
     incoming: 0,
-    reserved: 0,
+    committed: 0,
     value: 0,
-  }), [warehouseMaterials]);
+    reorderAlerts: 0,
+  }), [inventoryStockItems]);
 
   async function updateInlineMaterialStatus(material: MaterialRow, job: ServiceJob, nextStatus: MaterialRow['status']) {
     const previousStatus = statusOverrides[material.id] ?? material.status;
@@ -168,23 +213,27 @@ export function MaterialsPage({
       <div className="materials-header">
         <div>
           <p className="eyebrow">Parts and purchases</p>
-          <h1>{materialsView === 'warehouse' ? 'Склад' : 'Materials'}</h1>
+          <h1>{materialsView === 'inventory' ? 'Inventory' : 'Materials'}</h1>
           {inlineStatusMessage ? <p className="access-status">{inlineStatusMessage}</p> : null}
         </div>
         <div className="materials-summary">
-          {materialsView === 'warehouse' ? (
+          {materialsView === 'inventory' ? (
             <>
               <span>
-                <strong>{warehouseSummary.uniqueItems}</strong>
+                <strong>{inventorySummary.uniqueItems}</strong>
                 Items
               </span>
               <span>
-                <strong>{warehouseSummary.onHand}</strong>
-                On stock
+                <strong>{inventorySummary.onHand}</strong>
+                On hand
               </span>
               <span>
-                <strong>{money(warehouseSummary.value)}</strong>
-                Stock value
+                <strong>{inventorySummary.available}</strong>
+                Available
+              </span>
+              <span>
+                <strong>{money(inventorySummary.value)}</strong>
+                Inventory value
               </span>
             </>
           ) : (
@@ -210,197 +259,265 @@ export function MaterialsPage({
         <button className={materialsView === 'materials' ? 'active' : ''} type="button" onClick={() => setMaterialsView('materials')}>
           Materials
         </button>
-        <button className={materialsView === 'warehouse' ? 'active' : ''} type="button" onClick={() => setMaterialsView('warehouse')}>
+        <button className={materialsView === 'inventory' ? 'active' : ''} type="button" onClick={() => setMaterialsView('inventory')}>
           <Warehouse size={16} aria-hidden="true" />
-          Склад
+          Inventory
         </button>
       </div>
 
-      {materialsView === 'warehouse' ? (
+      {materialsView === 'inventory' ? (
         <>
-          <div className="warehouse-toolbar">
+          <div className="inventory-toolbar">
             <label>
-              Search warehouse
-              <input value={warehouseSearch} onChange={(event) => setWarehouseSearch(event.target.value)} placeholder="Material, supplier, job #" />
+              Search inventory
+              <input value={inventorySearch} onChange={(event) => setInventorySearch(event.target.value)} placeholder="SKU, item, supplier, location, job #" />
             </label>
-            <div className="warehouse-movement-summary">
-              <span><strong>{warehouseSummary.incoming}</strong> ordered</span>
-              <span><strong>{warehouseSummary.reserved}</strong> needed</span>
-              <span><strong>{filteredWarehouseMaterials.length}</strong> shown</span>
+            <label>
+              Stock status
+              <select value={inventoryStatusFilter} onChange={(event) => setInventoryStatusFilter(event.target.value as InventoryStatusFilter)}>
+                <option value="all">All stock</option>
+                <option value="available">Available</option>
+                <option value="low">Low stock</option>
+                <option value="out">Out of stock</option>
+                <option value="incoming">Incoming</option>
+              </select>
+            </label>
+            <div className="inventory-movement-summary">
+              <span><strong>{inventorySummary.incoming}</strong> incoming</span>
+              <span><strong>{inventorySummary.committed}</strong> committed</span>
+              <span><strong>{inventorySummary.reorderAlerts}</strong> reorder</span>
             </div>
           </div>
 
-          <div className="warehouse-stock-grid">
-            {filteredWarehouseMaterials.map((item) => {
-              const available = Math.max(0, item.received - item.installed - item.returned);
-              const averageCost = item.received ? item.totalCost / item.received : 0;
+          <div className="inventory-table-wrap">
+            <table className="inventory-stock-table">
+              <thead>
+                <tr>
+                  <th>SKU</th>
+                  <th>Item</th>
+                  <th>Location</th>
+                  <th>On hand</th>
+                  <th>Committed</th>
+                  <th>Available</th>
+                  <th>Incoming</th>
+                  <th>Reorder point</th>
+                  <th>Unit cost</th>
+                  <th>Value</th>
+                  <th>Supplier</th>
+                  <th>Jobs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredInventoryItems.map((item) => {
+                  const stockState = item.onHand <= 0 ? 'out' : item.onHand <= item.reorderPoint ? 'low' : 'ok';
 
-              return (
-                <article className="warehouse-stock-card" key={item.key}>
-                  <div className="warehouse-stock-card-header">
-                    <div>
-                      <h2>{item.name}</h2>
-                      <span>{item.supplier}</span>
-                    </div>
-                    <strong>{available}</strong>
-                  </div>
-                  <div className="warehouse-stock-stats">
-                    <span><b>{item.received}</b> received</span>
-                    <span><b>{item.ordered}</b> ordered</span>
-                    <span><b>{item.needed}</b> needed</span>
-                    <span><b>{item.installed}</b> installed</span>
-                    <span><b>{item.returned}</b> returned</span>
-                    <span><b>{money(averageCost)}</b> avg cost</span>
-                  </div>
-                  <div className="warehouse-stock-jobs">
-                    {item.jobNumbers.slice(0, 6).map((jobNumber) => (
-                      <button type="button" key={jobNumber} onClick={() => onOpenMaterialEditor(jobNumber)}>
-                        #{jobNumber}
+                  return (
+                    <tr className={stockState} key={item.key}>
+                      <td><strong>{item.sku}</strong></td>
+                      <td>
+                        <strong>{item.name}</strong>
+                        <span>Issued {item.issued} - Returned {item.returned}</span>
+                      </td>
+                      <td>{item.location}</td>
+                      <td><strong>{item.onHand}</strong></td>
+                      <td>{item.committed}</td>
+                      <td><strong>{item.available}</strong></td>
+                      <td>{item.incoming}</td>
+                      <td>{item.reorderPoint}</td>
+                      <td>{money(item.unitCost)}</td>
+                      <td>{money(item.stockValue)}</td>
+                      <td>{item.supplier}</td>
+                      <td>
+                        <div className="inventory-job-links">
+                          {item.jobNumbers.slice(0, 4).map((jobNumber) => (
+                            <button type="button" key={jobNumber} onClick={() => onOpenMaterialEditor(jobNumber)}>
+                              #{jobNumber}
+                            </button>
+                          ))}
+                          {item.jobNumbers.length > 4 ? <span>+{item.jobNumbers.length - 4}</span> : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!filteredInventoryItems.length ? (
+                  <tr>
+                    <td colSpan={12}>
+                      <div className="empty-inline">No inventory items match the filters.</div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="inventory-movement-table-wrap">
+            <table className="inventory-movement-table">
+              <thead>
+                <tr>
+                  <th>Movement</th>
+                  <th>Job</th>
+                  <th>Item</th>
+                  <th>Qty</th>
+                  <th>Supplier</th>
+                  <th>Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {materials.slice(0, 12).map((material) => (
+                  <tr key={material.id}>
+                    <td>{material.status}</td>
+                    <td>
+                      <button className="job-number-link" type="button" onClick={() => onOpenMaterialEditor(material.jobNumber)}>
+                        #{material.jobNumber}
                       </button>
-                    ))}
-                    {item.jobNumbers.length > 6 ? <span>+{item.jobNumbers.length - 6}</span> : null}
-                  </div>
-                </article>
-              );
-            })}
-            {!filteredWarehouseMaterials.length ? (
-              <div className="warehouse-empty">
-                <Warehouse size={24} aria-hidden="true" />
-                <strong>Склад пока пуст</strong>
-                <span>Materials marked as received, ordered, needed, installed, or returned will appear here.</span>
-              </div>
-            ) : null}
+                    </td>
+                    <td>{material.name || '-'}</td>
+                    <td>{material.quantity}</td>
+                    <td>{material.supplier || '-'}</td>
+                    <td>{money(material.quantity * material.price)}</td>
+                  </tr>
+                ))}
+                {!materials.length ? (
+                  <tr>
+                    <td colSpan={6}>
+                      <div className="empty-inline">No stock movements yet.</div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
         </>
       ) : (
         <>
-      <div className="materials-toolbar">
-        <label>
-          Jobs
-          <select value={materialJobStatusFilter} onChange={(event) => onMaterialJobStatusFilterChange(event.target.value as MaterialJobStatusFilter)}>
-            <option value="active">Active jobs</option>
-            <option value="all">All jobs</option>
-            <option value="Completed">Completed</option>
-            <option value="Cancelled">Cancelled</option>
-            <option value="Archived">Archived</option>
-          </select>
-        </label>
-        <label>
-          Status
-          <select value={materialStatusFilter} onChange={(event) => onMaterialStatusFilterChange(event.target.value as 'all' | MaterialRow['status'])}>
-            <option value="all">All statuses</option>
-            {materialStatuses.map((status) => (
-              <option value={status} key={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Technician
-          <select value={materialTechFilter} onChange={(event) => onMaterialTechFilterChange(event.target.value)}>
-            <option value="all">All technicians</option>
-            <option value="No technician">No technician</option>
-            {profile.technicians.filter((technician) => technician.role === 'technician').map((technician) => (
-              <option value={technician.name} key={technician.id}>
-                {technician.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Search
-          <input value={materialSearch} onChange={(event) => onMaterialSearchChange(event.target.value)} placeholder="Job #, client, supplier, material" />
-        </label>
-        <button className="secondary-button compact" type="button" onClick={onResetFilters}>
-          Reset
-        </button>
-      </div>
-
-      {jobsWithoutMaterials.length ? (
-        <section className="materials-missing">
-          <div>
-            <PackageCheck size={20} aria-hidden="true" />
-            <strong>Jobs without materials</strong>
+          <div className="materials-toolbar">
+            <label>
+              Jobs
+              <select value={materialJobStatusFilter} onChange={(event) => onMaterialJobStatusFilterChange(event.target.value as MaterialJobStatusFilter)}>
+                <option value="active">Active jobs</option>
+                <option value="all">All jobs</option>
+                <option value="Completed">Completed</option>
+                <option value="Cancelled">Cancelled</option>
+                <option value="Archived">Archived</option>
+              </select>
+            </label>
+            <label>
+              Status
+              <select value={materialStatusFilter} onChange={(event) => onMaterialStatusFilterChange(event.target.value as 'all' | MaterialRow['status'])}>
+                <option value="all">All statuses</option>
+                {materialStatuses.map((status) => (
+                  <option value={status} key={status}>
+                    {status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Technician
+              <select value={materialTechFilter} onChange={(event) => onMaterialTechFilterChange(event.target.value)}>
+                <option value="all">All technicians</option>
+                <option value="No technician">No technician</option>
+                {profile.technicians.filter((technician) => technician.role === 'technician').map((technician) => (
+                  <option value={technician.name} key={technician.id}>
+                    {technician.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Search
+              <input value={materialSearch} onChange={(event) => onMaterialSearchChange(event.target.value)} placeholder="Job #, client, supplier, material" />
+            </label>
+            <button className="secondary-button compact" type="button" onClick={onResetFilters}>
+              Reset
+            </button>
           </div>
-          <div className="materials-missing-list">
-            {jobsWithoutMaterials.map((job) => (
-              <button className="materials-missing-job" type="button" onClick={() => onOpenMaterialEditor(job.jobNumber)} key={job.jobNumber}>
-                #{job.jobNumber} - {job.organization} - {job.issue}
-              </button>
-            ))}
-          </div>
-        </section>
-      ) : null}
 
-      <div className="materials-table-wrap">
-        <table className="materials-page-table">
-          <thead>
-            <tr>
-              <th>Job / Client / Issue</th>
-              <th>Technician</th>
-              <th>Material</th>
-              <th>Qty</th>
-              <th>Price</th>
-              <th>Total</th>
-              <th>Supplier</th>
-              <th>Status</th>
-              <th>Edit</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filteredMaterialRows.map(({ material, job }) => {
-              const currentStatus = statusOverrides[material.id] ?? material.status;
-              const savingThisStatus = savingStatusId === material.id;
+          {jobsWithoutMaterials.length ? (
+            <section className="materials-missing">
+              <div>
+                <PackageCheck size={20} aria-hidden="true" />
+                <strong>Jobs without materials</strong>
+              </div>
+              <div className="materials-missing-list">
+                {jobsWithoutMaterials.map((job) => (
+                  <button className="materials-missing-job" type="button" onClick={() => onOpenMaterialEditor(job.jobNumber)} key={job.jobNumber}>
+                    #{job.jobNumber} - {job.organization} - {job.issue}
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
-              return (
-                <tr key={material.id} className="materials-clickable-row" onClick={() => onOpenJob(job)}>
-                  <td>
-                    <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
-                      #{job.jobNumber}
-                    </button>
-                    <strong>{job.organization}</strong>
-                    <span>{job.clientName} - {job.system} - {job.issue}</span>
-                  </td>
-                  <td>{job.assignee?.trim() || 'Unassigned'}</td>
-                  <td>{material.name || '-'}</td>
-                  <td>{material.quantity}</td>
-                  <td>{money(material.price)}</td>
-                  <td>{money(material.quantity * material.price)}</td>
-                  <td>{material.supplier || '-'}</td>
-                  <td>
-                    <select
-                      className={`material-status-select ${statusClassName(currentStatus)}`}
-                      value={currentStatus}
-                      disabled={savingThisStatus}
-                      onChange={(event) => updateInlineMaterialStatus(material, job, event.target.value as MaterialRow['status'])}
-                      aria-label={`Material status for job ${job.jobNumber}`}
-                    >
-                      {materialStatuses.map((status) => (
-                        <option value={status} key={status}>
-                          {status}
-                        </option>
-                      ))}
-                    </select>
-                  </td>
-                  <td>
-                    <button className="secondary-button compact" type="button" onClick={(event) => { event.stopPropagation(); onOpenMaterialEditor(job.jobNumber); }}>
-                      Edit
-                    </button>
-                  </td>
+          <div className="materials-table-wrap">
+            <table className="materials-page-table">
+              <thead>
+                <tr>
+                  <th>Job / Client / Issue</th>
+                  <th>Technician</th>
+                  <th>Material</th>
+                  <th>Qty</th>
+                  <th>Price</th>
+                  <th>Total</th>
+                  <th>Supplier</th>
+                  <th>Status</th>
+                  <th>Edit</th>
                 </tr>
-              );
-            })}
-            {!filteredMaterialRows.length ? (
-              <tr>
-                <td colSpan={9}>
-                  <div className="empty-inline">No material rows match the filters.</div>
-                </td>
-              </tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {filteredMaterialRows.map(({ material, job }) => {
+                  const currentStatus = statusOverrides[material.id] ?? material.status;
+                  const savingThisStatus = savingStatusId === material.id;
+
+                  return (
+                    <tr key={material.id} className="materials-clickable-row" onClick={() => onOpenJob(job)}>
+                      <td>
+                        <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
+                          #{job.jobNumber}
+                        </button>
+                        <strong>{job.organization}</strong>
+                        <span>{job.clientName} - {job.system} - {job.issue}</span>
+                      </td>
+                      <td>{job.assignee?.trim() || 'Unassigned'}</td>
+                      <td>{material.name || '-'}</td>
+                      <td>{material.quantity}</td>
+                      <td>{money(material.price)}</td>
+                      <td>{money(material.quantity * material.price)}</td>
+                      <td>{material.supplier || '-'}</td>
+                      <td>
+                        <select
+                          className={`material-status-select ${statusClassName(currentStatus)}`}
+                          value={currentStatus}
+                          disabled={savingThisStatus}
+                          onChange={(event) => updateInlineMaterialStatus(material, job, event.target.value as MaterialRow['status'])}
+                          aria-label={`Material status for job ${job.jobNumber}`}
+                        >
+                          {materialStatuses.map((status) => (
+                            <option value={status} key={status}>
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td>
+                        <button className="secondary-button compact" type="button" onClick={(event) => { event.stopPropagation(); onOpenMaterialEditor(job.jobNumber); }}>
+                          Edit
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!filteredMaterialRows.length ? (
+                  <tr>
+                    <td colSpan={9}>
+                      <div className="empty-inline">No material rows match the filters.</div>
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
