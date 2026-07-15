@@ -220,18 +220,18 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     }
   }
 
-  async function saveReceiptDraft() {
+  async function saveReceiptDraft(): Promise<InventoryStockReceipt | null> {
     if (!receiptDraft.warehouseId) {
       setStatus('Warehouse is required.');
-      return;
+      return null;
     }
     if (receiptDraft.binId && !snapshot.bins.some((bin) => bin.id === receiptDraft.binId && bin.warehouseId === receiptDraft.warehouseId)) {
       setStatus('Selected bin does not belong to this warehouse.');
-      return;
+      return null;
     }
     if (receiptDraft.supplierId && !snapshot.suppliers.some((supplier) => supplier.id === receiptDraft.supplierId && supplier.isActive)) {
       setStatus('Select an active supplier or leave supplier empty.');
-      return;
+      return null;
     }
 
     setStatus('Saving receipt draft...');
@@ -242,16 +242,19 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       setSelectedReceiptId(saved.id);
       await reloadWarehouse();
       setStatus('Receipt draft saved.');
+      return saved;
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
+      return null;
     }
   }
 
   async function addReceiptLine() {
-    const receiptId = selectedReceiptId;
+    let receiptId = selectedReceiptId;
     if (!receiptId) {
-      setStatus('Save the receipt draft before adding lines.');
-      return;
+      const savedReceipt = await saveReceiptDraft();
+      if (!savedReceipt) return;
+      receiptId = savedReceipt.id;
     }
     if (!receiptLineDraft.itemId) {
       setStatus('Select an item.');
@@ -279,6 +282,31 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
     }
+  }
+
+  function startReceiptForItem(item: InventoryItem) {
+    const activeWarehouses = snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive);
+    const preferredWarehouseId = warehouseFilter !== 'all'
+      ? warehouseFilter
+      : activeWarehouses.length === 1
+        ? activeWarehouses[0].id
+        : '';
+    const neededQuantity = Math.max(1, Math.ceil(item.minimumQuantity - item.totalQuantity));
+
+    setActiveTab('receipts');
+    setSelectedReceiptId('');
+    setReceiptDraft({
+      ...emptyReceiptDraft(),
+      warehouseId: preferredWarehouseId,
+    });
+    setReceiptLineDraft({
+      ...emptyReceiptLineDraft(),
+      itemId: item.id,
+      quantity: neededQuantity,
+    });
+    setStatus(preferredWarehouseId
+      ? 'Enter the vendor cost, then Add line. The receipt draft will be saved automatically.'
+      : 'Select a warehouse and vendor cost, then Add line. The receipt draft will be saved automatically.');
   }
 
   async function updateReceiptLine(line: InventoryStockReceiptLine, patch: Partial<InventoryReceiptLineDraft>) {
@@ -468,6 +496,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
               <th>Total stock</th>
               <th>Avg cost</th>
               <th>Min</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -482,6 +511,11 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 <td>{formatQty(item.totalQuantity, item.unit)}</td>
                 <td>{money(item.averageCost)}</td>
                 <td>{formatQty(item.minimumQuantity, item.unit)}</td>
+                <td>
+                  <button className="secondary-button compact" type="button" onClick={() => startReceiptForItem(item)}>
+                    Receive
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
