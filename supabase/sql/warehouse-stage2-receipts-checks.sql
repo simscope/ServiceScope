@@ -14,6 +14,8 @@ declare
   v_bin_id uuid;
   v_other_bin_id uuid;
   v_item_id uuid;
+  v_landed_item_id uuid;
+  v_cancel_item_id uuid;
   v_other_item_id uuid;
   v_supplier_id uuid;
   v_receipt_id uuid;
@@ -21,6 +23,7 @@ declare
   v_qty numeric(14,4);
   v_avg numeric(14,4);
   v_value numeric(14,4);
+  v_price numeric(14,4);
   v_count integer;
 begin
   insert into auth.users (id, aud, role, email, email_confirmed_at, created_at, updated_at)
@@ -56,6 +59,14 @@ begin
   insert into public.inventory_items (company_id, internal_name, part_number)
   values (v_company_id, 'Stage 2 Compressor', 'STAGE2-COMP')
   returning id into v_item_id;
+
+  insert into public.inventory_items (company_id, internal_name, part_number)
+  values (v_company_id, 'Stage 2 Landed Cost Part', 'STAGE2-LANDED')
+  returning id into v_landed_item_id;
+
+  insert into public.inventory_items (company_id, internal_name, part_number)
+  values (v_company_id, 'Stage 2 Cancel Price Part', 'STAGE2-CANCEL')
+  returning id into v_cancel_item_id;
 
   insert into public.inventory_items (company_id, internal_name, part_number)
   values (v_other_company_id, 'Other Company Part', 'OTHER-PART')
@@ -101,6 +112,25 @@ begin
 
   if v_qty <> 15 or v_avg <> 23.3333 or v_value <> 350 then
     raise exception 'TEST_2_FAILED qty %, avg %, value %', v_qty, v_avg, v_value;
+  end if;
+
+  -- Test 2b: extra_cost is part of landed inventory value.
+  insert into public.inventory_stock_receipts (company_id, supplier_id, warehouse_id, bin_id, po_number)
+  values (v_company_id, v_supplier_id, v_warehouse_id, v_bin_id, 'TEST-2B')
+  returning id into v_receipt_id;
+
+  insert into public.inventory_stock_receipt_lines (company_id, receipt_id, item_id, quantity, unit_cost, extra_cost)
+  values (v_company_id, v_receipt_id, v_landed_item_id, 10, 100, 200);
+
+  perform public.inventory_post_stock_receipt(v_receipt_id);
+
+  select total_quantity, average_cost, total_quantity * average_cost
+    into v_qty, v_avg, v_value
+  from public.inventory_items
+  where id = v_landed_item_id;
+
+  if v_qty <> 10 or v_avg <> 120 or v_value <> 1200 then
+    raise exception 'TEST_2B_FAILED qty %, avg %, value %', v_qty, v_avg, v_value;
   end if;
 
   -- Test 3: repeated post does not duplicate movement or change stock/cost.
@@ -160,9 +190,13 @@ begin
   end;
 
   -- Test 7: quantity <= 0 is blocked at the table/RPC boundary.
+  insert into public.inventory_stock_receipts (company_id, supplier_id, warehouse_id, bin_id, po_number)
+  values (v_company_id, v_supplier_id, v_warehouse_id, v_bin_id, 'TEST-7')
+  returning id into v_bad_receipt_id;
+
   begin
     insert into public.inventory_stock_receipt_lines (company_id, receipt_id, item_id, quantity, unit_cost)
-    values (v_company_id, v_receipt_id, v_item_id, 0, 1);
+    values (v_company_id, v_bad_receipt_id, v_item_id, 0, 1);
     raise exception 'TEST_7_FAILED expected quantity check violation';
   exception
     when check_violation then
@@ -222,6 +256,46 @@ begin
         raise;
       end if;
   end;
+
+  begin
+    insert into public.inventory_stock_receipt_lines (company_id, receipt_id, item_id, quantity, unit_cost)
+    values (v_company_id, v_receipt_id, v_cancel_item_id, 1, 1);
+    raise exception 'TEST_10_FAILED expected posted line insert guard';
+  exception
+    when others then
+      if sqlerrm not like '%POSTED_RECEIPT_LINES_LOCKED%' then
+        raise;
+      end if;
+  end;
+
+  -- Canceled receipt restores supplier last price to the latest non-canceled posted receipt.
+  insert into public.inventory_stock_receipts (company_id, supplier_id, warehouse_id, bin_id, po_number)
+  values (v_company_id, v_supplier_id, v_warehouse_id, v_bin_id, 'TEST-CANCEL-1')
+  returning id into v_receipt_id;
+
+  insert into public.inventory_stock_receipt_lines (company_id, receipt_id, item_id, quantity, unit_cost)
+  values (v_company_id, v_receipt_id, v_cancel_item_id, 1, 80);
+
+  perform public.inventory_post_stock_receipt(v_receipt_id);
+
+  insert into public.inventory_stock_receipts (company_id, supplier_id, warehouse_id, bin_id, po_number)
+  values (v_company_id, v_supplier_id, v_warehouse_id, v_bin_id, 'TEST-CANCEL-2')
+  returning id into v_receipt_id;
+
+  insert into public.inventory_stock_receipt_lines (company_id, receipt_id, item_id, quantity, unit_cost)
+  values (v_company_id, v_receipt_id, v_cancel_item_id, 1, 130);
+
+  perform public.inventory_post_stock_receipt(v_receipt_id);
+  perform public.inventory_cancel_stock_receipt(v_receipt_id, 'stage 2 check');
+
+  select last_unit_cost into v_price
+  from public.inventory_item_suppliers
+  where item_id = v_cancel_item_id
+    and supplier_id = v_supplier_id;
+
+  if v_price <> 80 then
+    raise exception 'TEST_CANCEL_SUPPLIER_PRICE_FAILED expected 80, got %', v_price;
+  end if;
 
   -- Direct average cost changes are blocked outside the receipt RPC.
   begin
