@@ -10,8 +10,6 @@ create temp table ba_check_params (
   other_company_id uuid,
   allowed_auth_user_id uuid,
   allowed_email text,
-  no_access_auth_user_id uuid,
-  no_access_email text,
   report_date date
 ) on commit drop;
 
@@ -20,13 +18,13 @@ create temp table ba_timezone_restore (
   timezone text
 ) on commit drop;
 
+grant select on ba_check_params to authenticated;
+
 insert into ba_check_params values (
   '00000000-0000-0000-0000-000000000001',
   '00000000-0000-0000-0000-000000000002',
   '00000000-0000-0000-0000-000000000101',
   'allowed@example.com',
-  '00000000-0000-0000-0000-000000000102',
-  'no-access@example.com',
   '2026-07-14'
 );
 
@@ -51,6 +49,8 @@ begin
   exception
     when insufficient_privilege then
       raise notice 'PASS: authenticated cannot execute business_analytics_job_facts directly';
+    when others then
+      raise;
   end;
 end $$;
 
@@ -86,18 +86,28 @@ set local role authenticated;
 do $$
 declare
   v_params ba_check_params%rowtype;
+  v_access_denied boolean := false;
 begin
   select * into v_params from ba_check_params limit 1;
-  perform set_config('request.jwt.claim.sub', v_params.no_access_auth_user_id::text, true);
-  perform set_config('request.jwt.claim.email', v_params.no_access_email, true);
+  perform set_config('request.jwt.claim.sub', v_params.allowed_auth_user_id::text, true);
+  perform set_config('request.jwt.claim.email', v_params.allowed_email, true);
 
   begin
-    perform public.get_business_analytics(v_params.allowed_company_id, v_params.report_date - 29, v_params.report_date, null);
-    raise exception 'get_business_analytics unexpectedly returned data for another company user';
+    perform public.get_business_analytics(v_params.other_company_id, v_params.report_date - 29, v_params.report_date, null);
   exception
-    when raise_exception then
-      raise notice 'PASS: another company user cannot execute get_business_analytics for this company';
+    when others then
+      if sqlerrm = 'Business analytics access denied' then
+        v_access_denied := true;
+      else
+        raise;
+      end if;
   end;
+
+  if not v_access_denied then
+    raise exception 'Cross-company access was unexpectedly allowed';
+  end if;
+
+  raise notice 'PASS: allowed company user cannot execute get_business_analytics for another company';
 end $$;
 
 reset role;
