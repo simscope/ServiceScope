@@ -383,6 +383,24 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     };
   }), [itemById, snapshot.stockBalances, warehouseById]);
 
+  const selectedWarehouse = warehouseFilter === 'all' ? null : warehouseById.get(warehouseFilter) ?? null;
+  const itemQuantityBySelectedWarehouse = useMemo(() => {
+    if (warehouseFilter === 'all') return new Map<string, number>();
+    const quantities = new Map<string, number>();
+    snapshot.stockBalances
+      .filter((balance) => balance.warehouseId === warehouseFilter)
+      .forEach((balance) => {
+        quantities.set(balance.itemId, (quantities.get(balance.itemId) ?? 0) + balance.quantity);
+      });
+    return quantities;
+  }, [snapshot.stockBalances, warehouseFilter]);
+
+  function itemDisplayQuantity(item: InventoryItem) {
+    return warehouseFilter === 'all'
+      ? item.totalQuantity
+      : itemQuantityBySelectedWarehouse.get(item.id) ?? 0;
+  }
+
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     return snapshot.items.filter((item) => {
@@ -408,7 +426,10 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     });
   }, [search, stockRows, warehouseFilter]);
 
-  const lowStockItems = useMemo(() => snapshot.items.filter((item) => item.minimumQuantity > 0 && item.totalQuantity <= item.minimumQuantity), [snapshot.items]);
+  const lowStockItems = useMemo(
+    () => snapshot.items.filter((item) => item.minimumQuantity > 0 && itemDisplayQuantity(item) <= item.minimumQuantity),
+    [itemQuantityBySelectedWarehouse, snapshot.items, warehouseFilter],
+  );
 
   const summary = useMemo(() => ({
     warehouses: snapshot.warehouses.filter((warehouse) => warehouse.isActive).length,
@@ -481,6 +502,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
 
   function renderMaterialsTable(items: InventoryItem[]) {
     if (!items.length) return <EmptyWarehouseState title="No inventory materials yet" detail="The warehouse catalog is empty. Add items through the inventory_items table or the next CRUD stage." />;
+    const stockColumnLabel = selectedWarehouse ? `On hand in ${selectedWarehouse.name}` : 'Total stock';
 
     return (
       <div className="warehouse-table-wrap">
@@ -493,7 +515,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
               <th>OEM</th>
               <th>Part #</th>
               <th>Unit</th>
-              <th>Total stock</th>
+              <th>{stockColumnLabel}</th>
               <th>Avg cost</th>
               <th>Min</th>
               <th>Actions</th>
@@ -508,7 +530,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 <td>{item.oem || '-'}</td>
                 <td>{item.partNumber || '-'}</td>
                 <td>{item.unit}</td>
-                <td>{formatQty(item.totalQuantity, item.unit)}</td>
+                <td>{formatQty(itemDisplayQuantity(item), item.unit)}</td>
                 <td>{money(item.averageCost)}</td>
                 <td>{formatQty(item.minimumQuantity, item.unit)}</td>
                 <td>
