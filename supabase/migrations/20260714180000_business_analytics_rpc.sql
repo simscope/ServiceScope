@@ -539,6 +539,12 @@ end;
 $$;
 
 revoke all on function public.business_analytics_job_facts(uuid, timestamptz, timestamptz, uuid) from public;
+revoke all on function public.business_analytics_job_facts(uuid, timestamptz, timestamptz, uuid) from anon;
+revoke all on function public.business_analytics_job_facts(uuid, timestamptz, timestamptz, uuid) from authenticated;
 revoke all on function public.business_analytics_company_timezone(uuid) from public;
+revoke all on function public.business_analytics_company_timezone(uuid) from anon;
+revoke all on function public.business_analytics_company_timezone(uuid) from authenticated;
 revoke all on function public.get_business_analytics(uuid, date, date, uuid) from public;
+revoke all on function public.get_business_analytics(uuid, date, date, uuid) from anon;
+revoke all on function public.get_business_analytics(uuid, date, date, uuid) from authenticated;
 grant execute on function public.get_business_analytics(uuid, date, date, uuid) to authenticated;
