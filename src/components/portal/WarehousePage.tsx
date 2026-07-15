@@ -150,7 +150,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       .catch((error) => {
         if (cancelled) return;
         setSnapshot(emptySnapshot);
-        setStatus(error instanceof Error ? error.message : 'Warehouse data could not be loaded.');
+        setStatus(warehouseErrorMessage(error));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -443,7 +443,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
               <History size={18} aria-hidden="true" />
             </div>
             {snapshot.movements.length ? renderMovementTable(snapshot.movements.slice(0, 6)) : (
-              <EmptyWarehouseState title="No movements yet" detail="Posted receipts, transfers, adjustments, and Job issues will appear here." />
+              <EmptyWarehouseState title="No movements yet" detail="Posted receipts will appear here after the warehouse migrations are applied." />
             )}
           </section>
         </div>
