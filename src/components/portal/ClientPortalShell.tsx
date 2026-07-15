@@ -6,6 +6,8 @@ import { SquareBillingModal } from './SquareBillingModal';
 import type { ClientPageRendererContextGroups } from './clientPageRendererTypes';
 import type { ClientNavItem } from '../../features/navigation/clientNavigation';
 
+const ALL_JOBS_CONTEXT_STORAGE_KEY = 'servicescope.portal.allJobsContext';
+
 type ClientPortalShellProps = {
   activeClientNavItem?: ClientNavItem;
   activeCompany: Company;
@@ -45,6 +47,14 @@ export function ClientPortalShell({
   visibleClientNavItems,
   signedInUser,
 }: ClientPortalShellProps) {
+  const handleNavClick = (page: ClientPage) => {
+    if (page === 'allJobs') {
+      window.sessionStorage.removeItem(ALL_JOBS_CONTEXT_STORAGE_KEY);
+      window.dispatchEvent(new CustomEvent('servicescope:clearAllJobsContext'));
+    }
+    onNavigateClientPage(page);
+  };
+
   return (
     <div className="client-app">
       <header className="client-topbar">
@@ -62,7 +72,7 @@ export function ClientPortalShell({
               className={`client-nav-item ${renderedClientPage === item.page ? 'active' : ''} ${item.adminOnly ? 'admin' : ''}`}
               type="button"
               key={item.page}
-              onClick={() => onNavigateClientPage(item.page)}
+              onClick={() => handleNavClick(item.page)}
             >
               {item.icon}
               {item.label}

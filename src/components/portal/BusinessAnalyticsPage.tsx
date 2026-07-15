@@ -16,6 +16,14 @@ type BusinessAnalyticsPageProps = {
 
 const ALL_JOBS_CONTEXT_STORAGE_KEY = 'servicescope.portal.allJobsContext';
 
+function scrollBusinessAnalyticsToTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  const frameId = window.requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  });
+  return () => window.cancelAnimationFrame(frameId);
+}
+
 type KpiConfig = {
   key: keyof BusinessAnalyticsSummary;
   comparisonKey?: keyof BusinessAnalyticsComparison;
@@ -200,11 +208,7 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
   const hasFinancialAccess = accessLevel !== 'off';
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-    const frameId = window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
-    });
-    return () => window.cancelAnimationFrame(frameId);
+    return scrollBusinessAnalyticsToTop();
   }, []);
 
   useEffect(() => {
@@ -263,6 +267,11 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
     void loadAnalytics();
   }, [selectedCompanyId, range.from, range.to, hasFinancialAccess]);
 
+  const handleRefresh = () => {
+    scrollBusinessAnalyticsToTop();
+    void loadAnalytics();
+  };
+
   if (!hasFinancialAccess) {
     return (
       <section className="business-analytics-page">
@@ -292,7 +301,7 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
         </div>
         <div className="business-refresh">
           <span>{lastUpdated ? `Updated ${lastUpdated}` : 'Not updated yet'}</span>
-          <button className="secondary-button compact" type="button" onClick={loadAnalytics} disabled={loading}>
+          <button className="secondary-button compact" type="button" onClick={handleRefresh} disabled={loading}>
             <RefreshCw size={15} aria-hidden="true" />
             Refresh
           </button>
@@ -336,7 +345,7 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
           <AlertTriangle size={24} aria-hidden="true" />
           <h2>Analytics unavailable</h2>
           <p>{error}</p>
-          <button className="primary-button compact" type="button" onClick={loadAnalytics}>Retry</button>
+          <button className="primary-button compact" type="button" onClick={handleRefresh}>Retry</button>
         </div>
       ) : analytics ? (
         <>

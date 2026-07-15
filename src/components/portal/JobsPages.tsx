@@ -552,6 +552,12 @@ export function AllJobsPage({
     }
   }, [allJobsContext, allJobsVisibility, onAllJobsVisibilityChange]);
 
+  useEffect(() => {
+    const clearContext = () => setAllJobsContext(null);
+    window.addEventListener('servicescope:clearAllJobsContext', clearContext);
+    return () => window.removeEventListener('servicescope:clearAllJobsContext', clearContext);
+  }, []);
+
   if (openedJob) {
     return (
       <section className="all-jobs-page">
