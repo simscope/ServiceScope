@@ -2079,6 +2079,106 @@ button {
   gap: 8px;
 }
 
+.warehouse-receipts-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.warehouse-panel-heading select {
+  width: auto;
+  min-width: 130px;
+  min-height: 34px;
+}
+
+.warehouse-receipt-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.warehouse-receipt-list button {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 10px;
+  color: #17201b;
+  text-align: left;
+  cursor: pointer;
+}
+
+.warehouse-receipt-list button.active {
+  border-color: #377bd4;
+  background: #edf5ff;
+}
+
+.warehouse-receipt-list span {
+  color: #667269;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.warehouse-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #1f5da8;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: capitalize;
+}
+
+.warehouse-status.posted {
+  background: #dcf7e6;
+  color: #0e6b34;
+}
+
+.warehouse-status.canceled {
+  background: #ffe7e7;
+  color: #8f1212;
+}
+
+.warehouse-receipt-editor {
+  display: grid;
+  gap: 14px;
+}
+
+.warehouse-receipt-lines {
+  display: grid;
+  gap: 10px;
+}
+
+.warehouse-line-editor {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 100px 120px auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.warehouse-line-editor select,
+.warehouse-line-editor input,
+.warehouse-table.receipt-lines input {
+  min-height: 34px;
+  background: #fbfcfd;
+  font-size: 13px;
+}
+
+.warehouse-table.receipt-lines {
+  min-width: 780px;
+}
+
+.warehouse-table.receipt-lines td:nth-child(2),
+.warehouse-table.receipt-lines td:nth-child(3) {
+  width: 120px;
+}
+
 @media (max-width: 980px) {
   .warehouse-header {
     align-items: flex-start;
@@ -2093,8 +2193,13 @@ button {
   .warehouse-toolbar,
   .warehouse-dashboard-grid,
   .warehouse-settings-grid,
+  .warehouse-receipts-grid,
   .warehouse-form-grid,
   .warehouse-form-grid.wide {
+    grid-template-columns: 1fr;
+  }
+
+  .warehouse-line-editor {
     grid-template-columns: 1fr;
   }
 

@@ -1,14 +1,26 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Boxes, History, MapPin, Package, Settings, Truck, Warehouse } from 'lucide-react';
 import {
+  cancelInventoryReceipt,
   createInventoryItem,
+  createInventoryReceipt,
+  createInventoryReceiptLine,
   createInventorySupplier,
   createInventoryWarehouse,
+  deleteInventoryReceiptLine,
   listWarehouseSnapshot,
+  postInventoryReceipt,
+  updateInventoryReceipt,
+  updateInventoryReceiptLine,
+  warehouseErrorMessage,
   type InventoryItem,
   type InventoryItemDraft,
+  type InventoryReceiptDraft,
+  type InventoryReceiptLineDraft,
   type InventorySupplierDraft,
   type InventoryWarehouseDraft,
+  type InventoryStockReceipt,
+  type InventoryStockReceiptLine,
   type WarehouseSnapshot,
 } from '../../services/warehouseStore';
 import { money } from '../../utils/format';
@@ -28,6 +40,8 @@ const emptySnapshot: WarehouseSnapshot = {
   suppliers: [],
   stockBalances: [],
   movements: [],
+  receipts: [],
+  receiptLines: [],
 };
 
 const emptyWarehouseDraft: InventoryWarehouseDraft = {
@@ -59,6 +73,27 @@ const emptySupplierDraft: InventorySupplierDraft = {
   website: '',
   address: '',
 };
+
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+const emptyReceiptDraft = (): InventoryReceiptDraft => ({
+  supplierId: null,
+  warehouseId: '',
+  binId: null,
+  receiptDate: todayIso(),
+  poNumber: '',
+  invoiceNumber: '',
+  notes: '',
+});
+
+const emptyReceiptLineDraft = (receiptId = ''): InventoryReceiptLineDraft => ({
+  receiptId,
+  itemId: '',
+  quantity: 1,
+  unitCost: 0,
+  extraCost: 0,
+  currency: 'USD',
+});
 
 const tabs: Array<{ key: WarehouseTab; label: string }> = [
   { key: 'dashboard', label: 'Dashboard' },
@@ -98,6 +133,10 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const [warehouseDraft, setWarehouseDraft] = useState<InventoryWarehouseDraft>(emptyWarehouseDraft);
   const [itemDraft, setItemDraft] = useState<InventoryItemDraft>(emptyItemDraft);
   const [supplierDraft, setSupplierDraft] = useState<InventorySupplierDraft>(emptySupplierDraft);
+  const [receiptDraft, setReceiptDraft] = useState<InventoryReceiptDraft>(() => emptyReceiptDraft());
+  const [receiptLineDraft, setReceiptLineDraft] = useState<InventoryReceiptLineDraft>(() => emptyReceiptLineDraft());
+  const [selectedReceiptId, setSelectedReceiptId] = useState('');
+  const [receiptStatusFilter, setReceiptStatusFilter] = useState<'all' | 'draft' | 'posted' | 'canceled'>('all');
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +165,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   async function reloadWarehouse() {
     const nextSnapshot = await listWarehouseSnapshot(companyId);
     setSnapshot(nextSnapshot);
+    if (selectedReceiptId && !nextSnapshot.receipts.some((receipt) => receipt.id === selectedReceiptId)) {
+      setSelectedReceiptId('');
+    }
   }
 
   async function saveWarehouseDraft() {
@@ -179,6 +221,125 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     }
   }
 
+  async function saveReceiptDraft() {
+    if (!receiptDraft.warehouseId) {
+      setStatus('Warehouse is required.');
+      return;
+    }
+    if (receiptDraft.binId && !snapshot.bins.some((bin) => bin.id === receiptDraft.binId && bin.warehouseId === receiptDraft.warehouseId)) {
+      setStatus('Selected bin does not belong to this warehouse.');
+      return;
+    }
+    if (receiptDraft.supplierId && !snapshot.suppliers.some((supplier) => supplier.id === receiptDraft.supplierId && supplier.isActive)) {
+      setStatus('Select an active supplier or leave supplier empty.');
+      return;
+    }
+
+    setStatus('Saving receipt draft...');
+    try {
+      const saved = selectedReceiptId
+        ? await updateInventoryReceipt(snapshot.receipts.find((receipt) => receipt.id === selectedReceiptId) as InventoryStockReceipt, receiptDraft)
+        : await createInventoryReceipt(companyId, receiptDraft);
+      setSelectedReceiptId(saved.id);
+      await reloadWarehouse();
+      setStatus('Receipt draft saved.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function addReceiptLine() {
+    const receiptId = selectedReceiptId;
+    if (!receiptId) {
+      setStatus('Save the receipt draft before adding lines.');
+      return;
+    }
+    if (!receiptLineDraft.itemId) {
+      setStatus('Select an item.');
+      return;
+    }
+    if ((Number(receiptLineDraft.quantity) || 0) <= 0) {
+      setStatus('Quantity must be greater than zero.');
+      return;
+    }
+    if ((Number(receiptLineDraft.unitCost) || 0) < 0) {
+      setStatus('Unit cost cannot be negative.');
+      return;
+    }
+    if (snapshot.receiptLines.some((line) => line.receiptId === receiptId && line.itemId === receiptLineDraft.itemId)) {
+      setStatus('This item is already on the receipt. Update the existing line instead.');
+      return;
+    }
+
+    setStatus('Adding receipt line...');
+    try {
+      await createInventoryReceiptLine(companyId, { ...receiptLineDraft, receiptId });
+      setReceiptLineDraft(emptyReceiptLineDraft(receiptId));
+      await reloadWarehouse();
+      setStatus('Receipt line added.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function updateReceiptLine(line: InventoryStockReceiptLine, patch: Partial<InventoryReceiptLineDraft>) {
+    setStatus('Saving line...');
+    try {
+      await updateInventoryReceiptLine(line, patch);
+      await reloadWarehouse();
+      setStatus('Receipt line saved.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function removeReceiptLine(line: InventoryStockReceiptLine) {
+    setStatus('Removing line...');
+    try {
+      await deleteInventoryReceiptLine(line);
+      await reloadWarehouse();
+      setStatus('Receipt line removed.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function postReceipt(receipt: InventoryStockReceipt) {
+    const lines = snapshot.receiptLines.filter((line) => line.receiptId === receipt.id);
+    if (!lines.length) {
+      setStatus('Add at least one line before posting.');
+      return;
+    }
+    if (lines.some((line) => line.unitCost === 0)) {
+      const confirmedZeroCost = window.confirm('This receipt includes zero-cost lines. Continue only for warranty, free replacement, donated stock, or opening correction.');
+      if (!confirmedZeroCost) return;
+    }
+    const confirmed = window.confirm('This receipt will update stock balances and inventory cost. Posted receipts cannot be edited.');
+    if (!confirmed) return;
+
+    setStatus('Posting receipt...');
+    try {
+      await postInventoryReceipt(receipt.id);
+      await reloadWarehouse();
+      setStatus('Receipt posted. Stock balances and average cost were updated.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function cancelReceipt(receipt: InventoryStockReceipt) {
+    const reason = window.prompt('Cancel reason');
+    if (reason === null) return;
+    setStatus('Canceling receipt...');
+    try {
+      await cancelInventoryReceipt(receipt.id, reason);
+      await reloadWarehouse();
+      setStatus('Receipt canceled.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
   const itemById = useMemo(() => new Map(snapshot.items.map((item) => [item.id, item])), [snapshot.items]);
   const warehouseById = useMemo(() => new Map(snapshot.warehouses.map((warehouse) => [warehouse.id, warehouse])), [snapshot.warehouses]);
   const supplierById = useMemo(() => new Map(snapshot.suppliers.map((supplier) => [supplier.id, supplier])), [snapshot.suppliers]);
@@ -229,6 +390,22 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     inventoryValue: snapshot.items.reduce((sum, item) => sum + item.totalQuantity * item.averageCost, 0),
     lowStock: lowStockItems.length,
   }), [lowStockItems.length, snapshot.items, snapshot.warehouses]);
+
+  const selectedReceipt = useMemo(() => snapshot.receipts.find((receipt) => receipt.id === selectedReceiptId), [selectedReceiptId, snapshot.receipts]);
+
+  useEffect(() => {
+    if (!selectedReceipt) return;
+    setReceiptDraft({
+      supplierId: selectedReceipt.supplierId,
+      warehouseId: selectedReceipt.warehouseId,
+      binId: selectedReceipt.binId,
+      receiptDate: selectedReceipt.receiptDate,
+      poNumber: selectedReceipt.poNumber,
+      invoiceNumber: selectedReceipt.invoiceNumber,
+      notes: selectedReceipt.notes,
+    });
+    setReceiptLineDraft((draft) => ({ ...draft, receiptId: selectedReceipt.id }));
+  }, [selectedReceipt]);
 
   function renderDashboard() {
     return (
@@ -365,6 +542,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
               <th>Item</th>
               <th>Qty</th>
               <th>Cost</th>
+              <th>Balance before</th>
+              <th>Balance after</th>
+              <th>Avg after</th>
               <th>From</th>
               <th>To</th>
               <th>Supplier</th>
@@ -379,6 +559,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 <td>{itemById.get(movement.itemId)?.internalName ?? 'Unknown item'}</td>
                 <td>{formatQty(movement.quantity, itemById.get(movement.itemId)?.unit)}</td>
                 <td>{money(movement.totalCost)}</td>
+                <td>{movement.balanceBefore == null ? '-' : formatQty(movement.balanceBefore, itemById.get(movement.itemId)?.unit)}</td>
+                <td>{movement.balanceAfter == null ? '-' : formatQty(movement.balanceAfter, itemById.get(movement.itemId)?.unit)}</td>
+                <td>{movement.averageCostAfter == null ? '-' : money(movement.averageCostAfter)}</td>
                 <td>{movement.fromWarehouseId ? warehouseById.get(movement.fromWarehouseId)?.name ?? '-' : '-'}</td>
                 <td>{movement.toWarehouseId ? warehouseById.get(movement.toWarehouseId)?.name ?? '-' : '-'}</td>
                 <td>{movement.supplierId ? supplierById.get(movement.supplierId)?.name ?? '-' : '-'}</td>
@@ -408,13 +591,168 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     );
   }
 
-  function renderDocumentPlaceholder(kind: 'receipts' | 'transfers') {
+  function renderReceipts() {
+    const filteredReceipts = snapshot.receipts.filter((receipt) => receiptStatusFilter === 'all' || receipt.status === receiptStatusFilter);
+    const receiptLines = selectedReceipt ? snapshot.receiptLines.filter((line) => line.receiptId === selectedReceipt.id) : [];
+    const receiptMovements = selectedReceipt ? snapshot.movements.filter((movement) => movement.receiptId === selectedReceipt.id) : [];
+    const receiptTotal = receiptLines.reduce((sum, line) => sum + line.quantity * line.unitCost + line.extraCost, 0);
+    const editable = !selectedReceipt || selectedReceipt.status === 'draft';
+    const binsForWarehouse = snapshot.bins.filter((bin) => bin.warehouseId === receiptDraft.warehouseId && bin.isActive);
+
+    return (
+      <div className="warehouse-receipts-grid">
+        <section className="warehouse-panel">
+          <div className="warehouse-panel-heading">
+            <h2>Receipts</h2>
+            <select value={receiptStatusFilter} onChange={(event) => setReceiptStatusFilter(event.target.value as typeof receiptStatusFilter)}>
+              <option value="all">All</option>
+              <option value="draft">Draft</option>
+              <option value="posted">Posted</option>
+              <option value="canceled">Canceled</option>
+            </select>
+          </div>
+          <button className="secondary-button compact" type="button" onClick={() => { setSelectedReceiptId(''); setReceiptDraft(emptyReceiptDraft()); setReceiptLineDraft(emptyReceiptLineDraft()); }}>
+            New draft receipt
+          </button>
+          {filteredReceipts.length ? (
+            <div className="warehouse-receipt-list">
+              {filteredReceipts.map((receipt) => {
+                const lines = snapshot.receiptLines.filter((line) => line.receiptId === receipt.id);
+                const total = lines.reduce((sum, line) => sum + line.quantity * line.unitCost + line.extraCost, 0);
+                return (
+                  <button className={selectedReceiptId === receipt.id ? 'active' : ''} type="button" onClick={() => setSelectedReceiptId(receipt.id)} key={receipt.id}>
+                    <strong>{receipt.invoiceNumber || receipt.poNumber || `Receipt ${receipt.id.slice(0, 8)}`}</strong>
+                    <span>{receipt.status} - {receipt.receiptDate} - {money(total)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyWarehouseState title="No receipts yet" detail="Create a draft receipt, add lines, then post it through the database RPC." />
+          )}
+        </section>
+
+        <section className="warehouse-panel warehouse-receipt-editor">
+          <div className="warehouse-panel-heading">
+            <h2>{selectedReceipt ? `Receipt ${selectedReceipt.invoiceNumber || selectedReceipt.poNumber || selectedReceipt.id.slice(0, 8)}` : 'New receipt draft'}</h2>
+            {selectedReceipt ? <span className={`warehouse-status ${selectedReceipt.status}`}>{selectedReceipt.status}</span> : null}
+          </div>
+
+          <div className="warehouse-form-grid">
+            <label>Supplier
+              <select value={receiptDraft.supplierId ?? ''} disabled={!editable} onChange={(event) => setReceiptDraft({ ...receiptDraft, supplierId: event.target.value || null })}>
+                <option value="">No supplier</option>
+                {snapshot.suppliers.filter((supplier) => supplier.isActive).map((supplier) => (
+                  <option value={supplier.id} key={supplier.id}>{supplier.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>Warehouse
+              <select value={receiptDraft.warehouseId} disabled={!editable} onChange={(event) => setReceiptDraft({ ...receiptDraft, warehouseId: event.target.value, binId: null })}>
+                <option value="">Select warehouse</option>
+                {snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>Bin
+              <select value={receiptDraft.binId ?? ''} disabled={!editable || !receiptDraft.warehouseId} onChange={(event) => setReceiptDraft({ ...receiptDraft, binId: event.target.value || null })}>
+                <option value="">No bin</option>
+                {binsForWarehouse.map((bin) => (
+                  <option value={bin.id} key={bin.id}>{bin.code} - {bin.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>Date<input type="date" value={receiptDraft.receiptDate} disabled={!editable} onChange={(event) => setReceiptDraft({ ...receiptDraft, receiptDate: event.target.value })} /></label>
+            <label>PO #<input value={receiptDraft.poNumber} disabled={!editable} onChange={(event) => setReceiptDraft({ ...receiptDraft, poNumber: event.target.value })} /></label>
+            <label>Invoice #<input value={receiptDraft.invoiceNumber} disabled={!editable} onChange={(event) => setReceiptDraft({ ...receiptDraft, invoiceNumber: event.target.value })} /></label>
+            <label>Notes<input value={receiptDraft.notes} disabled={!editable} onChange={(event) => setReceiptDraft({ ...receiptDraft, notes: event.target.value })} /></label>
+          </div>
+
+          <div className="warehouse-form-actions">
+            {editable ? <button className="secondary-button compact" type="button" onClick={saveReceiptDraft}>Save draft</button> : null}
+            {selectedReceipt?.status === 'draft' ? <button className="primary-button" type="button" onClick={() => postReceipt(selectedReceipt)}>Post Receipt</button> : null}
+            {selectedReceipt?.status === 'posted' ? <button className="secondary-button compact danger-lite" type="button" onClick={() => cancelReceipt(selectedReceipt)}>Cancel Receipt</button> : null}
+          </div>
+
+          {selectedReceipt?.postedAt ? <p className="warehouse-note">Posted {selectedReceipt.postedAt.slice(0, 16).replace('T', ' ')}</p> : null}
+          {selectedReceipt?.canceledAt ? <p className="warehouse-note">Canceled {selectedReceipt.canceledAt.slice(0, 16).replace('T', ' ')} - {selectedReceipt.cancelReason}</p> : null}
+
+          <div className="warehouse-receipt-lines">
+            <div className="warehouse-panel-heading">
+              <h2>Lines</h2>
+              <strong>{money(receiptTotal)}</strong>
+            </div>
+            {editable ? (
+              <div className="warehouse-line-editor">
+                <select value={receiptLineDraft.itemId} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, itemId: event.target.value })}>
+                  <option value="">Select item</option>
+                  {snapshot.items.filter((item) => item.isActive).map((item) => (
+                    <option value={item.id} key={item.id}>{item.internalName} {item.partNumber ? `- ${item.partNumber}` : ''}</option>
+                  ))}
+                </select>
+                <input type="number" min="0" value={receiptLineDraft.quantity} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, quantity: Number(event.target.value) || 0 })} aria-label="Quantity" />
+                <input type="number" min="0" value={receiptLineDraft.unitCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, unitCost: Number(event.target.value) || 0 })} aria-label="Unit cost" />
+                <button className="secondary-button compact" type="button" onClick={addReceiptLine}>Add line</button>
+              </div>
+            ) : null}
+
+            {receiptLines.length ? (
+              <div className="warehouse-table-wrap">
+                <table className="warehouse-table receipt-lines">
+                  <thead>
+                    <tr>
+                      <th>Item</th>
+                      <th>Qty</th>
+                      <th>Unit cost</th>
+                      <th>Total</th>
+                      <th>Avg before</th>
+                      <th>Avg after</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {receiptLines.map((line) => {
+                      const item = itemById.get(line.itemId);
+                      const movement = snapshot.movements.find((row) => row.receiptLineId === line.id && row.movementType === 'receipt');
+                      return (
+                        <tr key={line.id}>
+                          <td>{item?.internalName ?? 'Unknown item'}</td>
+                          <td>{editable ? <input type="number" min="0" value={line.quantity} onChange={(event) => updateReceiptLine(line, { quantity: Number(event.target.value) || 0 })} /> : formatQty(line.quantity, item?.unit)}</td>
+                          <td>{editable ? <input type="number" min="0" value={line.unitCost} onChange={(event) => updateReceiptLine(line, { unitCost: Number(event.target.value) || 0 })} /> : money(line.unitCost)}</td>
+                          <td>{money(line.quantity * line.unitCost + line.extraCost)}</td>
+                          <td>{movement?.averageCostBefore == null ? '-' : money(movement.averageCostBefore)}</td>
+                          <td>{movement?.averageCostAfter == null ? '-' : money(movement.averageCostAfter)}</td>
+                          <td>{editable ? <button className="secondary-button compact danger-lite" type="button" onClick={() => removeReceiptLine(line)}>Remove</button> : null}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <EmptyWarehouseState title="No receipt lines" detail="Add at least one active inventory item before posting." />
+            )}
+          </div>
+
+          {receiptMovements.length ? (
+            <div>
+              <div className="warehouse-panel-heading">
+                <h2>Posted movements</h2>
+              </div>
+              {renderMovementTable(receiptMovements)}
+            </div>
+          ) : null}
+        </section>
+      </div>
+    );
+  }
+
+  function renderDocumentPlaceholder(kind: 'transfers') {
     return (
       <EmptyWarehouseState
-        title={kind === 'receipts' ? 'Receipts are ready for stage 2' : 'Transfers are ready for stage 3'}
-        detail={kind === 'receipts'
-          ? 'Stage 1 creates receipt tables. Posting logic and weighted average cost RPC will be added next.'
-          : 'Transfer documents will move stock between warehouses without changing company average cost.'}
+        title="Transfers are ready for stage 3"
+        detail="Transfer documents will move stock between warehouses without changing company average cost."
       />
     );
   }
@@ -575,7 +913,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       {activeTab === 'dashboard' ? renderDashboard() : null}
       {activeTab === 'materials' ? renderMaterialsTable(filteredItems) : null}
       {activeTab === 'stock' ? renderStockTable(false) : null}
-      {activeTab === 'receipts' ? renderDocumentPlaceholder('receipts') : null}
+      {activeTab === 'receipts' ? renderReceipts() : null}
       {activeTab === 'transfers' ? renderDocumentPlaceholder('transfers') : null}
       {activeTab === 'lowStock' ? (
         lowStockItems.length ? renderMaterialsTable(lowStockItems) : (
@@ -588,7 +926,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
 
       <div className="warehouse-warning">
         <AlertTriangle size={17} aria-hidden="true" />
-        <span>Stage 1 is database-backed setup and read UI. Posting receipts, transfers, and Job issues must be handled by database RPC in the next stages to prevent negative stock and double posting.</span>
+        <span>Receipts post through PostgreSQL RPC with locks. Transfers and Job issues are still reserved for later stages.</span>
       </div>
     </section>
   );
