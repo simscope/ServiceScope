@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Boxes, History, MapPin, Package, Settings, Truck, Warehouse } from 'lucide-react';
+import { AlertTriangle, Boxes, ChevronDown, History, MapPin, Package, Plus, Settings, Truck, Warehouse } from 'lucide-react';
 import {
   cancelInventoryReceipt,
   createInventoryItem,
@@ -25,13 +25,15 @@ import {
 } from '../../services/warehouseStore';
 import { money } from '../../utils/format';
 
-type WarehouseTab = 'dashboard' | 'materials' | 'stock' | 'receipts' | 'lowStock' | 'suppliers' | 'history' | 'settings';
+type WarehouseTab = 'parts' | 'purchases' | 'activity' | 'settings';
 
 type WarehousePageProps = {
   companyId: string;
 };
 
-type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier';
+type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock';
+type PartsFilter = 'all' | 'low' | 'out';
+type ActivityFilter = 'all' | 'received' | 'used' | 'moved' | 'adjustments';
 
 const emptySnapshot: WarehouseSnapshot = {
   warehouses: [],
@@ -96,15 +98,26 @@ const emptyReceiptLineDraft = (receiptId = ''): InventoryReceiptLineDraft => ({
 });
 
 const tabs: Array<{ key: WarehouseTab; label: string }> = [
-  { key: 'dashboard', label: 'Dashboard' },
-  { key: 'materials', label: 'Materials' },
-  { key: 'stock', label: 'Stock' },
-  { key: 'receipts', label: 'Receipts' },
-  { key: 'lowStock', label: 'Low Stock' },
-  { key: 'suppliers', label: 'Suppliers' },
-  { key: 'history', label: 'Movement History' },
+  { key: 'parts', label: 'Parts' },
+  { key: 'purchases', label: 'Purchases' },
+  { key: 'activity', label: 'Activity' },
   { key: 'settings', label: 'Settings' },
 ];
+
+const emptyQuickStockDraft = () => ({
+  itemId: '',
+  quantity: 1,
+  unitCost: 0,
+  warehouseId: '',
+  supplierId: '',
+  binId: '',
+  extraCost: 0,
+  invoiceNumber: '',
+  poNumber: '',
+  receiptDate: todayIso(),
+  notes: '',
+  showMore: false,
+});
 
 function formatQty(value: number, unit = '') {
   const clean = Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
@@ -122,20 +135,25 @@ function EmptyWarehouseState({ title, detail }: { title: string; detail: string 
 }
 
 export function WarehousePage({ companyId }: WarehousePageProps) {
-  const [activeTab, setActiveTab] = useState<WarehouseTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<WarehouseTab>('parts');
   const [search, setSearch] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
+  const [partsFilter, setPartsFilter] = useState<PartsFilter>('all');
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
   const [snapshot, setSnapshot] = useState<WarehouseSnapshot>(emptySnapshot);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState('');
   const [formMode, setFormMode] = useState<WarehouseFormMode>('none');
+  const [selectedPartId, setSelectedPartId] = useState('');
   const [warehouseDraft, setWarehouseDraft] = useState<InventoryWarehouseDraft>(emptyWarehouseDraft);
   const [itemDraft, setItemDraft] = useState<InventoryItemDraft>(emptyItemDraft);
   const [supplierDraft, setSupplierDraft] = useState<InventorySupplierDraft>(emptySupplierDraft);
   const [receiptDraft, setReceiptDraft] = useState<InventoryReceiptDraft>(() => emptyReceiptDraft());
   const [receiptLineDraft, setReceiptLineDraft] = useState<InventoryReceiptLineDraft>(() => emptyReceiptLineDraft());
+  const [quickStockDraft, setQuickStockDraft] = useState(() => emptyQuickStockDraft());
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
   const [receiptStatusFilter, setReceiptStatusFilter] = useState<'all' | 'draft' | 'posted' | 'canceled'>('all');
+  const [showAdvancedPurchaseEditor, setShowAdvancedPurchaseEditor] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -293,20 +311,78 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         : '';
     const neededQuantity = Math.max(1, Math.ceil(item.minimumQuantity - item.totalQuantity));
 
-    setActiveTab('receipts');
+    setActiveTab('parts');
+    setFormMode('stock');
     setSelectedReceiptId('');
-    setReceiptDraft({
-      ...emptyReceiptDraft(),
-      warehouseId: preferredWarehouseId,
-    });
-    setReceiptLineDraft({
-      ...emptyReceiptLineDraft(),
+    setQuickStockDraft({
+      ...emptyQuickStockDraft(),
       itemId: item.id,
       quantity: neededQuantity,
+      warehouseId: preferredWarehouseId,
     });
     setStatus(preferredWarehouseId
-      ? 'Enter the vendor cost, then Add line. The receipt draft will be saved automatically.'
-      : 'Select a warehouse and vendor cost, then Add line. The receipt draft will be saved automatically.');
+      ? 'Enter quantity and price, then add to stock.'
+      : 'Select a location, quantity, and price, then add to stock.');
+  }
+
+  function openQuickStock() {
+    const activeWarehouses = snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive);
+    setFormMode('stock');
+    setQuickStockDraft({
+      ...emptyQuickStockDraft(),
+      warehouseId: warehouseFilter !== 'all' ? warehouseFilter : activeWarehouses.length === 1 ? activeWarehouses[0].id : '',
+    });
+  }
+
+  async function addQuickStock() {
+    if (!quickStockDraft.itemId) {
+      setStatus('Select a part.');
+      return;
+    }
+    if (!quickStockDraft.warehouseId) {
+      setStatus('Select a location.');
+      return;
+    }
+    if ((Number(quickStockDraft.quantity) || 0) <= 0) {
+      setStatus('Quantity must be greater than zero.');
+      return;
+    }
+    if ((Number(quickStockDraft.unitCost) || 0) < 0) {
+      setStatus('Price each cannot be negative.');
+      return;
+    }
+    if ((Number(quickStockDraft.unitCost) || 0) === 0) {
+      const confirmedZeroCost = window.confirm('This stock has zero cost. Continue only for warranty, free replacement, donated stock, or opening correction.');
+      if (!confirmedZeroCost) return;
+    }
+
+    setStatus('Adding stock...');
+    try {
+      const savedReceipt = await createInventoryReceipt(companyId, {
+        supplierId: quickStockDraft.supplierId || null,
+        warehouseId: quickStockDraft.warehouseId,
+        binId: quickStockDraft.binId || null,
+        receiptDate: quickStockDraft.receiptDate,
+        poNumber: quickStockDraft.poNumber,
+        invoiceNumber: quickStockDraft.invoiceNumber,
+        notes: quickStockDraft.notes,
+      });
+      await createInventoryReceiptLine(companyId, {
+        receiptId: savedReceipt.id,
+        itemId: quickStockDraft.itemId,
+        quantity: quickStockDraft.quantity,
+        unitCost: quickStockDraft.unitCost,
+        extraCost: quickStockDraft.extraCost,
+        currency: 'USD',
+      });
+      await postInventoryReceipt(savedReceipt.id);
+      setQuickStockDraft(emptyQuickStockDraft());
+      setFormMode('none');
+      await reloadWarehouse();
+      setStatus('Stock added.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
   }
 
   async function updateReceiptLine(line: InventoryStockReceiptLine, patch: Partial<InventoryReceiptLineDraft>) {
@@ -401,6 +477,19 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       : itemQuantityBySelectedWarehouse.get(item.id) ?? 0;
   }
 
+  function itemLocationSummary(item: InventoryItem) {
+    const rows = stockRows.filter((row) => row.item?.id === item.id && row.balance.quantity > 0);
+    if (!rows.length) return 'No stock yet';
+    return rows
+      .slice(0, 3)
+      .map((row) => `${row.warehouse?.name ?? 'Unknown'} ${formatQty(row.balance.quantity, item.unit)}`)
+      .join(' - ');
+  }
+
+  function itemSubtitle(item: InventoryItem) {
+    return [item.partNumber, item.manufacturer || item.oem].filter(Boolean).join(' - ') || item.description || 'No part details';
+  }
+
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     return snapshot.items.filter((item) => {
@@ -413,9 +502,13 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         item.alternatePartNumber,
         item.description,
       ].join(' ').toLowerCase();
-      return !query || haystack.includes(query);
+      if (query && !haystack.includes(query)) return false;
+      const quantity = itemDisplayQuantity(item);
+      if (partsFilter === 'low') return item.minimumQuantity > 0 && quantity <= item.minimumQuantity;
+      if (partsFilter === 'out') return quantity <= 0;
+      return true;
     });
-  }, [search, snapshot.items]);
+  }, [itemQuantityBySelectedWarehouse, partsFilter, search, snapshot.items, warehouseFilter]);
 
   const filteredStockRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -440,6 +533,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   }), [lowStockItems.length, snapshot.items, snapshot.warehouses]);
 
   const selectedReceipt = useMemo(() => snapshot.receipts.find((receipt) => receipt.id === selectedReceiptId), [selectedReceiptId, snapshot.receipts]);
+  const selectedPart = useMemo(() => snapshot.items.find((item) => item.id === selectedPartId) ?? null, [selectedPartId, snapshot.items]);
 
   useEffect(() => {
     if (!selectedReceipt) return;
@@ -500,48 +594,70 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     );
   }
 
-  function renderMaterialsTable(items: InventoryItem[]) {
-    if (!items.length) return <EmptyWarehouseState title="No inventory materials yet" detail="The warehouse catalog is empty. Add items through the inventory_items table or the next CRUD stage." />;
-    const stockColumnLabel = selectedWarehouse ? `On hand in ${selectedWarehouse.name}` : 'Total stock';
+  function renderPartsList(items: InventoryItem[]) {
+    if (!items.length) return <EmptyWarehouseState title="No parts found" detail="Add a part or clear the search and filters." />;
 
     return (
-      <div className="warehouse-table-wrap">
-        <table className="warehouse-table">
-          <thead>
-            <tr>
-              <th>Item</th>
-              <th>Category</th>
-              <th>Manufacturer</th>
-              <th>OEM</th>
-              <th>Part #</th>
-              <th>Unit</th>
-              <th>{stockColumnLabel}</th>
-              <th>Avg cost</th>
-              <th>Min</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={item.id}>
-                <td><strong>{item.internalName}</strong><span>{item.description || item.notes}</span></td>
-                <td>{item.category || '-'}</td>
-                <td>{item.manufacturer || '-'}</td>
-                <td>{item.oem || '-'}</td>
-                <td>{item.partNumber || '-'}</td>
-                <td>{item.unit}</td>
-                <td>{formatQty(itemDisplayQuantity(item), item.unit)}</td>
-                <td>{money(item.averageCost)}</td>
-                <td>{formatQty(item.minimumQuantity, item.unit)}</td>
-                <td>
-                  <button className="secondary-button compact" type="button" onClick={() => startReceiptForItem(item)}>
-                    Receive
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="warehouse-part-list">
+        {items.map((item) => {
+          const quantity = itemDisplayQuantity(item);
+          const isOut = quantity <= 0;
+          const isLow = item.minimumQuantity > 0 && quantity <= item.minimumQuantity;
+          const isSelected = selectedPartId === item.id;
+          return (
+            <article className={`warehouse-part-card${isSelected ? ' selected' : ''}`} key={item.id}>
+              <button className="warehouse-part-main" type="button" onClick={() => setSelectedPartId(isSelected ? '' : item.id)}>
+                <span className="warehouse-part-photo">{item.internalName.slice(0, 1).toUpperCase()}</span>
+                <span className="warehouse-part-copy">
+                  <strong>{item.internalName}</strong>
+                  <small>{itemSubtitle(item)}</small>
+                  <small>{itemLocationSummary(item)}</small>
+                </span>
+                <span className="warehouse-part-stock">
+                  <strong>{formatQty(quantity, item.unit)}</strong>
+                  <small>{selectedWarehouse ? selectedWarehouse.name : 'available'}</small>
+                </span>
+                {isOut ? <span className="warehouse-pill danger">Out</span> : isLow ? <span className="warehouse-pill warning">Low</span> : null}
+                <ChevronDown size={18} aria-hidden="true" />
+              </button>
+              <div className="warehouse-part-actions">
+                <button className="primary-button compact" type="button" onClick={() => startReceiptForItem(item)}>Add stock</button>
+                <button className="secondary-button compact" type="button" disabled title="Job issues are Stage 4">Use on Job</button>
+                <button className="secondary-button compact" type="button" disabled title="Transfers are Stage 3">Move</button>
+              </div>
+              {isSelected ? renderPartDetails(item) : null}
+            </article>
+          );
+        })}
+      </div>
+    );
+  }
+
+  function renderPartDetails(item: InventoryItem) {
+    const itemRows = stockRows.filter((row) => row.item?.id === item.id);
+    const recentMovements = snapshot.movements.filter((movement) => movement.itemId === item.id).slice(0, 5);
+    return (
+      <div className="warehouse-part-detail">
+        <div>
+          <h3>{item.internalName}</h3>
+          <p>{item.description || item.notes || 'No description yet.'}</p>
+          <div className="warehouse-detail-meta">
+            <span>Part # {item.partNumber || '-'}</span>
+            <span>{item.manufacturer || item.oem || 'No manufacturer'}</span>
+            <span>Min {formatQty(item.minimumQuantity, item.unit)}</span>
+            <span>Avg cost {money(item.averageCost)}</span>
+          </div>
+        </div>
+        <div className="warehouse-location-list">
+          <strong>Locations</strong>
+          {itemRows.length ? itemRows.map((row) => (
+            <span key={row.balance.id}>{row.warehouse?.name ?? 'Unknown'} <b>{formatQty(row.balance.quantity, item.unit)}</b></span>
+          )) : <span>No stock yet</span>}
+        </div>
+        <div className="warehouse-activity-list compact">
+          <strong>Recent activity</strong>
+          {recentMovements.length ? recentMovements.map((movement) => renderActivityRow(movement, true)) : <span>No activity yet</span>}
+        </div>
       </div>
     );
   }
@@ -629,6 +745,74 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     );
   }
 
+  function movementTitle(movement: WarehouseSnapshot['movements'][number]) {
+    const item = itemById.get(movement.itemId);
+    if (movement.movementType === 'receipt') return `Received ${formatQty(movement.quantity, item?.unit)}`;
+    if (movement.movementType === 'job_issue') return `Used ${formatQty(Math.abs(movement.quantity), item?.unit)} on Job`;
+    if (movement.movementType === 'transfer_out' || movement.movementType === 'transfer_in') return `Moved ${formatQty(Math.abs(movement.quantity), item?.unit)}`;
+    if (movement.movementType === 'job_return') return `Returned ${formatQty(movement.quantity, item?.unit)}`;
+    return `Adjusted ${formatQty(movement.quantity, item?.unit)}`;
+  }
+
+  function movementContext(movement: WarehouseSnapshot['movements'][number]) {
+    const supplier = movement.supplierId ? supplierById.get(movement.supplierId)?.name : '';
+    const from = movement.fromWarehouseId ? warehouseById.get(movement.fromWarehouseId)?.name : '';
+    const to = movement.toWarehouseId ? warehouseById.get(movement.toWarehouseId)?.name : '';
+    if (movement.movementType === 'receipt') return [to, supplier].filter(Boolean).join(' - ') || 'Stock received';
+    if (from && to) return `${from} -> ${to}`;
+    return from || to || movement.referenceNumber || 'Warehouse';
+  }
+
+  function renderActivityRow(movement: WarehouseSnapshot['movements'][number], compact = false) {
+    const item = itemById.get(movement.itemId);
+    return (
+      <details className={`warehouse-activity-row${compact ? ' compact' : ''}`} key={movement.id}>
+        <summary>
+          <span>
+            <strong>{movementTitle(movement)}</strong>
+            <small>{item?.internalName ?? 'Unknown part'}</small>
+          </span>
+          <span>
+            <small>{movementContext(movement)}</small>
+            <small>{new Date(movement.createdAt).toLocaleString()}</small>
+          </span>
+        </summary>
+        <div className="warehouse-activity-details">
+          <span>Balance before: {movement.balanceBefore == null ? '-' : formatQty(movement.balanceBefore, item?.unit)}</span>
+          <span>Balance after: {movement.balanceAfter == null ? '-' : formatQty(movement.balanceAfter, item?.unit)}</span>
+          <span>Average before: {movement.averageCostBefore == null ? '-' : money(movement.averageCostBefore)}</span>
+          <span>Average after: {movement.averageCostAfter == null ? '-' : money(movement.averageCostAfter)}</span>
+          <span>Movement ID: {movement.id}</span>
+          <span>Purchase ID: {movement.receiptId ?? '-'}</span>
+        </div>
+      </details>
+    );
+  }
+
+  function renderActivity() {
+    const rows = snapshot.movements.filter((movement) => {
+      if (activityFilter === 'received') return movement.movementType === 'receipt';
+      if (activityFilter === 'used') return movement.movementType === 'job_issue' || movement.movementType === 'job_return';
+      if (activityFilter === 'moved') return movement.movementType === 'transfer_in' || movement.movementType === 'transfer_out';
+      if (activityFilter === 'adjustments') return movement.movementType === 'adjustment';
+      return true;
+    });
+    return (
+      <section className="warehouse-panel">
+        <div className="warehouse-filter-row">
+          {(['all', 'received', 'used', 'moved', 'adjustments'] as ActivityFilter[]).map((filter) => (
+            <button className={activityFilter === filter ? 'active' : ''} type="button" onClick={() => setActivityFilter(filter)} key={filter}>
+              {filter === 'all' ? 'All' : filter === 'received' ? 'Received' : filter === 'used' ? 'Used on Jobs' : filter === 'moved' ? 'Moved' : 'Adjustments'}
+            </button>
+          ))}
+        </div>
+        {rows.length ? <div className="warehouse-activity-list">{rows.map((movement) => renderActivityRow(movement))}</div> : (
+          <EmptyWarehouseState title="No activity yet" detail="Completed stock changes will appear here." />
+        )}
+      </section>
+    );
+  }
+
   function renderSuppliers() {
     if (!snapshot.suppliers.length) return <EmptyWarehouseState title="No suppliers yet" detail="Suppliers and item supplier prices will be stored in inventory_suppliers and inventory_item_suppliers." />;
 
@@ -646,6 +830,109 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     );
   }
 
+  function purchaseStatusLabel(status: InventoryStockReceipt['status']) {
+    if (status === 'draft') return 'Not finished';
+    if (status === 'canceled') return 'Canceled';
+    return 'Posted';
+  }
+
+  function receiptTotal(receipt: InventoryStockReceipt) {
+    return snapshot.receiptLines
+      .filter((line) => line.receiptId === receipt.id)
+      .reduce((sum, line) => sum + line.quantity * line.unitCost + line.extraCost, 0);
+  }
+
+  function renderPurchases() {
+    const selectedPurchase = selectedReceiptId ? snapshot.receipts.find((receipt) => receipt.id === selectedReceiptId) ?? null : null;
+    const purchases = snapshot.receipts.filter((receipt) => receiptStatusFilter === 'all' || receipt.status === receiptStatusFilter);
+    return (
+      <div className="warehouse-purchases-grid">
+        <section className="warehouse-panel">
+          <div className="warehouse-panel-heading">
+            <h2>Purchases</h2>
+            <select value={receiptStatusFilter} onChange={(event) => setReceiptStatusFilter(event.target.value as typeof receiptStatusFilter)}>
+              <option value="all">All</option>
+              <option value="draft">Not finished</option>
+              <option value="posted">Posted</option>
+              <option value="canceled">Canceled</option>
+            </select>
+          </div>
+          <div className="warehouse-purchase-actions">
+            <button className="primary-button compact" type="button" onClick={openQuickStock}>New purchase</button>
+            <button className="secondary-button compact" type="button" onClick={() => { setShowAdvancedPurchaseEditor(true); setSelectedReceiptId(''); setReceiptDraft(emptyReceiptDraft()); setReceiptLineDraft(emptyReceiptLineDraft()); }}>
+              Receive multiple items
+            </button>
+          </div>
+          {purchases.length ? (
+            <div className="warehouse-purchase-list">
+              {purchases.map((receipt) => {
+                const lines = snapshot.receiptLines.filter((line) => line.receiptId === receipt.id);
+                const supplier = receipt.supplierId ? supplierById.get(receipt.supplierId)?.name : 'No supplier';
+                const warehouseRow = warehouseById.get(receipt.warehouseId)?.name ?? 'Unknown location';
+                return (
+                  <button className={selectedReceiptId === receipt.id ? 'active' : ''} type="button" onClick={() => { setShowAdvancedPurchaseEditor(false); setSelectedReceiptId(receipt.id); }} key={receipt.id}>
+                    <span>
+                      <strong>{new Date(receipt.receiptDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</strong>
+                      <small>{supplier}</small>
+                    </span>
+                    <span>
+                      <strong>{lines.length} item{lines.length === 1 ? '' : 's'} - {money(receiptTotal(receipt))}</strong>
+                      <small>{warehouseRow}</small>
+                    </span>
+                    <span className={`warehouse-status ${receipt.status}`}>{purchaseStatusLabel(receipt.status)}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyWarehouseState title="No purchases yet" detail="Use Add stock or New purchase to receive parts." />
+          )}
+        </section>
+        <section className="warehouse-panel">
+          {showAdvancedPurchaseEditor ? renderReceipts() : selectedPurchase ? renderPurchaseDetail(selectedPurchase) : (
+            <EmptyWarehouseState title="Select a purchase" detail="Open a purchase to see details, or use New purchase to add stock." />
+          )}
+        </section>
+      </div>
+    );
+  }
+
+  function renderPurchaseDetail(receipt: InventoryStockReceipt) {
+    const lines = snapshot.receiptLines.filter((line) => line.receiptId === receipt.id);
+    const supplier = receipt.supplierId ? supplierById.get(receipt.supplierId)?.name : 'No supplier';
+    const warehouseRow = warehouseById.get(receipt.warehouseId)?.name ?? 'Unknown location';
+    return (
+      <div className="warehouse-purchase-detail">
+        <div className="warehouse-panel-heading">
+          <div>
+            <h2>{receipt.invoiceNumber || receipt.poNumber || 'Purchase'}</h2>
+            <p className="warehouse-note">{supplier} - {warehouseRow} - {receipt.receiptDate}</p>
+          </div>
+          <span className={`warehouse-status ${receipt.status}`}>{purchaseStatusLabel(receipt.status)}</span>
+        </div>
+        <div className="warehouse-purchase-lines">
+          {lines.map((line) => {
+            const item = itemById.get(line.itemId);
+            return (
+              <div className="warehouse-purchase-line" key={line.id}>
+                <span>
+                  <strong>{item?.internalName ?? 'Unknown part'}</strong>
+                  <small>{formatQty(line.quantity, item?.unit)} - Price each {money(line.unitCost)}</small>
+                </span>
+                <strong>{money(line.quantity * line.unitCost + line.extraCost)}</strong>
+              </div>
+            );
+          })}
+        </div>
+        <div className="warehouse-total-row">
+          <span>Total</span>
+          <strong>{money(receiptTotal(receipt))}</strong>
+        </div>
+        {receipt.status === 'posted' ? <button className="secondary-button compact danger-lite" type="button" onClick={() => cancelReceipt(receipt)}>Cancel purchase</button> : null}
+      </div>
+    );
+  }
+
   function renderReceipts() {
     const filteredReceipts = snapshot.receipts.filter((receipt) => receiptStatusFilter === 'all' || receipt.status === receiptStatusFilter);
     const receiptLines = selectedReceipt ? snapshot.receiptLines.filter((line) => line.receiptId === selectedReceipt.id) : [];
@@ -658,7 +945,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       <div className="warehouse-receipts-grid">
         <section className="warehouse-panel">
           <div className="warehouse-panel-heading">
-            <h2>Receipts</h2>
+            <h2>Purchases</h2>
             <select value={receiptStatusFilter} onChange={(event) => setReceiptStatusFilter(event.target.value as typeof receiptStatusFilter)}>
               <option value="all">All</option>
               <option value="draft">Draft</option>
@@ -667,7 +954,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
             </select>
           </div>
           <button className="secondary-button compact" type="button" onClick={() => { setSelectedReceiptId(''); setReceiptDraft(emptyReceiptDraft()); setReceiptLineDraft(emptyReceiptLineDraft()); }}>
-            New draft receipt
+            New purchase
           </button>
           {filteredReceipts.length ? (
             <div className="warehouse-receipt-list">
@@ -676,20 +963,20 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 const total = lines.reduce((sum, line) => sum + line.quantity * line.unitCost + line.extraCost, 0);
                 return (
                   <button className={selectedReceiptId === receipt.id ? 'active' : ''} type="button" onClick={() => setSelectedReceiptId(receipt.id)} key={receipt.id}>
-                    <strong>{receipt.invoiceNumber || receipt.poNumber || `Receipt ${receipt.id.slice(0, 8)}`}</strong>
-                    <span>{receipt.status} - {receipt.receiptDate} - {money(total)}</span>
+                    <strong>{receipt.invoiceNumber || receipt.poNumber || `Purchase ${receipt.id.slice(0, 8)}`}</strong>
+                    <span>{purchaseStatusLabel(receipt.status)} - {receipt.receiptDate} - {money(total)}</span>
                   </button>
                 );
               })}
             </div>
           ) : (
-            <EmptyWarehouseState title="No receipts yet" detail="Create a draft receipt, add lines, then post it through the database RPC." />
+            <EmptyWarehouseState title="No purchases yet" detail="Create a purchase, add parts, then complete it." />
           )}
         </section>
 
         <section className="warehouse-panel warehouse-receipt-editor">
           <div className="warehouse-panel-heading">
-            <h2>{selectedReceipt ? `Receipt ${selectedReceipt.invoiceNumber || selectedReceipt.poNumber || selectedReceipt.id.slice(0, 8)}` : 'New receipt draft'}</h2>
+            <h2>{selectedReceipt ? `Purchase ${selectedReceipt.invoiceNumber || selectedReceipt.poNumber || selectedReceipt.id.slice(0, 8)}` : 'New purchase'}</h2>
             {selectedReceipt ? <span className={`warehouse-status ${selectedReceipt.status}`}>{selectedReceipt.status}</span> : null}
           </div>
 
@@ -725,9 +1012,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           </div>
 
           <div className="warehouse-form-actions">
-            {editable ? <button className="secondary-button compact" type="button" onClick={saveReceiptDraft}>Save draft</button> : null}
-            {selectedReceipt?.status === 'draft' ? <button className="primary-button" type="button" onClick={() => postReceipt(selectedReceipt)}>Post Receipt</button> : null}
-            {selectedReceipt?.status === 'posted' ? <button className="secondary-button compact danger-lite" type="button" onClick={() => cancelReceipt(selectedReceipt)}>Cancel Receipt</button> : null}
+            {editable ? <button className="secondary-button compact" type="button" onClick={saveReceiptDraft}>Save purchase</button> : null}
+            {selectedReceipt?.status === 'draft' ? <button className="primary-button" type="button" onClick={() => postReceipt(selectedReceipt)}>Complete purchase</button> : null}
+            {selectedReceipt?.status === 'posted' ? <button className="secondary-button compact danger-lite" type="button" onClick={() => cancelReceipt(selectedReceipt)}>Cancel purchase</button> : null}
           </div>
 
           {selectedReceipt?.postedAt ? <p className="warehouse-note">Posted {selectedReceipt.postedAt.slice(0, 16).replace('T', ' ')}</p> : null}
@@ -735,7 +1022,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
 
           <div className="warehouse-receipt-lines">
             <div className="warehouse-panel-heading">
-              <h2>Lines</h2>
+              <h2>Parts</h2>
               <strong>{money(receiptTotal)}</strong>
             </div>
             {editable ? (
@@ -747,7 +1034,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                   ))}
                 </select>
                 <input type="number" min="0" value={receiptLineDraft.quantity} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, quantity: Number(event.target.value) || 0 })} aria-label="Quantity" />
-                <input type="number" min="0" value={receiptLineDraft.unitCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, unitCost: Number(event.target.value) || 0 })} aria-label="Vendor unit cost" />
+                <input type="number" min="0" value={receiptLineDraft.unitCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, unitCost: Number(event.target.value) || 0 })} aria-label="Price each" />
                 <input type="number" min="0" value={receiptLineDraft.extraCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, extraCost: Number(event.target.value) || 0 })} aria-label="Extra cost" />
                 <button className="secondary-button compact" type="button" onClick={addReceiptLine}>Add line</button>
               </div>
@@ -760,12 +1047,11 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                     <tr>
                       <th>Item</th>
                       <th>Qty</th>
-                      <th>Vendor unit</th>
+                      <th>Price each</th>
                       <th>Extra</th>
-                      <th>Landed unit</th>
+                      <th>Actual cost each</th>
                       <th>Total</th>
-                      <th>Avg before</th>
-                      <th>Avg after</th>
+                      <th>Admin details</th>
                       <th />
                     </tr>
                   </thead>
@@ -777,13 +1063,12 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                       return (
                         <tr key={line.id}>
                           <td>{item?.internalName ?? 'Unknown item'}</td>
-                          <td>{editable ? <input type="number" min="0" value={line.quantity} onChange={(event) => updateReceiptLine(line, { quantity: Number(event.target.value) || 0 })} /> : formatQty(line.quantity, item?.unit)}</td>
-                          <td>{editable ? <input type="number" min="0" value={line.unitCost} onChange={(event) => updateReceiptLine(line, { unitCost: Number(event.target.value) || 0 })} /> : money(line.unitCost)}</td>
-                          <td>{editable ? <input type="number" min="0" value={line.extraCost} onChange={(event) => updateReceiptLine(line, { extraCost: Number(event.target.value) || 0 })} /> : money(line.extraCost)}</td>
+                          <td>{editable ? <input type="number" min="0" defaultValue={line.quantity} onBlur={(event) => updateReceiptLine(line, { quantity: Number(event.target.value) || 0 })} /> : formatQty(line.quantity, item?.unit)}</td>
+                          <td>{editable ? <input type="number" min="0" defaultValue={line.unitCost} onBlur={(event) => updateReceiptLine(line, { unitCost: Number(event.target.value) || 0 })} /> : money(line.unitCost)}</td>
+                          <td>{editable ? <input type="number" min="0" defaultValue={line.extraCost} onBlur={(event) => updateReceiptLine(line, { extraCost: Number(event.target.value) || 0 })} /> : money(line.extraCost)}</td>
                           <td>{money(landedUnitCost)}</td>
                           <td>{money(line.quantity * line.unitCost + line.extraCost)}</td>
-                          <td>{movement?.averageCostBefore == null ? '-' : money(movement.averageCostBefore)}</td>
-                          <td>{movement?.averageCostAfter == null ? '-' : money(movement.averageCostAfter)}</td>
+                          <td>{movement ? `${money(movement.averageCostBefore ?? 0)} -> ${money(movement.averageCostAfter ?? 0)}` : '-'}</td>
                           <td>{editable ? <button className="secondary-button compact danger-lite" type="button" onClick={() => removeReceiptLine(line)}>Remove</button> : null}</td>
                         </tr>
                       );
@@ -814,26 +1099,28 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       <div className="warehouse-settings-grid">
         <section className="warehouse-panel">
           <div className="warehouse-panel-heading">
-            <h2>Data model</h2>
+            <h2>Locations</h2>
             <Settings size={18} aria-hidden="true" />
           </div>
-          <div className="warehouse-settings-list">
-            <span>Warehouses and technician vehicles</span>
-            <span>Storage bins per warehouse</span>
-            <span>Inventory material catalog</span>
-            <span>Supplier catalog and supplier prices</span>
-            <span>Stock balances per item, warehouse, and bin</span>
-            <span>Append-only movement history</span>
-          </div>
+          {snapshot.warehouses.length ? (
+            <div className="warehouse-list">
+              {snapshot.warehouses.map((warehouseRow) => (
+                <div className="warehouse-list-row" key={warehouseRow.id}>
+                  <strong>{warehouseRow.name}</strong>
+                  <span>{warehouseRow.type.replace(/_/g, ' ')} - {warehouseRow.location || 'No address'}</span>
+                </div>
+              ))}
+            </div>
+          ) : <EmptyWarehouseState title="No locations yet" detail="Add a main stock room, office, or van." />}
+          <button className="secondary-button compact" type="button" onClick={() => setFormMode('warehouse')}>Add location</button>
         </section>
         <section className="warehouse-panel">
           <div className="warehouse-panel-heading">
-            <h2>Integration boundary</h2>
+            <h2>Suppliers</h2>
             <Package size={18} aria-hidden="true" />
           </div>
-          <p className="warehouse-note">
-            Existing Job Materials remain manual entries. Warehouse-issued Job costs will use source_type=warehouse and an inventory_movement_id in a later stage.
-          </p>
+          {snapshot.suppliers.length ? renderSuppliers() : <EmptyWarehouseState title="No suppliers yet" detail="Add suppliers when you want to track purchase source and last price." />}
+          <button className="secondary-button compact" type="button" onClick={() => setFormMode('supplier')}>Add supplier</button>
         </section>
       </div>
     );
@@ -843,7 +1130,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     if (formMode === 'warehouse') {
       return (
         <section className="warehouse-form-panel">
-          <h2>Add warehouse</h2>
+          <h2>Add location</h2>
           <div className="warehouse-form-grid">
             <label>Name<input value={warehouseDraft.name} onChange={(event) => setWarehouseDraft({ ...warehouseDraft, name: event.target.value })} /></label>
             <label>Type
@@ -858,7 +1145,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           </div>
           <div className="warehouse-form-actions">
             <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
-            <button className="primary-button" type="button" onClick={saveWarehouseDraft}>Save warehouse</button>
+            <button className="primary-button" type="button" onClick={saveWarehouseDraft}>Save location</button>
           </div>
         </section>
       );
@@ -867,22 +1154,87 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     if (formMode === 'item') {
       return (
         <section className="warehouse-form-panel">
-          <h2>Add inventory item</h2>
+          <h2>Add part</h2>
           <div className="warehouse-form-grid wide">
             <label>Name<input value={itemDraft.internalName} onChange={(event) => setItemDraft({ ...itemDraft, internalName: event.target.value })} /></label>
-            <label>Category<input value={itemDraft.category} onChange={(event) => setItemDraft({ ...itemDraft, category: event.target.value })} /></label>
-            <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft({ ...itemDraft, manufacturer: event.target.value })} /></label>
-            <label>OEM<input value={itemDraft.oem} onChange={(event) => setItemDraft({ ...itemDraft, oem: event.target.value })} /></label>
             <label>Part #<input value={itemDraft.partNumber} onChange={(event) => setItemDraft({ ...itemDraft, partNumber: event.target.value })} /></label>
-            <label>Alt part #<input value={itemDraft.alternatePartNumber} onChange={(event) => setItemDraft({ ...itemDraft, alternatePartNumber: event.target.value })} /></label>
-            <label>Unit<input value={itemDraft.unit} onChange={(event) => setItemDraft({ ...itemDraft, unit: event.target.value })} /></label>
-            <label>Minimum qty<input type="number" min="0" value={itemDraft.minimumQuantity} onChange={(event) => setItemDraft({ ...itemDraft, minimumQuantity: Number(event.target.value) || 0 })} /></label>
-            <label>Description<input value={itemDraft.description} onChange={(event) => setItemDraft({ ...itemDraft, description: event.target.value })} /></label>
-            <label>Notes<input value={itemDraft.notes} onChange={(event) => setItemDraft({ ...itemDraft, notes: event.target.value })} /></label>
+            <label>Photo<input disabled placeholder="Photo upload coming soon" /></label>
+            <details className="warehouse-more-fields">
+              <summary>More details</summary>
+              <div className="warehouse-form-grid wide">
+                <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft({ ...itemDraft, manufacturer: event.target.value })} /></label>
+                <label>OEM<input value={itemDraft.oem} onChange={(event) => setItemDraft({ ...itemDraft, oem: event.target.value })} /></label>
+                <label>Alt part #<input value={itemDraft.alternatePartNumber} onChange={(event) => setItemDraft({ ...itemDraft, alternatePartNumber: event.target.value })} /></label>
+                <label>Category<input value={itemDraft.category} onChange={(event) => setItemDraft({ ...itemDraft, category: event.target.value })} /></label>
+                <label>Unit<input value={itemDraft.unit} onChange={(event) => setItemDraft({ ...itemDraft, unit: event.target.value })} /></label>
+                <label>Minimum stock<input type="number" min="0" value={itemDraft.minimumQuantity} onChange={(event) => setItemDraft({ ...itemDraft, minimumQuantity: Number(event.target.value) || 0 })} /></label>
+                <label>Description<input value={itemDraft.description} onChange={(event) => setItemDraft({ ...itemDraft, description: event.target.value })} /></label>
+                <label>Notes<input value={itemDraft.notes} onChange={(event) => setItemDraft({ ...itemDraft, notes: event.target.value })} /></label>
+              </div>
+            </details>
           </div>
           <div className="warehouse-form-actions">
             <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
-            <button className="primary-button" type="button" onClick={saveItemDraft}>Save item</button>
+            <button className="primary-button" type="button" onClick={saveItemDraft}>Save part</button>
+          </div>
+        </section>
+      );
+    }
+
+    if (formMode === 'stock') {
+      const binsForWarehouse = snapshot.bins.filter((bin) => bin.warehouseId === quickStockDraft.warehouseId && bin.isActive);
+      return (
+        <section className="warehouse-form-panel stock">
+          <h2>Add stock</h2>
+          <div className="warehouse-form-grid">
+            <label>Part
+              <select value={quickStockDraft.itemId} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, itemId: event.target.value })}>
+                <option value="">Select part</option>
+                {snapshot.items.filter((item) => item.isActive).map((item) => (
+                  <option value={item.id} key={item.id}>{item.internalName} {item.partNumber ? `- ${item.partNumber}` : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>Quantity<input type="number" min="0" value={quickStockDraft.quantity} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, quantity: Number(event.target.value) || 0 })} /></label>
+            <label>Price each<input type="number" min="0" value={quickStockDraft.unitCost} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, unitCost: Number(event.target.value) || 0 })} /></label>
+            <label>Location
+              <select value={quickStockDraft.warehouseId} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, warehouseId: event.target.value, binId: '' })}>
+                <option value="">Select location</option>
+                {snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <details className="warehouse-more-fields" open={quickStockDraft.showMore} onToggle={(event) => setQuickStockDraft({ ...quickStockDraft, showMore: event.currentTarget.open })}>
+            <summary>More options</summary>
+            <div className="warehouse-form-grid wide">
+              <label>Supplier
+                <select value={quickStockDraft.supplierId} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, supplierId: event.target.value })}>
+                  <option value="">No supplier</option>
+                  {snapshot.suppliers.filter((supplier) => supplier.isActive).map((supplier) => (
+                    <option value={supplier.id} key={supplier.id}>{supplier.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Exact location
+                <select value={quickStockDraft.binId} disabled={!quickStockDraft.warehouseId} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, binId: event.target.value })}>
+                  <option value="">No exact location</option>
+                  {binsForWarehouse.map((bin) => (
+                    <option value={bin.id} key={bin.id}>{bin.code} - {bin.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Extra cost<input type="number" min="0" value={quickStockDraft.extraCost} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, extraCost: Number(event.target.value) || 0 })} /></label>
+              <label>Invoice #<input value={quickStockDraft.invoiceNumber} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, invoiceNumber: event.target.value })} /></label>
+              <label>PO #<input value={quickStockDraft.poNumber} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, poNumber: event.target.value })} /></label>
+              <label>Date<input type="date" value={quickStockDraft.receiptDate} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, receiptDate: event.target.value })} /></label>
+              <label>Notes<input value={quickStockDraft.notes} onChange={(event) => setQuickStockDraft({ ...quickStockDraft, notes: event.target.value })} /></label>
+            </div>
+          </details>
+          <div className="warehouse-form-actions sticky">
+            <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
+            <button className="primary-button" type="button" onClick={addQuickStock}>Add to stock</button>
           </div>
         </section>
       );
@@ -920,17 +1272,13 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           {status ? <p className="access-status">{status}</p> : null}
         </div>
         <div className="warehouse-header-actions">
-          <button className="secondary-button compact" type="button" onClick={() => setFormMode('supplier')}>
-            <Truck size={16} aria-hidden="true" />
-            Add supplier
-          </button>
-          <button className="secondary-button compact" type="button" onClick={() => setFormMode('warehouse')}>
-            <Truck size={16} aria-hidden="true" />
-            Add warehouse
+          <button className="secondary-button compact" type="button" onClick={openQuickStock}>
+            <Plus size={16} aria-hidden="true" />
+            Add stock
           </button>
           <button className="primary-button" type="button" onClick={() => setFormMode('item')}>
             <Boxes size={16} aria-hidden="true" />
-            Add item
+            Add part
           </button>
         </div>
       </div>
@@ -943,41 +1291,46 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         ))}
       </div>
 
-      <div className="warehouse-toolbar">
-        <label>
-          Search
-          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, OEM, part #, manufacturer" />
-        </label>
-        <label>
-          Warehouse
-          <select value={warehouseFilter} onChange={(event) => setWarehouseFilter(event.target.value)}>
-            <option value="all">All warehouses</option>
-            {snapshot.warehouses.map((warehouseRow) => (
-              <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}</option>
+      {activeTab === 'parts' ? (
+        <>
+          <div className="warehouse-toolbar simplified">
+            <label>
+              Search parts
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Name, part #, OEM, manufacturer, description" />
+            </label>
+            <label>
+              Location
+              <select value={warehouseFilter} onChange={(event) => setWarehouseFilter(event.target.value)}>
+                <option value="all">All locations</option>
+                {snapshot.warehouses.map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}</option>
+                ))}
+              </select>
+            </label>
+            <span className="warehouse-load-state">{loading ? 'Loading...' : `${summary.items} parts`}</span>
+          </div>
+          <div className="warehouse-filter-row">
+            {(['all', 'low', 'out'] as PartsFilter[]).map((filter) => (
+              <button className={partsFilter === filter ? 'active' : ''} type="button" onClick={() => setPartsFilter(filter)} key={filter}>
+                {filter === 'all' ? 'All' : filter === 'low' ? 'Low stock' : 'Out of stock'}
+              </button>
             ))}
-          </select>
-        </label>
-        <span className="warehouse-load-state">{loading ? 'Loading warehouse...' : `${summary.items} items loaded`}</span>
-      </div>
+            <span><strong>{lowStockItems.length}</strong> low stock</span>
+            <span><strong>{money(summary.inventoryValue)}</strong> inventory value</span>
+          </div>
+        </>
+      ) : null}
 
       {renderActiveForm()}
 
-      {activeTab === 'dashboard' ? renderDashboard() : null}
-      {activeTab === 'materials' ? renderMaterialsTable(filteredItems) : null}
-      {activeTab === 'stock' ? renderStockTable(false) : null}
-      {activeTab === 'receipts' ? renderReceipts() : null}
-      {activeTab === 'lowStock' ? (
-        lowStockItems.length ? renderMaterialsTable(lowStockItems) : (
-          <EmptyWarehouseState title="No low-stock materials" detail="Items will appear here when total quantity is at or below the minimum quantity." />
-        )
-      ) : null}
-      {activeTab === 'suppliers' ? renderSuppliers() : null}
-      {activeTab === 'history' ? renderMovementTable() : null}
+      {activeTab === 'parts' ? renderPartsList(filteredItems) : null}
+      {activeTab === 'purchases' ? renderPurchases() : null}
+      {activeTab === 'activity' ? renderActivity() : null}
       {activeTab === 'settings' ? renderSettings() : null}
 
       <div className="warehouse-warning">
         <AlertTriangle size={17} aria-hidden="true" />
-        <span>Receipts post through PostgreSQL RPC with locks. Transfers and Job issues are reserved for later stages.</span>
+        <span>Stock changes are posted through the existing PostgreSQL RPC with locks. Job use and moves are reserved for later stages.</span>
       </div>
     </section>
   );
