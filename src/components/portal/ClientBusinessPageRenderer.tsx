@@ -3,6 +3,7 @@ import { emailProviderLabels, initialEmailTemplates, libraryCategories, libraryF
 import type { ClientPage } from '../../appTypes';
 import { EmailPage } from './EmailPage';
 import { FinancePage } from './FinancePage';
+import { BusinessAnalyticsPage } from './BusinessAnalyticsPage';
 import { KnowledgePage } from './KnowledgePage';
 import { OnboardingPage } from './OnboardingPage';
 import { PortalAccountPage } from './PortalAccountPage';
@@ -139,6 +140,15 @@ export function ClientBusinessPageRenderer({
         onOpenJob={setOpenedJob}
         onToggleSalaryPaid={financeWorkflow.toggleSalaryPaid}
         onMarkSalaryJobsPaid={financeWorkflow.markSalaryJobsPaid}
+      />
+    );
+  }
+
+  if (renderedClientPage === 'aiBusiness') {
+    return (
+      <BusinessAnalyticsPage
+        selectedCompanyId={selectedCompanyId}
+        currentPortalUser={currentPortalUser}
       />
     );
   }

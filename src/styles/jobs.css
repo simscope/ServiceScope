@@ -1989,3 +1989,293 @@
   left: 51%;
   transform: rotate(8deg);
 }
+
+.business-analytics-page {
+  display: grid;
+  gap: 18px;
+}
+
+.business-analytics-header,
+.business-period-toolbar,
+.business-section {
+  border: 1px solid #dfe7e1;
+  border-radius: 12px;
+  background: #fff;
+  padding: 18px;
+}
+
+.business-analytics-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.business-analytics-header h1,
+.business-section-heading h2 {
+  margin: 0;
+  color: #17201b;
+}
+
+.business-analytics-header p,
+.business-refresh span,
+.business-section-heading span,
+.business-opportunity-row small {
+  color: #526157;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.business-refresh {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.business-period-toolbar {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.business-period-toolbar label {
+  display: grid;
+  gap: 6px;
+  color: #526157;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.business-period-toolbar select,
+.business-period-toolbar input {
+  min-width: 160px;
+  border: 1px solid #d6dfd8;
+  border-radius: 10px;
+  background: #f8faf7;
+  padding: 9px 10px;
+  color: #17201b;
+  font-weight: 900;
+}
+
+.business-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.business-kpi-card,
+.business-insight-card,
+.business-status-card,
+.business-access-state,
+.business-opportunity-list,
+.business-data-quality article {
+  border: 1px solid #dfe7e1;
+  border-radius: 10px;
+  background: #fff;
+  padding: 16px;
+}
+
+.business-kpi-card {
+  display: grid;
+  gap: 8px;
+  min-height: 118px;
+}
+
+.business-kpi-card span,
+.business-insight-card span,
+.business-opportunity-list h3,
+.business-data-quality span {
+  color: #526157;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.business-kpi-card strong {
+  color: #17201b;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.business-kpi-card small {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: #f4f6f4;
+  color: #526157;
+  font-weight: 900;
+}
+
+.business-kpi-card.good small {
+  background: #ecfdf3;
+  color: #166534;
+}
+
+.business-kpi-card.bad small {
+  background: #fff1f2;
+  color: #b42318;
+}
+
+.business-section {
+  display: grid;
+  gap: 14px;
+}
+
+.business-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.business-insight-grid,
+.business-opportunities-grid,
+.business-data-quality {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.business-insight-card {
+  display: grid;
+  gap: 12px;
+  border-left: 4px solid #94a3b8;
+}
+
+.business-insight-card.medium {
+  border-left-color: #f59e0b;
+}
+
+.business-insight-card.high {
+  border-left-color: #dc2626;
+}
+
+.business-insight-card h3,
+.business-insight-card p,
+.business-opportunity-list h3 {
+  margin: 0;
+}
+
+.business-insight-card p {
+  color: #526157;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.business-insight-card > strong {
+  color: #17201b;
+  font-size: 22px;
+}
+
+.business-table-wrap {
+  overflow-x: auto;
+}
+
+.business-table {
+  min-width: 1040px;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.business-table th {
+  background: #f4f6f4;
+  color: #526157;
+  font-size: 11px;
+  font-weight: 900;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.business-table th,
+.business-table td {
+  border-bottom: 1px solid #e4ebe6;
+  padding: 10px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.business-opportunity-list {
+  display: grid;
+  gap: 10px;
+}
+
+.business-opportunity-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) repeat(3, auto);
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #e4ebe6;
+  border-radius: 8px;
+  padding: 10px;
+  color: #17201b;
+  text-decoration: none;
+  font-weight: 900;
+}
+
+.business-opportunity-row span:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.business-data-quality article {
+  display: grid;
+  gap: 6px;
+}
+
+.business-data-quality strong {
+  color: #17201b;
+  font-size: 26px;
+}
+
+.business-status-card,
+.business-access-state {
+  display: grid;
+  place-items: center;
+  min-height: 260px;
+  text-align: center;
+}
+
+.business-status-card.error {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.business-status-card h2,
+.business-access-state h1,
+.business-status-card p,
+.business-access-state p {
+  margin: 0;
+}
+
+.business-note {
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  background: #fffdf4;
+  padding: 12px 14px;
+  color: #854d0e;
+  font-weight: 900;
+}
+
+@media (max-width: 760px) {
+  .business-analytics-header,
+  .business-section-heading,
+  .business-refresh {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .business-period-toolbar label,
+  .business-period-toolbar select,
+  .business-period-toolbar input {
+    width: 100%;
+  }
+
+  .business-opportunity-row {
+    grid-template-columns: 1fr;
+  }
+}
