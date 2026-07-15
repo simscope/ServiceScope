@@ -256,6 +256,39 @@ export async function supabaseRpc<T>(name: string, body: Record<string, unknown>
   return text ? JSON.parse(text) as T : undefined as T;
 }
 
+export async function supabaseFunction<T>(name: string, body: Record<string, unknown>, options: Pick<SupabaseRequestOptions, 'timeoutMs'> = {}): Promise<T> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+  }
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(`${supabaseUrl}/functions/v1/${name}`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: makeSupabaseHeaders('application/json'),
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Supabase function timed out. Try again or enter the product manually.');
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    await readSupabaseError(response);
+  }
+
+  const text = await response.text();
+  return text ? JSON.parse(text) as T : undefined as T;
+}
+
 export async function uploadSupabaseStorageFile(bucket: string, path: string, file: Blob, contentType = 'application/octet-stream') {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');

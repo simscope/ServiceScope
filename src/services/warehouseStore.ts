@@ -1,4 +1,4 @@
-import { sqlEq, supabaseRequest, supabaseRpc } from './supabaseRest';
+import { sqlEq, supabaseFunction, supabaseRequest, supabaseRpc } from './supabaseRest';
 
 export type WarehouseType = 'main' | 'office' | 'technician_vehicle' | 'other';
 export type InventoryMovementType = 'receipt' | 'transfer_out' | 'transfer_in' | 'job_issue' | 'job_return' | 'adjustment';
@@ -53,6 +53,52 @@ export type InventorySupplier = {
   website: string;
   address: string;
   isActive: boolean;
+};
+
+export type InventorySupplierLink = {
+  id: string;
+  companyId: string;
+  itemId: string;
+  supplierId: string | null;
+  sourceType: 'amazon' | 'ebay' | 'generic';
+  sourceDomain: string;
+  sourceUrl: string;
+  sourceUrlNormalized: string;
+  canonicalUrl: string;
+  canonicalUrlNormalized: string;
+  externalProductId: string;
+  asin: string;
+  ebayItemId: string;
+  supplierPartNumber: string;
+  lastTitle: string;
+  lastImageUrl: string;
+  lastVendorPrice: number;
+  currency: string;
+  packQuantity: number;
+  lastCheckedAt: string | null;
+};
+
+export type ImportedInventoryProduct = {
+  sourceType: 'amazon' | 'ebay' | 'generic';
+  sourceDomain: string;
+  externalProductId: string;
+  title: string;
+  brand: string;
+  manufacturer: string;
+  partNumber: string;
+  model: string;
+  oem: string;
+  description: string;
+  imageUrl: string;
+  vendorPrice: number;
+  currency: string;
+  packQuantity: number;
+  supplierName: string;
+  canonicalUrl: string;
+  asin?: string;
+  ebayItemId?: string;
+  confidence: Record<string, { source: string; score: number }>;
+  warnings: string[];
 };
 
 export type InventoryStockBalance = {
@@ -135,6 +181,7 @@ export type WarehouseSnapshot = {
   bins: InventoryBin[];
   items: InventoryItem[];
   suppliers: InventorySupplier[];
+  supplierLinks: InventorySupplierLink[];
   jobs: WarehouseJob[];
   stockBalances: InventoryStockBalance[];
   movements: InventoryMovement[];
@@ -214,6 +261,29 @@ type SupplierRow = {
   website: string | null;
   address: string | null;
   is_active: boolean;
+};
+
+type SupplierLinkRow = {
+  id: string;
+  company_id: string;
+  item_id: string;
+  supplier_id: string | null;
+  source_type: 'amazon' | 'ebay' | 'generic';
+  source_domain: string | null;
+  source_url: string | null;
+  source_url_normalized: string | null;
+  canonical_url: string | null;
+  canonical_url_normalized: string | null;
+  external_product_id: string | null;
+  asin: string | null;
+  ebay_item_id: string | null;
+  supplier_part_number: string | null;
+  last_title: string | null;
+  last_image_url: string | null;
+  last_vendor_price: number | string | null;
+  currency: string | null;
+  pack_quantity: number | string | null;
+  last_checked_at: string | null;
 };
 
 type StockBalanceRow = {
@@ -356,6 +426,31 @@ function mapSupplier(row: SupplierRow): InventorySupplier {
   };
 }
 
+function mapSupplierLink(row: SupplierLinkRow): InventorySupplierLink {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    itemId: row.item_id,
+    supplierId: row.supplier_id,
+    sourceType: row.source_type,
+    sourceDomain: row.source_domain ?? '',
+    sourceUrl: row.source_url ?? '',
+    sourceUrlNormalized: row.source_url_normalized ?? '',
+    canonicalUrl: row.canonical_url ?? '',
+    canonicalUrlNormalized: row.canonical_url_normalized ?? '',
+    externalProductId: row.external_product_id ?? '',
+    asin: row.asin ?? '',
+    ebayItemId: row.ebay_item_id ?? '',
+    supplierPartNumber: row.supplier_part_number ?? '',
+    lastTitle: row.last_title ?? '',
+    lastImageUrl: row.last_image_url ?? '',
+    lastVendorPrice: numberValue(row.last_vendor_price),
+    currency: row.currency ?? 'USD',
+    packQuantity: numberValue(row.pack_quantity) || 1,
+    lastCheckedAt: row.last_checked_at,
+  };
+}
+
 function mapStockBalance(row: StockBalanceRow): InventoryStockBalance {
   return {
     id: row.id,
@@ -447,6 +542,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     bins,
     items,
     suppliers,
+    supplierLinks,
     jobs,
     stockBalances,
     movements,
@@ -457,6 +553,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     supabaseRequest<BinRow[]>(`inventory_bins?company_id=${sqlEq(companyId)}&order=code.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<ItemRow[]>(`inventory_items?company_id=${sqlEq(companyId)}&order=internal_name.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<SupplierRow[]>(`inventory_suppliers?company_id=${sqlEq(companyId)}&order=name.asc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<SupplierLinkRow[]>(`inventory_supplier_links?company_id=${sqlEq(companyId)}&order=last_checked_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&select=id,company_id,job_number,status,system,issue,created_at&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<StockBalanceRow[]>(`inventory_stock_balances?company_id=${sqlEq(companyId)}&order=updated_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<MovementRow[]>(`inventory_movements?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
@@ -469,6 +566,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     bins: bins.map(mapBin),
     items: items.map(mapItem),
     suppliers: suppliers.map(mapSupplier),
+    supplierLinks: supplierLinks.map(mapSupplierLink),
     jobs: jobs.map(mapJob),
     stockBalances: stockBalances.map(mapStockBalance),
     movements: movements.map(mapMovement),
@@ -529,6 +627,76 @@ export async function createInventorySupplier(companyId: string, draft: Inventor
     }],
   });
   return mapSupplier(row);
+}
+
+export async function upsertInventoryItemSupplier(companyId: string, itemId: string, supplierId: string, patch: {
+  supplierPartNumber?: string;
+  supplierDescription?: string;
+  lastUnitCost?: number;
+  currency?: string;
+  productUrl?: string;
+}) {
+  await supabaseRequest('inventory_item_suppliers?on_conflict=item_id,supplier_id', {
+    method: 'POST',
+    prefer: 'resolution=merge-duplicates,return=minimal',
+    body: [{
+      company_id: companyId,
+      item_id: itemId,
+      supplier_id: supplierId,
+      supplier_part_number: patch.supplierPartNumber?.trim() ?? '',
+      supplier_description: patch.supplierDescription?.trim() ?? '',
+      last_unit_cost: Math.max(0, Number(patch.lastUnitCost) || 0),
+      currency: patch.currency || 'USD',
+      product_url: patch.productUrl?.trim() ?? '',
+      last_price_updated_at: new Date().toISOString(),
+    }],
+  });
+}
+
+export async function upsertInventorySupplierLink(companyId: string, draft: {
+  itemId: string;
+  supplierId?: string | null;
+  sourceType: 'amazon' | 'ebay' | 'generic';
+  sourceDomain: string;
+  sourceUrl: string;
+  canonicalUrl: string;
+  externalProductId?: string;
+  asin?: string;
+  ebayItemId?: string;
+  supplierPartNumber?: string;
+  lastTitle?: string;
+  lastImageUrl?: string;
+  lastVendorPrice?: number;
+  currency?: string;
+  packQuantity?: number;
+}) {
+  const normalizedSourceUrl = normalizeSupplierUrl(draft.sourceUrl);
+  const normalizedCanonicalUrl = normalizeSupplierUrl(draft.canonicalUrl || draft.sourceUrl);
+  await supabaseRequest('inventory_supplier_links?on_conflict=company_id,canonical_url_normalized', {
+    method: 'POST',
+    prefer: 'resolution=merge-duplicates,return=minimal',
+    body: [{
+      company_id: companyId,
+      item_id: draft.itemId,
+      supplier_id: draft.supplierId || null,
+      source_type: draft.sourceType,
+      source_domain: draft.sourceDomain,
+      source_url: draft.sourceUrl,
+      source_url_normalized: normalizedSourceUrl,
+      canonical_url: draft.canonicalUrl || draft.sourceUrl,
+      canonical_url_normalized: normalizedCanonicalUrl,
+      external_product_id: draft.externalProductId ?? '',
+      asin: draft.asin ?? '',
+      ebay_item_id: draft.ebayItemId ?? '',
+      supplier_part_number: draft.supplierPartNumber ?? '',
+      last_title: draft.lastTitle ?? '',
+      last_image_url: draft.lastImageUrl ?? '',
+      last_vendor_price: Math.max(0, Number(draft.lastVendorPrice) || 0),
+      currency: draft.currency || 'USD',
+      pack_quantity: Math.max(1, Number(draft.packQuantity) || 1),
+      last_checked_at: new Date().toISOString(),
+    }],
+  });
 }
 
 export async function createInventoryReceipt(companyId: string, draft: InventoryReceiptDraft): Promise<InventoryStockReceipt> {
@@ -630,6 +798,21 @@ export async function returnInventoryJobPart(draft: InventoryJobReturnDraft) {
     p_bin_id: draft.binId || null,
     p_notes: draft.notes?.trim() ?? '',
   }, { timeoutMs: 30000 });
+}
+
+export async function importInventoryProductUrl(companyId: string, url: string) {
+  return supabaseFunction<ImportedInventoryProduct>('import-inventory-product-url', { companyId, url }, { timeoutMs: 30000 });
+}
+
+export function normalizeSupplierUrl(url: string) {
+  try {
+    const parsed = new URL(url.trim());
+    parsed.hash = '';
+    ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'tag', 'ascsubtag'].forEach((key) => parsed.searchParams.delete(key));
+    return parsed.toString().replace(/\/$/, '').toLowerCase();
+  } catch {
+    return url.trim().replace(/\/$/, '').toLowerCase();
+  }
 }
 
 export function warehouseErrorMessage(error: unknown) {

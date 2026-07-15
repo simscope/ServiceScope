@@ -1879,6 +1879,85 @@ button {
   font-weight: 900;
 }
 
+.warehouse-import-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin: 12px 0 16px;
+}
+
+.warehouse-import-bar.in-form {
+  margin-top: 0;
+}
+
+.warehouse-import-preview {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 16px;
+  padding: 14px;
+  margin-bottom: 16px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.warehouse-import-preview img,
+.warehouse-import-photo {
+  width: 140px;
+  aspect-ratio: 1;
+  object-fit: contain;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #f7f9fb;
+}
+
+.warehouse-import-photo {
+  display: grid;
+  place-items: center;
+  color: #667269;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.warehouse-import-fields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.warehouse-match-box,
+.warehouse-import-warnings {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #f1c46d;
+  border-radius: 8px;
+  background: #fff8e8;
+}
+
+.warehouse-match-box > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.warehouse-import-warnings span {
+  color: #6b4a00;
+  font-weight: 800;
+}
+
+.warehouse-confirm-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 900;
+}
+
+.warehouse-confirm-row input {
+  width: auto;
+}
+
 .warehouse-kpi-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
