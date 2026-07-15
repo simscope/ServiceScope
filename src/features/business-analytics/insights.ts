@@ -9,22 +9,18 @@ export const BUSINESS_ANALYTICS_THRESHOLDS = {
   inactiveDays: 180,
 };
 
-function percentPoint(value: number) {
-  return `${(value * 100).toFixed(1)}%`;
-}
-
 export function buildBusinessInsights(analytics: BusinessAnalyticsResponse): BusinessInsight[] {
   const insights: BusinessInsight[] = [];
 
-  if (analytics.unpaid.jobs_count > 0) {
+  if (analytics.unpaid.period_jobs_count > 0) {
     insights.push({
       id: 'unpaid-completed-jobs',
       type: 'unpaid',
       severity: analytics.unpaid.older_than_30_days_count > 0 ? 'high' : 'medium',
       title: 'Completed jobs still have unpaid balances',
-      description: `${analytics.unpaid.jobs_count} completed job${analytics.unpaid.jobs_count === 1 ? '' : 's'} have unpaid SCF or Labor.`,
-      value: analytics.unpaid.total_amount,
-      action: { label: 'Open Debtors', href: '#debtors' },
+      description: `${analytics.unpaid.period_jobs_count} completed job${analytics.unpaid.period_jobs_count === 1 ? '' : 's'} in this period have unpaid SCF or Labor.`,
+      value: analytics.unpaid.period_total_amount,
+      action: { label: 'Open Debtors', target: 'debtors' },
     });
   }
 
@@ -34,26 +30,9 @@ export function buildBusinessInsights(analytics: BusinessAnalyticsResponse): Bus
       type: 'aged-debt',
       severity: 'high',
       title: 'Debt older than 30 days needs follow-up',
-      description: `${analytics.unpaid.older_than_30_days_count} unpaid completed job${analytics.unpaid.older_than_30_days_count === 1 ? '' : 's'} are older than 30 days.`,
+      description: `${analytics.unpaid.older_than_30_days_count} outstanding job${analytics.unpaid.older_than_30_days_count === 1 ? '' : 's'} are older than 30 days by completed-age.`,
       value: analytics.unpaid.older_than_30_days_amount,
-      action: { label: 'Review Debtors', href: '#debtors?age=30' },
-    });
-  }
-
-  const recallIncrease = analytics.comparison.recall_rate_percent;
-  if (
-    analytics.summary.recall_rate >= BUSINESS_ANALYTICS_THRESHOLDS.recallRateAbsolute ||
-    (recallIncrease !== null && recallIncrease >= BUSINESS_ANALYTICS_THRESHOLDS.recallRateIncreasePercent)
-  ) {
-    insights.push({
-      id: 'recall-rate-growth',
-      type: 'recall',
-      severity: analytics.summary.recall_rate >= BUSINESS_ANALYTICS_THRESHOLDS.recallRateAbsolute ? 'high' : 'medium',
-      title: 'Recall rate is elevated',
-      description: `Current recall rate is ${percentPoint(analytics.summary.recall_rate)} with ${analytics.recalls.current_count} recall job${analytics.recalls.current_count === 1 ? '' : 's'} versus ${analytics.recalls.previous_count} in the previous period.`,
-      value: analytics.summary.recall_rate,
-      changePercent: recallIncrease,
-      action: { label: 'Open Recall Jobs', href: '#allJobs?status=ReCall' },
+      action: { label: 'Review Debtors', target: 'debtors' },
     });
   }
 
@@ -67,7 +46,7 @@ export function buildBusinessInsights(analytics: BusinessAnalyticsResponse): Bus
       title: 'Service contract candidates found',
       description: `${contractCandidates.length} customer${contractCandidates.length === 1 ? '' : 's'} meet repeat-service or revenue thresholds. Top candidate: ${topCandidate.name}.`,
       value: topCandidate.revenue,
-      action: { label: 'Review Customers', href: '#aiBusiness-opportunities' },
+      action: { label: 'Review Customers', target: 'opportunities' },
     });
   }
 
@@ -81,7 +60,7 @@ export function buildBusinessInsights(analytics: BusinessAnalyticsResponse): Bus
       title: 'Repeat customers are inactive',
       description: `${inactiveCustomers.length} repeat customer${inactiveCustomers.length === 1 ? '' : 's'} have been inactive for more than ${BUSINESS_ANALYTICS_THRESHOLDS.inactiveDays} days. Longest inactive: ${topCustomer.name}.`,
       value: topCustomer.lifetime_revenue,
-      action: { label: 'Review Opportunities', href: '#aiBusiness-opportunities' },
+      action: { label: 'Review Opportunities', target: 'opportunities' },
     });
   }
 

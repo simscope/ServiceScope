@@ -549,6 +549,7 @@ function CompanyPortalWithTenant({
   const clientPageRendererContext = useClientPageRendererContext({
     shell: {
       activeClientNavItem,
+      activePageAccessLevel,
       activePageReadOnly,
       billingStatus,
       completedSteps,

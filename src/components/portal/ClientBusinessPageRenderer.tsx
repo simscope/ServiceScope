@@ -148,7 +148,8 @@ export function ClientBusinessPageRenderer({
     return (
       <BusinessAnalyticsPage
         selectedCompanyId={selectedCompanyId}
-        currentPortalUser={currentPortalUser}
+        accessLevel={shell.activePageAccessLevel}
+        onNavigateClientPage={setClientPage}
       />
     );
   }

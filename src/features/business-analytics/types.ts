@@ -12,7 +12,7 @@ export type BusinessAnalyticsSummary = {
   estimated_gross_profit: number;
   completed_jobs: number;
   recall_jobs: number;
-  recall_rate: number;
+  recall_rate: number | null;
   average_ticket: number;
 };
 
@@ -29,11 +29,15 @@ export type BusinessAnalyticsComparison = {
 };
 
 export type UnpaidAnalytics = {
-  total_amount: number;
-  jobs_count: number;
+  period_total_amount: number;
+  period_jobs_count: number;
+  total_outstanding_amount: number;
+  total_outstanding_jobs_count: number;
   older_than_30_days_amount: number;
   older_than_30_days_count: number;
-  job_ids: string[];
+  period_job_ids: string[];
+  older_than_30_days_job_ids: string[];
+  aging_basis: 'completed-age';
 };
 
 export type RecallAnalytics = {
@@ -41,6 +45,9 @@ export type RecallAnalytics = {
   previous_count: number;
   change_percent: number | null;
   job_ids: string[];
+  measurement_mode: 'snapshot' | 'period';
+  rate_available: boolean;
+  notice: string;
 };
 
 export type TechnicianAnalytics = {
@@ -54,7 +61,7 @@ export type TechnicianAnalytics = {
   payroll: number;
   estimated_gross_profit: number;
   recall_count: number;
-  recall_rate: number;
+  recall_rate: number | null;
 };
 
 export type CustomerOpportunity = {
@@ -69,11 +76,22 @@ export type CustomerOpportunity = {
 };
 
 export type DataQualitySummary = {
-  missing_completed_at: number;
-  missing_technician: number;
-  missing_material_cost: number;
-  missing_equipment_type: number;
-  missing_lead_source: number | null;
+  period: {
+    missing_completed_at: number;
+    missing_technician: number;
+    missing_material_cost: number;
+    missing_equipment_type: number;
+  };
+  company_wide: {
+    missing_lead_source: number | null;
+  };
+};
+
+export type BusinessAnalyticsMetadata = {
+  timezone: string;
+  timezone_source: 'company_profile' | 'fallback';
+  technician_filter_applied: boolean;
+  customer_opportunities_scope: 'company-wide';
 };
 
 export type BusinessAnalyticsResponse = {
@@ -89,6 +107,7 @@ export type BusinessAnalyticsResponse = {
     inactive_customers: CustomerOpportunity[];
   };
   data_quality: DataQualitySummary;
+  metadata: BusinessAnalyticsMetadata;
 };
 
 export type BusinessInsight = {
@@ -101,6 +120,8 @@ export type BusinessInsight = {
   changePercent?: number | null;
   action?: {
     label: string;
-    href: string;
+    target: BusinessInsightActionTarget;
   };
 };
+
+export type BusinessInsightActionTarget = 'debtors' | 'allJobs' | 'opportunities';
