@@ -25,7 +25,7 @@ import {
 } from '../../services/warehouseStore';
 import { money } from '../../utils/format';
 
-type WarehouseTab = 'dashboard' | 'materials' | 'stock' | 'receipts' | 'transfers' | 'lowStock' | 'suppliers' | 'history' | 'settings';
+type WarehouseTab = 'dashboard' | 'materials' | 'stock' | 'receipts' | 'lowStock' | 'suppliers' | 'history' | 'settings';
 
 type WarehousePageProps = {
   companyId: string;
@@ -100,7 +100,6 @@ const tabs: Array<{ key: WarehouseTab; label: string }> = [
   { key: 'materials', label: 'Materials' },
   { key: 'stock', label: 'Stock' },
   { key: 'receipts', label: 'Receipts' },
-  { key: 'transfers', label: 'Transfers' },
   { key: 'lowStock', label: 'Low Stock' },
   { key: 'suppliers', label: 'Suppliers' },
   { key: 'history', label: 'Movement History' },
@@ -754,15 +753,6 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     );
   }
 
-  function renderDocumentPlaceholder(kind: 'transfers') {
-    return (
-      <EmptyWarehouseState
-        title="Transfers are ready for stage 3"
-        detail="Transfer documents will move stock between warehouses without changing company average cost."
-      />
-    );
-  }
-
   function renderSettings() {
     return (
       <div className="warehouse-settings-grid">
@@ -920,7 +910,6 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       {activeTab === 'materials' ? renderMaterialsTable(filteredItems) : null}
       {activeTab === 'stock' ? renderStockTable(false) : null}
       {activeTab === 'receipts' ? renderReceipts() : null}
-      {activeTab === 'transfers' ? renderDocumentPlaceholder('transfers') : null}
       {activeTab === 'lowStock' ? (
         lowStockItems.length ? renderMaterialsTable(lowStockItems) : (
           <EmptyWarehouseState title="No low-stock materials" detail="Items will appear here when total quantity is at or below the minimum quantity." />
@@ -932,7 +921,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
 
       <div className="warehouse-warning">
         <AlertTriangle size={17} aria-hidden="true" />
-        <span>Receipts post through PostgreSQL RPC with locks. Transfers and Job issues are still reserved for later stages.</span>
+        <span>Receipts post through PostgreSQL RPC with locks. Transfers and Job issues are reserved for later stages.</span>
       </div>
     </section>
   );
