@@ -2162,6 +2162,14 @@ button {
   align-items: center;
 }
 
+.warehouse-line-editor.simple {
+  grid-template-columns: minmax(220px, 1fr) 100px auto;
+}
+
+.warehouse-line-editor.adjustment {
+  grid-template-columns: minmax(220px, 1fr) 110px 120px auto;
+}
+
 .warehouse-line-editor select,
 .warehouse-line-editor input,
 .warehouse-table.receipt-lines input {
