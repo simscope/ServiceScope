@@ -692,7 +692,8 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                   ))}
                 </select>
                 <input type="number" min="0" value={receiptLineDraft.quantity} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, quantity: Number(event.target.value) || 0 })} aria-label="Quantity" />
-                <input type="number" min="0" value={receiptLineDraft.unitCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, unitCost: Number(event.target.value) || 0 })} aria-label="Unit cost" />
+                <input type="number" min="0" value={receiptLineDraft.unitCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, unitCost: Number(event.target.value) || 0 })} aria-label="Vendor unit cost" />
+                <input type="number" min="0" value={receiptLineDraft.extraCost} onChange={(event) => setReceiptLineDraft({ ...receiptLineDraft, extraCost: Number(event.target.value) || 0 })} aria-label="Extra cost" />
                 <button className="secondary-button compact" type="button" onClick={addReceiptLine}>Add line</button>
               </div>
             ) : null}
@@ -704,7 +705,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                     <tr>
                       <th>Item</th>
                       <th>Qty</th>
-                      <th>Unit cost</th>
+                      <th>Vendor unit</th>
+                      <th>Extra</th>
+                      <th>Landed unit</th>
                       <th>Total</th>
                       <th>Avg before</th>
                       <th>Avg after</th>
@@ -715,11 +718,14 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                     {receiptLines.map((line) => {
                       const item = itemById.get(line.itemId);
                       const movement = snapshot.movements.find((row) => row.receiptLineId === line.id && row.movementType === 'receipt');
+                      const landedUnitCost = line.quantity > 0 ? line.unitCost + line.extraCost / line.quantity : line.unitCost;
                       return (
                         <tr key={line.id}>
                           <td>{item?.internalName ?? 'Unknown item'}</td>
                           <td>{editable ? <input type="number" min="0" value={line.quantity} onChange={(event) => updateReceiptLine(line, { quantity: Number(event.target.value) || 0 })} /> : formatQty(line.quantity, item?.unit)}</td>
                           <td>{editable ? <input type="number" min="0" value={line.unitCost} onChange={(event) => updateReceiptLine(line, { unitCost: Number(event.target.value) || 0 })} /> : money(line.unitCost)}</td>
+                          <td>{editable ? <input type="number" min="0" value={line.extraCost} onChange={(event) => updateReceiptLine(line, { extraCost: Number(event.target.value) || 0 })} /> : money(line.extraCost)}</td>
+                          <td>{money(landedUnitCost)}</td>
                           <td>{money(line.quantity * line.unitCost + line.extraCost)}</td>
                           <td>{movement?.averageCostBefore == null ? '-' : money(movement.averageCostBefore)}</td>
                           <td>{movement?.averageCostAfter == null ? '-' : money(movement.averageCostAfter)}</td>

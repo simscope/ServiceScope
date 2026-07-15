@@ -2157,7 +2157,7 @@ button {
 
 .warehouse-line-editor {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 100px 120px auto;
+  grid-template-columns: minmax(220px, 1fr) 90px 110px 110px auto;
   gap: 8px;
   align-items: center;
 }
@@ -2171,11 +2171,12 @@ button {
 }
 
 .warehouse-table.receipt-lines {
-  min-width: 780px;
+  min-width: 900px;
 }
 
 .warehouse-table.receipt-lines td:nth-child(2),
-.warehouse-table.receipt-lines td:nth-child(3) {
+.warehouse-table.receipt-lines td:nth-child(3),
+.warehouse-table.receipt-lines td:nth-child(4) {
   width: 120px;
 }
 
