@@ -10,6 +10,7 @@ const clientPageValues: ClientPage[] = [
   'debtors',
   'calendar',
   'materials',
+  'warehouse',
   'tasks',
   'map',
   'email',

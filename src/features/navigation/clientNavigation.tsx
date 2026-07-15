@@ -14,6 +14,7 @@ import {
   Map,
   Rocket,
   UploadCloud,
+  Warehouse,
 } from 'lucide-react';
 import type { ClientPage } from '../../appTypes';
 import type { CompanyPortalAccessPage } from '../../types';
@@ -32,6 +33,7 @@ export const clientNavItems: ClientNavItem[] = [
   { page: 'debtors', label: 'Debtors', icon: <CircleDollarSign size={16} /> },
   { page: 'calendar', label: 'Calendar', icon: <CalendarDays size={16} /> },
   { page: 'materials', label: 'Materials', icon: <Box size={16} /> },
+  { page: 'warehouse', label: 'Warehouse', icon: <Warehouse size={16} /> },
   { page: 'tasks', label: 'Tasks', icon: <CheckCircle2 size={16} /> },
   { page: 'map', label: 'Map', icon: <Map size={16} /> },
   { page: 'email', label: 'Email', icon: <MailPlus size={16} /> },

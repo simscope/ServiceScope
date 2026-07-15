@@ -4,6 +4,7 @@ import { MapPage } from './MapPage';
 import { ClientBusinessPageRenderer } from './ClientBusinessPageRenderer';
 import { ClientJobsPageRenderer } from './ClientJobsPageRenderer';
 import { ClientOperationsPageRenderer } from './ClientOperationsPageRenderer';
+import { WarehousePage } from './WarehousePage';
 import type { ClientPageRendererContextGroups } from './clientPageRendererTypes';
 
 type ClientPageRendererProps = {
@@ -16,6 +17,7 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     activeClientNavItem,
     profile,
     selectedCompany,
+    selectedCompanyId,
   } = context.shell;
   const {
     mapModel,
@@ -48,6 +50,10 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
         shell={context.shell}
       />
     );
+  }
+
+  if (renderedClientPage === 'warehouse') {
+    return <WarehousePage companyId={selectedCompanyId} />;
   }
 
   if (['email', 'finances', 'aiBusiness', 'knowledge', 'portal', 'onboarding'].includes(renderedClientPage)) {
