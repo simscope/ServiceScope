@@ -25,6 +25,9 @@ verify_jwt = true
 [functions.billing-confirm]
 verify_jwt = true
 
+[functions.import-inventory-product-url]
+verify_jwt = true
+
 [functions.mailbox-oauth-callback]
 verify_jwt = false
 
