@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Boxes, ChevronDown, History, MapPin, Package, Plus, Settings, Truck, Warehouse } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Box, Boxes, ChevronDown, Droplet, Fan, Folder, Forklift, GripVertical, History, Home, MapPin, Package, Pencil, Plus, Settings, Snowflake, Trash2, Truck, Utensils, Warehouse, Wrench, Zap } from 'lucide-react';
 import {
   cancelInventoryReceipt,
+  createInventoryCategory,
   createInventoryItem,
   createInventoryReceipt,
   createInventoryReceiptLine,
   createInventorySupplier,
   createInventoryWarehouse,
+  deleteInventoryCategory,
   deleteInventoryReceiptLine,
   importInventoryProductUrl,
   issueInventoryPartToJob,
@@ -14,11 +16,16 @@ import {
   normalizeSupplierUrl,
   postInventoryReceipt,
   receiveImportedProductToStock,
+  reorderInventoryCategories,
   returnInventoryJobPart,
+  setInventoryItemCategory,
+  updateInventoryCategory,
   updateInventoryReceipt,
   updateInventoryReceiptLine,
   warehouseErrorMessage,
   type ImportedInventoryProduct,
+  type InventoryCategory,
+  type InventoryCategoryDraft,
   type InventoryItem,
   type InventoryItemDraft,
   type InventoryReceiptDraft,
@@ -40,13 +47,14 @@ type WarehousePageProps = {
 };
 
 type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock' | 'jobIssue' | 'jobReturn';
-type PartsFilter = 'all' | 'low' | 'out';
+type PartsStatusFilter = 'all' | 'in' | 'low' | 'out';
 type ActivityFilter = 'all' | 'received' | 'used' | 'moved' | 'adjustments';
 
 const emptySnapshot: WarehouseSnapshot = {
   warehouses: [],
   bins: [],
   items: [],
+  categories: [],
   suppliers: [],
   supplierLinks: [],
   jobs: [],
@@ -67,6 +75,7 @@ const emptyWarehouseDraft: InventoryWarehouseDraft = {
 const emptyItemDraft: InventoryItemDraft = {
   internalName: '',
   category: '',
+  categoryId: null,
   manufacturer: '',
   oem: '',
   partNumber: '',
@@ -76,6 +85,14 @@ const emptyItemDraft: InventoryItemDraft = {
   minimumQuantity: 0,
   notes: '',
 };
+
+const emptyCategoryDraft: InventoryCategoryDraft = {
+  name: '',
+  parentId: null,
+  icon: '',
+};
+
+const categoryIconOptions = ['snowflake', 'home', 'utensils', 'forklift', 'zap', 'wrench', 'box', 'droplet', 'fan', 'settings'] as const;
 
 const emptySupplierDraft: InventorySupplierDraft = {
   name: '',
@@ -144,6 +161,7 @@ type ProductImportDraft = {
   otherCost: number;
   supplierName: string;
   sourceUrl: string;
+  categoryId: string | null;
   verified: boolean;
 };
 
@@ -162,6 +180,7 @@ const emptyProductImportDraft = (): ProductImportDraft => ({
   otherCost: 0,
   supplierName: '',
   sourceUrl: '',
+  categoryId: null,
   verified: false,
 });
 
@@ -194,6 +213,21 @@ function importMatchValue(value: string | null | undefined) {
   return importPlaceholderValues.has(clean) ? '' : clean;
 }
 
+function categoryIcon(key: string, size = 16) {
+  const props = { size, 'aria-hidden': true };
+  if (key === 'snowflake') return <Snowflake {...props} />;
+  if (key === 'home') return <Home {...props} />;
+  if (key === 'utensils') return <Utensils {...props} />;
+  if (key === 'forklift') return <Forklift {...props} />;
+  if (key === 'zap') return <Zap {...props} />;
+  if (key === 'wrench') return <Wrench {...props} />;
+  if (key === 'box') return <Box {...props} />;
+  if (key === 'droplet') return <Droplet {...props} />;
+  if (key === 'fan') return <Fan {...props} />;
+  if (key === 'settings') return <Settings {...props} />;
+  return <Folder {...props} />;
+}
+
 function EmptyWarehouseState({ title, detail }: { title: string; detail: string }) {
   return (
     <div className="warehouse-empty-state">
@@ -208,7 +242,8 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const [activeTab, setActiveTab] = useState<WarehouseTab>('parts');
   const [search, setSearch] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
-  const [partsFilter, setPartsFilter] = useState<PartsFilter>('all');
+  const [partsStatusFilter, setPartsStatusFilter] = useState<PartsStatusFilter>('all');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [activityFilter, setActivityFilter] = useState<ActivityFilter>('all');
   const [snapshot, setSnapshot] = useState<WarehouseSnapshot>(emptySnapshot);
   const [loading, setLoading] = useState(true);
@@ -217,6 +252,10 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const [selectedPartId, setSelectedPartId] = useState('');
   const [warehouseDraft, setWarehouseDraft] = useState<InventoryWarehouseDraft>(emptyWarehouseDraft);
   const [itemDraft, setItemDraft] = useState<InventoryItemDraft>(emptyItemDraft);
+  const [categoryDraft, setCategoryDraft] = useState<InventoryCategoryDraft>(emptyCategoryDraft);
+  const [editingCategoryId, setEditingCategoryId] = useState('');
+  const [categoryPickerTarget, setCategoryPickerTarget] = useState<'settings' | 'item' | 'import'>('settings');
+  const [categoryDraftOpen, setCategoryDraftOpen] = useState(false);
   const [supplierDraft, setSupplierDraft] = useState<InventorySupplierDraft>(emptySupplierDraft);
   const [receiptDraft, setReceiptDraft] = useState<InventoryReceiptDraft>(() => emptyReceiptDraft());
   const [receiptLineDraft, setReceiptLineDraft] = useState<InventoryReceiptLineDraft>(() => emptyReceiptLineDraft());
@@ -525,6 +564,74 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     return '';
   }
 
+  async function saveCategoryDraft() {
+    if (!categoryDraft.name.trim()) {
+      setStatus('Category name is required.');
+      return;
+    }
+    setStatus(editingCategoryId ? 'Saving category...' : 'Creating category...');
+    try {
+      const saved = editingCategoryId
+        ? await updateInventoryCategory(editingCategoryId, { ...categoryDraft, isActive: true })
+        : await createInventoryCategory(companyId, categoryDraft);
+      setCategoryDraft(emptyCategoryDraft);
+      setEditingCategoryId('');
+      setCategoryDraftOpen(false);
+      if (categoryPickerTarget === 'item') setItemDraft((draft) => ({ ...draft, categoryId: saved.id, category: saved.name }));
+      if (categoryPickerTarget === 'import') setProductImportDraft((draft) => ({ ...draft, categoryId: saved.id, verified: false }));
+      await reloadWarehouse();
+      setStatus('Category saved.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function deleteCategory(category: InventoryCategory) {
+    const confirmed = window.confirm(`Delete category "${category.name}"? This is only allowed when it is not used.`);
+    if (!confirmed) return;
+    setStatus('Deleting category...');
+    try {
+      await deleteInventoryCategory(category.id);
+      await reloadWarehouse();
+      setStatus('Category deleted.');
+    } catch (error) {
+      const message = warehouseErrorMessage(error);
+      setStatus(message.includes('CATEGORY_USED_BY_ITEMS') || message.includes('CATEGORY_HAS_CHILDREN')
+        ? 'This category is used by inventory parts or active subcategories and cannot be deleted. Move parts or deactivate the category.'
+        : message);
+    }
+  }
+
+  async function toggleCategory(category: InventoryCategory) {
+    setStatus(category.isActive ? 'Deactivating category...' : 'Activating category...');
+    try {
+      await updateInventoryCategory(category.id, { name: category.name, icon: category.icon, isActive: !category.isActive });
+      await reloadWarehouse();
+      setStatus(category.isActive ? 'Category deactivated.' : 'Category activated.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function moveCategory(category: InventoryCategory, direction: -1 | 1) {
+    const siblings = snapshot.categories
+      .filter((row) => row.parentId === category.parentId)
+      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name));
+    const index = siblings.findIndex((row) => row.id === category.id);
+    const nextIndex = index + direction;
+    if (index < 0 || nextIndex < 0 || nextIndex >= siblings.length) return;
+    const reordered = [...siblings];
+    [reordered[index], reordered[nextIndex]] = [reordered[nextIndex], reordered[index]];
+    setStatus('Saving category order...');
+    try {
+      await reorderInventoryCategories(companyId, category.parentId, reordered.map((row) => row.id));
+      await reloadWarehouse();
+      setStatus('Category order saved.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
   function findWeakImportMatches(product: ImportedInventoryProduct) {
     const model = importMatchValue(product.model || product.oem);
     const maker = importMatchValue(product.manufacturer || product.brand);
@@ -652,6 +759,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         poNumber: quickStockDraft.poNumber,
         invoiceNumber: quickStockDraft.invoiceNumber,
       });
+      if (productImportDraft.categoryId) {
+        await setInventoryItemCategory(result.item_id, productImportDraft.categoryId);
+      }
 
       setProductImportDraft(emptyProductImportDraft());
       setQuickStockDraft(emptyQuickStockDraft());
@@ -777,6 +887,22 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   }
 
   const itemById = useMemo(() => new Map(snapshot.items.map((item) => [item.id, item])), [snapshot.items]);
+  const categoryById = useMemo(() => new Map(snapshot.categories.map((category) => [category.id, category])), [snapshot.categories]);
+  const rootCategories = useMemo(
+    () => snapshot.categories.filter((category) => !category.parentId).sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)),
+    [snapshot.categories],
+  );
+  const categoryChildrenByParent = useMemo(() => {
+    const map = new Map<string, InventoryCategory[]>();
+    snapshot.categories.forEach((category) => {
+      if (!category.parentId) return;
+      const rows = map.get(category.parentId) ?? [];
+      rows.push(category);
+      map.set(category.parentId, rows);
+    });
+    map.forEach((rows) => rows.sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name)));
+    return map;
+  }, [snapshot.categories]);
   const warehouseById = useMemo(() => new Map(snapshot.warehouses.map((warehouse) => [warehouse.id, warehouse])), [snapshot.warehouses]);
   const supplierById = useMemo(() => new Map(snapshot.suppliers.map((supplier) => [supplier.id, supplier])), [snapshot.suppliers]);
   const jobById = useMemo(() => new Map(snapshot.jobs.map((job) => [job.id, job])), [snapshot.jobs]);
@@ -793,11 +919,37 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       item,
       warehouse: warehouseRow,
       value: balance.quantity * (item?.averageCost ?? 0),
-      low: item ? balance.quantity <= item.minimumQuantity : false,
+      low: item ? item.minimumQuantity > 0 && balance.quantity > 0 && balance.quantity <= item.minimumQuantity : false,
     };
   }), [itemById, snapshot.stockBalances, warehouseById]);
 
   const selectedWarehouse = warehouseFilter === 'all' ? null : warehouseById.get(warehouseFilter) ?? null;
+
+  function categoryPath(categoryId: string | null | undefined) {
+    if (!categoryId) return 'Uncategorized';
+    const category = categoryById.get(categoryId);
+    if (!category) return 'Uncategorized';
+    const parent = category.parentId ? categoryById.get(category.parentId) : null;
+    return parent ? `${parent.name} / ${category.name}` : category.name;
+  }
+
+  function categoryMatchesFilter(item: InventoryItem) {
+    if (categoryFilter === 'all') return true;
+    if (item.categoryId === categoryFilter) return true;
+    const selected = categoryById.get(categoryFilter);
+    if (selected && !selected.parentId) {
+      const childIds = new Set((categoryChildrenByParent.get(selected.id) ?? []).map((child) => child.id));
+      return Boolean(item.categoryId && childIds.has(item.categoryId));
+    }
+    return false;
+  }
+
+  function itemStockStatus(item: InventoryItem) {
+    const quantity = itemDisplayQuantity(item);
+    if (quantity <= 0) return 'out' as const;
+    if (item.minimumQuantity > 0 && quantity <= item.minimumQuantity) return 'low' as const;
+    return 'in' as const;
+  }
   const itemQuantityBySelectedWarehouse = useMemo(() => {
     if (warehouseFilter === 'all') return new Map<string, number>();
     const quantities = new Map<string, number>();
@@ -832,12 +984,57 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     setProductImportDraft((draft) => draft.preview ? { ...draft, preview: { ...draft.preview, ...patch }, verified: false } : draft);
   }
 
+  function renderCategorySelect(value: string | null, onChange: (categoryId: string | null) => void, includeInactiveSelected = false) {
+    return (
+      <select value={value ?? ''} onChange={(event) => onChange(event.target.value || null)}>
+        <option value="">Uncategorized</option>
+        {rootCategories.filter((category) => category.isActive || (includeInactiveSelected && category.id === value)).map((category) => (
+          <optgroup label={category.name} key={category.id}>
+            <option value={category.id}>{category.name}</option>
+            {(categoryChildrenByParent.get(category.id) ?? [])
+              .filter((child) => child.isActive || (includeInactiveSelected && child.id === value))
+              .map((child) => (
+                <option value={child.id} key={child.id}>{child.name}</option>
+              ))}
+          </optgroup>
+        ))}
+      </select>
+    );
+  }
+
+  function renderCategoryDraftForm(compact = false) {
+    return (
+      <div className={compact ? 'warehouse-category-draft compact' : 'warehouse-category-draft'}>
+        <label>Name<input value={categoryDraft.name} onChange={(event) => setCategoryDraft({ ...categoryDraft, name: event.target.value })} /></label>
+        <label>Icon
+          <select value={categoryDraft.icon} onChange={(event) => setCategoryDraft({ ...categoryDraft, icon: event.target.value })}>
+            <option value="">Default</option>
+            {categoryIconOptions.map((icon) => <option value={icon} key={icon}>{icon}</option>)}
+          </select>
+        </label>
+        <label>Parent category
+          <select value={categoryDraft.parentId ?? ''} disabled={Boolean(editingCategoryId)} onChange={(event) => setCategoryDraft({ ...categoryDraft, parentId: event.target.value || null })}>
+            <option value="">None - root category</option>
+            {rootCategories.filter((category) => category.isActive).map((category) => (
+              <option value={category.id} key={category.id}>{category.name}</option>
+            ))}
+          </select>
+        </label>
+        <div className="warehouse-form-actions">
+          <button className="secondary-button compact" type="button" onClick={() => { setCategoryDraft(emptyCategoryDraft); setEditingCategoryId(''); setCategoryDraftOpen(false); }}>Clear</button>
+          <button className="primary-button compact" type="button" onClick={saveCategoryDraft}>{editingCategoryId ? 'Save category' : 'Create category'}</button>
+        </div>
+      </div>
+    );
+  }
+
   const filteredItems = useMemo(() => {
     const query = search.trim().toLowerCase();
     return snapshot.items.filter((item) => {
       const haystack = [
         item.internalName,
         item.category,
+        categoryPath(item.categoryId),
         item.manufacturer,
         item.oem,
         item.partNumber,
@@ -845,12 +1042,12 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         item.description,
       ].join(' ').toLowerCase();
       if (query && !haystack.includes(query)) return false;
-      const quantity = itemDisplayQuantity(item);
-      if (partsFilter === 'low') return item.minimumQuantity > 0 && quantity <= item.minimumQuantity;
-      if (partsFilter === 'out') return quantity <= 0;
+      if (!categoryMatchesFilter(item)) return false;
+      const stockStatus = itemStockStatus(item);
+      if (partsStatusFilter !== 'all' && stockStatus !== partsStatusFilter) return false;
       return true;
     });
-  }, [itemQuantityBySelectedWarehouse, partsFilter, search, snapshot.items, warehouseFilter]);
+  }, [categoryFilter, categoryById, categoryChildrenByParent, itemQuantityBySelectedWarehouse, partsStatusFilter, search, snapshot.items, warehouseFilter]);
 
   const filteredStockRows = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -862,7 +1059,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   }, [search, stockRows, warehouseFilter]);
 
   const lowStockItems = useMemo(
-    () => snapshot.items.filter((item) => item.minimumQuantity > 0 && itemDisplayQuantity(item) <= item.minimumQuantity),
+    () => snapshot.items.filter((item) => itemStockStatus(item) === 'low'),
     [itemQuantityBySelectedWarehouse, snapshot.items, warehouseFilter],
   );
 
@@ -943,8 +1140,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       <div className="warehouse-part-list">
         {items.map((item) => {
           const quantity = itemDisplayQuantity(item);
-          const isOut = quantity <= 0;
-          const isLow = item.minimumQuantity > 0 && quantity <= item.minimumQuantity;
+          const stockStatus = itemStockStatus(item);
           const isSelected = selectedPartId === item.id;
           return (
             <article className={`warehouse-part-card${isSelected ? ' selected' : ''}`} key={item.id}>
@@ -953,13 +1149,14 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 <span className="warehouse-part-copy">
                   <strong>{item.internalName}</strong>
                   <small>{itemSubtitle(item)}</small>
+                  <small className="warehouse-category-line">{categoryPath(item.categoryId)}</small>
                   <small>{itemLocationSummary(item)}</small>
                 </span>
-                <span className="warehouse-part-stock">
+                <span className={`warehouse-part-stock ${stockStatus}`}>
+                  <small>{stockStatus === 'out' ? 'Out of stock' : stockStatus === 'low' ? `Low - ${formatQty(quantity, item.unit)} left` : 'In stock'}</small>
                   <strong>{formatQty(quantity, item.unit)}</strong>
-                  <small>{selectedWarehouse ? selectedWarehouse.name : 'available'}</small>
+                  <small>{stockStatus === 'low' ? `Minimum: ${formatQty(item.minimumQuantity, item.unit)}` : selectedWarehouse ? selectedWarehouse.name : 'available'}</small>
                 </span>
-                {isOut ? <span className="warehouse-pill danger">Out</span> : isLow ? <span className="warehouse-pill warning">Low</span> : null}
                 <ChevronDown size={18} aria-hidden="true" />
               </button>
               <div className="warehouse-part-actions">
@@ -986,6 +1183,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           <div className="warehouse-detail-meta">
             <span>Part # {item.partNumber || '-'}</span>
             <span>{item.manufacturer || item.oem || 'No manufacturer'}</span>
+            <span>{categoryPath(item.categoryId)}</span>
             <span>Min {formatQty(item.minimumQuantity, item.unit)}</span>
             <span>Avg cost {money(item.averageCost)}</span>
           </div>
@@ -1175,6 +1373,60 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           </article>
         ))}
       </div>
+    );
+  }
+
+  function renderCategoryRow(category: InventoryCategory, isChild = false) {
+    return (
+      <div className={`warehouse-category-row${isChild ? ' child' : ''}${category.isActive ? '' : ' inactive'}`} key={category.id}>
+        <span className="warehouse-category-handle"><GripVertical size={16} aria-hidden="true" /></span>
+        <span className="warehouse-category-icon">{categoryIcon(category.icon)}</span>
+        <span className="warehouse-category-name">
+          <strong>{category.name}</strong>
+          <small>{category.isActive ? (isChild ? 'Subcategory' : 'Root category') : 'Inactive'}</small>
+        </span>
+        <div className="warehouse-category-actions">
+          <button className="secondary-button compact icon-button" type="button" title="Move up" onClick={() => moveCategory(category, -1)}><ArrowUp size={15} aria-hidden="true" /></button>
+          <button className="secondary-button compact icon-button" type="button" title="Move down" onClick={() => moveCategory(category, 1)}><ArrowDown size={15} aria-hidden="true" /></button>
+          <button className="secondary-button compact icon-button" type="button" title="Edit" onClick={() => { setCategoryPickerTarget('settings'); setEditingCategoryId(category.id); setCategoryDraft({ name: category.name, icon: category.icon, parentId: category.parentId }); setCategoryDraftOpen(true); }}><Pencil size={15} aria-hidden="true" /></button>
+          {!isChild ? <button className="secondary-button compact" type="button" onClick={() => { setCategoryPickerTarget('settings'); setEditingCategoryId(''); setCategoryDraft({ ...emptyCategoryDraft, parentId: category.id }); setCategoryDraftOpen(true); }}>Add subcategory</button> : null}
+          <button className="secondary-button compact" type="button" onClick={() => toggleCategory(category)}>{category.isActive ? 'Deactivate' : 'Activate'}</button>
+          <button className="secondary-button compact danger-lite icon-button" type="button" title="Delete" onClick={() => deleteCategory(category)}><Trash2 size={15} aria-hidden="true" /></button>
+        </div>
+      </div>
+    );
+  }
+
+  function renderCategoriesManager() {
+    return (
+      <section className="warehouse-panel warehouse-categories-panel">
+        <div className="warehouse-panel-heading">
+          <h2>Categories</h2>
+          <Folder size={18} aria-hidden="true" />
+        </div>
+        {categoryDraftOpen && categoryPickerTarget === 'settings' ? renderCategoryDraftForm() : null}
+        {snapshot.categories.length ? (
+          <div className="warehouse-category-tree">
+            {rootCategories.map((category) => (
+              <div className="warehouse-category-group" key={category.id}>
+                {renderCategoryRow(category)}
+                {(categoryChildrenByParent.get(category.id) ?? []).map((child) => renderCategoryRow(child, true))}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div>
+            <EmptyWarehouseState title="No categories yet." detail="Use categories to organize parts by your type of service." />
+            <div className="warehouse-form-actions">
+              <button className="primary-button compact" type="button" onClick={() => { setCategoryPickerTarget('settings'); setCategoryDraft(emptyCategoryDraft); setEditingCategoryId(''); setCategoryDraftOpen(true); }}>Create category</button>
+              <button className="secondary-button compact" type="button" disabled title="Starter templates will be added after category usage is validated.">Use starter template</button>
+            </div>
+          </div>
+        )}
+        {snapshot.categories.length ? (
+          <button className="secondary-button compact" type="button" onClick={() => { setCategoryPickerTarget('settings'); setCategoryDraft(emptyCategoryDraft); setEditingCategoryId(''); setCategoryDraftOpen(true); }}>Create category</button>
+        ) : null}
+      </section>
     );
   }
 
@@ -1445,6 +1697,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   function renderSettings() {
     return (
       <div className="warehouse-settings-grid">
+        {renderCategoriesManager()}
         <section className="warehouse-panel">
           <div className="warehouse-panel-heading">
             <h2>Locations</h2>
@@ -1506,14 +1759,21 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           <div className="warehouse-form-grid wide">
             <label>Name<input value={itemDraft.internalName} onChange={(event) => setItemDraft({ ...itemDraft, internalName: event.target.value })} /></label>
             <label>Part #<input value={itemDraft.partNumber} onChange={(event) => setItemDraft({ ...itemDraft, partNumber: event.target.value })} /></label>
+            <label>Category
+              {renderCategorySelect(itemDraft.categoryId, (categoryId) => setItemDraft({ ...itemDraft, categoryId, category: categoryPath(categoryId) === 'Uncategorized' ? '' : categoryPath(categoryId) }))}
+            </label>
             <label>Photo<input disabled placeholder="Photo upload coming soon" /></label>
+            <button className="secondary-button compact" type="button" onClick={() => { setCategoryPickerTarget('item'); setEditingCategoryId(''); setCategoryDraft(emptyCategoryDraft); setCategoryDraftOpen(true); }}>
+              <Plus size={15} aria-hidden="true" /> Add category
+            </button>
+            {categoryPickerTarget === 'item' && categoryDraftOpen ? renderCategoryDraftForm(true) : null}
             <details className="warehouse-more-fields">
               <summary>More details</summary>
               <div className="warehouse-form-grid wide">
                 <label>Manufacturer<input value={itemDraft.manufacturer} onChange={(event) => setItemDraft({ ...itemDraft, manufacturer: event.target.value })} /></label>
                 <label>OEM<input value={itemDraft.oem} onChange={(event) => setItemDraft({ ...itemDraft, oem: event.target.value })} /></label>
                 <label>Alt part #<input value={itemDraft.alternatePartNumber} onChange={(event) => setItemDraft({ ...itemDraft, alternatePartNumber: event.target.value })} /></label>
-                <label>Category<input value={itemDraft.category} onChange={(event) => setItemDraft({ ...itemDraft, category: event.target.value })} /></label>
+                <label>Legacy category<input value={itemDraft.category} onChange={(event) => setItemDraft({ ...itemDraft, category: event.target.value })} /></label>
                 <label>Unit<input value={itemDraft.unit} onChange={(event) => setItemDraft({ ...itemDraft, unit: event.target.value })} /></label>
                 <label>Minimum stock<input type="number" min="0" value={itemDraft.minimumQuantity} onChange={(event) => setItemDraft({ ...itemDraft, minimumQuantity: Number(event.target.value) || 0 })} /></label>
                 <label>Description<input value={itemDraft.description} onChange={(event) => setItemDraft({ ...itemDraft, description: event.target.value })} /></label>
@@ -1588,10 +1848,17 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                   <label>Part Number / MPN<input value={importedProduct.partNumber} onChange={(event) => updateImportedProduct({ partNumber: event.target.value })} /></label>
                   <label>OEM / model<input value={importedProduct.oem || importedProduct.model} onChange={(event) => updateImportedProduct({ oem: event.target.value, model: event.target.value })} /></label>
                   <label>Supplier<input value={productImportDraft.supplierName} onChange={(event) => setProductImportDraft({ ...productImportDraft, supplierName: event.target.value, verified: false })} /></label>
+                  <label>Category
+                    {renderCategorySelect(productImportDraft.categoryId, (categoryId) => setProductImportDraft({ ...productImportDraft, categoryId, verified: false }))}
+                  </label>
+                  <button className="secondary-button compact" type="button" onClick={() => { setCategoryPickerTarget('import'); setEditingCategoryId(''); setCategoryDraft(emptyCategoryDraft); setCategoryDraftOpen(true); }}>
+                    <Plus size={15} aria-hidden="true" /> Add category
+                  </button>
                   <label>Supplier product ID<input value={importedProduct.externalProductId} onChange={(event) => updateImportedProduct({ externalProductId: event.target.value })} /></label>
                   <label>Source URL<input value={productImportDraft.sourceUrl} onChange={(event) => setProductImportDraft({ ...productImportDraft, sourceUrl: event.target.value, verified: false })} /></label>
                   <label>Description<input value={importedProduct.description} onChange={(event) => updateImportedProduct({ description: event.target.value })} /></label>
                 </div>
+                {categoryPickerTarget === 'import' && categoryDraftOpen ? renderCategoryDraftForm(true) : null}
                 <div className="warehouse-form-grid wide">
                   <label>Purchase format
                     <select value={productImportDraft.unitsPerPackage > 1 ? 'pack' : 'individual'} onChange={(event) => setProductImportDraft({ ...productImportDraft, unitsPerPackage: event.target.value === 'individual' ? 1 : Math.max(2, productImportDraft.unitsPerPackage), verified: false })}>
@@ -1871,14 +2138,33 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 ))}
               </select>
             </label>
+            <label>
+              Category
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)}>
+                <option value="all">All categories</option>
+                {rootCategories.map((category) => (
+                  <optgroup label={category.name} key={category.id}>
+                    <option value={category.id}>{category.name}</option>
+                    {(categoryChildrenByParent.get(category.id) ?? []).map((child) => (
+                      <option value={child.id} key={child.id}>{child.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+            </label>
+            <label>
+              Status
+              <select value={partsStatusFilter} onChange={(event) => setPartsStatusFilter(event.target.value as PartsStatusFilter)}>
+                <option value="all">All statuses</option>
+                <option value="in">In stock</option>
+                <option value="low">Low</option>
+                <option value="out">Out of stock</option>
+              </select>
+            </label>
             <span className="warehouse-load-state">{loading ? 'Loading...' : `${summary.items} parts`}</span>
           </div>
           <div className="warehouse-filter-row">
-            {(['all', 'low', 'out'] as PartsFilter[]).map((filter) => (
-              <button className={partsFilter === filter ? 'active' : ''} type="button" onClick={() => setPartsFilter(filter)} key={filter}>
-                {filter === 'all' ? 'All' : filter === 'low' ? 'Low stock' : 'Out of stock'}
-              </button>
-            ))}
+            <span><strong>All Parts</strong></span>
             <span><strong>{lowStockItems.length}</strong> low stock</span>
             <span><strong>{money(summary.inventoryValue)}</strong> inventory value</span>
           </div>

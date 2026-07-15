@@ -30,6 +30,7 @@ export type InventoryItem = {
   companyId: string;
   internalName: string;
   category: string;
+  categoryId: string | null;
   manufacturer: string;
   oem: string;
   partNumber: string;
@@ -41,6 +42,16 @@ export type InventoryItem = {
   totalQuantity: number;
   isActive: boolean;
   notes: string;
+};
+
+export type InventoryCategory = {
+  id: string;
+  companyId: string;
+  name: string;
+  parentId: string | null;
+  icon: string;
+  sortOrder: number;
+  isActive: boolean;
 };
 
 export type InventorySupplier = {
@@ -229,6 +240,7 @@ export type WarehouseSnapshot = {
   warehouses: InventoryWarehouse[];
   bins: InventoryBin[];
   items: InventoryItem[];
+  categories: InventoryCategory[];
   suppliers: InventorySupplier[];
   supplierLinks: InventorySupplierLink[];
   jobs: WarehouseJob[];
@@ -239,7 +251,8 @@ export type WarehouseSnapshot = {
 };
 
 export type InventoryWarehouseDraft = Pick<InventoryWarehouse, 'name' | 'type' | 'location' | 'technicianId' | 'notes'>;
-export type InventoryItemDraft = Pick<InventoryItem, 'internalName' | 'category' | 'manufacturer' | 'oem' | 'partNumber' | 'alternatePartNumber' | 'description' | 'unit' | 'minimumQuantity' | 'notes'>;
+export type InventoryItemDraft = Pick<InventoryItem, 'internalName' | 'category' | 'categoryId' | 'manufacturer' | 'oem' | 'partNumber' | 'alternatePartNumber' | 'description' | 'unit' | 'minimumQuantity' | 'notes'>;
+export type InventoryCategoryDraft = Pick<InventoryCategory, 'name' | 'parentId' | 'icon'>;
 export type InventorySupplierDraft = Pick<InventorySupplier, 'name' | 'contactName' | 'phone' | 'email' | 'website' | 'address'>;
 export type InventoryReceiptDraft = Pick<InventoryStockReceipt, 'supplierId' | 'warehouseId' | 'binId' | 'receiptDate' | 'poNumber' | 'invoiceNumber' | 'notes'>;
 export type InventoryReceiptLineDraft = Pick<InventoryStockReceiptLine, 'receiptId' | 'itemId' | 'quantity' | 'unitCost' | 'extraCost' | 'currency'>;
@@ -287,6 +300,7 @@ type ItemRow = {
   company_id: string;
   internal_name: string;
   category: string | null;
+  category_id?: string | null;
   manufacturer: string | null;
   oem: string | null;
   part_number: string | null;
@@ -298,6 +312,16 @@ type ItemRow = {
   total_quantity: number | string | null;
   is_active: boolean;
   notes: string | null;
+};
+
+type CategoryRow = {
+  id: string;
+  company_id: string;
+  name: string;
+  parent_id: string | null;
+  icon: string | null;
+  sort_order: number | string;
+  is_active: boolean;
 };
 
 type SupplierRow = {
@@ -447,6 +471,7 @@ function mapItem(row: ItemRow): InventoryItem {
     companyId: row.company_id,
     internalName: row.internal_name,
     category: row.category ?? '',
+    categoryId: row.category_id ?? null,
     manufacturer: row.manufacturer ?? '',
     oem: row.oem ?? '',
     partNumber: row.part_number ?? '',
@@ -458,6 +483,18 @@ function mapItem(row: ItemRow): InventoryItem {
     totalQuantity: numberValue(row.total_quantity),
     isActive: row.is_active,
     notes: row.notes ?? '',
+  };
+}
+
+function mapCategory(row: CategoryRow): InventoryCategory {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    name: row.name,
+    parentId: row.parent_id,
+    icon: row.icon ?? '',
+    sortOrder: numberValue(row.sort_order),
+    isActive: row.is_active,
   };
 }
 
@@ -590,6 +627,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     warehouses,
     bins,
     items,
+    categories,
     suppliers,
     supplierLinks,
     jobs,
@@ -601,6 +639,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     supabaseRequest<WarehouseRow[]>(`inventory_warehouses?company_id=${sqlEq(companyId)}&order=name.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<BinRow[]>(`inventory_bins?company_id=${sqlEq(companyId)}&order=code.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<ItemRow[]>(`inventory_items?company_id=${sqlEq(companyId)}&order=internal_name.asc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<CategoryRow[]>(`inventory_categories?company_id=${sqlEq(companyId)}&order=sort_order.asc,name.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<SupplierRow[]>(`inventory_suppliers?company_id=${sqlEq(companyId)}&order=name.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<SupplierLinkRow[]>(`inventory_supplier_links?company_id=${sqlEq(companyId)}&order=last_checked_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&select=id,company_id,job_number,status,system,issue,created_at&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
@@ -614,6 +653,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     warehouses: warehouses.map(mapWarehouse),
     bins: bins.map(mapBin),
     items: items.map(mapItem),
+    categories: categories.map(mapCategory),
     suppliers: suppliers.map(mapSupplier),
     supplierLinks: supplierLinks.map(mapSupplierLink),
     jobs: jobs.map(mapJob),
@@ -648,6 +688,7 @@ export async function createInventoryItem(companyId: string, draft: InventoryIte
       company_id: companyId,
       internal_name: draft.internalName.trim(),
       category: draft.category.trim(),
+      category_id: draft.categoryId || null,
       manufacturer: draft.manufacturer.trim(),
       oem: draft.oem.trim(),
       part_number: draft.partNumber.trim(),
@@ -659,6 +700,45 @@ export async function createInventoryItem(companyId: string, draft: InventoryIte
     }],
   });
   return mapItem(row);
+}
+
+export async function createInventoryCategory(companyId: string, draft: InventoryCategoryDraft): Promise<InventoryCategory> {
+  const row = await supabaseRpc<CategoryRow>('inventory_create_category', {
+    p_company_id: companyId,
+    p_name: draft.name.trim(),
+    p_parent_id: draft.parentId || null,
+    p_icon: draft.icon || null,
+  });
+  return mapCategory(row);
+}
+
+export async function updateInventoryCategory(categoryId: string, draft: Partial<InventoryCategoryDraft> & { isActive?: boolean }): Promise<InventoryCategory> {
+  const row = await supabaseRpc<CategoryRow>('inventory_update_category', {
+    p_category_id: categoryId,
+    p_name: draft.name?.trim() ?? '',
+    p_icon: draft.icon || null,
+    p_is_active: draft.isActive ?? true,
+  });
+  return mapCategory(row);
+}
+
+export async function reorderInventoryCategories(companyId: string, parentId: string | null, categoryIds: string[]) {
+  return supabaseRpc<{ status: string; count: number }>('inventory_reorder_categories', {
+    p_company_id: companyId,
+    p_parent_id: parentId,
+    p_category_ids: categoryIds,
+  });
+}
+
+export async function deleteInventoryCategory(categoryId: string) {
+  return supabaseRpc<{ status: string; category_id: string }>('inventory_delete_category', { p_category_id: categoryId });
+}
+
+export async function setInventoryItemCategory(itemId: string, categoryId: string | null) {
+  return supabaseRpc<{ status: string; item_id: string; category_id: string | null }>('inventory_set_item_category', {
+    p_item_id: itemId,
+    p_category_id: categoryId,
+  });
 }
 
 export async function createInventorySupplier(companyId: string, draft: InventorySupplierDraft): Promise<InventorySupplier> {
@@ -943,6 +1023,15 @@ export function warehouseErrorMessage(error: unknown) {
     JOB_MATERIAL_NOT_FOUND: 'The linked Job material was not found.',
     RETURN_QUANTITY_EXCEEDS_USED: 'Return quantity cannot be greater than the remaining Job material quantity.',
     JOB_MATERIAL_ALREADY_LINKED: 'This warehouse movement is already linked to a Job material.',
+    CATEGORY_NAME_REQUIRED: 'Category name is required.',
+    CATEGORY_PARENT_NOT_FOUND: 'Parent category was not found.',
+    CATEGORY_DEPTH_LIMIT: 'Only two category levels are supported.',
+    CATEGORY_PARENT_SELF: 'Category cannot be its own parent.',
+    CATEGORY_COMPANY_MISMATCH: 'Category belongs to another company.',
+    CATEGORY_DUPLICATE_NAME: 'A category with this name already exists in this level.',
+    CATEGORY_USED_BY_ITEMS: 'This category is used by inventory parts and cannot be deleted.',
+    CATEGORY_HAS_CHILDREN: 'Delete or deactivate subcategories before deleting this root category.',
+    CATEGORY_REORDER_SCOPE_MISMATCH: 'Category order could not be saved because the category list changed.',
   };
   const code = Object.keys(knownMessages).find((key) => raw.includes(key));
   return code ? knownMessages[code] : raw;
