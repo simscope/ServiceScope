@@ -3,6 +3,9 @@
 
 select
   to_regclass('public.inventory_supplier_links') as supplier_links,
+  to_regclass('public.inventory_import_operations') as import_operations,
+  to_regprocedure('public.inventory_import_product_to_stock(uuid,uuid,jsonb)') as import_receive_rpc,
+  to_regprocedure('public.inventory_post_stock_receipt_internal(uuid,uuid,boolean)') as internal_receipt_posting_helper,
   to_regprocedure('public.inventory_post_stock_receipt(uuid)') as receipt_posting_rpc;
 
 select

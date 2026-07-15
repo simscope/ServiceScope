@@ -101,6 +101,53 @@ export type ImportedInventoryProduct = {
   warnings: string[];
 };
 
+export type InventoryImportReceiveDraft = {
+  idempotencyKey: string;
+  selectedItemId?: string | null;
+  createNewPart: boolean;
+  warehouseId: string;
+  binId?: string | null;
+  title: string;
+  brand: string;
+  manufacturer: string;
+  partNumber: string;
+  model: string;
+  oem: string;
+  description: string;
+  imageUrl: string;
+  supplierName: string;
+  sourceType: 'amazon' | 'ebay' | 'generic';
+  sourceDomain: string;
+  sourceUrl: string;
+  canonicalUrl: string;
+  externalProductId: string;
+  asin?: string;
+  ebayItemId?: string;
+  currency: string;
+  packagesReceived: number;
+  unitsPerPackage: number;
+  packagePrice: number;
+  shippingCost: number;
+  taxCost: number;
+  otherCost: number;
+  receiptDate: string;
+  poNumber: string;
+  invoiceNumber: string;
+};
+
+export type InventoryImportReceiveResult = {
+  status: string;
+  item_id: string;
+  supplier_id: string | null;
+  receipt_id: string;
+  receipt_line_id: string;
+  movement_id: string;
+  new_total_quantity: number;
+  average_cost: number;
+  warnings: string[];
+  idempotent_replay?: boolean;
+};
+
 export type InventoryStockBalance = {
   id: string;
   companyId: string;
@@ -804,6 +851,45 @@ export async function importInventoryProductUrl(companyId: string, url: string) 
   return supabaseFunction<ImportedInventoryProduct>('import-inventory-product-url', { companyId, url }, { timeoutMs: 30000 });
 }
 
+export async function receiveImportedProductToStock(companyId: string, draft: InventoryImportReceiveDraft) {
+  return supabaseRpc<InventoryImportReceiveResult>('inventory_import_product_to_stock', {
+    p_company_id: companyId,
+    p_idempotency_key: draft.idempotencyKey,
+    p_payload: {
+      selected_item_id: draft.selectedItemId || '',
+      create_new_part: draft.createNewPart,
+      warehouse_id: draft.warehouseId,
+      bin_id: draft.binId || '',
+      title: draft.title,
+      brand: draft.brand,
+      manufacturer: draft.manufacturer,
+      part_number: draft.partNumber,
+      model: draft.model,
+      oem: draft.oem,
+      description: draft.description,
+      image_url: draft.imageUrl,
+      supplier_name: draft.supplierName,
+      source_type: draft.sourceType,
+      source_domain: draft.sourceDomain,
+      source_url: draft.sourceUrl,
+      canonical_url: draft.canonicalUrl,
+      external_product_id: draft.externalProductId,
+      asin: draft.asin || '',
+      ebay_item_id: draft.ebayItemId || '',
+      currency: draft.currency || 'USD',
+      packages_received: Math.max(0, Number(draft.packagesReceived) || 0),
+      units_per_package: Math.max(0, Number(draft.unitsPerPackage) || 0),
+      package_price: Math.max(0, Number(draft.packagePrice) || 0),
+      shipping_cost: Math.max(0, Number(draft.shippingCost) || 0),
+      tax_cost: Math.max(0, Number(draft.taxCost) || 0),
+      other_cost: Math.max(0, Number(draft.otherCost) || 0),
+      receipt_date: draft.receiptDate,
+      po_number: draft.poNumber,
+      invoice_number: draft.invoiceNumber,
+    },
+  }, { timeoutMs: 30000 });
+}
+
 export function normalizeSupplierUrl(url: string) {
   try {
     const parsed = new URL(url.trim());
@@ -840,6 +926,8 @@ export function warehouseErrorMessage(error: unknown) {
     UNSUPPORTED_CURRENCY: 'Only USD receipt lines can be posted in this stage.',
     POSTED_RECEIPT_LOCKED: 'Posted receipts cannot be edited directly.',
     POSTED_RECEIPT_LINES_LOCKED: 'Posted receipt lines cannot be edited directly.',
+    IDEMPOTENCY_KEY_REQUIRED: 'Import retry key is missing. Reopen the import and try again.',
+    ITEM_NAME_REQUIRED: 'Product name is required.',
     JOB_NOT_FOUND: 'Job was not found.',
     INSUFFICIENT_STOCK: 'There is not enough stock in the selected location.',
     JOB_ISSUE_NOT_FOUND: 'The original Job stock issue was not found.',

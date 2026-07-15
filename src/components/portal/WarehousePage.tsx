@@ -13,11 +13,10 @@ import {
   listWarehouseSnapshot,
   normalizeSupplierUrl,
   postInventoryReceipt,
+  receiveImportedProductToStock,
   returnInventoryJobPart,
   updateInventoryReceipt,
   updateInventoryReceiptLine,
-  upsertInventoryItemSupplier,
-  upsertInventorySupplierLink,
   warehouseErrorMessage,
   type ImportedInventoryProduct,
   type InventoryItem,
@@ -30,7 +29,6 @@ import {
   type InventoryJobReturnDraft,
   type InventoryStockReceipt,
   type InventoryStockReceiptLine,
-  type InventorySupplier,
   type WarehouseSnapshot,
 } from '../../services/warehouseStore';
 import { money } from '../../utils/format';
@@ -132,6 +130,7 @@ const emptyQuickStockDraft = () => ({
 });
 
 type ProductImportDraft = {
+  idempotencyKey: string;
   productUrl: string;
   preview: ImportedInventoryProduct | null;
   matchItemId: string;
@@ -148,6 +147,7 @@ type ProductImportDraft = {
 };
 
 const emptyProductImportDraft = (): ProductImportDraft => ({
+  idempotencyKey: crypto.randomUUID(),
   productUrl: '',
   preview: null,
   matchItemId: '',
@@ -213,6 +213,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const [receiptLineDraft, setReceiptLineDraft] = useState<InventoryReceiptLineDraft>(() => emptyReceiptLineDraft());
   const [quickStockDraft, setQuickStockDraft] = useState(() => emptyQuickStockDraft());
   const [productImportDraft, setProductImportDraft] = useState<ProductImportDraft>(() => emptyProductImportDraft());
+  const [importPosting, setImportPosting] = useState(false);
   const [jobIssueDraft, setJobIssueDraft] = useState<InventoryJobIssueDraft>(() => emptyJobIssueDraft());
   const [jobReturnDraft, setJobReturnDraft] = useState<InventoryJobReturnDraft>(() => emptyJobReturnDraft());
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
@@ -556,21 +557,6 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     }
   }
 
-  async function ensureImportSupplier(name: string, product: ImportedInventoryProduct): Promise<InventorySupplier | null> {
-    const cleanName = name.trim();
-    if (!cleanName) return null;
-    const existing = snapshot.suppliers.find((supplier) => supplier.name.trim().toLowerCase() === cleanName.toLowerCase());
-    if (existing) return existing;
-    return createInventorySupplier(companyId, {
-      name: cleanName,
-      contactName: '',
-      phone: '',
-      email: '',
-      website: product.canonicalUrl || product.sourceDomain,
-      address: '',
-    });
-  }
-
   async function addImportedStock() {
     const product = productImportDraft.preview;
     if (!product) {
@@ -591,73 +577,33 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       return;
     }
     if ((Number(productImportDraft.packagePrice) || 0) <= 0) {
-      setStatus('Price per pack is required.');
-      return;
+      const confirmedZeroPrice = window.confirm('This imported product has zero price. Continue only for free replacement, warranty, donated stock, or opening correction.');
+      if (!confirmedZeroPrice) return;
     }
     if (!productImportDraft.verified) {
       setStatus('Review and confirm the imported fields before adding stock.');
       return;
     }
 
-    const totalQuantity = Number(productImportDraft.packagesReceived) * Number(productImportDraft.unitsPerPackage);
-    const unitCost = Number(productImportDraft.packagePrice) / Number(productImportDraft.unitsPerPackage);
-    const extraCost = Number(productImportDraft.shippingCost) + Number(productImportDraft.taxCost) + Number(productImportDraft.otherCost);
-
+    if (importPosting) return;
+    setImportPosting(true);
     setStatus('Adding imported product to stock...');
     try {
-      let itemId = productImportDraft.matchItemId;
-      if (!itemId || productImportDraft.createNewPart) {
-        const exactExisting = findImportMatch(product);
-        if (exactExisting && !productImportDraft.createNewPart) {
-          itemId = exactExisting;
-        } else {
-          const created = await createInventoryItem(companyId, {
-            internalName: itemName,
-            category: '',
-            manufacturer: product.manufacturer || product.brand,
-            oem: product.oem || product.model,
-            partNumber: product.partNumber,
-            alternatePartNumber: product.asin || product.ebayItemId || '',
-            description: product.description,
-            unit: 'pcs',
-            minimumQuantity: 0,
-            notes: product.imageUrl ? `Imported image source: ${product.imageUrl}` : '',
-          });
-          itemId = created.id;
-        }
-      }
-
-      const supplier = await ensureImportSupplier(productImportDraft.supplierName, product);
-      const savedReceipt = await createInventoryReceipt(companyId, {
-        supplierId: supplier?.id ?? null,
+      const result = await receiveImportedProductToStock(companyId, {
+        idempotencyKey: productImportDraft.idempotencyKey,
+        selectedItemId: productImportDraft.matchItemId || null,
+        createNewPart: productImportDraft.createNewPart,
         warehouseId: quickStockDraft.warehouseId,
         binId: quickStockDraft.binId || null,
-        receiptDate: quickStockDraft.receiptDate,
-        poNumber: quickStockDraft.poNumber,
-        invoiceNumber: quickStockDraft.invoiceNumber,
-        notes: `Imported from ${productImportDraft.sourceUrl || product.canonicalUrl || productImportDraft.productUrl}`,
-      });
-      await createInventoryReceiptLine(companyId, {
-        receiptId: savedReceipt.id,
-        itemId,
-        quantity: totalQuantity,
-        unitCost,
-        extraCost,
-        currency: product.currency || 'USD',
-      });
-      await postInventoryReceipt(savedReceipt.id);
-      if (supplier) {
-        await upsertInventoryItemSupplier(companyId, itemId, supplier.id, {
-          supplierPartNumber: product.partNumber || product.externalProductId,
-          supplierDescription: product.title,
-          lastUnitCost: unitCost,
-          currency: product.currency || 'USD',
-          productUrl: productImportDraft.sourceUrl || product.canonicalUrl || productImportDraft.productUrl,
-        });
-      }
-      await upsertInventorySupplierLink(companyId, {
-        itemId,
-        supplierId: supplier?.id ?? null,
+        title: product.title,
+        brand: product.brand,
+        manufacturer: product.manufacturer || product.brand,
+        partNumber: product.partNumber,
+        model: product.model,
+        oem: product.oem,
+        description: product.description,
+        imageUrl: product.imageUrl,
+        supplierName: productImportDraft.supplierName,
         sourceType: product.sourceType,
         sourceDomain: product.sourceDomain,
         sourceUrl: productImportDraft.productUrl,
@@ -665,21 +611,28 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         externalProductId: product.externalProductId,
         asin: product.asin,
         ebayItemId: product.ebayItemId,
-        supplierPartNumber: product.partNumber,
-        lastTitle: product.title,
-        lastImageUrl: product.imageUrl,
-        lastVendorPrice: Number(productImportDraft.packagePrice),
         currency: product.currency || 'USD',
-        packQuantity: Number(productImportDraft.unitsPerPackage),
+        packagesReceived: productImportDraft.packagesReceived,
+        unitsPerPackage: productImportDraft.unitsPerPackage,
+        packagePrice: productImportDraft.packagePrice,
+        shippingCost: productImportDraft.shippingCost,
+        taxCost: productImportDraft.taxCost,
+        otherCost: productImportDraft.otherCost,
+        receiptDate: quickStockDraft.receiptDate,
+        poNumber: quickStockDraft.poNumber,
+        invoiceNumber: quickStockDraft.invoiceNumber,
       });
 
       setProductImportDraft(emptyProductImportDraft());
       setQuickStockDraft(emptyQuickStockDraft());
       setFormMode('none');
       await reloadWarehouse();
-      setStatus('Imported product added to stock.');
+      const warningText = result.warnings?.length ? ` ${result.warnings.join(' ')}` : '';
+      setStatus(`${result.idempotent_replay ? 'Import retry returned the original posted result.' : 'Imported product added to stock.'}${warningText}`);
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
+    } finally {
+      setImportPosting(false);
     }
   }
 
@@ -1668,7 +1621,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           </details>
           <div className="warehouse-form-actions sticky">
             <button className="secondary-button compact" type="button" onClick={() => { setProductImportDraft(emptyProductImportDraft()); setFormMode('none'); }}>Cancel</button>
-            <button className="primary-button" type="button" onClick={importedProduct ? addImportedStock : addQuickStock}>Add to stock</button>
+            <button className="primary-button" type="button" disabled={importPosting} onClick={importedProduct ? addImportedStock : addQuickStock}>
+              {importPosting ? 'Adding...' : 'Add to stock'}
+            </button>
           </div>
         </section>
       );
