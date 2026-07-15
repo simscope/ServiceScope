@@ -74,7 +74,9 @@ export type InventoryMovement = {
   unitCost: number;
   totalCost: number;
   fromWarehouseId: string | null;
+  fromBinId: string | null;
   toWarehouseId: string | null;
+  toBinId: string | null;
   supplierId: string | null;
   jobId: string | null;
   referenceNumber: string;
@@ -85,6 +87,16 @@ export type InventoryMovement = {
   averageCostBefore: number | null;
   averageCostAfter: number | null;
   notes: string;
+  createdAt: string;
+};
+
+export type WarehouseJob = {
+  id: string;
+  companyId: string;
+  jobNumber: string;
+  status: string;
+  system: string;
+  issue: string;
   createdAt: string;
 };
 
@@ -123,6 +135,7 @@ export type WarehouseSnapshot = {
   bins: InventoryBin[];
   items: InventoryItem[];
   suppliers: InventorySupplier[];
+  jobs: WarehouseJob[];
   stockBalances: InventoryStockBalance[];
   movements: InventoryMovement[];
   receipts: InventoryStockReceipt[];
@@ -134,6 +147,23 @@ export type InventoryItemDraft = Pick<InventoryItem, 'internalName' | 'category'
 export type InventorySupplierDraft = Pick<InventorySupplier, 'name' | 'contactName' | 'phone' | 'email' | 'website' | 'address'>;
 export type InventoryReceiptDraft = Pick<InventoryStockReceipt, 'supplierId' | 'warehouseId' | 'binId' | 'receiptDate' | 'poNumber' | 'invoiceNumber' | 'notes'>;
 export type InventoryReceiptLineDraft = Pick<InventoryStockReceiptLine, 'receiptId' | 'itemId' | 'quantity' | 'unitCost' | 'extraCost' | 'currency'>;
+
+export type InventoryJobIssueDraft = {
+  itemId: string;
+  jobId: string;
+  warehouseId: string;
+  binId?: string | null;
+  quantity: number;
+  notes?: string;
+};
+
+export type InventoryJobReturnDraft = {
+  movementId: string;
+  warehouseId?: string | null;
+  binId?: string | null;
+  quantity: number;
+  notes?: string;
+};
 
 type WarehouseRow = {
   id: string;
@@ -205,7 +235,9 @@ type MovementRow = {
   unit_cost: number | string | null;
   total_cost: number | string | null;
   from_warehouse_id: string | null;
+  from_bin_id?: string | null;
   to_warehouse_id: string | null;
+  to_bin_id?: string | null;
   supplier_id: string | null;
   job_id: string | null;
   reference_number: string | null;
@@ -216,6 +248,16 @@ type MovementRow = {
   average_cost_before?: number | string | null;
   average_cost_after?: number | string | null;
   notes: string | null;
+  created_at: string;
+};
+
+type JobRow = {
+  id: string;
+  company_id: string;
+  job_number: string;
+  status: string;
+  system: string | null;
+  issue: string | null;
   created_at: string;
 };
 
@@ -336,7 +378,9 @@ function mapMovement(row: MovementRow): InventoryMovement {
     unitCost: numberValue(row.unit_cost),
     totalCost: numberValue(row.total_cost),
     fromWarehouseId: row.from_warehouse_id,
+    fromBinId: row.from_bin_id ?? null,
     toWarehouseId: row.to_warehouse_id,
+    toBinId: row.to_bin_id ?? null,
     supplierId: row.supplier_id,
     jobId: row.job_id,
     referenceNumber: row.reference_number ?? '',
@@ -347,6 +391,18 @@ function mapMovement(row: MovementRow): InventoryMovement {
     averageCostBefore: row.average_cost_before == null ? null : numberValue(row.average_cost_before),
     averageCostAfter: row.average_cost_after == null ? null : numberValue(row.average_cost_after),
     notes: row.notes ?? '',
+    createdAt: row.created_at,
+  };
+}
+
+function mapJob(row: JobRow): WarehouseJob {
+  return {
+    id: row.id,
+    companyId: row.company_id,
+    jobNumber: row.job_number,
+    status: row.status,
+    system: row.system ?? '',
+    issue: row.issue ?? '',
     createdAt: row.created_at,
   };
 }
@@ -391,6 +447,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     bins,
     items,
     suppliers,
+    jobs,
     stockBalances,
     movements,
     receipts,
@@ -400,6 +457,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     supabaseRequest<BinRow[]>(`inventory_bins?company_id=${sqlEq(companyId)}&order=code.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<ItemRow[]>(`inventory_items?company_id=${sqlEq(companyId)}&order=internal_name.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<SupplierRow[]>(`inventory_suppliers?company_id=${sqlEq(companyId)}&order=name.asc&limit=${DEFAULT_LIMIT}`),
+    supabaseRequest<JobRow[]>(`jobs?company_id=${sqlEq(companyId)}&select=id,company_id,job_number,status,system,issue,created_at&order=created_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<StockBalanceRow[]>(`inventory_stock_balances?company_id=${sqlEq(companyId)}&order=updated_at.desc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<MovementRow[]>(`inventory_movements?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
     supabaseRequest<ReceiptRow[]>(`inventory_stock_receipts?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
@@ -411,6 +469,7 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     bins: bins.map(mapBin),
     items: items.map(mapItem),
     suppliers: suppliers.map(mapSupplier),
+    jobs: jobs.map(mapJob),
     stockBalances: stockBalances.map(mapStockBalance),
     movements: movements.map(mapMovement),
     receipts: receipts.map(mapReceipt),
@@ -552,6 +611,27 @@ export async function cancelInventoryReceipt(receiptId: string, reason: string) 
   return supabaseRpc<{ status: string; receipt_id: string; canceled_lines: number }>('inventory_cancel_stock_receipt', { p_receipt_id: receiptId, p_reason: reason }, { timeoutMs: 30000 });
 }
 
+export async function issueInventoryPartToJob(draft: InventoryJobIssueDraft) {
+  return supabaseRpc<{ status: string; movement_id: string; job_material_id: string; job_id: string; item_id: string; quantity: number }>('inventory_issue_part_to_job', {
+    p_item_id: draft.itemId,
+    p_job_id: draft.jobId,
+    p_warehouse_id: draft.warehouseId,
+    p_bin_id: draft.binId || null,
+    p_quantity: Math.max(0, Number(draft.quantity) || 0),
+    p_notes: draft.notes?.trim() ?? '',
+  }, { timeoutMs: 30000 });
+}
+
+export async function returnInventoryJobPart(draft: InventoryJobReturnDraft) {
+  return supabaseRpc<{ status: string; movement_id: string; source_movement_id: string; job_material_id: string; quantity: number }>('inventory_return_job_part', {
+    p_movement_id: draft.movementId,
+    p_quantity: Math.max(0, Number(draft.quantity) || 0),
+    p_warehouse_id: draft.warehouseId || null,
+    p_bin_id: draft.binId || null,
+    p_notes: draft.notes?.trim() ?? '',
+  }, { timeoutMs: 30000 });
+}
+
 export function warehouseErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   if (raw.includes('PGRST205') && raw.includes('inventory_')) {
@@ -577,6 +657,12 @@ export function warehouseErrorMessage(error: unknown) {
     UNSUPPORTED_CURRENCY: 'Only USD receipt lines can be posted in this stage.',
     POSTED_RECEIPT_LOCKED: 'Posted receipts cannot be edited directly.',
     POSTED_RECEIPT_LINES_LOCKED: 'Posted receipt lines cannot be edited directly.',
+    JOB_NOT_FOUND: 'Job was not found.',
+    INSUFFICIENT_STOCK: 'There is not enough stock in the selected location.',
+    JOB_ISSUE_NOT_FOUND: 'The original Job stock issue was not found.',
+    JOB_MATERIAL_NOT_FOUND: 'The linked Job material was not found.',
+    RETURN_QUANTITY_EXCEEDS_USED: 'Return quantity cannot be greater than the remaining Job material quantity.',
+    JOB_MATERIAL_ALREADY_LINKED: 'This warehouse movement is already linked to a Job material.',
   };
   const code = Object.keys(knownMessages).find((key) => raw.includes(key));
   return code ? knownMessages[code] : raw;
