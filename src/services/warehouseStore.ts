@@ -554,6 +554,9 @@ export async function cancelInventoryReceipt(receiptId: string, reason: string) 
 
 export function warehouseErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
+  if (raw.includes('PGRST205') && raw.includes('inventory_')) {
+    return 'Warehouse database tables are not available yet. Apply the Warehouse Supabase migrations and refresh the schema cache before using Inventory Control.';
+  }
   const knownMessages: Record<string, string> = {
     RECEIPT_NOT_FOUND: 'Receipt was not found.',
     ACCESS_DENIED: 'You do not have permission to manage this warehouse.',
