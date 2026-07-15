@@ -8,8 +8,10 @@ import {
   createInventorySupplier,
   createInventoryWarehouse,
   deleteInventoryReceiptLine,
+  issueInventoryPartToJob,
   listWarehouseSnapshot,
   postInventoryReceipt,
+  returnInventoryJobPart,
   updateInventoryReceipt,
   updateInventoryReceiptLine,
   warehouseErrorMessage,
@@ -19,6 +21,8 @@ import {
   type InventoryReceiptLineDraft,
   type InventorySupplierDraft,
   type InventoryWarehouseDraft,
+  type InventoryJobIssueDraft,
+  type InventoryJobReturnDraft,
   type InventoryStockReceipt,
   type InventoryStockReceiptLine,
   type WarehouseSnapshot,
@@ -31,7 +35,7 @@ type WarehousePageProps = {
   companyId: string;
 };
 
-type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock';
+type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock' | 'jobIssue' | 'jobReturn';
 type PartsFilter = 'all' | 'low' | 'out';
 type ActivityFilter = 'all' | 'received' | 'used' | 'moved' | 'adjustments';
 
@@ -40,6 +44,7 @@ const emptySnapshot: WarehouseSnapshot = {
   bins: [],
   items: [],
   suppliers: [],
+  jobs: [],
   stockBalances: [],
   movements: [],
   receipts: [],
@@ -119,6 +124,23 @@ const emptyQuickStockDraft = () => ({
   showMore: false,
 });
 
+const emptyJobIssueDraft = (): InventoryJobIssueDraft => ({
+  itemId: '',
+  jobId: '',
+  warehouseId: '',
+  binId: '',
+  quantity: 1,
+  notes: '',
+});
+
+const emptyJobReturnDraft = (): InventoryJobReturnDraft => ({
+  movementId: '',
+  warehouseId: '',
+  binId: '',
+  quantity: 1,
+  notes: '',
+});
+
 function formatQty(value: number, unit = '') {
   const clean = Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
   return unit ? `${clean} ${unit}` : clean;
@@ -151,6 +173,8 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const [receiptDraft, setReceiptDraft] = useState<InventoryReceiptDraft>(() => emptyReceiptDraft());
   const [receiptLineDraft, setReceiptLineDraft] = useState<InventoryReceiptLineDraft>(() => emptyReceiptLineDraft());
   const [quickStockDraft, setQuickStockDraft] = useState(() => emptyQuickStockDraft());
+  const [jobIssueDraft, setJobIssueDraft] = useState<InventoryJobIssueDraft>(() => emptyJobIssueDraft());
+  const [jobReturnDraft, setJobReturnDraft] = useState<InventoryJobReturnDraft>(() => emptyJobReturnDraft());
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
   const [receiptStatusFilter, setReceiptStatusFilter] = useState<'all' | 'draft' | 'posted' | 'canceled'>('all');
   const [showAdvancedPurchaseEditor, setShowAdvancedPurchaseEditor] = useState(false);
@@ -325,6 +349,46 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       : 'Select a location, quantity, and price, then add to stock.');
   }
 
+  function preferredIssueLocation(item: InventoryItem) {
+    const activeWarehouseIds = new Set(snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => warehouseRow.id));
+    const selectedBalance = warehouseFilter !== 'all'
+      ? snapshot.stockBalances.find((balance) => balance.itemId === item.id && balance.warehouseId === warehouseFilter && balance.quantity > 0 && activeWarehouseIds.has(balance.warehouseId))
+      : null;
+    const firstBalance = selectedBalance ?? snapshot.stockBalances.find((balance) => balance.itemId === item.id && balance.quantity > 0 && activeWarehouseIds.has(balance.warehouseId));
+    return {
+      warehouseId: firstBalance?.warehouseId ?? (warehouseFilter !== 'all' ? warehouseFilter : ''),
+      binId: firstBalance?.binId ?? '',
+      quantity: firstBalance ? Math.min(1, firstBalance.quantity) : 1,
+    };
+  }
+
+  function startIssueForItem(item: InventoryItem) {
+    const location = preferredIssueLocation(item);
+    setActiveTab('parts');
+    setFormMode('jobIssue');
+    setJobIssueDraft({
+      ...emptyJobIssueDraft(),
+      itemId: item.id,
+      warehouseId: location.warehouseId,
+      binId: location.binId,
+      quantity: location.quantity,
+    });
+    setStatus(location.warehouseId ? 'Select a Job and quantity to use this part.' : 'Add stock first, then choose a location for Job use.');
+  }
+
+  function startReturnForMovement(movement: WarehouseSnapshot['movements'][number]) {
+    setActiveTab('activity');
+    setFormMode('jobReturn');
+    setJobReturnDraft({
+      ...emptyJobReturnDraft(),
+      movementId: movement.id,
+      warehouseId: movement.fromWarehouseId ?? '',
+      binId: movement.fromBinId ?? '',
+      quantity: Math.min(1, movement.quantity),
+    });
+    setStatus('Enter the unused quantity to return to stock.');
+  }
+
   function openQuickStock() {
     const activeWarehouses = snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive);
     setFormMode('stock');
@@ -380,6 +444,58 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       setFormMode('none');
       await reloadWarehouse();
       setStatus('Stock added.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function issuePartToJob() {
+    if (!jobIssueDraft.itemId) {
+      setStatus('Select a part.');
+      return;
+    }
+    if (!jobIssueDraft.jobId) {
+      setStatus('Select a Job.');
+      return;
+    }
+    if (!jobIssueDraft.warehouseId) {
+      setStatus('Select a location.');
+      return;
+    }
+    if ((Number(jobIssueDraft.quantity) || 0) <= 0) {
+      setStatus('Quantity must be greater than zero.');
+      return;
+    }
+
+    setStatus('Using part on Job...');
+    try {
+      await issueInventoryPartToJob(jobIssueDraft);
+      setJobIssueDraft(emptyJobIssueDraft());
+      setFormMode('none');
+      await reloadWarehouse();
+      setStatus('Part used on Job. Stock and Job material cost were posted.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
+  async function returnJobPart() {
+    if (!jobReturnDraft.movementId) {
+      setStatus('Select a Job issue movement.');
+      return;
+    }
+    if ((Number(jobReturnDraft.quantity) || 0) <= 0) {
+      setStatus('Quantity must be greater than zero.');
+      return;
+    }
+
+    setStatus('Returning unused part...');
+    try {
+      await returnInventoryJobPart(jobReturnDraft);
+      setJobReturnDraft(emptyJobReturnDraft());
+      setFormMode('none');
+      await reloadWarehouse();
+      setStatus('Unused part returned to stock.');
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
     }
@@ -446,6 +562,11 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const itemById = useMemo(() => new Map(snapshot.items.map((item) => [item.id, item])), [snapshot.items]);
   const warehouseById = useMemo(() => new Map(snapshot.warehouses.map((warehouse) => [warehouse.id, warehouse])), [snapshot.warehouses]);
   const supplierById = useMemo(() => new Map(snapshot.suppliers.map((supplier) => [supplier.id, supplier])), [snapshot.suppliers]);
+  const jobById = useMemo(() => new Map(snapshot.jobs.map((job) => [job.id, job])), [snapshot.jobs]);
+  const activeJobs = useMemo(
+    () => snapshot.jobs.filter((job) => !['Completed', 'Cancelled', 'Archived'].includes(job.status)),
+    [snapshot.jobs],
+  );
 
   const stockRows = useMemo(() => snapshot.stockBalances.map((balance) => {
     const item = itemById.get(balance.itemId);
@@ -622,7 +743,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
               </button>
               <div className="warehouse-part-actions">
                 <button className="primary-button compact" type="button" onClick={() => startReceiptForItem(item)}>Add stock</button>
-                <button className="secondary-button compact" type="button" disabled title="Job issues are Stage 4">Use on Job</button>
+                <button className="secondary-button compact" type="button" disabled={quantity <= 0} onClick={() => startIssueForItem(item)}>Use on Job</button>
                 <button className="secondary-button compact" type="button" disabled title="Transfers are Stage 3">Move</button>
               </div>
               {isSelected ? renderPartDetails(item) : null}
@@ -758,7 +879,10 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     const supplier = movement.supplierId ? supplierById.get(movement.supplierId)?.name : '';
     const from = movement.fromWarehouseId ? warehouseById.get(movement.fromWarehouseId)?.name : '';
     const to = movement.toWarehouseId ? warehouseById.get(movement.toWarehouseId)?.name : '';
+    const job = movement.jobId ? jobById.get(movement.jobId) : null;
     if (movement.movementType === 'receipt') return [to, supplier].filter(Boolean).join(' - ') || 'Stock received';
+    if (movement.movementType === 'job_issue') return [job ? `Job #${job.jobNumber}` : movement.referenceNumber, from].filter(Boolean).join(' - ');
+    if (movement.movementType === 'job_return') return [job ? `Job #${job.jobNumber}` : movement.referenceNumber, to].filter(Boolean).join(' - ');
     if (from && to) return `${from} -> ${to}`;
     return from || to || movement.referenceNumber || 'Warehouse';
   }
@@ -784,6 +908,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
           <span>Average after: {movement.averageCostAfter == null ? '-' : money(movement.averageCostAfter)}</span>
           <span>Movement ID: {movement.id}</span>
           <span>Purchase ID: {movement.receiptId ?? '-'}</span>
+          {movement.movementType === 'job_issue' ? (
+            <button className="secondary-button compact" type="button" onClick={() => startReturnForMovement(movement)}>Return unused</button>
+          ) : null}
         </div>
       </details>
     );
@@ -1240,6 +1367,134 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       );
     }
 
+    if (formMode === 'jobIssue') {
+      const binsForWarehouse = snapshot.bins.filter((bin) => bin.warehouseId === jobIssueDraft.warehouseId && bin.isActive);
+      const selectedItem = itemById.get(jobIssueDraft.itemId);
+      const availableQuantity = snapshot.stockBalances
+        .filter((balance) => balance.itemId === jobIssueDraft.itemId
+          && balance.warehouseId === jobIssueDraft.warehouseId
+          && (jobIssueDraft.binId ? balance.binId === jobIssueDraft.binId : balance.binId == null))
+        .reduce((sum, balance) => sum + balance.quantity, 0);
+      return (
+        <section className="warehouse-form-panel stock">
+          <h2>Use on Job</h2>
+          <div className="warehouse-form-grid">
+            <label>Part
+              <select value={jobIssueDraft.itemId} onChange={(event) => {
+                const item = itemById.get(event.target.value);
+                const location = item ? preferredIssueLocation(item) : { warehouseId: '', binId: '', quantity: 1 };
+                setJobIssueDraft({ ...jobIssueDraft, itemId: event.target.value, warehouseId: location.warehouseId, binId: location.binId, quantity: location.quantity });
+              }}>
+                <option value="">Select part</option>
+                {snapshot.items.filter((item) => item.isActive).map((item) => (
+                  <option value={item.id} key={item.id}>{item.internalName} {item.partNumber ? `- ${item.partNumber}` : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>Job
+              <select value={jobIssueDraft.jobId} onChange={(event) => setJobIssueDraft({ ...jobIssueDraft, jobId: event.target.value })}>
+                <option value="">Select Job</option>
+                {activeJobs.map((job) => (
+                  <option value={job.id} key={job.id}>#{job.jobNumber} - {[job.system, job.issue, job.status].filter(Boolean).join(' - ')}</option>
+                ))}
+              </select>
+            </label>
+            <label>Location
+              <select value={jobIssueDraft.warehouseId} onChange={(event) => setJobIssueDraft({ ...jobIssueDraft, warehouseId: event.target.value, binId: '' })}>
+                <option value="">Select location</option>
+                {snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}{warehouseRow.type === 'technician_vehicle' ? ' - technician vehicle' : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>Quantity<input type="number" min="0" value={jobIssueDraft.quantity} onChange={(event) => setJobIssueDraft({ ...jobIssueDraft, quantity: Number(event.target.value) || 0 })} /></label>
+          </div>
+          <details className="warehouse-more-fields">
+            <summary>More options</summary>
+            <div className="warehouse-form-grid wide">
+              <label>Exact location
+                <select value={jobIssueDraft.binId ?? ''} disabled={!jobIssueDraft.warehouseId} onChange={(event) => setJobIssueDraft({ ...jobIssueDraft, binId: event.target.value })}>
+                  <option value="">No exact location</option>
+                  {binsForWarehouse.map((bin) => (
+                    <option value={bin.id} key={bin.id}>{bin.code} - {bin.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Notes<input value={jobIssueDraft.notes ?? ''} onChange={(event) => setJobIssueDraft({ ...jobIssueDraft, notes: event.target.value })} /></label>
+              <label>Available<input disabled value={selectedItem ? formatQty(availableQuantity, selectedItem.unit) : 'Select part'} /></label>
+              <label>Cost locked at<input disabled value={selectedItem ? money(selectedItem.averageCost) : '-'} /></label>
+            </div>
+          </details>
+          <div className="warehouse-form-actions sticky">
+            <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
+            <button className="primary-button" type="button" onClick={issuePartToJob}>Post to Job</button>
+          </div>
+        </section>
+      );
+    }
+
+    if (formMode === 'jobReturn') {
+      const selectedMovement = snapshot.movements.find((movement) => movement.id === jobReturnDraft.movementId);
+      const selectedItem = selectedMovement ? itemById.get(selectedMovement.itemId) : null;
+      const binsForWarehouse = snapshot.bins.filter((bin) => bin.warehouseId === jobReturnDraft.warehouseId && bin.isActive);
+      return (
+        <section className="warehouse-form-panel stock">
+          <h2>Return unused part</h2>
+          <div className="warehouse-form-grid">
+            <label>Original issue
+              <select value={jobReturnDraft.movementId} onChange={(event) => {
+                const movement = snapshot.movements.find((row) => row.id === event.target.value);
+                setJobReturnDraft({
+                  ...jobReturnDraft,
+                  movementId: event.target.value,
+                  warehouseId: movement?.fromWarehouseId ?? '',
+                  binId: movement?.fromBinId ?? '',
+                });
+              }}>
+                <option value="">Select issue</option>
+                {snapshot.movements.filter((movement) => movement.movementType === 'job_issue').map((movement) => {
+                  const item = itemById.get(movement.itemId);
+                  const job = movement.jobId ? jobById.get(movement.jobId) : null;
+                  return (
+                    <option value={movement.id} key={movement.id}>{item?.internalName ?? 'Part'} - Job #{job?.jobNumber ?? movement.referenceNumber}</option>
+                  );
+                })}
+              </select>
+            </label>
+            <label>Return quantity<input type="number" min="0" value={jobReturnDraft.quantity} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, quantity: Number(event.target.value) || 0 })} /></label>
+            <label>Return to
+              <select value={jobReturnDraft.warehouseId ?? ''} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, warehouseId: event.target.value, binId: '' })}>
+                <option value="">Original location</option>
+                {snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}{warehouseRow.type === 'technician_vehicle' ? ' - technician vehicle' : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>Cost returned at<input disabled value={selectedMovement ? money(selectedMovement.unitCost) : '-'} /></label>
+          </div>
+          <details className="warehouse-more-fields">
+            <summary>More options</summary>
+            <div className="warehouse-form-grid wide">
+              <label>Exact location
+                <select value={jobReturnDraft.binId ?? ''} disabled={!jobReturnDraft.warehouseId} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, binId: event.target.value })}>
+                  <option value="">No exact location</option>
+                  {binsForWarehouse.map((bin) => (
+                    <option value={bin.id} key={bin.id}>{bin.code} - {bin.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Notes<input value={jobReturnDraft.notes ?? ''} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, notes: event.target.value })} /></label>
+              <label>Part<input disabled value={selectedItem?.internalName ?? '-'} /></label>
+            </div>
+          </details>
+          <div className="warehouse-form-actions sticky">
+            <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
+            <button className="primary-button" type="button" onClick={returnJobPart}>Return to stock</button>
+          </div>
+        </section>
+      );
+    }
+
     if (formMode === 'supplier') {
       return (
         <section className="warehouse-form-panel">
@@ -1330,7 +1585,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
 
       <div className="warehouse-warning">
         <AlertTriangle size={17} aria-hidden="true" />
-        <span>Stock changes are posted through the existing PostgreSQL RPC with locks. Job use and moves are reserved for later stages.</span>
+        <span>Receipts, Job use, and Job returns post through PostgreSQL RPC with locks. Moves and adjustments are reserved for later stages.</span>
       </div>
     </section>
   );
