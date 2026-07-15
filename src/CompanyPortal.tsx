@@ -167,7 +167,7 @@ function CompanyPortalWithTenant({
   onCreateRequest,
   onReplyToTicket,
 }: Omit<CompanyPortalProps, 'selectedCompany'> & { selectedCompany: Company }) {
-  const { clientPage, setClientPage } = useClientPageFeature();
+  const { clientPage, setClientPage } = useClientPageFeature(selectedCompany.id);
   const {
     request,
     setRequest,
