@@ -67,6 +67,7 @@ export type TechnicianAnalytics = {
 export type CustomerOpportunity = {
   customer_id: string;
   name: string;
+  job_ids?: string[];
   jobs_count?: number;
   revenue?: number;
   last_job_date: string;

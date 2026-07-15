@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { ClipboardList, Plus } from 'lucide-react';
 import type { JobCardData } from '../JobCard';
 import { JobDetailPanel } from '../JobDetailPanel';
@@ -36,6 +36,15 @@ const allJobsExportColumns = [
   'Notes',
   'Created',
 ];
+
+const ALL_JOBS_CONTEXT_STORAGE_KEY = 'servicescope.portal.allJobsContext';
+
+type AllJobsContext = {
+  source: 'businessAnalyticsOpportunity';
+  label: string;
+  customerId?: string;
+  jobIds?: string[];
+};
 
 function normalizeSearch(value: string | number | null | undefined) {
   return String(value ?? '').trim().toLowerCase();
@@ -433,6 +442,7 @@ export function AllJobsPage({
   onDeleteInvoice,
   onComposeEmail,
   jobStatusFilters,
+  allJobsRows,
   allJobsGroups,
   allJobsVisibility,
   onAllJobsVisibilityChange,
@@ -456,6 +466,7 @@ export function AllJobsPage({
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
   jobStatusFilters: ServiceJobStatus[];
+  allJobsRows: ServiceJob[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
   allJobsVisibility: 'active' | 'paid' | 'all';
   onAllJobsVisibilityChange: (value: 'active' | 'paid' | 'all') => void;
@@ -472,7 +483,23 @@ export function AllJobsPage({
   const [generalSearch, setGeneralSearch] = useState('');
   const [numberSearch, setNumberSearch] = useState('');
   const [sortMode, setSortMode] = useState<'job-desc' | 'client' | 'status'>('job-desc');
-  const allVisibleJobs = useMemo(() => allJobsGroups.flatMap((group) => group.jobs), [allJobsGroups]);
+  const [allJobsContext, setAllJobsContext] = useState<AllJobsContext | null>(() => {
+    try {
+      const stored = window.sessionStorage.getItem(ALL_JOBS_CONTEXT_STORAGE_KEY);
+      return stored ? JSON.parse(stored) as AllJobsContext : null;
+    } catch {
+      return null;
+    }
+  });
+  const contextJobIds = useMemo(() => new Set(allJobsContext?.jobIds ?? []), [allJobsContext]);
+  const allVisibleJobs = useMemo(() => {
+    if (!allJobsContext) return allJobsGroups.flatMap((group) => group.jobs);
+
+    return allJobsRows.filter((job) => {
+      if (contextJobIds.size > 0) return contextJobIds.has(job.id);
+      return Boolean(allJobsContext.customerId) && job.customerId === allJobsContext.customerId;
+    });
+  }, [allJobsContext, allJobsGroups, allJobsRows, contextJobIds]);
   const technicianOptions = useMemo(() => {
     const names = Array.from(new Set(allVisibleJobs.map((job) => job.assignee || 'No technician')));
     return ['all', ...names.sort((first, second) => first.localeCompare(second))];
@@ -515,7 +542,15 @@ export function AllJobsPage({
     setGeneralSearch('');
     setNumberSearch('');
     setSortMode('job-desc');
+    setAllJobsContext(null);
+    window.sessionStorage.removeItem(ALL_JOBS_CONTEXT_STORAGE_KEY);
   };
+
+  useEffect(() => {
+    if (allJobsContext && allJobsVisibility !== 'all') {
+      onAllJobsVisibilityChange('all');
+    }
+  }, [allJobsContext, allJobsVisibility, onAllJobsVisibilityChange]);
 
   if (openedJob) {
     return (
@@ -584,7 +619,9 @@ export function AllJobsPage({
       </div>
 
       <p className="all-jobs-visibility-note">
-        Paid jobs are hidden from the active board. Open Paid or All jobs here whenever you need them.
+        {allJobsContext
+          ? `Showing jobs for ${allJobsContext.label}. Clear filters to return to the full board.`
+          : 'Paid jobs are hidden from the active board. Open Paid or All jobs here whenever you need them.'}
       </p>
 
       <div className="all-jobs-groups">
