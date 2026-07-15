@@ -101,6 +101,7 @@ export function useClientPageRendererContext(groups: ClientPageRendererContextGr
     groups.operations.visibleCalendarDays,
     groups.operations.visibleCalendarJobs,
     groups.shell.activeClientNavItem,
+    groups.shell.activePageAccessLevel,
     groups.shell.activePageReadOnly,
     groups.shell.billingStatus,
     groups.shell.completedSteps,

@@ -14,6 +14,7 @@ const clientPageValues: ClientPage[] = [
   'map',
   'email',
   'finances',
+  'aiBusiness',
   'knowledge',
   'import',
   'portal',
@@ -21,6 +22,11 @@ const clientPageValues: ClientPage[] = [
 ];
 
 function readSavedClientPage(): ClientPage {
+  if (window.location.pathname === '/ai-business') return 'aiBusiness';
+
+  const hashPage = window.location.hash.replace(/^#/, '');
+  if (clientPageValues.includes(hashPage as ClientPage)) return hashPage as ClientPage;
+
   const saved = window.localStorage.getItem(CLIENT_PAGE_STORAGE_KEY);
   return clientPageValues.includes(saved as ClientPage) ? saved as ClientPage : 'jobs';
 }

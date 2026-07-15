@@ -1,7 +1,7 @@
 import type { Company, MaterialRow } from './types';
 
 export type AppPage = 'dashboard' | 'companies' | 'monitoring' | 'billing' | 'companyAccess' | 'access' | 'audit' | 'support' | 'companyLogin' | 'portal';
-export type ClientPage = 'onboarding' | 'jobInbox' | 'jobs' | 'allJobs' | 'debtors' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'knowledge' | 'import' | 'portal';
+export type ClientPage = 'onboarding' | 'jobInbox' | 'jobs' | 'allJobs' | 'debtors' | 'calendar' | 'materials' | 'tasks' | 'map' | 'email' | 'finances' | 'aiBusiness' | 'knowledge' | 'import' | 'portal';
 
 export type AuthSession =
   | { kind: 'owner'; userId: string; name: string; email: string }

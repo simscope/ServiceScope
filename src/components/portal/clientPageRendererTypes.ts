@@ -62,6 +62,7 @@ export type ClientPageRendererContext = {
   activeCalendarTech: string;
   activeClientNavItem?: ClientNavItem;
   activeJobsRows: ServiceJob[];
+  activePageAccessLevel: import('../../types').CompanyPortalAccessLevel;
   activePageReadOnly: boolean;
   allCalendarDays: CalendarDay[];
   allJobsGroups: Array<{ technician: string; jobs: ServiceJob[] }>;
@@ -278,6 +279,7 @@ export type ClientPageRendererOperationsContext = Pick<ClientPageRendererContext
 
 export type ClientPageRendererShellContext = Pick<ClientPageRendererContext,
   | 'activeClientNavItem'
+  | 'activePageAccessLevel'
   | 'activePageReadOnly'
   | 'billingStatus'
   | 'completedSteps'

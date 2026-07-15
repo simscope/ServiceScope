@@ -50,7 +50,7 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
     );
   }
 
-  if (['email', 'finances', 'knowledge', 'portal', 'onboarding'].includes(renderedClientPage)) {
+  if (['email', 'finances', 'aiBusiness', 'knowledge', 'portal', 'onboarding'].includes(renderedClientPage)) {
     return (
       <ClientBusinessPageRenderer
         renderedClientPage={renderedClientPage}
