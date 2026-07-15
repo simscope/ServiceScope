@@ -106,6 +106,7 @@ export function ClientJobsPageRenderer({
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
         jobStatusFilters={jobStatusFilters}
+        allJobsRows={allJobsRows}
         allJobsGroups={allJobsGroups}
         allJobsVisibility={allJobsVisibility}
         onAllJobsVisibilityChange={setAllJobsVisibility}

@@ -14,6 +14,16 @@ type BusinessAnalyticsPageProps = {
   onNavigateClientPage: (page: ClientPage) => void;
 };
 
+const ALL_JOBS_CONTEXT_STORAGE_KEY = 'servicescope.portal.allJobsContext';
+
+function scrollBusinessAnalyticsToTop() {
+  window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  const frameId = window.requestAnimationFrame(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  });
+  return () => window.cancelAnimationFrame(frameId);
+}
+
 type KpiConfig = {
   key: keyof BusinessAnalyticsSummary;
   comparisonKey?: keyof BusinessAnalyticsComparison;
@@ -143,12 +153,12 @@ function TechnicianTable({ technicians }: { technicians: TechnicianAnalytics[] }
   );
 }
 
-function OpportunityList({ title, customers, onOpenAllJobs }: { title: string; customers: CustomerOpportunity[]; onOpenAllJobs: () => void }) {
+function OpportunityList({ title, customers, onOpenCustomerJobs }: { title: string; customers: CustomerOpportunity[]; onOpenCustomerJobs: (customer: CustomerOpportunity, title: string) => void }) {
   return (
     <section className="business-opportunity-list">
       <h3>{title}</h3>
       {customers.map((customer) => (
-        <button className="business-opportunity-row" type="button" onClick={onOpenAllJobs} key={customer.customer_id}>
+        <button className="business-opportunity-row" type="button" onClick={() => onOpenCustomerJobs(customer, title)} key={customer.customer_id}>
           <span>
             <strong>{customer.name}</strong>
             <small>Last job {formatDate(customer.last_job_date)}</small>
@@ -198,9 +208,23 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
   const hasFinancialAccess = accessLevel !== 'off';
 
   useEffect(() => {
+    return scrollBusinessAnalyticsToTop();
+  }, []);
+
+  useEffect(() => {
     if (preset === 'custom') return;
     setRange(rangeForBusinessAnalyticsPreset(preset));
   }, [preset]);
+
+  const openOpportunityJobs = (customer: CustomerOpportunity, title: string) => {
+    window.sessionStorage.setItem(ALL_JOBS_CONTEXT_STORAGE_KEY, JSON.stringify({
+      source: 'businessAnalyticsOpportunity',
+      label: `${title}: ${customer.name}`,
+      customerId: customer.customer_id,
+      jobIds: customer.job_ids ?? [],
+    }));
+    onNavigateClientPage('allJobs');
+  };
 
   const handleInsightAction = (target: BusinessInsightActionTarget) => {
     if (target === 'debtors') {
@@ -243,6 +267,11 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
     void loadAnalytics();
   }, [selectedCompanyId, range.from, range.to, hasFinancialAccess]);
 
+  const handleRefresh = () => {
+    scrollBusinessAnalyticsToTop();
+    void loadAnalytics();
+  };
+
   if (!hasFinancialAccess) {
     return (
       <section className="business-analytics-page">
@@ -272,7 +301,7 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
         </div>
         <div className="business-refresh">
           <span>{lastUpdated ? `Updated ${lastUpdated}` : 'Not updated yet'}</span>
-          <button className="secondary-button compact" type="button" onClick={loadAnalytics} disabled={loading}>
+          <button className="secondary-button compact" type="button" onClick={handleRefresh} disabled={loading}>
             <RefreshCw size={15} aria-hidden="true" />
             Refresh
           </button>
@@ -316,7 +345,7 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
           <AlertTriangle size={24} aria-hidden="true" />
           <h2>Analytics unavailable</h2>
           <p>{error}</p>
-          <button className="primary-button compact" type="button" onClick={loadAnalytics}>Retry</button>
+          <button className="primary-button compact" type="button" onClick={handleRefresh}>Retry</button>
         </div>
       ) : analytics ? (
         <>
@@ -354,8 +383,8 @@ export function BusinessAnalyticsPage({ selectedCompanyId, accessLevel, onNaviga
               <span>Rules-based</span>
             </div>
             <div className="business-opportunities-grid">
-              <OpportunityList title="Service Contract Candidates" customers={analytics.customer_opportunities.service_contract_candidates} onOpenAllJobs={() => onNavigateClientPage('allJobs')} />
-              <OpportunityList title="Inactive Customers" customers={analytics.customer_opportunities.inactive_customers} onOpenAllJobs={() => onNavigateClientPage('allJobs')} />
+              <OpportunityList title="Service Contract Candidates" customers={analytics.customer_opportunities.service_contract_candidates} onOpenCustomerJobs={openOpportunityJobs} />
+              <OpportunityList title="Inactive Customers" customers={analytics.customer_opportunities.inactive_customers} onOpenCustomerJobs={openOpportunityJobs} />
             </div>
           </section>
 
