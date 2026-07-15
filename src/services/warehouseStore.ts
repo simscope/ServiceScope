@@ -3,7 +3,6 @@ import { sqlEq, supabaseRequest, supabaseRpc } from './supabaseRest';
 export type WarehouseType = 'main' | 'office' | 'technician_vehicle' | 'other';
 export type InventoryMovementType = 'receipt' | 'transfer_out' | 'transfer_in' | 'job_issue' | 'job_return' | 'adjustment';
 export type InventoryDocumentStatus = 'draft' | 'posted' | 'canceled';
-export type InventoryAdjustmentReason = 'initial' | 'count' | 'shortage' | 'damage' | 'found' | 'correction';
 
 export type InventoryWarehouse = {
   id: string;
@@ -81,69 +80,12 @@ export type InventoryMovement = {
   referenceNumber: string;
   receiptId: string | null;
   receiptLineId: string | null;
-  transferId: string | null;
-  transferLineId: string | null;
-  adjustmentId: string | null;
-  adjustmentLineId: string | null;
   balanceBefore: number | null;
   balanceAfter: number | null;
   averageCostBefore: number | null;
   averageCostAfter: number | null;
   notes: string;
   createdAt: string;
-};
-
-export type InventoryTransferDocument = {
-  id: string;
-  companyId: string;
-  fromWarehouseId: string;
-  fromBinId: string | null;
-  toWarehouseId: string;
-  toBinId: string | null;
-  transferDate: string;
-  referenceNumber: string;
-  status: InventoryDocumentStatus;
-  notes: string;
-  postedAt: string | null;
-  canceledAt: string | null;
-  cancelReason: string;
-  createdAt: string;
-};
-
-export type InventoryTransferLine = {
-  id: string;
-  companyId: string;
-  transferId: string;
-  itemId: string;
-  quantity: number;
-  outMovementId: string | null;
-  inMovementId: string | null;
-};
-
-export type InventoryAdjustmentDocument = {
-  id: string;
-  companyId: string;
-  warehouseId: string;
-  binId: string | null;
-  adjustmentDate: string;
-  reason: InventoryAdjustmentReason;
-  referenceNumber: string;
-  status: InventoryDocumentStatus;
-  notes: string;
-  postedAt: string | null;
-  canceledAt: string | null;
-  cancelReason: string;
-  createdAt: string;
-};
-
-export type InventoryAdjustmentLine = {
-  id: string;
-  companyId: string;
-  adjustmentId: string;
-  itemId: string;
-  quantityDelta: number;
-  unitCost: number;
-  movementId: string | null;
 };
 
 export type InventoryStockReceipt = {
@@ -185,10 +127,6 @@ export type WarehouseSnapshot = {
   movements: InventoryMovement[];
   receipts: InventoryStockReceipt[];
   receiptLines: InventoryStockReceiptLine[];
-  transfers: InventoryTransferDocument[];
-  transferLines: InventoryTransferLine[];
-  adjustments: InventoryAdjustmentDocument[];
-  adjustmentLines: InventoryAdjustmentLine[];
 };
 
 export type InventoryWarehouseDraft = Pick<InventoryWarehouse, 'name' | 'type' | 'location' | 'technicianId' | 'notes'>;
@@ -196,10 +134,6 @@ export type InventoryItemDraft = Pick<InventoryItem, 'internalName' | 'category'
 export type InventorySupplierDraft = Pick<InventorySupplier, 'name' | 'contactName' | 'phone' | 'email' | 'website' | 'address'>;
 export type InventoryReceiptDraft = Pick<InventoryStockReceipt, 'supplierId' | 'warehouseId' | 'binId' | 'receiptDate' | 'poNumber' | 'invoiceNumber' | 'notes'>;
 export type InventoryReceiptLineDraft = Pick<InventoryStockReceiptLine, 'receiptId' | 'itemId' | 'quantity' | 'unitCost' | 'extraCost' | 'currency'>;
-export type InventoryTransferDraft = Pick<InventoryTransferDocument, 'fromWarehouseId' | 'fromBinId' | 'toWarehouseId' | 'toBinId' | 'transferDate' | 'referenceNumber' | 'notes'>;
-export type InventoryTransferLineDraft = Pick<InventoryTransferLine, 'transferId' | 'itemId' | 'quantity'>;
-export type InventoryAdjustmentDraft = Pick<InventoryAdjustmentDocument, 'warehouseId' | 'binId' | 'adjustmentDate' | 'reason' | 'referenceNumber' | 'notes'>;
-export type InventoryAdjustmentLineDraft = Pick<InventoryAdjustmentLine, 'adjustmentId' | 'itemId' | 'quantityDelta' | 'unitCost'>;
 
 type WarehouseRow = {
   id: string;
@@ -277,69 +211,12 @@ type MovementRow = {
   reference_number: string | null;
   receipt_id?: string | null;
   receipt_line_id?: string | null;
-  transfer_id?: string | null;
-  transfer_line_id?: string | null;
-  adjustment_id?: string | null;
-  adjustment_line_id?: string | null;
   balance_before?: number | string | null;
   balance_after?: number | string | null;
   average_cost_before?: number | string | null;
   average_cost_after?: number | string | null;
   notes: string | null;
   created_at: string;
-};
-
-type TransferRow = {
-  id: string;
-  company_id: string;
-  from_warehouse_id: string;
-  from_bin_id: string | null;
-  to_warehouse_id: string;
-  to_bin_id: string | null;
-  transfer_date: string;
-  reference_number: string | null;
-  status: InventoryDocumentStatus;
-  notes: string | null;
-  posted_at: string | null;
-  canceled_at: string | null;
-  cancel_reason?: string | null;
-  created_at: string;
-};
-
-type TransferLineRow = {
-  id: string;
-  company_id: string;
-  transfer_id: string;
-  item_id: string;
-  quantity: number | string;
-  out_movement_id: string | null;
-  in_movement_id: string | null;
-};
-
-type AdjustmentRow = {
-  id: string;
-  company_id: string;
-  warehouse_id: string;
-  bin_id: string | null;
-  adjustment_date: string;
-  reason: InventoryAdjustmentReason;
-  reference_number: string | null;
-  status: InventoryDocumentStatus;
-  notes: string | null;
-  posted_at: string | null;
-  canceled_at: string | null;
-  cancel_reason?: string | null;
-  created_at: string;
-};
-
-type AdjustmentLineRow = {
-  id: string;
-  company_id: string;
-  adjustment_id: string;
-  item_id: string;
-  quantity_delta: number | string;
-  unit_cost: number | string;
-  movement_id: string | null;
 };
 
 type ReceiptRow = {
@@ -465,77 +342,12 @@ function mapMovement(row: MovementRow): InventoryMovement {
     referenceNumber: row.reference_number ?? '',
     receiptId: row.receipt_id ?? null,
     receiptLineId: row.receipt_line_id ?? null,
-    transferId: row.transfer_id ?? null,
-    transferLineId: row.transfer_line_id ?? null,
-    adjustmentId: row.adjustment_id ?? null,
-    adjustmentLineId: row.adjustment_line_id ?? null,
     balanceBefore: row.balance_before == null ? null : numberValue(row.balance_before),
     balanceAfter: row.balance_after == null ? null : numberValue(row.balance_after),
     averageCostBefore: row.average_cost_before == null ? null : numberValue(row.average_cost_before),
     averageCostAfter: row.average_cost_after == null ? null : numberValue(row.average_cost_after),
     notes: row.notes ?? '',
     createdAt: row.created_at,
-  };
-}
-
-function mapTransfer(row: TransferRow): InventoryTransferDocument {
-  return {
-    id: row.id,
-    companyId: row.company_id,
-    fromWarehouseId: row.from_warehouse_id,
-    fromBinId: row.from_bin_id,
-    toWarehouseId: row.to_warehouse_id,
-    toBinId: row.to_bin_id,
-    transferDate: row.transfer_date,
-    referenceNumber: row.reference_number ?? '',
-    status: row.status,
-    notes: row.notes ?? '',
-    postedAt: row.posted_at,
-    canceledAt: row.canceled_at,
-    cancelReason: row.cancel_reason ?? '',
-    createdAt: row.created_at,
-  };
-}
-
-function mapTransferLine(row: TransferLineRow): InventoryTransferLine {
-  return {
-    id: row.id,
-    companyId: row.company_id,
-    transferId: row.transfer_id,
-    itemId: row.item_id,
-    quantity: numberValue(row.quantity),
-    outMovementId: row.out_movement_id,
-    inMovementId: row.in_movement_id,
-  };
-}
-
-function mapAdjustment(row: AdjustmentRow): InventoryAdjustmentDocument {
-  return {
-    id: row.id,
-    companyId: row.company_id,
-    warehouseId: row.warehouse_id,
-    binId: row.bin_id,
-    adjustmentDate: row.adjustment_date,
-    reason: row.reason,
-    referenceNumber: row.reference_number ?? '',
-    status: row.status,
-    notes: row.notes ?? '',
-    postedAt: row.posted_at,
-    canceledAt: row.canceled_at,
-    cancelReason: row.cancel_reason ?? '',
-    createdAt: row.created_at,
-  };
-}
-
-function mapAdjustmentLine(row: AdjustmentLineRow): InventoryAdjustmentLine {
-  return {
-    id: row.id,
-    companyId: row.company_id,
-    adjustmentId: row.adjustment_id,
-    itemId: row.item_id,
-    quantityDelta: numberValue(row.quantity_delta),
-    unitCost: numberValue(row.unit_cost),
-    movementId: row.movement_id,
   };
 }
 
@@ -583,10 +395,6 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     movements,
     receipts,
     receiptLines,
-    transfers,
-    transferLines,
-    adjustments,
-    adjustmentLines,
   ] = await Promise.all([
     supabaseRequest<WarehouseRow[]>(`inventory_warehouses?company_id=${sqlEq(companyId)}&order=name.asc&limit=${DEFAULT_LIMIT}`),
     supabaseRequest<BinRow[]>(`inventory_bins?company_id=${sqlEq(companyId)}&order=code.asc&limit=${DEFAULT_LIMIT}`),
@@ -596,10 +404,6 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     supabaseRequest<MovementRow[]>(`inventory_movements?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
     supabaseRequest<ReceiptRow[]>(`inventory_stock_receipts?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
     supabaseRequest<ReceiptLineRow[]>(`inventory_stock_receipt_lines?company_id=${sqlEq(companyId)}&order=created_at.asc&limit=${DEFAULT_LIMIT}`),
-    supabaseRequest<TransferRow[]>(`inventory_transfer_documents?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
-    supabaseRequest<TransferLineRow[]>(`inventory_transfer_lines?company_id=${sqlEq(companyId)}&order=created_at.asc&limit=${DEFAULT_LIMIT}`),
-    supabaseRequest<AdjustmentRow[]>(`inventory_adjustment_documents?company_id=${sqlEq(companyId)}&order=created_at.desc&limit=200`),
-    supabaseRequest<AdjustmentLineRow[]>(`inventory_adjustment_lines?company_id=${sqlEq(companyId)}&order=created_at.asc&limit=${DEFAULT_LIMIT}`),
   ]);
 
   return {
@@ -611,10 +415,6 @@ export async function listWarehouseSnapshot(companyId: string): Promise<Warehous
     movements: movements.map(mapMovement),
     receipts: receipts.map(mapReceipt),
     receiptLines: receiptLines.map(mapReceiptLine),
-    transfers: transfers.map(mapTransfer),
-    transferLines: transferLines.map(mapTransferLine),
-    adjustments: adjustments.map(mapAdjustment),
-    adjustmentLines: adjustmentLines.map(mapAdjustmentLine),
   };
 }
 
@@ -752,154 +552,6 @@ export async function cancelInventoryReceipt(receiptId: string, reason: string) 
   return supabaseRpc<{ status: string; receipt_id: string; canceled_lines: number }>('inventory_cancel_stock_receipt', { p_receipt_id: receiptId, p_reason: reason }, { timeoutMs: 30000 });
 }
 
-export async function createInventoryTransfer(companyId: string, draft: InventoryTransferDraft): Promise<InventoryTransferDocument> {
-  const [row] = await supabaseRequest<TransferRow[]>('inventory_transfer_documents?select=*', {
-    method: 'POST',
-    select: true,
-    body: [{
-      company_id: companyId,
-      from_warehouse_id: draft.fromWarehouseId,
-      from_bin_id: draft.fromBinId || null,
-      to_warehouse_id: draft.toWarehouseId,
-      to_bin_id: draft.toBinId || null,
-      transfer_date: draft.transferDate,
-      reference_number: draft.referenceNumber.trim(),
-      notes: draft.notes.trim(),
-      status: 'draft',
-    }],
-  });
-  return mapTransfer(row);
-}
-
-export async function updateInventoryTransfer(transfer: InventoryTransferDocument, patch: Partial<InventoryTransferDraft>): Promise<InventoryTransferDocument> {
-  const [row] = await supabaseRequest<TransferRow[]>(`inventory_transfer_documents?id=${sqlEq(transfer.id)}&company_id=${sqlEq(transfer.companyId)}&select=*`, {
-    method: 'PATCH',
-    select: true,
-    body: {
-      ...(patch.fromWarehouseId !== undefined ? { from_warehouse_id: patch.fromWarehouseId } : {}),
-      ...(patch.fromBinId !== undefined ? { from_bin_id: patch.fromBinId || null } : {}),
-      ...(patch.toWarehouseId !== undefined ? { to_warehouse_id: patch.toWarehouseId } : {}),
-      ...(patch.toBinId !== undefined ? { to_bin_id: patch.toBinId || null } : {}),
-      ...(patch.transferDate !== undefined ? { transfer_date: patch.transferDate } : {}),
-      ...(patch.referenceNumber !== undefined ? { reference_number: patch.referenceNumber.trim() } : {}),
-      ...(patch.notes !== undefined ? { notes: patch.notes.trim() } : {}),
-    },
-  });
-  return mapTransfer(row);
-}
-
-export async function createInventoryTransferLine(companyId: string, draft: InventoryTransferLineDraft): Promise<InventoryTransferLine> {
-  const [row] = await supabaseRequest<TransferLineRow[]>('inventory_transfer_lines?select=*', {
-    method: 'POST',
-    select: true,
-    body: [{
-      company_id: companyId,
-      transfer_id: draft.transferId,
-      item_id: draft.itemId,
-      quantity: Math.max(0, Number(draft.quantity) || 0),
-    }],
-  });
-  return mapTransferLine(row);
-}
-
-export async function updateInventoryTransferLine(line: InventoryTransferLine, patch: Partial<InventoryTransferLineDraft>): Promise<InventoryTransferLine> {
-  const [row] = await supabaseRequest<TransferLineRow[]>(`inventory_transfer_lines?id=${sqlEq(line.id)}&company_id=${sqlEq(line.companyId)}&select=*`, {
-    method: 'PATCH',
-    select: true,
-    body: {
-      ...(patch.itemId !== undefined ? { item_id: patch.itemId } : {}),
-      ...(patch.quantity !== undefined ? { quantity: Math.max(0, Number(patch.quantity) || 0) } : {}),
-    },
-  });
-  return mapTransferLine(row);
-}
-
-export async function deleteInventoryTransferLine(line: InventoryTransferLine): Promise<void> {
-  await supabaseRequest<void>(`inventory_transfer_lines?id=${sqlEq(line.id)}&company_id=${sqlEq(line.companyId)}`, { method: 'DELETE' });
-}
-
-export async function postInventoryTransfer(transferId: string) {
-  return supabaseRpc<{ status: string; transfer_id: string; posted_lines: number }>('inventory_post_transfer', { p_transfer_id: transferId }, { timeoutMs: 30000 });
-}
-
-export async function cancelInventoryTransfer(transferId: string, reason: string) {
-  return supabaseRpc<{ status: string; transfer_id: string; canceled_lines: number }>('inventory_cancel_transfer', { p_transfer_id: transferId, p_reason: reason }, { timeoutMs: 30000 });
-}
-
-export async function createInventoryAdjustment(companyId: string, draft: InventoryAdjustmentDraft): Promise<InventoryAdjustmentDocument> {
-  const [row] = await supabaseRequest<AdjustmentRow[]>('inventory_adjustment_documents?select=*', {
-    method: 'POST',
-    select: true,
-    body: [{
-      company_id: companyId,
-      warehouse_id: draft.warehouseId,
-      bin_id: draft.binId || null,
-      adjustment_date: draft.adjustmentDate,
-      reason: draft.reason,
-      reference_number: draft.referenceNumber.trim(),
-      notes: draft.notes.trim(),
-      status: 'draft',
-    }],
-  });
-  return mapAdjustment(row);
-}
-
-export async function updateInventoryAdjustment(adjustment: InventoryAdjustmentDocument, patch: Partial<InventoryAdjustmentDraft>): Promise<InventoryAdjustmentDocument> {
-  const [row] = await supabaseRequest<AdjustmentRow[]>(`inventory_adjustment_documents?id=${sqlEq(adjustment.id)}&company_id=${sqlEq(adjustment.companyId)}&select=*`, {
-    method: 'PATCH',
-    select: true,
-    body: {
-      ...(patch.warehouseId !== undefined ? { warehouse_id: patch.warehouseId } : {}),
-      ...(patch.binId !== undefined ? { bin_id: patch.binId || null } : {}),
-      ...(patch.adjustmentDate !== undefined ? { adjustment_date: patch.adjustmentDate } : {}),
-      ...(patch.reason !== undefined ? { reason: patch.reason } : {}),
-      ...(patch.referenceNumber !== undefined ? { reference_number: patch.referenceNumber.trim() } : {}),
-      ...(patch.notes !== undefined ? { notes: patch.notes.trim() } : {}),
-    },
-  });
-  return mapAdjustment(row);
-}
-
-export async function createInventoryAdjustmentLine(companyId: string, draft: InventoryAdjustmentLineDraft): Promise<InventoryAdjustmentLine> {
-  const [row] = await supabaseRequest<AdjustmentLineRow[]>('inventory_adjustment_lines?select=*', {
-    method: 'POST',
-    select: true,
-    body: [{
-      company_id: companyId,
-      adjustment_id: draft.adjustmentId,
-      item_id: draft.itemId,
-      quantity_delta: Number(draft.quantityDelta) || 0,
-      unit_cost: Math.max(0, Number(draft.unitCost) || 0),
-    }],
-  });
-  return mapAdjustmentLine(row);
-}
-
-export async function updateInventoryAdjustmentLine(line: InventoryAdjustmentLine, patch: Partial<InventoryAdjustmentLineDraft>): Promise<InventoryAdjustmentLine> {
-  const [row] = await supabaseRequest<AdjustmentLineRow[]>(`inventory_adjustment_lines?id=${sqlEq(line.id)}&company_id=${sqlEq(line.companyId)}&select=*`, {
-    method: 'PATCH',
-    select: true,
-    body: {
-      ...(patch.itemId !== undefined ? { item_id: patch.itemId } : {}),
-      ...(patch.quantityDelta !== undefined ? { quantity_delta: Number(patch.quantityDelta) || 0 } : {}),
-      ...(patch.unitCost !== undefined ? { unit_cost: Math.max(0, Number(patch.unitCost) || 0) } : {}),
-    },
-  });
-  return mapAdjustmentLine(row);
-}
-
-export async function deleteInventoryAdjustmentLine(line: InventoryAdjustmentLine): Promise<void> {
-  await supabaseRequest<void>(`inventory_adjustment_lines?id=${sqlEq(line.id)}&company_id=${sqlEq(line.companyId)}`, { method: 'DELETE' });
-}
-
-export async function postInventoryAdjustment(adjustmentId: string) {
-  return supabaseRpc<{ status: string; adjustment_id: string; posted_lines: number }>('inventory_post_adjustment', { p_adjustment_id: adjustmentId }, { timeoutMs: 30000 });
-}
-
-export async function cancelInventoryAdjustment(adjustmentId: string, reason: string) {
-  return supabaseRpc<{ status: string; adjustment_id: string; canceled_lines: number }>('inventory_cancel_adjustment', { p_adjustment_id: adjustmentId, p_reason: reason }, { timeoutMs: 30000 });
-}
-
 export function warehouseErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
   const knownMessages: Record<string, string> = {
@@ -922,26 +574,6 @@ export function warehouseErrorMessage(error: unknown) {
     UNSUPPORTED_CURRENCY: 'Only USD receipt lines can be posted in this stage.',
     POSTED_RECEIPT_LOCKED: 'Posted receipts cannot be edited directly.',
     POSTED_RECEIPT_LINES_LOCKED: 'Posted receipt lines cannot be edited directly.',
-    TRANSFER_NOT_FOUND: 'Transfer was not found.',
-    TRANSFER_ALREADY_POSTED: 'This transfer has already been posted.',
-    TRANSFER_NOT_DRAFT: 'Only draft transfers can be posted.',
-    TRANSFER_NOT_POSTED: 'Only posted transfers can be canceled.',
-    TRANSFER_HAS_NO_LINES: 'Add at least one transfer line before posting.',
-    TRANSFER_SAME_LOCATION: 'Transfer source and destination must be different.',
-    TRANSFER_HAS_LATER_MOVEMENTS: 'This transfer cannot be canceled because later movements exist for its items.',
-    TRANSFER_MOVEMENTS_NOT_FOUND: 'Transfer movements are incomplete.',
-    POSTED_TRANSFER_LOCKED: 'Posted transfers cannot be edited directly.',
-    POSTED_TRANSFER_LINES_LOCKED: 'Posted transfer lines cannot be edited directly.',
-    ADJUSTMENT_NOT_FOUND: 'Adjustment was not found.',
-    ADJUSTMENT_ALREADY_POSTED: 'This adjustment has already been posted.',
-    ADJUSTMENT_NOT_DRAFT: 'Only draft adjustments can be posted.',
-    ADJUSTMENT_NOT_POSTED: 'Only posted adjustments can be canceled.',
-    ADJUSTMENT_HAS_NO_LINES: 'Add at least one adjustment line before posting.',
-    ADJUSTMENT_HAS_LATER_MOVEMENTS: 'This adjustment cannot be canceled because later movements exist for its items.',
-    ADJUSTMENT_MOVEMENT_NOT_FOUND: 'Adjustment movement was not found.',
-    POSTED_ADJUSTMENT_LOCKED: 'Posted adjustments cannot be edited directly.',
-    POSTED_ADJUSTMENT_LINES_LOCKED: 'Posted adjustment lines cannot be edited directly.',
-    INSUFFICIENT_STOCK: 'There is not enough stock for this operation.',
   };
   const code = Object.keys(knownMessages).find((key) => raw.includes(key));
   return code ? knownMessages[code] : raw;
