@@ -1,6 +1,8 @@
 -- Business Analytics reconciliation helper.
 -- Replace the values in params and run after migration 20260714180000.
 -- This diagnostic output is intentionally separate from the production UI.
+-- Run as a database owner/service role because the underlying helper function
+-- is intentionally not executable by PUBLIC/authenticated users.
 
 with params as (
   select

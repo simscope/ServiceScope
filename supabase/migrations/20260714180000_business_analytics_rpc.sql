@@ -18,7 +18,14 @@ set search_path = public
 stable
 as $$
   -- Fallback is temporary until every company profile has a timezone.
-  select coalesce(nullif(company_profiles.timezone, ''), 'America/New_York')
+  select case
+    when exists (
+      select 1
+      from pg_timezone_names
+      where pg_timezone_names.name = nullif(company_profiles.timezone, '')
+    ) then company_profiles.timezone
+    else 'America/New_York'
+  end
   from public.company_profiles
   where company_profiles.company_id = p_company_id
   union all
@@ -245,6 +252,7 @@ begin
     when exists (
       select 1
       from public.company_profiles
+      join pg_timezone_names on pg_timezone_names.name = company_profiles.timezone
       where company_id = p_company_id
         and nullif(timezone, '') is not null
     ) then 'company_profile'
@@ -349,10 +357,10 @@ begin
     'period_jobs_count', coalesce((select count(*) from period_debt), 0),
     'total_outstanding_amount', coalesce((select sum(unpaid_cents) from all_debt), 0)::numeric / 100,
     'total_outstanding_jobs_count', coalesce((select count(*) from all_debt), 0),
-    'older_than_30_days_amount', coalesce((select sum(unpaid_cents) from all_debt where analytics_at < v_current_end - interval '30 days'), 0)::numeric / 100,
-    'older_than_30_days_count', coalesce((select count(*) from all_debt where analytics_at < v_current_end - interval '30 days'), 0),
+    'older_than_30_days_amount', coalesce((select sum(unpaid_cents) from all_debt where (analytics_at at time zone v_timezone)::date < p_date_to - 30), 0)::numeric / 100,
+    'older_than_30_days_count', coalesce((select count(*) from all_debt where (analytics_at at time zone v_timezone)::date < p_date_to - 30), 0),
     'period_job_ids', coalesce((select jsonb_agg(job_id) from period_debt), '[]'::jsonb),
-    'older_than_30_days_job_ids', coalesce((select jsonb_agg(job_id) from all_debt where analytics_at < v_current_end - interval '30 days'), '[]'::jsonb),
+    'older_than_30_days_job_ids', coalesce((select jsonb_agg(job_id) from all_debt where (analytics_at at time zone v_timezone)::date < p_date_to - 30), '[]'::jsonb),
     'aging_basis', 'completed-age'
   )
   into v_unpaid;
@@ -530,7 +538,7 @@ begin
 end;
 $$;
 
+revoke all on function public.business_analytics_job_facts(uuid, timestamptz, timestamptz, uuid) from public;
+revoke all on function public.business_analytics_company_timezone(uuid) from public;
+revoke all on function public.get_business_analytics(uuid, date, date, uuid) from public;
 grant execute on function public.get_business_analytics(uuid, date, date, uuid) to authenticated;
-revoke execute on function public.get_business_analytics(uuid, date, date, uuid) from anon;
-revoke execute on function public.business_analytics_job_facts(uuid, timestamptz, timestamptz, uuid) from anon, authenticated;
-revoke execute on function public.business_analytics_company_timezone(uuid) from anon, authenticated;
