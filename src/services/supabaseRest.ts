@@ -124,6 +124,14 @@ async function readSupabaseError(response: Response) {
     throw error;
   }
 
+  try {
+    const parsed = JSON.parse(message) as { error?: string; message?: string };
+    const clean = parsed.error || parsed.message;
+    if (clean) throw new Error(clean);
+  } catch (error) {
+    if (error instanceof Error && error.message !== message) throw error;
+  }
+
   throw new Error(message || `Supabase request failed with ${response.status}`);
 }
 

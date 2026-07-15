@@ -1942,6 +1942,35 @@ button {
   flex-wrap: wrap;
 }
 
+.warehouse-match-box.weak {
+  border-color: #d7dee8;
+  background: #f7f9fb;
+}
+
+.warehouse-provider-status {
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.warehouse-provider-status.complete {
+  background: #ecfdf3;
+  color: #166534;
+}
+
+.warehouse-provider-status.partial {
+  background: #fff8e8;
+  color: #92400e;
+}
+
+.warehouse-provider-status.blocked {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .warehouse-import-warnings span {
   color: #6b4a00;
   font-weight: 800;

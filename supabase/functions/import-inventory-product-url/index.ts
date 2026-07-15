@@ -5,8 +5,12 @@ type ImportRequest = {
   url?: string;
 };
 
+type ProviderStatus = 'complete' | 'partial' | 'blocked';
+type SourceType = 'amazon' | 'ebay' | 'generic';
+
 type ImportedProduct = {
-  sourceType: 'amazon' | 'ebay' | 'generic';
+  sourceType: SourceType;
+  providerStatus: ProviderStatus;
   sourceDomain: string;
   externalProductId: string;
   asin: string;
@@ -19,6 +23,7 @@ type ImportedProduct = {
   oem: string;
   description: string;
   imageUrl: string;
+  sourceImageUrl: string;
   vendorPrice: number;
   currency: string;
   packQuantity: number;
@@ -35,10 +40,25 @@ const corsHeaders = {
 };
 
 const MAX_HTML_BYTES = 1_500_000;
+const MAX_IMAGE_BYTES = 4_000_000;
 const REDIRECT_LIMIT = 4;
 const FETCH_TIMEOUT_MS = 9000;
+const IMAGE_TIMEOUT_MS = 8000;
+const INVENTORY_IMAGE_BUCKET = 'inventory-images';
 const PRIVATE_HOSTS = new Set(['localhost', 'metadata.google.internal']);
 const BLOCKED_IPS = new Set(['0.0.0.0', '127.0.0.1', '169.254.169.254', '::1']);
+const PLACEHOLDER_VALUES = new Set(['unknown', 'n/a', 'na', 'none', 'null', 'undefined', 'not available', 'unavailable']);
+const BLOCKED_PAGE_PATTERNS = [
+  /whoops[,! ]/i,
+  /access denied/i,
+  /forbidden/i,
+  /captcha/i,
+  /robot check/i,
+  /page not found/i,
+  /request blocked/i,
+  /we couldn't find that/i,
+  /verify you are human/i,
+];
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -81,7 +101,7 @@ function assertSafeUrl(value: string) {
   return parsed;
 }
 
-async function fetchSafeText(url: string, redirects = 0): Promise<{ url: string; html: string; contentType: string }> {
+async function fetchSafeText(url: string, redirects = 0): Promise<{ url: string; html: string; contentType: string; status: number }> {
   const parsed = assertSafeUrl(url);
   if (redirects > REDIRECT_LIMIT) throw new Error('Too many redirects while reading product link.');
 
@@ -127,7 +147,7 @@ async function fetchSafeText(url: string, redirects = 0): Promise<{ url: string;
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return { url: response.url || parsed.toString(), html: new TextDecoder().decode(bytes), contentType };
+    return { url: response.url || parsed.toString(), html: new TextDecoder().decode(bytes), contentType, status: response.status };
   } finally {
     clearTimeout(timeout);
   }
@@ -137,14 +157,49 @@ function text(value: unknown) {
   return String(value ?? '').replace(/\s+/g, ' ').replace(/<[^>]+>/g, '').trim().slice(0, 1200);
 }
 
+function cleanValue(value: unknown) {
+  const clean = text(value);
+  return PLACEHOLDER_VALUES.has(clean.toLowerCase()) ? '' : clean;
+}
+
 function attr(html: string, pattern: RegExp) {
   const match = html.match(pattern);
-  return text(match?.[1] ?? '');
+  return cleanValue(match?.[1] ?? '');
 }
 
 function parseMoney(value: unknown) {
   const clean = String(value ?? '').replace(/,/g, '').match(/\d+(?:\.\d{1,4})?/);
   return clean ? Number(clean[0]) || 0 : 0;
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function isTokenLikePartNumber(value: string) {
+  const clean = value.trim();
+  if (!clean) return false;
+  if (clean.length > 48) return true;
+  if (/^[a-f0-9]{24,}$/i.test(clean)) return true;
+  if (/^[A-Za-z0-9+/=_-]{28,}$/.test(clean)) return true;
+  if (/challenge|captcha|token|akamai|cloudflare|datadome|bot/i.test(clean)) return true;
+  if (/^[A-Z0-9]{18,}$/i.test(clean) && !/[._-]/.test(clean)) return true;
+  return false;
+}
+
+function cleanPartNumber(value: unknown, warnings: string[]) {
+  const clean = cleanValue(value).replace(/^#/, '').trim();
+  if (!clean) return '';
+  if (isTokenLikePartNumber(clean)) {
+    warnings.push('Imported Part Number looked like a challenge token and was cleared. Enter it manually.');
+    return '';
+  }
+  return clean.slice(0, 80);
+}
+
+function detectBlockedPage(html: string) {
+  const sample = html.slice(0, 180_000);
+  return BLOCKED_PAGE_PATTERNS.some((pattern) => pattern.test(sample));
 }
 
 function extractJsonLdProducts(html: string) {
@@ -176,6 +231,7 @@ function baseResult(url: URL, canonicalUrl: string): ImportedProduct {
   const host = url.hostname.replace(/^www\./, '');
   return {
     sourceType: host.includes('amazon.') ? 'amazon' : host.includes('ebay.') ? 'ebay' : 'generic',
+    providerStatus: 'complete',
     sourceDomain: host,
     externalProductId: '',
     asin: '',
@@ -188,6 +244,7 @@ function baseResult(url: URL, canonicalUrl: string): ImportedProduct {
     oem: '',
     description: '',
     imageUrl: '',
+    sourceImageUrl: '',
     vendorPrice: 0,
     currency: 'USD',
     packQuantity: 1,
@@ -215,17 +272,17 @@ function parsePackQuantity(title: string) {
 function mergeProductFromHtml(result: ImportedProduct, html: string) {
   const product = extractJsonLdProducts(html)[0];
   if (product) {
-    result.title = text(product.name) || result.title;
-    result.brand = text(typeof product.brand === 'object' ? product.brand?.name : product.brand) || result.brand;
-    result.manufacturer = text(product.manufacturer) || result.manufacturer || result.brand;
-    result.partNumber = text(product.mpn ?? product.sku) || result.partNumber;
-    result.model = text(product.model) || result.model;
-    result.description = text(product.description) || result.description;
+    result.title = cleanValue(product.name) || result.title;
+    result.brand = cleanValue(typeof product.brand === 'object' ? objectValue(product.brand).name : product.brand) || result.brand;
+    result.manufacturer = cleanValue(product.manufacturer) || result.manufacturer || result.brand;
+    result.partNumber = cleanPartNumber(product.mpn ?? product.sku, result.warnings) || result.partNumber;
+    result.model = cleanValue(product.model) || result.model;
+    result.description = cleanValue(product.description) || result.description;
     const image = Array.isArray(product.image) ? product.image[0] : product.image;
-    result.imageUrl = text(image) || result.imageUrl;
+    result.imageUrl = cleanValue(image) || result.imageUrl;
     const offer = Array.isArray(product.offers) ? product.offers[0] : product.offers as Record<string, unknown> | undefined;
     result.vendorPrice = parseMoney(offer?.price ?? product.price) || result.vendorPrice;
-    result.currency = text(offer?.priceCurrency) || result.currency;
+    result.currency = cleanValue(offer?.priceCurrency) || result.currency;
     result.confidence.title = confidence('json-ld', 0.95);
     result.confidence.partNumber = confidence('json-ld', result.partNumber ? 0.85 : 0);
     result.confidence.vendorPrice = confidence('json-ld', result.vendorPrice ? 0.85 : 0);
@@ -237,51 +294,156 @@ function mergeProductFromHtml(result: ImportedProduct, html: string) {
   result.canonicalUrl = attr(html, /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/i) || result.canonicalUrl;
   result.vendorPrice ||= parseMoney(attr(html, /<meta[^>]+property=["']product:price:amount["'][^>]+content=["']([^"']+)["']/i));
   result.currency = attr(html, /<meta[^>]+property=["']product:price:currency["'][^>]+content=["']([^"']+)["']/i) || result.currency;
-  result.partNumber ||= attr(html, /(?:MPN|Part Number|Manufacturer Part Number|Model)[\s\S]{0,120}?([A-Z0-9][A-Z0-9._-]{2,})/i);
+  result.partNumber ||= cleanPartNumber(attr(html, /(?:MPN|Part Number|Manufacturer Part Number|Model)[\s\S]{0,120}?([A-Z0-9][A-Z0-9._-]{2,})/i), result.warnings);
   result.packQuantity = parsePackQuantity(result.title);
   if (!result.confidence.title && result.title) result.confidence.title = confidence('html-meta', 0.65);
   if (!result.confidence.partNumber && result.partNumber) result.confidence.partNumber = confidence('sanitized-text', 0.45);
 }
 
-async function importEbay(url: URL, htmlResult: ImportedProduct, html: string) {
-  const itemId = ebayItemIdFromUrl(url);
-  htmlResult.ebayItemId = itemId;
-  htmlResult.externalProductId = itemId;
-  htmlResult.supplierName = 'eBay';
-  if (!itemId) htmlResult.warnings.push('Could not find an eBay item ID in this URL.');
+function ebayApiBase() {
+  return Deno.env.get('EBAY_API_BASE_URL') || 'https://api.ebay.com';
+}
 
-  const token = Deno.env.get('EBAY_BROWSE_API_TOKEN') ?? '';
+async function getEbayApplicationToken() {
+  const clientId = Deno.env.get('EBAY_CLIENT_ID') ?? '';
+  const clientSecret = Deno.env.get('EBAY_CLIENT_SECRET') ?? '';
+  if (!clientId || !clientSecret) return '';
+  const response = await fetch(`${ebayApiBase()}/identity/v1/oauth2/token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: `Basic ${btoa(`${clientId}:${clientSecret}`)}`,
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      scope: 'https://api.ebay.com/oauth/api_scope',
+    }),
+  });
+  if (!response.ok) return '';
+  const token = await response.json();
+  return cleanValue(token.access_token);
+}
+
+async function importEbay(url: URL, result: ImportedProduct) {
+  const itemId = ebayItemIdFromUrl(url);
+  result.ebayItemId = itemId;
+  result.externalProductId = itemId;
+  result.supplierName = 'eBay';
+  result.canonicalUrl = itemId ? `https://www.ebay.com/itm/${itemId}` : result.canonicalUrl;
+  if (!itemId) result.warnings.push('Could not find an eBay item ID in this URL.');
+
+  const token = itemId ? await getEbayApplicationToken() : '';
   if (!itemId || !token) {
-    mergeProductFromHtml(htmlResult, html);
-    htmlResult.warnings.push('eBay Browse API credentials are not configured; product page metadata was used and must be verified.');
-    return htmlResult;
+    result.providerStatus = 'blocked';
+    result.warnings.push('eBay blocked the page and the eBay API is not available.');
+    return result;
   }
 
-  const response = await fetch(`https://api.ebay.com/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${encodeURIComponent(itemId)}`, {
+  const response = await fetch(`${ebayApiBase()}/buy/browse/v1/item/get_item_by_legacy_id?legacy_item_id=${encodeURIComponent(itemId)}`, {
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
   });
   if (!response.ok) {
-    mergeProductFromHtml(htmlResult, html);
-    htmlResult.warnings.push(`eBay Browse API returned HTTP ${response.status}; product page metadata was used and must be verified.`);
-    return htmlResult;
+    result.providerStatus = 'blocked';
+    result.warnings.push(`eBay Browse API returned HTTP ${response.status}. Enter the fields manually.`);
+    return result;
   }
+
   const item = await response.json();
   const aspects = item.localizedAspects ?? [];
-  const aspect = (name: string) => text(aspects.find((row: Record<string, unknown>) => String(row.name).toLowerCase() === name.toLowerCase())?.value);
-  htmlResult.title = text(item.title);
-  htmlResult.imageUrl = text(item.image?.imageUrl);
-  htmlResult.vendorPrice = parseMoney(item.price?.value);
-  htmlResult.currency = text(item.price?.currency) || 'USD';
-  htmlResult.brand = aspect('Brand');
-  htmlResult.manufacturer = htmlResult.brand;
-  htmlResult.partNumber = aspect('MPN') || aspect('Manufacturer Part Number');
-  htmlResult.model = aspect('Model');
-  htmlResult.description = text(item.shortDescription);
-  htmlResult.canonicalUrl = text(item.itemWebUrl) || htmlResult.canonicalUrl;
-  htmlResult.confidence.title = confidence('ebay-browse-api', 0.98);
-  htmlResult.confidence.partNumber = confidence('ebay-browse-api', htmlResult.partNumber ? 0.9 : 0);
-  htmlResult.confidence.vendorPrice = confidence('ebay-browse-api', htmlResult.vendorPrice ? 0.95 : 0);
-  return htmlResult;
+  const aspect = (name: string) => cleanValue(aspects.find((row: Record<string, unknown>) => String(row.name).toLowerCase() === name.toLowerCase())?.value);
+  result.title = cleanValue(item.title);
+  result.imageUrl = cleanValue(item.image?.imageUrl);
+  result.vendorPrice = parseMoney(item.price?.value);
+  result.currency = cleanValue(item.price?.currency) || 'USD';
+  result.brand = aspect('Brand');
+  result.manufacturer = result.brand;
+  result.partNumber = cleanPartNumber(aspect('MPN') || aspect('Manufacturer Part Number'), result.warnings);
+  result.model = aspect('Model');
+  result.description = cleanValue(item.shortDescription);
+  result.canonicalUrl = cleanValue(item.itemWebUrl) || result.canonicalUrl;
+  result.confidence.title = confidence('ebay-browse-api', 0.98);
+  result.confidence.partNumber = confidence('ebay-browse-api', result.partNumber ? 0.9 : 0);
+  result.confidence.vendorPrice = confidence('ebay-browse-api', result.vendorPrice ? 0.95 : 0);
+  result.providerStatus = result.title && result.vendorPrice ? 'complete' : 'partial';
+  return result;
+}
+
+function absoluteUrl(value: string, base: string) {
+  try {
+    return new URL(value, base).toString();
+  } catch {
+    return '';
+  }
+}
+
+async function copyImageToStorage(serviceClient: ReturnType<typeof createClient>, companyId: string, imageUrl: string, warnings: string[]) {
+  const safeUrl = absoluteUrl(imageUrl, 'https://example.com');
+  if (!safeUrl) return '';
+  assertSafeUrl(safeUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_TIMEOUT_MS);
+  try {
+    const response = await fetch(safeUrl, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'ServiceScopeInventoryImporter/1.0',
+        Accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8',
+      },
+    });
+    if (!response.ok) {
+      warnings.push('Product image could not be copied; stock import can continue.');
+      return '';
+    }
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!/^image\/(png|jpe?g|webp|gif|avif)$/i.test(contentType)) {
+      warnings.push('Product image had an unsupported file type and was skipped.');
+      return '';
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!bytes.byteLength || bytes.byteLength > MAX_IMAGE_BYTES) {
+      warnings.push('Product image was empty or too large and was skipped.');
+      return '';
+    }
+    const extension = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : contentType.includes('gif') ? 'gif' : contentType.includes('avif') ? 'avif' : 'jpg';
+    const path = `${companyId}/${crypto.randomUUID()}.${extension}`;
+    const { error } = await serviceClient.storage.from(INVENTORY_IMAGE_BUCKET).upload(path, bytes, { contentType, upsert: true });
+    if (error) {
+      warnings.push('Product image could not be saved to Storage; stock import can continue.');
+      console.error('inventory image upload failed', error.message);
+      return '';
+    }
+    const { data } = serviceClient.storage.from(INVENTORY_IMAGE_BUCKET).getPublicUrl(path);
+    return data.publicUrl || '';
+  } catch (error) {
+    warnings.push('Product image could not be copied; stock import can continue.');
+    console.error('inventory image copy failed', error);
+    return '';
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function sanitizeResult(result: ImportedProduct) {
+  result.title = cleanValue(result.title);
+  result.brand = cleanValue(result.brand);
+  result.manufacturer = cleanValue(result.manufacturer);
+  result.partNumber = cleanPartNumber(result.partNumber, result.warnings);
+  result.model = cleanValue(result.model);
+  result.oem = cleanValue(result.oem);
+  result.description = cleanValue(result.description);
+  result.externalProductId = cleanValue(result.externalProductId);
+  result.asin = cleanValue(result.asin);
+  result.ebayItemId = cleanValue(result.ebayItemId);
+  result.supplierName = cleanValue(result.supplierName) || result.sourceDomain;
+  result.canonicalUrl = cleanValue(result.canonicalUrl);
+  if (result.providerStatus === 'complete' && (!result.title || result.warnings.length)) result.providerStatus = 'partial';
+  return result;
+}
+
+function blockedMessage(result: ImportedProduct) {
+  if (result.sourceDomain.includes('grainger.')) return 'Grainger blocked automatic product import. Enter the fields manually.';
+  if (result.sourceType === 'ebay') return 'eBay blocked the page and the eBay API is not available.';
+  return 'Product page is blocked or not a product page. Enter the fields manually.';
 }
 
 Deno.serve(async (request) => {
@@ -305,6 +467,7 @@ Deno.serve(async (request) => {
     if (!companyId || !inputUrl) return jsonResponse({ error: 'Company and product link are required.' }, 400);
 
     const callerClient = createClient(supabaseUrl, supabaseAnonKey, { global: { headers: { Authorization: authorization } } });
+    const serviceClient = createClient(supabaseUrl, serviceRoleKey);
     const { data: sessionRows, error: sessionError } = await callerClient.rpc('app_current_session');
     if (sessionError) return jsonResponse({ error: sessionError.message }, 401);
     const session = Array.isArray(sessionRows) ? sessionRows[0] : null;
@@ -313,30 +476,54 @@ Deno.serve(async (request) => {
     if (!canManage) return jsonResponse({ error: 'Current login cannot manage this warehouse.' }, 403);
 
     const normalized = normalizeUrl(inputUrl);
+    const inputParsed = assertSafeUrl(normalized);
+    let result = baseResult(inputParsed, normalized);
+
+    if (result.sourceType === 'ebay') {
+      result = await importEbay(inputParsed, result);
+      return jsonResponse(sanitizeResult(result));
+    }
+
     const fetchResult = await fetchSafeText(normalized);
     const finalUrl = assertSafeUrl(fetchResult.url);
-    const result = baseResult(finalUrl, fetchResult.url);
+    result = baseResult(finalUrl, fetchResult.url);
+
+    if (detectBlockedPage(fetchResult.html)) {
+      result.providerStatus = 'blocked';
+      result.warnings.push(blockedMessage(result));
+      return jsonResponse(sanitizeResult(result));
+    }
 
     const asin = asinFromUrl(finalUrl);
     if (asin) {
       result.asin = asin;
       result.externalProductId = asin;
       result.supplierName = 'Amazon';
+      result.canonicalUrl = `https://www.amazon.com/dp/${asin}`;
       mergeProductFromHtml(result, fetchResult.html);
-      result.warnings.push('Amazon data was extracted from the product page and must be verified.');
+      result.partNumber = '';
+      result.providerStatus = 'partial';
+      result.warnings.push('Amazon import is partial. Price, image, manufacturer, and Part Number may require manual entry.');
       if (!result.title) result.title = `Amazon product ${asin}`;
-      return jsonResponse(result);
+    } else {
+      mergeProductFromHtml(result, fetchResult.html);
+      if (!result.partNumber) result.warnings.push('No valid Part Number was found. Verify before creating a new part.');
+      if (!result.vendorPrice) result.warnings.push('No price was found. Enter Price each or Price per pack manually.');
     }
 
-    if (result.sourceType === 'ebay') return jsonResponse(await importEbay(finalUrl, result, fetchResult.html));
+    result = sanitizeResult(result);
+    result.sourceImageUrl = result.imageUrl;
+    if (result.imageUrl) {
+      const copiedImageUrl = await copyImageToStorage(serviceClient, companyId, result.imageUrl, result.warnings);
+      if (copiedImageUrl) result.imageUrl = copiedImageUrl;
+    }
 
-    mergeProductFromHtml(result, fetchResult.html);
-    if (!result.partNumber) result.warnings.push('No Part Number was found. Verify before creating a new part.');
-    if (!result.vendorPrice) result.warnings.push('No price was found. Enter Price each or Price per pack manually.');
-
-    return jsonResponse(result);
+    return jsonResponse(sanitizeResult(result));
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Product link could not be imported.';
+    const raw = error instanceof Error ? error.message : 'Product link could not be imported.';
+    console.error('inventory product import failed', raw);
+    let message = raw;
+    if (/HTTP 403|Forbidden/i.test(raw)) message = 'Product page blocked automatic import. Enter the fields manually.';
     return jsonResponse({ error: message }, 400);
   }
 });

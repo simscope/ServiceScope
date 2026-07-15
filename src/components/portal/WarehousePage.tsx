@@ -134,6 +134,7 @@ type ProductImportDraft = {
   productUrl: string;
   preview: ImportedInventoryProduct | null;
   matchItemId: string;
+  weakMatchItemIds: string[];
   createNewPart: boolean;
   packagesReceived: number;
   unitsPerPackage: number;
@@ -151,6 +152,7 @@ const emptyProductImportDraft = (): ProductImportDraft => ({
   productUrl: '',
   preview: null,
   matchItemId: '',
+  weakMatchItemIds: [],
   createNewPart: false,
   packagesReceived: 1,
   unitsPerPackage: 1,
@@ -183,6 +185,13 @@ const emptyJobReturnDraft = (): InventoryJobReturnDraft => ({
 function formatQty(value: number, unit = '') {
   const clean = Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
   return unit ? `${clean} ${unit}` : clean;
+}
+
+const importPlaceholderValues = new Set(['unknown', 'n/a', 'na', 'none', 'null', 'undefined', 'not available', 'unavailable']);
+
+function importMatchValue(value: string | null | undefined) {
+  const clean = (value ?? '').trim().toLowerCase();
+  return importPlaceholderValues.has(clean) ? '' : clean;
 }
 
 function EmptyWarehouseState({ title, detail }: { title: string; detail: string }) {
@@ -491,36 +500,49 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   }
 
   function findImportMatch(product: ImportedInventoryProduct) {
-    const normalizedUrl = normalizeSupplierUrl(product.canonicalUrl || product.sourceDomain || product.title);
-    const externalId = (product.externalProductId || product.asin || product.ebayItemId || '').trim().toLowerCase();
+    const normalizedUrl = normalizeSupplierUrl(product.canonicalUrl || '');
+    const externalId = importMatchValue(product.externalProductId);
+    const asin = importMatchValue(product.asin);
+    const ebayItemId = importMatchValue(product.ebayItemId);
     const linkedMatch = snapshot.supplierLinks.find((link) => {
-      const linkExternal = (link.externalProductId || link.asin || link.ebayItemId).trim().toLowerCase();
+      const linkExternal = importMatchValue(link.externalProductId);
+      const linkAsin = importMatchValue(link.asin);
+      const linkEbayItemId = importMatchValue(link.ebayItemId);
       return Boolean(
         (externalId && linkExternal === externalId) ||
+        (asin && linkAsin === asin) ||
+        (ebayItemId && linkEbayItemId === ebayItemId) ||
         (normalizedUrl && (link.canonicalUrlNormalized === normalizedUrl || link.sourceUrlNormalized === normalizedUrl)),
       );
     });
     if (linkedMatch) return linkedMatch.itemId;
 
-    const partNumber = product.partNumber.trim().toLowerCase();
+    const partNumber = importMatchValue(product.partNumber);
     if (partNumber) {
-      const partMatch = snapshot.items.find((item) => [item.partNumber, item.alternatePartNumber, item.oem].some((value) => value.trim().toLowerCase() === partNumber));
+      const partMatch = snapshot.items.find((item) => [item.partNumber, item.alternatePartNumber].some((value) => importMatchValue(value) === partNumber));
       if (partMatch) return partMatch.id;
     }
-
-    const model = (product.model || product.oem).trim().toLowerCase();
-    const maker = (product.manufacturer || product.brand).trim().toLowerCase();
-    if (model && maker) {
-      const modelMatch = snapshot.items.find((item) => (item.manufacturer || '').trim().toLowerCase() === maker && [item.oem, item.partNumber, item.alternatePartNumber].some((value) => value.trim().toLowerCase() === model));
-      if (modelMatch) return modelMatch.id;
-    }
-
-    const normalizedName = product.title.trim().toLowerCase();
-    if (normalizedName) {
-      const nameMatch = snapshot.items.find((item) => item.internalName.trim().toLowerCase() === normalizedName);
-      if (nameMatch) return nameMatch.id;
-    }
     return '';
+  }
+
+  function findWeakImportMatches(product: ImportedInventoryProduct) {
+    const model = importMatchValue(product.model || product.oem);
+    const maker = importMatchValue(product.manufacturer || product.brand);
+    const title = importMatchValue(product.title);
+    const matches = new Set<string>();
+    if (model && maker) {
+      snapshot.items.forEach((item) => {
+        if (importMatchValue(item.manufacturer) === maker && [item.oem, item.partNumber, item.alternatePartNumber].some((value) => importMatchValue(value) === model)) {
+          matches.add(item.id);
+        }
+      });
+    }
+    if (title) {
+      snapshot.items.forEach((item) => {
+        if (importMatchValue(item.internalName) === title) matches.add(item.id);
+      });
+    }
+    return Array.from(matches).slice(0, 5);
   }
 
   async function importProductLink(sourceUrl = productImportDraft.productUrl) {
@@ -532,13 +554,21 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     setStatus('Importing product details...');
     try {
       const preview = await importInventoryProductUrl(companyId, cleanUrl);
+      if (preview.providerStatus === 'blocked') {
+        setProductImportDraft({ ...emptyProductImportDraft(), productUrl: cleanUrl });
+        setFormMode('stock');
+        setStatus(preview.warnings?.[0] || 'Automatic product import was blocked. Enter the fields manually.');
+        return;
+      }
       const matchItemId = findImportMatch(preview);
+      const weakMatchItemIds = matchItemId ? [] : findWeakImportMatches(preview);
       setProductImportDraft({
         ...emptyProductImportDraft(),
         productUrl: cleanUrl,
         sourceUrl: preview.canonicalUrl || cleanUrl,
         preview,
         matchItemId,
+        weakMatchItemIds,
         createNewPart: !matchItemId,
         packagesReceived: 1,
         unitsPerPackage: Math.max(1, Number(preview.packQuantity) || 1),
@@ -551,7 +581,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
         unitCost: preview.packQuantity > 0 ? Number(preview.vendorPrice) / Math.max(1, Number(preview.packQuantity) || 1) : Number(preview.vendorPrice) || 0,
       }));
       setFormMode('stock');
-      setStatus(matchItemId ? 'Possible existing part found. Review the imported product before adding stock.' : 'Review the imported product before adding stock.');
+      setStatus(matchItemId ? 'Strong existing part match found. Review before adding stock.' : 'Review the imported product before adding stock.');
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
     }
@@ -1506,6 +1536,9 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       const importUnitCost = productImportDraft.unitsPerPackage > 0 ? productImportDraft.packagePrice / productImportDraft.unitsPerPackage : 0;
       const importExtraCost = productImportDraft.shippingCost + productImportDraft.taxCost + productImportDraft.otherCost;
       const matchedItem = productImportDraft.matchItemId ? itemById.get(productImportDraft.matchItemId) : null;
+      const weakMatchedItems = productImportDraft.weakMatchItemIds.map((id) => itemById.get(id)).filter(Boolean) as InventoryItem[];
+      const providerStatus = importedProduct?.providerStatus ?? 'complete';
+      const providerStatusLabel = providerStatus === 'complete' ? 'Complete' : providerStatus === 'partial' ? 'Partial - review required' : 'Blocked - manual entry required';
       return (
         <section className="warehouse-form-panel stock">
           <h2>Add stock</h2>
@@ -1524,6 +1557,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                 <div className="warehouse-panel-heading">
                   <h3>Review imported fields</h3>
                   <span>{importedProduct.sourceDomain}</span>
+                  <span className={`warehouse-provider-status ${providerStatus}`}>{providerStatusLabel}</span>
                 </div>
                 {matchedItem ? (
                   <div className="warehouse-match-box">
@@ -1532,6 +1566,19 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
                     <div>
                       <button className={!productImportDraft.createNewPart ? 'primary-button compact' : 'secondary-button compact'} type="button" onClick={() => setProductImportDraft({ ...productImportDraft, createNewPart: false })}>Use existing part</button>
                       <button className={productImportDraft.createNewPart ? 'primary-button compact' : 'secondary-button compact'} type="button" onClick={() => setProductImportDraft({ ...productImportDraft, createNewPart: true })}>Create new part</button>
+                    </div>
+                  </div>
+                ) : null}
+                {!matchedItem && weakMatchedItems.length ? (
+                  <div className="warehouse-match-box weak">
+                    <strong>Weak suggestions only</strong>
+                    <span>These are title/model similarities. Choose one manually only if it is truly the same part.</span>
+                    <div>
+                      {weakMatchedItems.map((item) => (
+                        <button className="secondary-button compact" type="button" key={item.id} onClick={() => setProductImportDraft({ ...productImportDraft, matchItemId: item.id, createNewPart: false })}>
+                          {item.internalName} {item.partNumber ? `- ${item.partNumber}` : ''}
+                        </button>
+                      ))}
                     </div>
                   </div>
                 ) : null}
@@ -1834,14 +1881,6 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
             ))}
             <span><strong>{lowStockItems.length}</strong> low stock</span>
             <span><strong>{money(summary.inventoryValue)}</strong> inventory value</span>
-          </div>
-          <div className="warehouse-import-bar">
-            <input
-              value={productImportDraft.productUrl}
-              onChange={(event) => setProductImportDraft({ ...productImportDraft, productUrl: event.target.value })}
-              placeholder="Paste Amazon, eBay, or supplier product link"
-            />
-            <button className="secondary-button compact" type="button" onClick={() => importProductLink()}>Import product</button>
           </div>
         </>
       ) : null}

@@ -80,6 +80,7 @@ export type InventorySupplierLink = {
 
 export type ImportedInventoryProduct = {
   sourceType: 'amazon' | 'ebay' | 'generic';
+  providerStatus?: 'complete' | 'partial' | 'blocked';
   sourceDomain: string;
   externalProductId: string;
   title: string;
@@ -90,6 +91,7 @@ export type ImportedInventoryProduct = {
   oem: string;
   description: string;
   imageUrl: string;
+  sourceImageUrl?: string;
   vendorPrice: number;
   currency: string;
   packQuantity: number;
@@ -903,6 +905,13 @@ export function normalizeSupplierUrl(url: string) {
 
 export function warehouseErrorMessage(error: unknown) {
   const raw = error instanceof Error ? error.message : String(error);
+  try {
+    const parsed = JSON.parse(raw) as { error?: string; message?: string };
+    const clean = parsed.error || parsed.message;
+    if (clean) return clean;
+  } catch {
+    // Raw message is already plain text.
+  }
   if (raw.includes('PGRST205') && raw.includes('inventory_')) {
     return 'Warehouse database tables are not available yet. Apply the Warehouse Supabase migrations and refresh the schema cache before using Inventory Control.';
   }
