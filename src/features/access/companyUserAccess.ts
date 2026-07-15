@@ -16,6 +16,7 @@ export const companyUserPageAccessDefinitions: Array<{
   { page: 'debtors', label: 'Debtors', detail: 'Unpaid work and blacklist' },
   { page: 'calendar', label: 'Calendar', detail: 'Schedule and appointments' },
   { page: 'materials', label: 'Materials', detail: 'Parts and stock' },
+  { page: 'warehouse', label: 'Warehouse', detail: 'Inventory, suppliers, stock, and movement history' },
   { page: 'tasks', label: 'Tasks', detail: 'Team task list' },
   { page: 'map', label: 'Map', detail: 'Technician locations' },
   { page: 'email', label: 'Email', detail: 'Company mailbox' },
@@ -29,7 +30,7 @@ export const companyUserPageAccessDefinitions: Array<{
 
 const staffPages = companyUserPageAccessDefinitions.filter(({ page }) => page !== 'onboarding');
 
-const dispatcherHiddenPages: CompanyPortalAccessPage[] = ['materials', 'knowledge', 'finances', 'aiBusiness', 'import'];
+const dispatcherHiddenPages: CompanyPortalAccessPage[] = ['materials', 'warehouse', 'knowledge', 'finances', 'aiBusiness', 'import'];
 const managerHiddenPages: CompanyPortalAccessPage[] = ['finances', 'aiBusiness', 'import'];
 
 export function defaultCompanyUserPageAccess(role: CompanyTechnicianRole): CompanyAccessRules {
