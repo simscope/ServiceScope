@@ -4,6 +4,11 @@ import type { MaterialRow, ServiceJobStatus } from '../../types';
 
 export type MaterialJobStatusFilter = 'active' | 'all' | ServiceJobStatus;
 
+export function isReturnedWarehouseMaterial(material: MaterialRow) {
+  return (material.sourceType === 'warehouse' || Boolean(material.inventoryMovementId))
+    && material.status === 'Returned';
+}
+
 export function normalizeMaterialRows(jobNumber: string, rows: MaterialRow[]) {
   return rows
     .filter((row) => row.name.trim() || row.supplier.trim())
@@ -36,7 +41,7 @@ export function useMaterialsFeature(initialRows: MaterialRow[]) {
   };
 
   const openMaterialEditor = (jobNumber: string) => {
-    const existingRows = materials.filter((material) => material.jobNumber === jobNumber);
+    const existingRows = materials.filter((material) => material.jobNumber === jobNumber && !isReturnedWarehouseMaterial(material));
     setEditingMaterialsJobNumber(jobNumber);
     setMaterialDraftRows(existingRows.length ? existingRows.map((material) => ({ ...material })) : [emptyMaterialDraft(jobNumber)]);
   };
@@ -72,6 +77,7 @@ export function useMaterialsFeature(initialRows: MaterialRow[]) {
     setMaterialSearch,
     editingMaterialsJobNumber,
     materialDraftRows,
+    setMaterialDraftRows,
     resetMaterialFilters,
     openMaterialEditor,
     closeMaterialEditor,

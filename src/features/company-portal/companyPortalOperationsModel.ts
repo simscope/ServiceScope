@@ -44,6 +44,7 @@ type CompanyPortalOperationsInput = {
   setJobs: Dispatch<SetStateAction<ServiceJob[]>>;
   setJobsStatus: Dispatch<SetStateAction<string>>;
   setMaterials: Dispatch<SetStateAction<MaterialRow[]>>;
+  setMaterialDraftRows: Dispatch<SetStateAction<MaterialRow[]>>;
   setMonthDropRequest: Dispatch<SetStateAction<MonthDropRequest | null>>;
   setOpenedJob: Dispatch<SetStateAction<JobCardData | null>>;
   setResizingJob: Dispatch<SetStateAction<CalendarResizeState | null>>;
@@ -81,6 +82,7 @@ export function makeCompanyPortalOperationsModel({
   setJobs,
   setJobsStatus,
   setMaterials,
+  setMaterialDraftRows,
   setMonthDropRequest,
   setOpenedJob,
   setResizingJob,
@@ -119,6 +121,7 @@ export function makeCompanyPortalOperationsModel({
     allJobsRows,
     activeJobsRows,
     setMaterials,
+    setMaterialDraftRows,
     setJobsStatus,
     closeMaterialEditor,
     stopMaterialsWrite: (action) => stopCompanyWrite('materials', action),

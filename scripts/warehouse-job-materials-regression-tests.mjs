@@ -36,8 +36,10 @@ includes(materialsPage, "warehouseSource ? 'Stock' : 'Remove'", 'Warehouse-backe
 includes(materialsPage, 'openStockPicker', 'Stock button must open the in-modal stock picker.');
 includes(materialsPage, 'issueInventoryPartToJob', 'Materials stock picker must post through the warehouse Job issue RPC.');
 includes(materialsFeature, "Math.max(0, Number(row.quantity) || 0)", 'Warehouse-backed material normalization must allow zero quantity.');
-includes(materialWorkflow, 'materialIsReturnedWarehouseReturned', 'Returned warehouse materials must be handled separately.');
-includes(materialWorkflow, "materialStatusFilter !== 'all' || !materialIsReturnedWarehouseReturned(material)", 'Default Materials view must hide returned warehouse rows.');
+includes(materialsFeature, 'isReturnedWarehouseMaterial', 'Returned warehouse material detection must be shared.');
+includes(materialsFeature, 'material.jobNumber === jobNumber && !isReturnedWarehouseMaterial(material)', 'Materials editor must not open returned warehouse rows as active Job materials.');
+includes(materialWorkflow, "materialStatusFilter !== 'all' || !isReturnedWarehouseMaterial(material)", 'Default Materials view must hide returned warehouse rows.');
+includes(materialWorkflow, 'setMaterialDraftRows(savedMaterials', 'Open Materials editor must refresh draft rows after warehouse stock is issued.');
 includes(materialsPage, 'type MaterialJobGroup', 'Materials list must group material rows by Job.');
 includes(materialsPage, 'materialJobGroups.map', 'Materials table must render one row per Job group.');
 includes(materialsPage, 'jobMaterials.map', 'Grouped Material rows must render compact material lines inside one Job row.');

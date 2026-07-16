@@ -2,7 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { listCompanyJobMaterials, saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
 import type { CompanyJobType, MaterialRow, ServiceJob } from '../../types';
 import type { MaterialJobStatusFilter } from './useMaterialsFeature';
-import { normalizeMaterialRows } from './useMaterialsFeature';
+import { isReturnedWarehouseMaterial, normalizeMaterialRows } from './useMaterialsFeature';
 
 type MaterialWorkflowInput = {
   companyId: string;
@@ -17,6 +17,7 @@ type MaterialWorkflowInput = {
   allJobsRows: ServiceJob[];
   activeJobsRows: ServiceJob[];
   setMaterials: Dispatch<SetStateAction<MaterialRow[]>>;
+  setMaterialDraftRows: Dispatch<SetStateAction<MaterialRow[]>>;
   setJobsStatus: Dispatch<SetStateAction<string>>;
   closeMaterialEditor: () => void;
   stopMaterialsWrite: (action: string) => boolean;
@@ -35,6 +36,7 @@ export function makeMaterialWorkflow({
   allJobsRows,
   activeJobsRows,
   setMaterials,
+  setMaterialDraftRows,
   setJobsStatus,
   closeMaterialEditor,
   stopMaterialsWrite,
@@ -43,10 +45,6 @@ export function makeMaterialWorkflow({
   const materialRowsWithJobs = materials
     .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))
     .filter((row): row is { material: MaterialRow; job: ServiceJob } => Boolean(row.job));
-  const materialIsReturnedWarehouseReturned = (material: MaterialRow) => (
-    (material.sourceType === 'warehouse' || Boolean(material.inventoryMovementId))
-    && material.status === 'Returned'
-  );
   const normalizedMaterialSearch = materialSearch.trim().toLowerCase();
   const materialJobMatchesSearch = (job: ServiceJob, extras: string[] = []) => {
     if (!normalizedMaterialSearch) return true;
@@ -77,12 +75,12 @@ export function makeMaterialWorkflow({
   );
   const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
     const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
-    const visibleInDefaultList = materialStatusFilter !== 'all' || !materialIsReturnedWarehouseReturned(material);
+    const visibleInDefaultList = materialStatusFilter !== 'all' || !isReturnedWarehouseMaterial(material);
 
     return visibleInDefaultList && matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
   const materialJobs = materialJobStatusFilter === 'active' ? activeJobsRows : allJobsRows;
-  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber && !materialIsReturnedWarehouseReturned(material)));
+  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber && !isReturnedWarehouseMaterial(material)));
   const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
     materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
   ));
@@ -140,6 +138,11 @@ export function makeMaterialWorkflow({
     if (!companyId) return;
     const savedMaterials = await listCompanyJobMaterials(companyId);
     setMaterials(savedMaterials);
+    if (editingMaterialsJobNumber) {
+      setMaterialDraftRows(savedMaterials
+        .filter((material) => material.jobNumber === editingMaterialsJobNumber && !isReturnedWarehouseMaterial(material))
+        .map((material) => ({ ...material })));
+    }
   }
 
   return {
