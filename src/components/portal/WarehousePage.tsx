@@ -1208,14 +1208,12 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
                 <span className="warehouse-part-photo">{item.internalName.slice(0, 1).toUpperCase()}</span>
                 <span className="warehouse-part-copy">
                   <strong>{item.internalName}</strong>
-                  <small>{itemSubtitle(item)}</small>
-                  <small className="warehouse-category-line">{categoryPath(item.categoryId)}</small>
-                  <small>{itemLocationSummary(item)}</small>
+                  <small>{[itemSubtitle(item), categoryPath(item.categoryId), itemLocationSummary(item)].filter(Boolean).join(' - ')}</small>
                 </span>
                 <span className={`warehouse-part-stock ${stockStatus}`}>
                   <small>{stockStatus === 'out' ? 'Out of stock' : stockStatus === 'low' ? `Low - ${formatQty(quantity, item.unit)} left` : 'In stock'}</small>
                   <strong>{formatQty(quantity, item.unit)}</strong>
-                  <small>{stockStatus === 'low' ? `Minimum: ${formatQty(item.minimumQuantity, item.unit)}` : selectedWarehouse ? selectedWarehouse.name : 'available'}</small>
+                  <small>{stockStatus === 'low' ? `Min ${formatQty(item.minimumQuantity, item.unit)}` : selectedWarehouse ? selectedWarehouse.name : 'available'}</small>
                 </span>
                 <ChevronDown size={18} aria-hidden="true" />
               </button>
