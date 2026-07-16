@@ -31,6 +31,8 @@ includes(page, 'From location', 'Move form must collect source location.');
 includes(page, 'To location', 'Move form must collect destination location.');
 includes(page, 'Move stock', 'Move form must post stock moves.');
 assert.ok(!page.includes('Transfers are Stage 3'), 'Move button must not remain a disabled Stage 3 placeholder.');
+assert.ok(!page.includes('Moves and adjustments are reserved for later stages.'), 'Warehouse footer must not claim moves are reserved.');
+includes(page, 'Receipts, moves, Job use, and Job returns post through PostgreSQL RPC with locks.', 'Warehouse footer must describe production move posting.');
 
 includes(page, 'Use on Job', 'Use on Job workflow must remain visible.');
 includes(page, 'Return unused part', 'Return from Job workflow must remain visible.');

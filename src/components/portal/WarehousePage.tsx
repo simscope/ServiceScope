@@ -2316,7 +2316,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
 
       <div className="warehouse-warning">
         <AlertTriangle size={17} aria-hidden="true" />
-        <span>Receipts, Job use, and Job returns post through PostgreSQL RPC with locks. Moves and adjustments are reserved for later stages.</span>
+        <span>Receipts, moves, Job use, and Job returns post through PostgreSQL RPC with locks. Adjustments are reserved for a later stage.</span>
       </div>
     </section>
   );
