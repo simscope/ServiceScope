@@ -3,7 +3,6 @@ import { Plus, PackageCheck } from 'lucide-react';
 import type { CompanyOnboardingProfile, MaterialRow, ServiceJob } from '../../types';
 import type { MaterialJobStatusFilter } from '../../features/materials/useMaterialsFeature';
 import { money, statusClassName } from '../../utils/format';
-import { saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
 
 type MaterialRowWithJob = {
   material: MaterialRow;
@@ -35,6 +34,7 @@ export function MaterialsPage({
   onRemoveMaterialDraftRow,
   onAddMaterialDraftRow,
   onSaveMaterialDraftRows,
+  onSaveMaterials,
 }: {
   materials: MaterialRow[];
   jobsWithoutMaterials: ServiceJob[];
@@ -60,6 +60,7 @@ export function MaterialsPage({
   onRemoveMaterialDraftRow: (rowId: string) => void;
   onAddMaterialDraftRow: () => void;
   onSaveMaterialDraftRows: () => void;
+  onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => Promise<void> | void;
 }) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, MaterialRow['status']>>({});
   const [savingStatusId, setSavingStatusId] = useState('');
@@ -76,7 +77,7 @@ export function MaterialsPage({
       .map((row) => (row.id === material.id ? { ...row, status: nextStatus } : row));
 
     try {
-      await saveJobMaterialsToBackend(job.companyId, job.jobNumber, rowsForJob);
+      await onSaveMaterials(job.jobNumber, rowsForJob);
       setInlineStatusMessage('Material status saved.');
     } catch (error) {
       setStatusOverrides((statuses) => ({ ...statuses, [material.id]: previousStatus }));

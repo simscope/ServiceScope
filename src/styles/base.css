@@ -2262,8 +2262,8 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 36px;
+  height: 36px;
   border-radius: 8px;
   background: #eef4ea;
   color: #17201b;
@@ -2319,17 +2319,18 @@ button {
 .warehouse-part-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  padding: 0 12px 12px;
+  gap: 6px;
+  padding: 0 10px 10px;
 }
 
 .warehouse-part-detail {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(180px, .7fr) minmax(220px, .9fr);
-  gap: 12px;
+  align-items: start;
+  gap: 10px;
   border-top: 1px solid #e3e9e4;
   background: #fbfcfd;
-  padding: 12px;
+  padding: 10px;
 }
 
 .warehouse-part-detail h3,
@@ -2342,7 +2343,8 @@ button {
 .warehouse-activity-list,
 .warehouse-purchase-lines {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 6px;
 }
 
 .warehouse-detail-meta {
@@ -2357,22 +2359,22 @@ button {
   border: 1px solid #e3e9e4;
   border-radius: 8px;
   background: #ffffff;
-  padding: 8px 10px;
+  padding: 6px 8px;
   color: #526158;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .warehouse-activity-row {
   border: 1px solid #d7dee8;
-  border-radius: 8px;
+  border-radius: 6px;
   background: #ffffff;
 }
 
 .warehouse-activity-row summary {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
-  gap: 10px;
-  padding: 10px 12px;
+  gap: 8px;
+  padding: 7px 9px;
   cursor: pointer;
 }
 
@@ -2384,9 +2386,9 @@ button {
 .warehouse-activity-details {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 8px;
+  gap: 6px;
   border-top: 1px solid #e3e9e4;
-  padding: 10px 12px;
+  padding: 8px 9px;
   color: #526158;
   font-size: 12px;
   font-weight: 800;
@@ -2780,14 +2782,14 @@ button {
 
 .materials-page-table {
   width: 100%;
-  min-width: 1180px;
+  min-width: 1040px;
   border-collapse: collapse;
 }
 
 .materials-page-table th {
   border-bottom: 1px solid #d7dee8;
   background: #f4f6f8;
-  padding: 10px 12px;
+  padding: 7px 10px;
   color: #17201b;
   font-size: 12px;
   text-align: left;
@@ -2795,10 +2797,10 @@ button {
 
 .materials-page-table td {
   border-bottom: 1px solid #e3e9e4;
-  padding: 10px 12px;
+  padding: 7px 10px;
   color: #223028;
-  font-size: 13px;
-  vertical-align: top;
+  font-size: 12px;
+  vertical-align: middle;
 }
 
 .materials-page-table tr:last-child td {
@@ -2806,7 +2808,7 @@ button {
 }
 
 .materials-page-table td:first-child {
-  min-width: 290px;
+  min-width: 250px;
 }
 
 .materials-page-table td:first-child strong,
@@ -2817,6 +2819,17 @@ button {
 .materials-page-table td:first-child span {
   margin-top: 2px;
   color: #667269;
+  font-size: 11px;
+}
+
+.materials-page-table .secondary-button.compact {
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.material-status-select {
+  min-height: 34px;
+  padding: 6px 32px 6px 10px;
   font-size: 12px;
 }
 

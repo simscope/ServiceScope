@@ -86,6 +86,7 @@ export function useClientPageRendererContext(groups: ClientPageRendererContextGr
     groups.operations.setAllJobsVisibility,
     groups.operations.setCalendarView,
     groups.operations.setMaterialSearch,
+    groups.operations.setMaterials,
     groups.operations.setMaterialStatusFilter,
     groups.operations.setMaterialJobStatusFilter,
     groups.operations.setMaterialTechFilter,

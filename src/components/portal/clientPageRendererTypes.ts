@@ -154,6 +154,7 @@ export type ClientPageRendererContext = {
   setMapStatusFilter: Dispatch<SetStateAction<string>>;
   setMapTechFilter: Dispatch<SetStateAction<string>>;
   setMaterialSearch: Dispatch<SetStateAction<string>>;
+  setMaterials: Dispatch<SetStateAction<MaterialRow[]>>;
   setMaterialStatusFilter: Dispatch<SetStateAction<MaterialStatus | 'all'>>;
   setMaterialJobStatusFilter: Dispatch<SetStateAction<MaterialJobStatusFilter>>;
   setMaterialTechFilter: Dispatch<SetStateAction<string>>;
@@ -261,6 +262,7 @@ export type ClientPageRendererOperationsContext = Pick<ClientPageRendererContext
   | 'setAllJobsVisibility'
   | 'setCalendarView'
   | 'setMaterialSearch'
+  | 'setMaterials'
   | 'setMaterialJobStatusFilter'
   | 'setMaterialStatusFilter'
   | 'setMaterialTechFilter'

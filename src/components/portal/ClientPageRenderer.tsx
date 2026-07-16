@@ -6,6 +6,7 @@ import { ClientJobsPageRenderer } from './ClientJobsPageRenderer';
 import { ClientOperationsPageRenderer } from './ClientOperationsPageRenderer';
 import { WarehousePage } from './WarehousePage';
 import type { ClientPageRendererContextGroups } from './clientPageRendererTypes';
+import { listCompanyJobMaterials } from '../../services/jobsStore';
 
 type ClientPageRendererProps = {
   renderedClientPage: ClientPage;
@@ -53,7 +54,15 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
   }
 
   if (renderedClientPage === 'warehouse') {
-    return <WarehousePage companyId={selectedCompanyId} />;
+    return (
+      <WarehousePage
+        companyId={selectedCompanyId}
+        onMaterialsChanged={async () => {
+          const nextMaterials = await listCompanyJobMaterials(selectedCompanyId);
+          context.operations.setMaterials(nextMaterials);
+        }}
+      />
+    );
   }
 
   if (['email', 'finances', 'aiBusiness', 'knowledge', 'portal', 'onboarding'].includes(renderedClientPage)) {

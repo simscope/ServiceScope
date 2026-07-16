@@ -46,6 +46,7 @@ type WarehouseTab = 'parts' | 'purchases' | 'activity' | 'settings';
 
 type WarehousePageProps = {
   companyId: string;
+  onMaterialsChanged?: () => Promise<void> | void;
 };
 
 type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock' | 'jobIssue' | 'jobReturn' | 'move';
@@ -250,7 +251,7 @@ function EmptyWarehouseState({ title, detail }: { title: string; detail: string 
   );
 }
 
-export function WarehousePage({ companyId }: WarehousePageProps) {
+export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePageProps) {
   const [activeTab, setActiveTab] = useState<WarehouseTab>('parts');
   const [search, setSearch] = useState('');
   const [warehouseFilter, setWarehouseFilter] = useState('all');
@@ -827,6 +828,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       setJobIssueDraft(emptyJobIssueDraft());
       setFormMode('none');
       await reloadWarehouse();
+      await onMaterialsChanged?.();
       setStatus('Part used on Job. Stock and Job material cost were posted.');
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
@@ -849,6 +851,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       setJobReturnDraft(emptyJobReturnDraft());
       setFormMode('none');
       await reloadWarehouse();
+      await onMaterialsChanged?.();
       setStatus('Unused part returned to stock.');
     } catch (error) {
       setStatus(warehouseErrorMessage(error));

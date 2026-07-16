@@ -605,6 +605,7 @@ function CompanyPortalWithTenant({
       setAllJobsVisibility,
       setCalendarView,
       setMaterialSearch,
+      setMaterials,
       setMaterialJobStatusFilter,
       setMaterialStatusFilter,
       setMaterialTechFilter,

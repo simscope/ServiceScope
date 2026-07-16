@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 const migration = readFileSync('supabase/migrations/20260716013000_warehouse_move_between_locations.sql', 'utf8');
 const page = readFileSync('src/components/portal/WarehousePage.tsx', 'utf8');
 const store = readFileSync('src/services/warehouseStore.ts', 'utf8');
+const renderer = readFileSync('src/components/portal/ClientPageRenderer.tsx', 'utf8');
+const materialsPage = readFileSync('src/components/portal/MaterialsPage.tsx', 'utf8');
 
 function includes(source, value, label) {
   assert.ok(source.includes(value), label);
@@ -38,5 +40,10 @@ includes(page, 'Use on Job', 'Use on Job workflow must remain visible.');
 includes(page, 'Return unused part', 'Return from Job workflow must remain visible.');
 includes(page, 'Cost locked at', 'Use on Job must show cost snapshot.');
 includes(page, 'Cost returned at', 'Return from Job must show returned cost.');
+includes(page, 'onMaterialsChanged?.()', 'Warehouse Job issue/return must refresh shared Materials state.');
+includes(renderer, 'listCompanyJobMaterials', 'Warehouse renderer must reload job materials after warehouse postings.');
+includes(renderer, 'context.operations.setMaterials(nextMaterials)', 'Warehouse renderer must update shared Materials state.');
+includes(materialsPage, 'onSaveMaterials(job.jobNumber, rowsForJob)', 'Inline material status updates must use the shared workflow.');
+assert.ok(!materialsPage.includes('saveJobMaterialsToBackend'), 'Materials page must not bypass the shared material workflow for inline status changes.');
 
 console.log('Warehouse daily workflow regression checks passed.');

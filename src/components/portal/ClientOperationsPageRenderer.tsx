@@ -136,6 +136,7 @@ export function ClientOperationsPageRenderer({
         onRemoveMaterialDraftRow={removeMaterialDraftRow}
         onAddMaterialDraftRow={addMaterialDraftRow}
         onSaveMaterialDraftRows={materialWorkflow.saveMaterialDraftRows}
+        onSaveMaterials={materialWorkflow.saveJobMaterials}
       />
     );
   }
