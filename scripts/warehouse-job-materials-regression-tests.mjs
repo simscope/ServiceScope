@@ -7,6 +7,7 @@ const materialsPage = readFileSync('src/components/portal/MaterialsPage.tsx', 'u
 const migration = readFileSync('supabase/migrations/20260716024500_dedupe_warehouse_job_materials.sql', 'utf8');
 const aggregateMigration = readFileSync('supabase/migrations/20260716031000_aggregate_warehouse_job_materials.sql', 'utf8');
 const returnReferenceMigration = readFileSync('supabase/migrations/20260716034500_fix_job_return_reference_id.sql', 'utf8');
+const returnQuantityMigration = readFileSync('supabase/migrations/20260716040500_recalculate_warehouse_job_material_quantities.sql', 'utf8');
 const warehousePage = readFileSync('src/components/portal/WarehousePage.tsx', 'utf8');
 
 function includes(source, value, label) {
@@ -45,6 +46,10 @@ includes(aggregateMigration, 'join public.inventory_movements im on im.id = jm.i
 includes(aggregateMigration, 'if v_existing_job_material.id is not null then', 'Issue RPC must branch on existing warehouse material line.');
 includes(returnReferenceMigration, "'job_material_return', v_issue.id, v_issue.reference_number", 'Return movement reference_id must use the original issue movement UUID.');
 assert.ok(!returnReferenceMigration.includes("'job_material_return', v_job_material.id"), 'Return movement reference_id must not use job_materials.id.');
+includes(returnQuantityMigration, 'sum(quantity) filter (where movement_type = \'job_issue\')', 'Return quantity fix must sum issued movement quantity.');
+includes(returnQuantityMigration, 'sum(quantity) filter (where movement_type = \'job_return\')', 'Return quantity fix must sum returned movement quantity.');
+includes(returnQuantityMigration, 'greatest(coalesce(mt.issued_quantity, 0) - coalesce(mt.returned_quantity, 0), 0)', 'Existing warehouse material quantity must be recalculated from movement totals.');
+includes(returnQuantityMigration, 'v_remaining_job_quantity := round(greatest(v_issued_quantity - (v_returned_quantity + v_quantity), 0)::numeric, 2)', 'Return RPC must set remaining quantity from movement totals.');
 
 includes(warehousePage, 'jobIssuePosting', 'Warehouse UI must track in-flight Job issue posting.');
 includes(warehousePage, 'if (jobIssuePosting) return;', 'Warehouse UI must block double-submit on Job issue.');
