@@ -2712,6 +2712,10 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .warehouse-activity-row.compact summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .warehouse-part-stock {
     justify-items: start;
   }
