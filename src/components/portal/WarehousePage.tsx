@@ -915,14 +915,14 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
       const confirmedZeroCost = window.confirm('This receipt includes zero-cost lines. Continue only for warranty, free replacement, donated stock, or opening correction.');
       if (!confirmedZeroCost) return;
     }
-    const confirmed = window.confirm('This receipt will update stock balances and inventory cost. Posted receipts cannot be edited.');
+    const confirmed = window.confirm('This receipt will update stock balances and set the current stock price. Posted receipts cannot be edited.');
     if (!confirmed) return;
 
     setStatus('Posting receipt...');
     try {
       await postInventoryReceipt(receipt.id);
       await reloadWarehouse();
-      setStatus('Receipt posted. Stock balances and average cost were updated.');
+      setStatus('Receipt posted. Stock balances and current stock price were updated.');
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
     }
@@ -1320,7 +1320,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
             <span>{item.manufacturer || item.oem || 'No manufacturer'}</span>
             <span>{categoryPath(item.categoryId)}</span>
             <span>Min {formatQty(item.minimumQuantity, item.unit)}</span>
-            <span>Avg cost {money(item.averageCost)}</span>
+            <span>Current price {money(item.averageCost)}</span>
           </div>
         </div>
         <div className="warehouse-location-list">
@@ -1351,7 +1351,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
               <th>Bin</th>
               <th>On hand</th>
               <th>Min</th>
-              <th>Avg cost</th>
+              <th>Current price</th>
               <th>Value</th>
               <th>Updated</th>
             </tr>
@@ -2144,7 +2144,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
                 </select>
               </label>
               <label>Available<input disabled value={selectedItem ? formatQty(availableQuantity, selectedItem.unit) : 'Select part'} /></label>
-              <label>Cost moved at<input disabled value={selectedItem ? money(selectedItem.averageCost) : '-'} /></label>
+              <label>Current price<input disabled value={selectedItem ? money(selectedItem.averageCost) : '-'} /></label>
               <label>Notes<input value={moveDraft.notes ?? ''} onChange={(event) => setMoveDraft({ ...moveDraft, notes: event.target.value })} /></label>
             </div>
           </details>
@@ -2212,7 +2212,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
               </label>
               <label>Notes<input value={jobIssueDraft.notes ?? ''} onChange={(event) => setJobIssueDraft({ ...jobIssueDraft, notes: event.target.value })} /></label>
               <label>Available<input disabled value={selectedItem ? formatQty(availableQuantity, selectedItem.unit) : 'Select part'} /></label>
-              <label>Cost locked at<input disabled value={selectedItem ? money(selectedItem.averageCost) : '-'} /></label>
+              <label>Job price<input disabled value={selectedItem ? money(selectedItem.averageCost) : '-'} /></label>
             </div>
           </details>
           <div className="warehouse-form-actions sticky">
@@ -2263,7 +2263,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
                 ))}
               </select>
             </label>
-            <label>Cost returned at<input disabled value={selectedReturnIssue ? money(selectedReturnIssue.unitCost) : '-'} /></label>
+            <label>Returned price<input disabled value={selectedReturnIssue ? money(selectedReturnIssue.unitCost) : '-'} /></label>
           </div>
           {selectedReturnIssue ? (
             <p className="warehouse-note">Available to return: {formatQty(selectedReturnIssue.quantityAvailable, selectedItem?.unit)} from {formatQty(selectedReturnIssue.quantityIssued, selectedItem?.unit)} used.</p>
