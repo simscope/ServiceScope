@@ -20,13 +20,17 @@ includes(store, 'source_type?:', 'Job material row must read source_type.');
 includes(store, 'inventory_movement_id?:', 'Job material row must read inventory_movement_id.');
 includes(store, 'sourceType: row.source_type', 'Mapped material must keep source type.');
 includes(store, 'inventoryMovementId: row.inventory_movement_id', 'Mapped material must keep movement id.');
+includes(store, 'unit_price_cents: dollarsToCents(String(Math.max(0, Number(row.price) || 0)))', 'Warehouse-backed material price edits must be saved.');
+includes(store, 'supplier: row.supplier.trim()', 'Warehouse-backed material supplier edits must be saved.');
 includes(store, "source_type=${sqlEq('manual')}", 'Manual save must delete only manual material rows.');
 includes(store, "source_type: 'manual'", 'Manual rows must be explicitly saved as manual.');
 assert.ok(!/job_materials\\?company_id=.*job_id=.*\\}`, \\{ method: 'DELETE' \\}/.test(store), 'Saving materials must not delete all job_materials for a Job.');
 
 includes(materialsPage, 'warehouseSource', 'Materials editor must detect warehouse-backed rows.');
-includes(materialsPage, 'disabled={warehouseSource}', 'Warehouse-backed material fields must be read-only.');
+includes(materialsPage, "title={warehouseSource ? 'Return unused stock to change quantity.' : undefined}", 'Warehouse-backed material quantity must explain why it is locked.');
 includes(materialsPage, "warehouseSource ? 'Stock' : 'Remove'", 'Warehouse-backed rows must not show Remove.');
+assert.ok(!materialsPage.includes('value={row.price} disabled={warehouseSource}'), 'Warehouse-backed material price must be editable.');
+assert.ok(!materialsPage.includes('value={row.name} disabled={warehouseSource}'), 'Warehouse-backed material name must be editable.');
 
 includes(migration, 'delete from public.job_materials manual_row', 'Cleanup migration must delete manual clones.');
 includes(migration, "warehouse_row.source_type = 'warehouse'", 'Cleanup migration must preserve warehouse source rows.');

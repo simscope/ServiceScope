@@ -337,7 +337,12 @@ export async function saveJobMaterials(companyId: string, jobOrJobNumber: Servic
   for (const row of warehouseRows) {
     await supabaseRequest(`job_materials?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&id=${sqlEq(row.id)}`, {
       method: 'PATCH',
-      body: { status: row.status },
+      body: {
+        name: row.name.trim(),
+        unit_price_cents: dollarsToCents(String(Math.max(0, Number(row.price) || 0))),
+        supplier: row.supplier.trim(),
+        status: row.status,
+      },
     });
   }
   await supabaseRequest(`job_materials?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&source_type=${sqlEq('manual')}`, { method: 'DELETE' });

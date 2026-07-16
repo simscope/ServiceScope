@@ -266,10 +266,10 @@ export function MaterialsPage({
                 const warehouseSource = row.sourceType === 'warehouse' || Boolean(row.inventoryMovementId);
                 return (
                   <div className={`material-editor-row${warehouseSource ? ' warehouse-source' : ''}`} key={row.id}>
-                    <input value={row.name} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { name: event.target.value })} placeholder="Material name" />
-                    <input type="number" min="1" value={row.quantity} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { quantity: Number(event.target.value) })} aria-label="Quantity" />
-                    <input type="number" min="0" value={row.price} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { price: Number(event.target.value) })} aria-label="Price" />
-                    <input value={row.supplier} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { supplier: event.target.value })} placeholder="Supplier" />
+                    <input value={row.name} onChange={(event) => onUpdateMaterialDraft(row.id, { name: event.target.value })} placeholder="Material name" />
+                    <input type="number" min="1" value={row.quantity} disabled={warehouseSource} title={warehouseSource ? 'Return unused stock to change quantity.' : undefined} onChange={(event) => onUpdateMaterialDraft(row.id, { quantity: Number(event.target.value) })} aria-label="Quantity" />
+                    <input type="number" min="0" value={row.price} onChange={(event) => onUpdateMaterialDraft(row.id, { price: Number(event.target.value) })} aria-label="Price" />
+                    <input value={row.supplier} onChange={(event) => onUpdateMaterialDraft(row.id, { supplier: event.target.value })} placeholder="Supplier" />
                     <select value={row.status} onChange={(event) => onUpdateMaterialDraft(row.id, { status: event.target.value as MaterialRow['status'] })}>
                       {materialStatuses.map((status) => (
                         <option value={status} key={status}>
