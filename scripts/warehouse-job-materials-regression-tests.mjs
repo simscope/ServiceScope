@@ -42,5 +42,12 @@ includes(aggregateMigration, 'if v_existing_job_material.id is not null then', '
 includes(warehousePage, 'jobIssuePosting', 'Warehouse UI must track in-flight Job issue posting.');
 includes(warehousePage, 'if (jobIssuePosting) return;', 'Warehouse UI must block double-submit on Job issue.');
 includes(warehousePage, "disabled={jobIssuePosting}", 'Post to Job button must be disabled while posting.');
+includes(warehousePage, 'type ReturnIssueOption', 'Return UI must use grouped return issue options.');
+includes(warehousePage, 'returnIssueOptions = useMemo', 'Return issue options must be memoized from movements.');
+includes(warehousePage, "return `${movement.jobId ?? ''}:${movement.itemId}`", 'Return issue grouping must use Job and item.');
+includes(warehousePage, "movement.movementType === 'job_return'", 'Return issue availability must subtract posted returns.');
+includes(warehousePage, 'quantityAvailable', 'Return UI must show and validate available return quantity.');
+includes(warehousePage, 'Only ${formatQty(selectedReturnIssue.quantityAvailable', 'Return UI must block returning more than available.');
+assert.ok(!/snapshot\.movements\.filter\(\(movement\) => movement\.movementType === 'job_issue'\)\.map/.test(warehousePage), 'Return dropdown must not render raw job_issue movements directly.');
 
 console.log('Warehouse Job materials regression checks passed.');

@@ -29,6 +29,7 @@ import {
   type InventoryCategoryDraft,
   type InventoryItem,
   type InventoryItemDraft,
+  type InventoryMovement,
   type InventoryReceiptDraft,
   type InventoryReceiptLineDraft,
   type InventoryMoveDraft,
@@ -52,6 +53,19 @@ type WarehousePageProps = {
 type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock' | 'jobIssue' | 'jobReturn' | 'move';
 type PartsStatusFilter = 'all' | 'in' | 'low' | 'out';
 type ActivityFilter = 'all' | 'received' | 'used' | 'moved' | 'adjustments';
+
+type ReturnIssueOption = {
+  key: string;
+  movementId: string;
+  itemId: string;
+  jobId: string;
+  quantityIssued: number;
+  quantityReturned: number;
+  quantityAvailable: number;
+  unitCost: number;
+  fromWarehouseId: string | null;
+  fromBinId: string | null;
+};
 
 const emptySnapshot: WarehouseSnapshot = {
   warehouses: [],
@@ -845,8 +859,14 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
       setStatus('Select a Job issue movement.');
       return;
     }
+    const selectedReturnIssue = returnIssueOptions.find((option) => option.movementId === jobReturnDraft.movementId);
     if ((Number(jobReturnDraft.quantity) || 0) <= 0) {
       setStatus('Quantity must be greater than zero.');
+      return;
+    }
+    if (selectedReturnIssue && Number(jobReturnDraft.quantity) > selectedReturnIssue.quantityAvailable) {
+      const item = itemById.get(selectedReturnIssue.itemId);
+      setStatus(`Only ${formatQty(selectedReturnIssue.quantityAvailable, item?.unit)} can be returned for this Job.`);
       return;
     }
 
@@ -945,6 +965,58 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
     () => snapshot.jobs.filter((job) => !['Completed', 'Cancelled', 'Archived'].includes(job.status)),
     [snapshot.jobs],
   );
+  const returnIssueOptions = useMemo<ReturnIssueOption[]>(() => {
+    const options = new Map<string, ReturnIssueOption>();
+
+    function issueKey(movement: InventoryMovement) {
+      return `${movement.jobId ?? ''}:${movement.itemId}`;
+    }
+
+    snapshot.movements
+      .filter((movement) => movement.movementType === 'job_issue' && movement.jobId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id))
+      .forEach((movement) => {
+        const key = issueKey(movement);
+        const existing = options.get(key);
+        if (existing) {
+          existing.quantityIssued += Math.abs(movement.quantity);
+          existing.quantityAvailable += Math.abs(movement.quantity);
+          if (!existing.fromWarehouseId && movement.fromWarehouseId) existing.fromWarehouseId = movement.fromWarehouseId;
+          if (!existing.fromBinId && movement.fromBinId) existing.fromBinId = movement.fromBinId;
+          return;
+        }
+        options.set(key, {
+          key,
+          movementId: movement.id,
+          itemId: movement.itemId,
+          jobId: movement.jobId ?? '',
+          quantityIssued: Math.abs(movement.quantity),
+          quantityReturned: 0,
+          quantityAvailable: Math.abs(movement.quantity),
+          unitCost: movement.unitCost,
+          fromWarehouseId: movement.fromWarehouseId,
+          fromBinId: movement.fromBinId,
+        });
+      });
+
+    snapshot.movements
+      .filter((movement) => movement.movementType === 'job_return' && movement.jobId)
+      .forEach((movement) => {
+        const option = options.get(issueKey(movement));
+        if (!option) return;
+        option.quantityReturned += Math.abs(movement.quantity);
+        option.quantityAvailable -= Math.abs(movement.quantity);
+      });
+
+    return Array.from(options.values())
+      .map((option) => ({ ...option, quantityAvailable: Math.max(0, Number(option.quantityAvailable.toFixed(4))) }))
+      .filter((option) => option.quantityAvailable > 0)
+      .sort((a, b) => {
+        const jobA = jobById.get(a.jobId)?.jobNumber ?? '';
+        const jobB = jobById.get(b.jobId)?.jobNumber ?? '';
+        return jobA.localeCompare(jobB) || (itemById.get(a.itemId)?.internalName ?? '').localeCompare(itemById.get(b.itemId)?.internalName ?? '');
+      });
+  }, [itemById, jobById, snapshot.movements]);
 
   const stockRows = useMemo(() => snapshot.stockBalances.map((balance) => {
     const item = itemById.get(balance.itemId);
@@ -2152,8 +2224,8 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
     }
 
     if (formMode === 'jobReturn') {
-      const selectedMovement = snapshot.movements.find((movement) => movement.id === jobReturnDraft.movementId);
-      const selectedItem = selectedMovement ? itemById.get(selectedMovement.itemId) : null;
+      const selectedReturnIssue = returnIssueOptions.find((option) => option.movementId === jobReturnDraft.movementId);
+      const selectedItem = selectedReturnIssue ? itemById.get(selectedReturnIssue.itemId) : null;
       const binsForWarehouse = snapshot.bins.filter((bin) => bin.warehouseId === jobReturnDraft.warehouseId && bin.isActive);
       return (
         <section className="warehouse-form-panel stock">
@@ -2161,25 +2233,28 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
           <div className="warehouse-form-grid">
             <label>Original issue
               <select value={jobReturnDraft.movementId} onChange={(event) => {
-                const movement = snapshot.movements.find((row) => row.id === event.target.value);
+                const option = returnIssueOptions.find((row) => row.movementId === event.target.value);
                 setJobReturnDraft({
                   ...jobReturnDraft,
                   movementId: event.target.value,
-                  warehouseId: movement?.fromWarehouseId ?? '',
-                  binId: movement?.fromBinId ?? '',
+                  quantity: option?.quantityAvailable ?? 1,
+                  warehouseId: option?.fromWarehouseId ?? '',
+                  binId: option?.fromBinId ?? '',
                 });
               }}>
                 <option value="">Select issue</option>
-                {snapshot.movements.filter((movement) => movement.movementType === 'job_issue').map((movement) => {
-                  const item = itemById.get(movement.itemId);
-                  const job = movement.jobId ? jobById.get(movement.jobId) : null;
+                {returnIssueOptions.map((option) => {
+                  const item = itemById.get(option.itemId);
+                  const job = jobById.get(option.jobId);
                   return (
-                    <option value={movement.id} key={movement.id}>{item?.internalName ?? 'Part'} - Job #{job?.jobNumber ?? movement.referenceNumber}</option>
+                    <option value={option.movementId} key={option.key}>
+                      {item?.internalName ?? 'Part'} - Job #{job?.jobNumber ?? ''} - available {formatQty(option.quantityAvailable, item?.unit)}
+                    </option>
                   );
                 })}
               </select>
             </label>
-            <label>Return quantity<input type="number" min="0" value={jobReturnDraft.quantity} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, quantity: Number(event.target.value) || 0 })} /></label>
+            <label>Return quantity<input type="number" min="0" max={selectedReturnIssue?.quantityAvailable ?? undefined} value={jobReturnDraft.quantity} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, quantity: Number(event.target.value) || 0 })} /></label>
             <label>Return to
               <select value={jobReturnDraft.warehouseId ?? ''} onChange={(event) => setJobReturnDraft({ ...jobReturnDraft, warehouseId: event.target.value, binId: '' })}>
                 <option value="">Original location</option>
@@ -2188,8 +2263,11 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
                 ))}
               </select>
             </label>
-            <label>Cost returned at<input disabled value={selectedMovement ? money(selectedMovement.unitCost) : '-'} /></label>
+            <label>Cost returned at<input disabled value={selectedReturnIssue ? money(selectedReturnIssue.unitCost) : '-'} /></label>
           </div>
+          {selectedReturnIssue ? (
+            <p className="warehouse-note">Available to return: {formatQty(selectedReturnIssue.quantityAvailable, selectedItem?.unit)} from {formatQty(selectedReturnIssue.quantityIssued, selectedItem?.unit)} used.</p>
+          ) : null}
           <details className="warehouse-more-fields">
             <summary>More options</summary>
             <div className="warehouse-form-grid wide">
