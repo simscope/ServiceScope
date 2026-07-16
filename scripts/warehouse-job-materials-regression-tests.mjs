@@ -6,6 +6,7 @@ const types = readFileSync('src/types.ts', 'utf8');
 const materialsPage = readFileSync('src/components/portal/MaterialsPage.tsx', 'utf8');
 const migration = readFileSync('supabase/migrations/20260716024500_dedupe_warehouse_job_materials.sql', 'utf8');
 const aggregateMigration = readFileSync('supabase/migrations/20260716031000_aggregate_warehouse_job_materials.sql', 'utf8');
+const returnReferenceMigration = readFileSync('supabase/migrations/20260716034500_fix_job_return_reference_id.sql', 'utf8');
 const warehousePage = readFileSync('src/components/portal/WarehousePage.tsx', 'utf8');
 
 function includes(source, value, label) {
@@ -38,6 +39,8 @@ includes(aggregateMigration, 'update public.job_materials', 'Issue RPC must upda
 includes(aggregateMigration, 'v_next_material_quantity := v_existing_job_material.quantity + v_quantity', 'Repeated issue must increment quantity.');
 includes(aggregateMigration, 'join public.inventory_movements im on im.id = jm.inventory_movement_id', 'Aggregation must identify material item through linked movements.');
 includes(aggregateMigration, 'if v_existing_job_material.id is not null then', 'Issue RPC must branch on existing warehouse material line.');
+includes(returnReferenceMigration, "'job_material_return', v_issue.id, v_issue.reference_number", 'Return movement reference_id must use the original issue movement UUID.');
+assert.ok(!returnReferenceMigration.includes("'job_material_return', v_job_material.id"), 'Return movement reference_id must not use job_materials.id.');
 
 includes(warehousePage, 'jobIssuePosting', 'Warehouse UI must track in-flight Job issue posting.');
 includes(warehousePage, 'if (jobIssuePosting) return;', 'Warehouse UI must block double-submit on Job issue.');
