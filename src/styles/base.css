@@ -2395,7 +2395,21 @@ button {
 }
 
 .warehouse-activity-row.compact summary {
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 6px 8px;
+}
+
+.warehouse-activity-row.compact summary span {
+  gap: 1px;
+}
+
+.warehouse-activity-row.compact strong {
+  font-size: 13px;
+}
+
+.warehouse-activity-row.compact small {
+  font-size: 11px;
 }
 
 .warehouse-purchases-grid {
