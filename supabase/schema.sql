@@ -923,7 +923,7 @@ create index idx_job_payments_job on job_payments(job_id);
 create index idx_payroll_items_technician on payroll_items(company_id, technician_id, paid_at);
 create index idx_tasks_company_status on tasks(company_id, status);
 create index idx_tasks_company_source on tasks(company_id, source, created_at desc);
-create unique index idx_tasks_company_auto_key on tasks(company_id, auto_key) where auto_key is not null;
+create unique index tasks_company_auto_key_unique on tasks(company_id, auto_key);
 create index idx_technician_locations_latest on technician_locations(technician_id, recorded_at desc);
 create index idx_email_messages_company_folder on email_messages(company_id, folder, created_at desc);
 create index idx_email_message_attachments_message on email_message_attachments(email_message_id);
