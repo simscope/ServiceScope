@@ -13,6 +13,7 @@ import {
   importInventoryProductUrl,
   issueInventoryPartToJob,
   listWarehouseSnapshot,
+  moveInventoryStock,
   normalizeSupplierUrl,
   postInventoryReceipt,
   receiveImportedProductToStock,
@@ -30,6 +31,7 @@ import {
   type InventoryItemDraft,
   type InventoryReceiptDraft,
   type InventoryReceiptLineDraft,
+  type InventoryMoveDraft,
   type InventorySupplierDraft,
   type InventoryWarehouseDraft,
   type InventoryJobIssueDraft,
@@ -46,7 +48,7 @@ type WarehousePageProps = {
   companyId: string;
 };
 
-type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock' | 'jobIssue' | 'jobReturn';
+type WarehouseFormMode = 'none' | 'warehouse' | 'item' | 'supplier' | 'stock' | 'jobIssue' | 'jobReturn' | 'move';
 type PartsStatusFilter = 'all' | 'in' | 'low' | 'out';
 type ActivityFilter = 'all' | 'received' | 'used' | 'moved' | 'adjustments';
 
@@ -201,6 +203,16 @@ const emptyJobReturnDraft = (): InventoryJobReturnDraft => ({
   notes: '',
 });
 
+const emptyMoveDraft = (): InventoryMoveDraft => ({
+  itemId: '',
+  fromWarehouseId: '',
+  fromBinId: '',
+  toWarehouseId: '',
+  toBinId: '',
+  quantity: 1,
+  notes: '',
+});
+
 function formatQty(value: number, unit = '') {
   const clean = Number.isInteger(value) ? String(value) : value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
   return unit ? `${clean} ${unit}` : clean;
@@ -264,6 +276,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
   const [importPosting, setImportPosting] = useState(false);
   const [jobIssueDraft, setJobIssueDraft] = useState<InventoryJobIssueDraft>(() => emptyJobIssueDraft());
   const [jobReturnDraft, setJobReturnDraft] = useState<InventoryJobReturnDraft>(() => emptyJobReturnDraft());
+  const [moveDraft, setMoveDraft] = useState<InventoryMoveDraft>(() => emptyMoveDraft());
   const [selectedReceiptId, setSelectedReceiptId] = useState('');
   const [receiptStatusFilter, setReceiptStatusFilter] = useState<'all' | 'draft' | 'posted' | 'canceled'>('all');
   const [showAdvancedPurchaseEditor, setShowAdvancedPurchaseEditor] = useState(false);
@@ -463,6 +476,20 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
       quantity: location.quantity,
     });
     setStatus(location.warehouseId ? 'Select a Job and quantity to use this part.' : 'Add stock first, then choose a location for Job use.');
+  }
+
+  function startMoveForItem(item: InventoryItem) {
+    const location = preferredIssueLocation(item);
+    setActiveTab('parts');
+    setFormMode('move');
+    setMoveDraft({
+      ...emptyMoveDraft(),
+      itemId: item.id,
+      fromWarehouseId: location.warehouseId,
+      fromBinId: location.binId,
+      quantity: location.quantity,
+    });
+    setStatus(location.warehouseId ? 'Choose the destination location and quantity to move.' : 'Add stock before moving this part.');
   }
 
   function startReturnForMovement(movement: WarehouseSnapshot['movements'][number]) {
@@ -933,6 +960,36 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
     return parent ? `${parent.name} / ${category.name}` : category.name;
   }
 
+  async function moveStock() {
+    if (!moveDraft.itemId) {
+      setStatus('Select a part.');
+      return;
+    }
+    if (!moveDraft.fromWarehouseId || !moveDraft.toWarehouseId) {
+      setStatus('Select from and to locations.');
+      return;
+    }
+    if (moveDraft.fromWarehouseId === moveDraft.toWarehouseId && (moveDraft.fromBinId || '') === (moveDraft.toBinId || '')) {
+      setStatus('Choose a different destination location.');
+      return;
+    }
+    if ((Number(moveDraft.quantity) || 0) <= 0) {
+      setStatus('Quantity must be greater than zero.');
+      return;
+    }
+
+    setStatus('Moving stock...');
+    try {
+      await moveInventoryStock(moveDraft);
+      setMoveDraft(emptyMoveDraft());
+      setFormMode('none');
+      await reloadWarehouse();
+      setStatus('Stock moved. Transfer out and transfer in movements were posted.');
+    } catch (error) {
+      setStatus(warehouseErrorMessage(error));
+    }
+  }
+
   function categoryMatchesFilter(item: InventoryItem) {
     if (categoryFilter === 'all') return true;
     if (item.categoryId === categoryFilter) return true;
@@ -1162,7 +1219,7 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
               <div className="warehouse-part-actions">
                 <button className="primary-button compact" type="button" onClick={() => startReceiptForItem(item)}>Add stock</button>
                 <button className="secondary-button compact" type="button" disabled={quantity <= 0} onClick={() => startIssueForItem(item)}>Use on Job</button>
-                <button className="secondary-button compact" type="button" disabled title="Transfers are Stage 3">Move</button>
+                <button className="secondary-button compact" type="button" disabled={quantity <= 0} onClick={() => startMoveForItem(item)}>Move</button>
               </div>
               {isSelected ? renderPartDetails(item) : null}
             </article>
@@ -1938,6 +1995,85 @@ export function WarehousePage({ companyId }: WarehousePageProps) {
             <button className="primary-button" type="button" disabled={importPosting} onClick={importedProduct ? addImportedStock : addQuickStock}>
               {importPosting ? 'Adding...' : 'Add to stock'}
             </button>
+          </div>
+        </section>
+      );
+    }
+
+    if (formMode === 'move') {
+      const selectedItem = itemById.get(moveDraft.itemId);
+      const fromBins = snapshot.bins.filter((bin) => bin.warehouseId === moveDraft.fromWarehouseId && bin.isActive);
+      const toBins = snapshot.bins.filter((bin) => bin.warehouseId === moveDraft.toWarehouseId && bin.isActive);
+      const availableQuantity = snapshot.stockBalances
+        .filter((balance) => balance.itemId === moveDraft.itemId
+          && balance.warehouseId === moveDraft.fromWarehouseId
+          && (moveDraft.fromBinId ? balance.binId === moveDraft.fromBinId : balance.binId == null))
+        .reduce((sum, balance) => sum + balance.quantity, 0);
+      const sameLocation = Boolean(moveDraft.fromWarehouseId && moveDraft.toWarehouseId
+        && moveDraft.fromWarehouseId === moveDraft.toWarehouseId
+        && (moveDraft.fromBinId || '') === (moveDraft.toBinId || ''));
+      return (
+        <section className="warehouse-form-panel stock">
+          <h2>Move between locations</h2>
+          <div className="warehouse-form-grid">
+            <label>Part
+              <select value={moveDraft.itemId} onChange={(event) => {
+                const item = itemById.get(event.target.value);
+                const location = item ? preferredIssueLocation(item) : { warehouseId: '', binId: '', quantity: 1 };
+                setMoveDraft({ ...moveDraft, itemId: event.target.value, fromWarehouseId: location.warehouseId, fromBinId: location.binId, quantity: location.quantity });
+              }}>
+                <option value="">Select part</option>
+                {snapshot.items.filter((item) => item.isActive).map((item) => (
+                  <option value={item.id} key={item.id}>{item.internalName} {item.partNumber ? `- ${item.partNumber}` : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>From location
+              <select value={moveDraft.fromWarehouseId} onChange={(event) => setMoveDraft({ ...moveDraft, fromWarehouseId: event.target.value, fromBinId: '' })}>
+                <option value="">Select location</option>
+                {snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}{warehouseRow.type === 'technician_vehicle' ? ' - technician vehicle' : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>To location
+              <select value={moveDraft.toWarehouseId} onChange={(event) => setMoveDraft({ ...moveDraft, toWarehouseId: event.target.value, toBinId: '' })}>
+                <option value="">Select location</option>
+                {snapshot.warehouses.filter((warehouseRow) => warehouseRow.isActive).map((warehouseRow) => (
+                  <option value={warehouseRow.id} key={warehouseRow.id}>{warehouseRow.name}{warehouseRow.type === 'technician_vehicle' ? ' - technician vehicle' : ''}</option>
+                ))}
+              </select>
+            </label>
+            <label>Quantity<input type="number" min="0" value={moveDraft.quantity} onChange={(event) => setMoveDraft({ ...moveDraft, quantity: Number(event.target.value) || 0 })} /></label>
+          </div>
+          <details className="warehouse-more-fields" open>
+            <summary>Exact locations</summary>
+            <div className="warehouse-form-grid wide">
+              <label>From exact location
+                <select value={moveDraft.fromBinId ?? ''} disabled={!moveDraft.fromWarehouseId} onChange={(event) => setMoveDraft({ ...moveDraft, fromBinId: event.target.value })}>
+                  <option value="">No exact location</option>
+                  {fromBins.map((bin) => (
+                    <option value={bin.id} key={bin.id}>{bin.code} - {bin.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>To exact location
+                <select value={moveDraft.toBinId ?? ''} disabled={!moveDraft.toWarehouseId} onChange={(event) => setMoveDraft({ ...moveDraft, toBinId: event.target.value })}>
+                  <option value="">No exact location</option>
+                  {toBins.map((bin) => (
+                    <option value={bin.id} key={bin.id}>{bin.code} - {bin.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>Available<input disabled value={selectedItem ? formatQty(availableQuantity, selectedItem.unit) : 'Select part'} /></label>
+              <label>Cost moved at<input disabled value={selectedItem ? money(selectedItem.averageCost) : '-'} /></label>
+              <label>Notes<input value={moveDraft.notes ?? ''} onChange={(event) => setMoveDraft({ ...moveDraft, notes: event.target.value })} /></label>
+            </div>
+          </details>
+          {sameLocation ? <p className="warehouse-note warning">Choose a different destination location before posting.</p> : null}
+          <div className="warehouse-form-actions sticky">
+            <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
+            <button className="primary-button" type="button" disabled={sameLocation} onClick={moveStock}>Move stock</button>
           </div>
         </section>
       );

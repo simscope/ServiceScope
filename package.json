@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "test:warehouse-import": "node scripts/warehouse-import-regression-tests.mjs",
     "test:warehouse-categories": "node scripts/warehouse-categories-regression-tests.mjs",
+    "test:warehouse-daily": "node scripts/warehouse-daily-workflows-regression-tests.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tech:install": "npm install --prefix apps/technician-mobile/client",
     "tech:dev": "npm start --prefix apps/technician-mobile/client",

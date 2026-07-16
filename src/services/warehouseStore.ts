@@ -274,6 +274,16 @@ export type InventoryJobReturnDraft = {
   notes?: string;
 };
 
+export type InventoryMoveDraft = {
+  itemId: string;
+  fromWarehouseId: string;
+  fromBinId?: string | null;
+  toWarehouseId: string;
+  toBinId?: string | null;
+  quantity: number;
+  notes?: string;
+};
+
 type WarehouseRow = {
   id: string;
   company_id: string;
@@ -929,6 +939,28 @@ export async function returnInventoryJobPart(draft: InventoryJobReturnDraft) {
   }, { timeoutMs: 30000 });
 }
 
+export async function moveInventoryStock(draft: InventoryMoveDraft) {
+  return supabaseRpc<{
+    status: string;
+    transfer_id: string;
+    transfer_number: string;
+    out_movement_id: string;
+    in_movement_id: string;
+    item_id: string;
+    quantity: number;
+    from_balance: number;
+    to_balance: number;
+  }>('inventory_move_stock_between_locations', {
+    p_item_id: draft.itemId,
+    p_from_warehouse_id: draft.fromWarehouseId,
+    p_from_bin_id: draft.fromBinId || null,
+    p_to_warehouse_id: draft.toWarehouseId,
+    p_to_bin_id: draft.toBinId || null,
+    p_quantity: Math.max(0, Number(draft.quantity) || 0),
+    p_notes: draft.notes?.trim() ?? '',
+  }, { timeoutMs: 30000 });
+}
+
 export async function importInventoryProductUrl(companyId: string, url: string) {
   return supabaseFunction<ImportedInventoryProduct>('import-inventory-product-url', { companyId, url }, { timeoutMs: 30000 });
 }
@@ -1023,6 +1055,7 @@ export function warehouseErrorMessage(error: unknown) {
     JOB_MATERIAL_NOT_FOUND: 'The linked Job material was not found.',
     RETURN_QUANTITY_EXCEEDS_USED: 'Return quantity cannot be greater than the remaining Job material quantity.',
     JOB_MATERIAL_ALREADY_LINKED: 'This warehouse movement is already linked to a Job material.',
+    TRANSFER_SAME_LOCATION: 'Choose a different destination location.',
     CATEGORY_NAME_REQUIRED: 'Category name is required.',
     CATEGORY_PARENT_NOT_FOUND: 'Parent category was not found.',
     CATEGORY_DEPTH_LIMIT: 'Only two category levels are supported.',
