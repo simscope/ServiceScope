@@ -18,6 +18,11 @@ type MaterialRowWithJob = {
   job: ServiceJob;
 };
 
+type MaterialJobGroup = {
+  job: ServiceJob;
+  materials: MaterialRow[];
+};
+
 export function MaterialsPage({
   companyId,
   materials,
@@ -84,6 +89,15 @@ export function MaterialsPage({
   const [stockPosting, setStockPosting] = useState(false);
   const [stockSearch, setStockSearch] = useState('');
   const [stockDraft, setStockDraft] = useState({ itemId: '', warehouseId: '', binId: '', quantity: 1 });
+  const materialJobGroups = useMemo<MaterialJobGroup[]>(() => {
+    const groups = new Map<string, MaterialJobGroup>();
+    filteredMaterialRows.forEach(({ material, job }) => {
+      const group = groups.get(job.jobNumber) ?? { job, materials: [] };
+      group.materials.push(material);
+      groups.set(job.jobNumber, group);
+    });
+    return Array.from(groups.values());
+  }, [filteredMaterialRows]);
 
   const stockItems = useMemo(() => {
     if (!stockSnapshot) return [];
@@ -196,7 +210,7 @@ export function MaterialsPage({
         </div>
         <div className="materials-summary">
           <span>
-            <strong>{materials.length}</strong>
+            <strong>{filteredMaterialRows.length}</strong>
             Material rows
           </span>
           <span>
@@ -285,12 +299,11 @@ export function MaterialsPage({
             </tr>
           </thead>
           <tbody>
-            {filteredMaterialRows.map(({ material, job }) => {
-              const currentStatus = statusOverrides[material.id] ?? material.status;
-              const savingThisStatus = savingStatusId === material.id;
+            {materialJobGroups.map(({ materials: jobMaterials, job }) => {
+              const jobTotal = jobMaterials.reduce((sum, material) => sum + material.quantity * material.price, 0);
 
               return (
-                <tr key={material.id} className="materials-clickable-row" onClick={() => onOpenJob(job)}>
+                <tr key={job.jobNumber} className="materials-clickable-row" onClick={() => onOpenJob(job)}>
                   <td>
                     <button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>
                       #{job.jobNumber}
@@ -299,25 +312,59 @@ export function MaterialsPage({
                     <span>{job.clientName} - {job.system} - {job.issue}</span>
                   </td>
                   <td>{job.assignee?.trim() || 'Unassigned'}</td>
-                  <td>{material.name || '-'}</td>
-                  <td>{material.quantity}</td>
-                  <td>{money(material.price)}</td>
-                  <td>{money(material.quantity * material.price)}</td>
-                  <td>{material.supplier || '-'}</td>
                   <td>
-                    <select
-                      className={`material-status-select ${statusClassName(currentStatus)}`}
-                      value={currentStatus}
-                      disabled={savingThisStatus}
-                      onChange={(event) => updateInlineMaterialStatus(material, job, event.target.value as MaterialRow['status'])}
-                      aria-label={`Material status for job ${job.jobNumber}`}
-                    >
-                      {materialStatuses.map((status) => (
-                        <option value={status} key={status}>
-                          {status}
-                        </option>
+                    <div className="materials-line-list">
+                      {jobMaterials.map((material) => (
+                        <span key={material.id}>{material.name || '-'}</span>
                       ))}
-                    </select>
+                    </div>
+                  </td>
+                  <td>
+                    <div className="materials-line-list compact">
+                      {jobMaterials.map((material) => (
+                        <span key={material.id}>{material.quantity}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="materials-line-list compact">
+                      {jobMaterials.map((material) => (
+                        <span key={material.id}>{money(material.price)}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>{money(jobTotal)}</td>
+                  <td>
+                    <div className="materials-line-list">
+                      {jobMaterials.map((material) => (
+                        <span key={material.id}>{material.supplier || '-'}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="materials-line-list">
+                      {jobMaterials.map((material) => {
+                        const currentStatus = statusOverrides[material.id] ?? material.status;
+                        const savingThisStatus = savingStatusId === material.id;
+                        return (
+                          <select
+                            className={`material-status-select ${statusClassName(currentStatus)}`}
+                            value={currentStatus}
+                            disabled={savingThisStatus}
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => updateInlineMaterialStatus(material, job, event.target.value as MaterialRow['status'])}
+                            aria-label={`Material status for job ${job.jobNumber}`}
+                            key={material.id}
+                          >
+                            {materialStatuses.map((status) => (
+                              <option value={status} key={status}>
+                                {status}
+                              </option>
+                            ))}
+                          </select>
+                        );
+                      })}
+                    </div>
                   </td>
                   <td>
                     <button className="secondary-button compact" type="button" onClick={(event) => { event.stopPropagation(); onOpenMaterialEditor(job.jobNumber); }}>
@@ -327,7 +374,7 @@ export function MaterialsPage({
                 </tr>
               );
             })}
-            {!filteredMaterialRows.length ? (
+            {!materialJobGroups.length ? (
               <tr>
                 <td colSpan={9}>
                   <div className="empty-inline">No material rows match the filters.</div>

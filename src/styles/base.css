@@ -2877,6 +2877,27 @@ button {
   padding: 6px 10px;
 }
 
+.materials-line-list {
+  display: grid;
+  gap: 4px;
+}
+
+.materials-line-list span {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+}
+
+.materials-line-list.compact {
+  justify-items: start;
+}
+
+.materials-line-list .material-status-select {
+  min-height: 28px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
 .material-status-select {
   min-height: 34px;
   padding: 6px 32px 6px 10px;

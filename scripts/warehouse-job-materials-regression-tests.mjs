@@ -36,8 +36,11 @@ includes(materialsPage, "warehouseSource ? 'Stock' : 'Remove'", 'Warehouse-backe
 includes(materialsPage, 'openStockPicker', 'Stock button must open the in-modal stock picker.');
 includes(materialsPage, 'issueInventoryPartToJob', 'Materials stock picker must post through the warehouse Job issue RPC.');
 includes(materialsFeature, "Math.max(0, Number(row.quantity) || 0)", 'Warehouse-backed material normalization must allow zero quantity.');
-includes(materialWorkflow, 'materialIsReturnedWarehouseZero', 'Returned zero-quantity warehouse materials must be handled separately.');
-includes(materialWorkflow, "materialStatusFilter !== 'all' || !materialIsReturnedWarehouseZero(material)", 'Default Materials view must hide returned zero-quantity warehouse rows.');
+includes(materialWorkflow, 'materialIsReturnedWarehouseReturned', 'Returned warehouse materials must be handled separately.');
+includes(materialWorkflow, "materialStatusFilter !== 'all' || !materialIsReturnedWarehouseReturned(material)", 'Default Materials view must hide returned warehouse rows.');
+includes(materialsPage, 'type MaterialJobGroup', 'Materials list must group material rows by Job.');
+includes(materialsPage, 'materialJobGroups.map', 'Materials table must render one row per Job group.');
+includes(materialsPage, 'jobMaterials.map', 'Grouped Material rows must render compact material lines inside one Job row.');
 assert.ok(!materialsPage.includes('value={row.price} disabled={warehouseSource}'), 'Warehouse-backed material price must be editable.');
 assert.ok(!materialsPage.includes('value={row.name} disabled={warehouseSource}'), 'Warehouse-backed material name must be editable.');
 

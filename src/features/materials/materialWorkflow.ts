@@ -43,10 +43,9 @@ export function makeMaterialWorkflow({
   const materialRowsWithJobs = materials
     .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))
     .filter((row): row is { material: MaterialRow; job: ServiceJob } => Boolean(row.job));
-  const materialIsReturnedWarehouseZero = (material: MaterialRow) => (
+  const materialIsReturnedWarehouseReturned = (material: MaterialRow) => (
     (material.sourceType === 'warehouse' || Boolean(material.inventoryMovementId))
     && material.status === 'Returned'
-    && Number(material.quantity) <= 0
   );
   const normalizedMaterialSearch = materialSearch.trim().toLowerCase();
   const materialJobMatchesSearch = (job: ServiceJob, extras: string[] = []) => {
@@ -78,12 +77,12 @@ export function makeMaterialWorkflow({
   );
   const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
     const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
-    const visibleInDefaultList = materialStatusFilter !== 'all' || !materialIsReturnedWarehouseZero(material);
+    const visibleInDefaultList = materialStatusFilter !== 'all' || !materialIsReturnedWarehouseReturned(material);
 
     return visibleInDefaultList && matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
   const materialJobs = materialJobStatusFilter === 'active' ? activeJobsRows : allJobsRows;
-  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber && !materialIsReturnedWarehouseZero(material)));
+  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber && !materialIsReturnedWarehouseReturned(material)));
   const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
     materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
   ));
