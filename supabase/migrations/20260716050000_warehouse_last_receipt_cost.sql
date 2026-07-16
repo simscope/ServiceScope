@@ -107,32 +107,36 @@ when (
 )
 execute function public.inventory_apply_last_cost_from_receipt();
 
-select set_config('app.inventory_rpc', 'on', false);
+do $$
+begin
+  perform set_config('app.inventory_rpc', 'on', true);
 
-with latest_cost as (
-  select distinct on (m.company_id, m.item_id)
-    m.company_id,
-    m.item_id,
-    m.unit_cost
-  from public.inventory_movements m
-  left join public.inventory_stock_receipts r on r.id = m.receipt_id
-  where m.movement_type = 'receipt'
-    and (
-      m.receipt_id is null
-      or (
-        r.status = 'posted'
-        and r.canceled_at is null
+  with latest_cost as (
+    select distinct on (m.company_id, m.item_id)
+      m.company_id,
+      m.item_id,
+      m.unit_cost
+    from public.inventory_movements m
+    left join public.inventory_stock_receipts r on r.id = m.receipt_id
+    where m.movement_type = 'receipt'
+      and (
+        m.receipt_id is null
+        or (
+          r.status = 'posted'
+          and r.canceled_at is null
+        )
       )
-    )
-  order by m.company_id, m.item_id, coalesce(r.posted_at, m.created_at) desc, m.created_at desc, m.id desc
-)
-update public.inventory_items i
-  set average_cost = latest_cost.unit_cost,
-      updated_at = now()
-from latest_cost
-where i.company_id = latest_cost.company_id
-  and i.id = latest_cost.item_id
-  and i.average_cost is distinct from latest_cost.unit_cost;
+    order by m.company_id, m.item_id, coalesce(r.posted_at, m.created_at) desc, m.created_at desc, m.id desc
+  )
+  update public.inventory_items i
+    set average_cost = latest_cost.unit_cost,
+        updated_at = now()
+  from latest_cost
+  where i.company_id = latest_cost.company_id
+    and i.id = latest_cost.item_id
+    and i.average_cost is distinct from latest_cost.unit_cost;
+end;
+$$;
 
 revoke all on function public.inventory_latest_receipt_unit_cost(uuid, uuid) from public;
 revoke all on function public.inventory_latest_receipt_unit_cost(uuid, uuid) from anon;
