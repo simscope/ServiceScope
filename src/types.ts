@@ -223,6 +223,8 @@ export type MaterialRow = {
   price: number;
   supplier: string;
   status: MaterialStatus;
+  sourceType?: 'manual' | 'warehouse';
+  inventoryMovementId?: string | null;
 };
 
 export type ServiceJobStatus =

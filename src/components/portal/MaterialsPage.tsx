@@ -262,24 +262,27 @@ export function MaterialsPage({
                 <span>Status</span>
                 <span />
               </div>
-              {materialDraftRows.map((row) => (
-                <div className="material-editor-row" key={row.id}>
-                  <input value={row.name} onChange={(event) => onUpdateMaterialDraft(row.id, { name: event.target.value })} placeholder="Material name" />
-                  <input type="number" min="1" value={row.quantity} onChange={(event) => onUpdateMaterialDraft(row.id, { quantity: Number(event.target.value) })} aria-label="Quantity" />
-                  <input type="number" min="0" value={row.price} onChange={(event) => onUpdateMaterialDraft(row.id, { price: Number(event.target.value) })} aria-label="Price" />
-                  <input value={row.supplier} onChange={(event) => onUpdateMaterialDraft(row.id, { supplier: event.target.value })} placeholder="Supplier" />
-                  <select value={row.status} onChange={(event) => onUpdateMaterialDraft(row.id, { status: event.target.value as MaterialRow['status'] })}>
-                    {materialStatuses.map((status) => (
-                      <option value={status} key={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </select>
-                  <button className="secondary-button compact danger-lite" type="button" onClick={() => onRemoveMaterialDraftRow(row.id)}>
-                    Remove
-                  </button>
-                </div>
-              ))}
+              {materialDraftRows.map((row) => {
+                const warehouseSource = row.sourceType === 'warehouse' || Boolean(row.inventoryMovementId);
+                return (
+                  <div className={`material-editor-row${warehouseSource ? ' warehouse-source' : ''}`} key={row.id}>
+                    <input value={row.name} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { name: event.target.value })} placeholder="Material name" />
+                    <input type="number" min="1" value={row.quantity} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { quantity: Number(event.target.value) })} aria-label="Quantity" />
+                    <input type="number" min="0" value={row.price} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { price: Number(event.target.value) })} aria-label="Price" />
+                    <input value={row.supplier} disabled={warehouseSource} onChange={(event) => onUpdateMaterialDraft(row.id, { supplier: event.target.value })} placeholder="Supplier" />
+                    <select value={row.status} onChange={(event) => onUpdateMaterialDraft(row.id, { status: event.target.value as MaterialRow['status'] })}>
+                      {materialStatuses.map((status) => (
+                        <option value={status} key={status}>
+                          {status}
+                        </option>
+                      ))}
+                    </select>
+                    <button className="secondary-button compact danger-lite" type="button" disabled={warehouseSource} onClick={() => onRemoveMaterialDraftRow(row.id)}>
+                      {warehouseSource ? 'Stock' : 'Remove'}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="material-modal-actions">

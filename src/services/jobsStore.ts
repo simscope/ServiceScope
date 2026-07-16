@@ -8,7 +8,19 @@ type JobRow = { id: string; company_id: string; customer_id: string | null; cust
 type JobPaymentRow = { id: string; company_id: string; job_id: string; scope: 'scf' | 'labor' | 'invoice' | 'subscription'; method: string | null; amount_cents: number };
 type JobInvoiceRow = { id: string; company_id: string; job_id: string; invoice_number: string; document_type?: JobDocumentType | null; status: JobInvoiceStatus; amount_cents: number; sent_at: string | null; paid_at: string | null; created_at: string };
 type AppointmentRow = { id: string; company_id: string; job_id: string; technician_id: string | null; starts_at: string; ends_at: string; timezone: string };
-type JobMaterialRow = { id: string; company_id: string; job_id: string; name: string; quantity: number; unit_price_cents: number; supplier: string; status: MaterialRow['status']; created_at: string };
+type JobMaterialRow = {
+  id: string;
+  company_id: string;
+  job_id: string;
+  name: string;
+  quantity: number;
+  unit_price_cents: number;
+  supplier: string;
+  status: MaterialRow['status'];
+  source_type?: 'manual' | 'warehouse' | null;
+  inventory_movement_id?: string | null;
+  created_at: string;
+};
 type JobCommentRow = { id: string; company_id: string; job_id: string; author_user_id: string | null; author_name: string; author_role: string; message: string; created_at: string };
 type JobAttachmentRow = { id: string; company_id: string; job_id: string; uploaded_by_user_id: string | null; name: string; mime_type: string; size_bytes: number; kind: JobAttachment['kind']; storage_bucket: string; storage_path: string; created_at: string };
 
@@ -38,7 +50,19 @@ function commentRole(role: string): JobComment['authorRole'] { return role === '
 function mapComment(row: JobCommentRow): JobComment { return { id: row.id, authorName: row.author_name, authorRole: commentRole(row.author_role), message: row.message, createdAt: row.created_at }; }
 function mapAttachment(row: JobAttachmentRow): JobAttachment { return { id: row.id, name: row.name, mimeType: row.mime_type, sizeBytes: Number(row.size_bytes) || 0, kind: row.kind, uploadedAt: row.created_at, storageBucket: row.storage_bucket, storagePath: row.storage_path, dataUrl: getSupabasePublicStorageUrl(row.storage_bucket, row.storage_path) }; }
 function mapInvoice(row: JobInvoiceRow): JobInvoice { return { id: row.id, companyId: row.company_id, jobId: row.job_id, invoiceNumber: row.invoice_number, documentType: row.document_type ?? 'Invoice', status: row.status, amount: toMoneyNumber(row.amount_cents), createdAt: row.created_at?.slice(0, 10) ?? todayIso(), sentAt: row.sent_at?.slice(0, 10) ?? '', paidAt: row.paid_at?.slice(0, 10) ?? '' }; }
-function mapMaterial(row: JobMaterialRow, jobNumber: string): MaterialRow { return { id: row.id, jobNumber, name: row.name ?? '', quantity: Number(row.quantity) || 1, price: toMoneyNumber(row.unit_price_cents), supplier: row.supplier ?? '', status: row.status ?? 'Needed' }; }
+function mapMaterial(row: JobMaterialRow, jobNumber: string): MaterialRow {
+  return {
+    id: row.id,
+    jobNumber,
+    name: row.name ?? '',
+    quantity: Number(row.quantity) || 1,
+    price: toMoneyNumber(row.unit_price_cents),
+    supplier: row.supplier ?? '',
+    status: row.status ?? 'Needed',
+    sourceType: row.source_type ?? 'manual',
+    inventoryMovementId: row.inventory_movement_id ?? null,
+  };
+}
 
 function mapCustomer(row: CustomerRow, locations: CustomerLocationRow[], jobs: JobRow[]): Customer {
   const customerJobs = jobs.filter((job) => job.customer_id === row.id);
@@ -309,8 +333,28 @@ async function resolveMaterialJob(companyId: string, jobOrJobNumber: ServiceJob 
 export async function saveJobMaterials(companyId: string, jobOrJobNumber: ServiceJob | string, rows: MaterialRow[]): Promise<MaterialRow[]> {
   const job = await resolveMaterialJob(companyId, jobOrJobNumber, rows);
   if (!job) throw new Error('Job was not found. Save the job first, then save materials again.');
-  await supabaseRequest(`job_materials?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}`, { method: 'DELETE' });
-  const cleanRows = rows.filter((row) => row.name.trim() || row.supplier.trim()).map((row) => ({ id: row.id, company_id: companyId, job_id: job.id, name: row.name.trim(), quantity: Math.max(1, Number(row.quantity) || 1), unit_price_cents: dollarsToCents(String(Math.max(0, Number(row.price) || 0))), supplier: row.supplier.trim(), status: row.status }));
+  const warehouseRows = rows.filter((row) => row.sourceType === 'warehouse' || row.inventoryMovementId);
+  for (const row of warehouseRows) {
+    await supabaseRequest(`job_materials?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&id=${sqlEq(row.id)}`, {
+      method: 'PATCH',
+      body: { status: row.status },
+    });
+  }
+  await supabaseRequest(`job_materials?company_id=${sqlEq(companyId)}&job_id=${sqlEq(job.id)}&source_type=${sqlEq('manual')}`, { method: 'DELETE' });
+  const cleanRows = rows
+    .filter((row) => !row.inventoryMovementId && row.sourceType !== 'warehouse')
+    .filter((row) => row.name.trim() || row.supplier.trim())
+    .map((row) => ({
+      id: row.id,
+      company_id: companyId,
+      job_id: job.id,
+      name: row.name.trim(),
+      quantity: Math.max(1, Number(row.quantity) || 1),
+      unit_price_cents: dollarsToCents(String(Math.max(0, Number(row.price) || 0))),
+      supplier: row.supplier.trim(),
+      status: row.status,
+      source_type: 'manual',
+    }));
   if (cleanRows.length) await supabaseRequest<JobMaterialRow[]>('job_materials?select=*', { method: 'POST', select: true, body: cleanRows });
   return listCompanyJobMaterials(companyId);
 }
