@@ -1,7 +1,16 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Plus, PackageCheck } from 'lucide-react';
 import type { CompanyOnboardingProfile, MaterialRow, ServiceJob } from '../../types';
 import type { MaterialJobStatusFilter } from '../../features/materials/useMaterialsFeature';
+import {
+  issueInventoryPartToJob,
+  listWarehouseSnapshot,
+  warehouseErrorMessage,
+  type InventoryItem,
+  type InventoryStockBalance,
+  type InventoryWarehouse,
+  type WarehouseSnapshot,
+} from '../../services/warehouseStore';
 import { money, statusClassName } from '../../utils/format';
 
 type MaterialRowWithJob = {
@@ -10,6 +19,7 @@ type MaterialRowWithJob = {
 };
 
 export function MaterialsPage({
+  companyId,
   materials,
   jobsWithoutMaterials,
   materialsTotal,
@@ -35,7 +45,9 @@ export function MaterialsPage({
   onAddMaterialDraftRow,
   onSaveMaterialDraftRows,
   onSaveMaterials,
+  onWarehouseStockIssued,
 }: {
+  companyId: string;
   materials: MaterialRow[];
   jobsWithoutMaterials: ServiceJob[];
   materialsTotal: number;
@@ -61,10 +73,97 @@ export function MaterialsPage({
   onAddMaterialDraftRow: () => void;
   onSaveMaterialDraftRows: () => void;
   onSaveMaterials: (jobNumber: string, rows: MaterialRow[]) => Promise<void> | void;
+  onWarehouseStockIssued: () => Promise<void> | void;
 }) {
   const [statusOverrides, setStatusOverrides] = useState<Record<string, MaterialRow['status']>>({});
   const [savingStatusId, setSavingStatusId] = useState('');
   const [inlineStatusMessage, setInlineStatusMessage] = useState('');
+  const [stockPickerOpen, setStockPickerOpen] = useState(false);
+  const [stockSnapshot, setStockSnapshot] = useState<WarehouseSnapshot | null>(null);
+  const [stockLoading, setStockLoading] = useState(false);
+  const [stockPosting, setStockPosting] = useState(false);
+  const [stockSearch, setStockSearch] = useState('');
+  const [stockDraft, setStockDraft] = useState({ itemId: '', warehouseId: '', binId: '', quantity: 1 });
+
+  const stockItems = useMemo(() => {
+    if (!stockSnapshot) return [];
+    const itemById = new Map(stockSnapshot.items.map((item) => [item.id, item]));
+    const warehouseById = new Map(stockSnapshot.warehouses.map((warehouse) => [warehouse.id, warehouse]));
+    const query = stockSearch.trim().toLowerCase();
+
+    return stockSnapshot.stockBalances
+      .filter((balance) => balance.quantity > 0)
+      .map((balance) => ({
+        balance,
+        item: itemById.get(balance.itemId),
+        warehouse: warehouseById.get(balance.warehouseId),
+      }))
+      .filter((row): row is { balance: InventoryStockBalance; item: InventoryItem; warehouse: InventoryWarehouse } => Boolean(row.item && row.warehouse))
+      .filter(({ item, warehouse }) => {
+        const haystack = [item.internalName, item.partNumber, item.oem, item.manufacturer, item.description, warehouse.name].join(' ').toLowerCase();
+        return !query || haystack.includes(query);
+      })
+      .sort((a, b) => a.item.internalName.localeCompare(b.item.internalName) || a.warehouse.name.localeCompare(b.warehouse.name));
+  }, [stockSearch, stockSnapshot]);
+
+  async function openStockPicker() {
+    setStockPickerOpen(true);
+    if (stockSnapshot || stockLoading) return;
+    setStockLoading(true);
+    setInlineStatusMessage('Loading stock...');
+    try {
+      const snapshot = await listWarehouseSnapshot(companyId);
+      setStockSnapshot(snapshot);
+      setInlineStatusMessage('');
+    } catch (error) {
+      setInlineStatusMessage(warehouseErrorMessage(error));
+    } finally {
+      setStockLoading(false);
+    }
+  }
+
+  function selectStockRow(balance: InventoryStockBalance) {
+    setStockDraft({
+      itemId: balance.itemId,
+      warehouseId: balance.warehouseId,
+      binId: balance.binId ?? '',
+      quantity: Math.min(1, balance.quantity),
+    });
+  }
+
+  async function useSelectedStockOnJob() {
+    if (!selectedMaterialsJob) return;
+    if (!stockDraft.itemId || !stockDraft.warehouseId) {
+      setInlineStatusMessage('Select a stock item.');
+      return;
+    }
+    if ((Number(stockDraft.quantity) || 0) <= 0) {
+      setInlineStatusMessage('Quantity must be greater than zero.');
+      return;
+    }
+
+    setStockPosting(true);
+    setInlineStatusMessage('Using stock on Job...');
+    try {
+      await issueInventoryPartToJob({
+        itemId: stockDraft.itemId,
+        jobId: selectedMaterialsJob.id,
+        warehouseId: stockDraft.warehouseId,
+        binId: stockDraft.binId || null,
+        quantity: stockDraft.quantity,
+        notes: `Added from Materials #${selectedMaterialsJob.jobNumber}`,
+      });
+      setStockDraft({ itemId: '', warehouseId: '', binId: '', quantity: 1 });
+      const snapshot = await listWarehouseSnapshot(companyId);
+      setStockSnapshot(snapshot);
+      await onWarehouseStockIssued();
+      setInlineStatusMessage('Stock added to Job materials.');
+    } catch (error) {
+      setInlineStatusMessage(warehouseErrorMessage(error));
+    } finally {
+      setStockPosting(false);
+    }
+  }
 
   async function updateInlineMaterialStatus(material: MaterialRow, job: ServiceJob, nextStatus: MaterialRow['status']) {
     const previousStatus = statusOverrides[material.id] ?? material.status;
@@ -277,7 +376,7 @@ export function MaterialsPage({
                         </option>
                       ))}
                     </select>
-                    <button className="secondary-button compact danger-lite" type="button" disabled={warehouseSource} onClick={() => onRemoveMaterialDraftRow(row.id)}>
+                    <button className={`secondary-button compact${warehouseSource ? '' : ' danger-lite'}`} type="button" onClick={() => (warehouseSource ? openStockPicker() : onRemoveMaterialDraftRow(row.id))}>
                       {warehouseSource ? 'Stock' : 'Remove'}
                     </button>
                   </div>
@@ -286,6 +385,10 @@ export function MaterialsPage({
             </div>
 
             <div className="material-modal-actions">
+              <button className="secondary-button compact" type="button" onClick={openStockPicker}>
+                <PackageCheck size={16} aria-hidden="true" />
+                Stock
+              </button>
               <button className="secondary-button compact" type="button" onClick={onAddMaterialDraftRow}>
                 <Plus size={16} aria-hidden="true" />
                 Add row
@@ -294,6 +397,41 @@ export function MaterialsPage({
                 Save materials
               </button>
             </div>
+            {stockPickerOpen ? (
+              <section className="material-stock-picker">
+                <div className="material-stock-picker-head">
+                  <strong>Add from stock</strong>
+                  <input value={stockSearch} onChange={(event) => setStockSearch(event.target.value)} placeholder="Search stock" />
+                </div>
+                {stockLoading ? <div className="empty-inline">Loading stock...</div> : null}
+                {!stockLoading && stockItems.length ? (
+                  <div className="material-stock-list">
+                    {stockItems.slice(0, 12).map(({ balance, item, warehouse }) => {
+                      const selected = stockDraft.itemId === balance.itemId && stockDraft.warehouseId === balance.warehouseId && (stockDraft.binId || '') === (balance.binId || '');
+                      return (
+                        <button className={`material-stock-row${selected ? ' selected' : ''}`} type="button" onClick={() => selectStockRow(balance)} key={balance.id}>
+                          <span>
+                            <strong>{item.internalName}</strong>
+                            <small>{[item.partNumber, item.manufacturer, item.oem].filter(Boolean).join(' - ') || 'No part details'}</small>
+                          </span>
+                          <span>{warehouse.name}</span>
+                          <strong>{balance.quantity} {item.unit}</strong>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+                {!stockLoading && !stockItems.length ? <div className="empty-inline">No stock found.</div> : null}
+                <div className="material-stock-actions">
+                  <label>Quantity
+                    <input type="number" min="1" value={stockDraft.quantity} onChange={(event) => setStockDraft((draft) => ({ ...draft, quantity: Number(event.target.value) || 0 }))} />
+                  </label>
+                  <button className="primary-button compact" type="button" disabled={stockPosting} onClick={useSelectedStockOnJob}>
+                    {stockPosting ? 'Posting...' : 'Use on Job'}
+                  </button>
+                </div>
+              </section>
+            ) : null}
           </div>
         </div>
       ) : null}

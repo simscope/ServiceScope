@@ -65,7 +65,7 @@ export function ClientOperationsPageRenderer({
     visibleCalendarJobs,
   } = operations;
   const { emailActions, paymentMethodOptions } = business;
-  const { currentPortalUser, profile } = shell;
+  const { currentPortalUser, profile, selectedCompanyId } = shell;
 
   if (renderedClientPage === 'calendar') {
     return (
@@ -112,6 +112,7 @@ export function ClientOperationsPageRenderer({
   if (renderedClientPage === 'materials') {
     return (
       <MaterialsPage
+        companyId={selectedCompanyId}
         materials={materials}
         jobsWithoutMaterials={materialWorkflow.filteredJobsWithoutMaterials}
         materialsTotal={materialWorkflow.materialsTotal}
@@ -137,6 +138,7 @@ export function ClientOperationsPageRenderer({
         onAddMaterialDraftRow={addMaterialDraftRow}
         onSaveMaterialDraftRows={materialWorkflow.saveMaterialDraftRows}
         onSaveMaterials={materialWorkflow.saveJobMaterials}
+        onWarehouseStockIssued={materialWorkflow.reloadMaterials}
       />
     );
   }

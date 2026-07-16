@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react';
-import { saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
+import { listCompanyJobMaterials, saveJobMaterials as saveJobMaterialsToBackend } from '../../services/jobsStore';
 import type { CompanyJobType, MaterialRow, ServiceJob } from '../../types';
 import type { MaterialJobStatusFilter } from './useMaterialsFeature';
 import { normalizeMaterialRows } from './useMaterialsFeature';
@@ -43,6 +43,11 @@ export function makeMaterialWorkflow({
   const materialRowsWithJobs = materials
     .map((material) => ({ material, job: materialJobMap.get(material.jobNumber) }))
     .filter((row): row is { material: MaterialRow; job: ServiceJob } => Boolean(row.job));
+  const materialIsReturnedWarehouseZero = (material: MaterialRow) => (
+    (material.sourceType === 'warehouse' || Boolean(material.inventoryMovementId))
+    && material.status === 'Returned'
+    && Number(material.quantity) <= 0
+  );
   const normalizedMaterialSearch = materialSearch.trim().toLowerCase();
   const materialJobMatchesSearch = (job: ServiceJob, extras: string[] = []) => {
     if (!normalizedMaterialSearch) return true;
@@ -73,11 +78,12 @@ export function makeMaterialWorkflow({
   );
   const filteredMaterialRows = materialRowsWithJobs.filter(({ material, job }) => {
     const matchesStatus = materialStatusFilter === 'all' || material.status === materialStatusFilter;
+    const visibleInDefaultList = materialStatusFilter !== 'all' || !materialIsReturnedWarehouseZero(material);
 
-    return matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
+    return visibleInDefaultList && matchesStatus && materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job, [material.name, material.supplier, material.status]);
   });
   const materialJobs = materialJobStatusFilter === 'active' ? activeJobsRows : allJobsRows;
-  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber));
+  const jobsWithoutMaterials = materialJobs.filter((job) => materialJobMatchesStatus(job) && materialJobIsAllowed(job) && materialJobIsTechnicianWork(job) && materialJobRequiresParts(job) && !materials.some((material) => material.jobNumber === job.jobNumber && !materialIsReturnedWarehouseZero(material)));
   const filteredJobsWithoutMaterials = jobsWithoutMaterials.filter((job) => (
     materialStatusFilter === 'all' && materialJobMatchesTechnician(job) && materialJobMatchesSearch(job)
   ));
@@ -131,12 +137,19 @@ export function makeMaterialWorkflow({
       });
   }
 
+  async function reloadMaterials() {
+    if (!companyId) return;
+    const savedMaterials = await listCompanyJobMaterials(companyId);
+    setMaterials(savedMaterials);
+  }
+
   return {
     materialJobMap,
     filteredMaterialRows,
     filteredJobsWithoutMaterials,
     selectedMaterialsJob,
     materialsTotal,
+    reloadMaterials,
     saveMaterialDraftRows,
     saveJobMaterials,
   };

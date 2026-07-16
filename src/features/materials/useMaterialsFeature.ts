@@ -12,7 +12,9 @@ export function normalizeMaterialRows(jobNumber: string, rows: MaterialRow[]) {
       jobNumber,
       name: row.name.trim(),
       supplier: row.supplier.trim(),
-      quantity: Math.max(1, Number(row.quantity) || 1),
+      quantity: row.sourceType === 'warehouse' || row.inventoryMovementId
+        ? Math.max(0, Number(row.quantity) || 0)
+        : Math.max(1, Number(row.quantity) || 1),
       price: Math.max(0, Number(row.price) || 0),
     }));
 }
