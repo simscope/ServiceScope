@@ -275,6 +275,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
   const [quickStockDraft, setQuickStockDraft] = useState(() => emptyQuickStockDraft());
   const [productImportDraft, setProductImportDraft] = useState<ProductImportDraft>(() => emptyProductImportDraft());
   const [importPosting, setImportPosting] = useState(false);
+  const [jobIssuePosting, setJobIssuePosting] = useState(false);
   const [jobIssueDraft, setJobIssueDraft] = useState<InventoryJobIssueDraft>(() => emptyJobIssueDraft());
   const [jobReturnDraft, setJobReturnDraft] = useState<InventoryJobReturnDraft>(() => emptyJobReturnDraft());
   const [moveDraft, setMoveDraft] = useState<InventoryMoveDraft>(() => emptyMoveDraft());
@@ -805,6 +806,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
   }
 
   async function issuePartToJob() {
+    if (jobIssuePosting) return;
     if (!jobIssueDraft.itemId) {
       setStatus('Select a part.');
       return;
@@ -822,6 +824,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
       return;
     }
 
+    setJobIssuePosting(true);
     setStatus('Using part on Job...');
     try {
       await issueInventoryPartToJob(jobIssueDraft);
@@ -832,6 +835,8 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
       setStatus('Part used on Job. Stock and Job material cost were posted.');
     } catch (error) {
       setStatus(warehouseErrorMessage(error));
+    } finally {
+      setJobIssuePosting(false);
     }
   }
 
@@ -2140,7 +2145,7 @@ export function WarehousePage({ companyId, onMaterialsChanged }: WarehousePagePr
           </details>
           <div className="warehouse-form-actions sticky">
             <button className="secondary-button compact" type="button" onClick={() => setFormMode('none')}>Cancel</button>
-            <button className="primary-button" type="button" onClick={issuePartToJob}>Post to Job</button>
+            <button className="primary-button" type="button" disabled={jobIssuePosting} onClick={issuePartToJob}>{jobIssuePosting ? 'Posting...' : 'Post to Job'}</button>
           </div>
         </section>
       );

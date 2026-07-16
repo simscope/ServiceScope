@@ -5,6 +5,8 @@ const store = readFileSync('src/services/jobsStore.ts', 'utf8');
 const types = readFileSync('src/types.ts', 'utf8');
 const materialsPage = readFileSync('src/components/portal/MaterialsPage.tsx', 'utf8');
 const migration = readFileSync('supabase/migrations/20260716024500_dedupe_warehouse_job_materials.sql', 'utf8');
+const aggregateMigration = readFileSync('supabase/migrations/20260716031000_aggregate_warehouse_job_materials.sql', 'utf8');
+const warehousePage = readFileSync('src/components/portal/WarehousePage.tsx', 'utf8');
 
 function includes(source, value, label) {
   assert.ok(source.includes(value), label);
@@ -28,5 +30,17 @@ includes(materialsPage, "warehouseSource ? 'Stock' : 'Remove'", 'Warehouse-backe
 includes(migration, 'delete from public.job_materials manual_row', 'Cleanup migration must delete manual clones.');
 includes(migration, "warehouse_row.source_type = 'warehouse'", 'Cleanup migration must preserve warehouse source rows.');
 includes(migration, 'warehouse_row.inventory_movement_id is not null', 'Cleanup migration must only match warehouse movement rows.');
+
+includes(aggregateMigration, 'partition by company_id, job_id, item_id', 'Existing warehouse material duplicates must be grouped by Job and item.');
+includes(aggregateMigration, 'sum(quantity)', 'Duplicate warehouse material lines must merge into summed quantity.');
+includes(aggregateMigration, 'select jm.* into v_existing_job_material', 'Issue RPC must look for an existing Job material line.');
+includes(aggregateMigration, 'update public.job_materials', 'Issue RPC must update an existing line instead of always inserting.');
+includes(aggregateMigration, 'v_next_material_quantity := v_existing_job_material.quantity + v_quantity', 'Repeated issue must increment quantity.');
+includes(aggregateMigration, 'join public.inventory_movements im on im.id = jm.inventory_movement_id', 'Aggregation must identify material item through linked movements.');
+includes(aggregateMigration, 'if v_existing_job_material.id is not null then', 'Issue RPC must branch on existing warehouse material line.');
+
+includes(warehousePage, 'jobIssuePosting', 'Warehouse UI must track in-flight Job issue posting.');
+includes(warehousePage, 'if (jobIssuePosting) return;', 'Warehouse UI must block double-submit on Job issue.');
+includes(warehousePage, "disabled={jobIssuePosting}", 'Post to Job button must be disabled while posting.');
 
 console.log('Warehouse Job materials regression checks passed.');
