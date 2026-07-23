@@ -1,4 +1,5 @@
 import { useEffect, type Dispatch, type SetStateAction } from 'react';
+import { hydrateCalendarAppointments } from '../../services/calendarAppointmentStore';
 import { listCompanyJobMaterials, listCompanyJobs } from '../../services/jobsStore';
 import type { Company, MaterialRow, ServiceJob } from '../../types';
 
@@ -29,10 +30,11 @@ export function useCompanyJobsLoader({
 
     async function loadJobsAndCustomers() {
       try {
-        const [savedJobs, savedMaterials] = await Promise.all([
+        const [baseJobs, savedMaterials] = await Promise.all([
           listCompanyJobs(company.id),
           listCompanyJobMaterials(company.id),
         ]);
+        const savedJobs = await hydrateCalendarAppointments(company.id, baseJobs);
         if (cancelled) return;
         setJobs(savedJobs);
         setMaterials(savedMaterials);
