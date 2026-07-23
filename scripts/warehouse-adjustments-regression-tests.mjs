@@ -28,10 +28,17 @@ assert.match(page, /Reverse/);
 assert.match(page, /window\.confirm/);
 assert.match(page, /quantityDelta === 0/);
 assert.match(page, /WarehousePage key=\{warehouseRefreshKey\}/);
+assert.match(page, /Search by name or part number/);
+assert.match(page, /filteredItems\.map/);
+assert.match(page, /role="listbox"/);
+assert.match(page, /Select the part you counted/);
+assert.doesNotMatch(page, /const itemId = draft\.itemId \|\| snapshot\.items\[0\]/);
 
 assert.match(renderer, /WarehouseAdjustmentsPage/);
 assert.doesNotMatch(renderer, /import \{ WarehousePage \}/);
 assert.match(styles, /\.warehouse-adjustment-enabled \.warehouse-warning/);
+assert.match(styles, /\.warehouse-adjustment-part-list/);
+assert.match(styles, /max-height: 250px/);
 assert.match(styles, /display: none/);
 
 console.log('warehouse adjustments regression checks passed');
