@@ -2,7 +2,7 @@ import { mailboxOAuthRedirectUrl } from '../../services/mailboxOAuthSettings';
 import { emailProviderLabels, initialEmailTemplates, libraryCategories, libraryFormats } from '../../appSeeds';
 import type { ClientPage } from '../../appTypes';
 import { EmailPage } from './EmailPage';
-import { FinancePage } from './FinancePage';
+import { EmployeeFinancePage } from './EmployeeFinancePage';
 import { BusinessAnalyticsPage } from './BusinessAnalyticsPage';
 import { KnowledgePage } from './KnowledgePage';
 import { OnboardingPage } from './OnboardingPage';
@@ -42,7 +42,6 @@ export function ClientBusinessPageRenderer({
     emailSearch,
     financePeriod,
     financeTechFilter,
-    financeWorkflow,
     libraryFeature,
     loadMoreMailboxMessages,
     mailBoxStatusProps,
@@ -116,11 +115,13 @@ export function ClientBusinessPageRenderer({
 
   if (renderedClientPage === 'finances') {
     return (
-      <FinancePage
+      <EmployeeFinancePage
+        companyId={selectedCompanyId}
         openedJob={openedJob}
         profile={profile}
         paymentMethodOptions={paymentMethodOptions}
         materials={materials}
+        jobs={allJobsRows}
         currentPortalUser={currentPortalUser}
         onCloseJob={() => setOpenedJob(null)}
         onSaveJob={jobActions.handleSaveJob}
@@ -128,18 +129,13 @@ export function ClientBusinessPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
-        financeSummary={financeWorkflow.financeSummary}
         financePeriod={financePeriod}
         onFinancePeriodChange={setFinancePeriod}
         financeTechFilter={financeTechFilter}
         onFinanceTechFilterChange={setFinanceTechFilter}
         payrollRules={payrollRules}
         onPayrollRulesChange={setPayrollRules}
-        technicianPayroll={financeWorkflow.technicianPayroll}
-        financeBaseRows={financeWorkflow.financeBaseRows}
         onOpenJob={setOpenedJob}
-        onToggleSalaryPaid={financeWorkflow.toggleSalaryPaid}
-        onMarkSalaryJobsPaid={financeWorkflow.markSalaryJobsPaid}
       />
     );
   }
