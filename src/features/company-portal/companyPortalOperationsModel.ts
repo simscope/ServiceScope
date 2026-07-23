@@ -173,6 +173,7 @@ export function makeCompanyPortalOperationsModel({
     calendarDropSlots,
     calendarJobs,
     stopCalendarWrite: (action) => stopCompanyWrite('calendar', action),
+    setStatus: setJobsStatus,
     setOpenedJob,
     persistCalendarAssignment: calendarPersistence.persistCalendarAssignment,
   });

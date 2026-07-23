@@ -30,6 +30,7 @@ type CalendarActionsInput = {
   calendarDropSlots: CalendarDropSlot[];
   calendarJobs: CalendarJob[];
   stopCalendarWrite: (action: string) => boolean;
+  setStatus: Dispatch<SetStateAction<string>>;
   setOpenedJob: Dispatch<SetStateAction<ServiceJob | null>>;
   persistCalendarAssignment: (
     jobNumber: string,
@@ -62,6 +63,7 @@ export function makeCalendarActions({
   calendarDropSlots,
   calendarJobs,
   stopCalendarWrite,
+  setStatus,
   setOpenedJob,
   persistCalendarAssignment,
 }: CalendarActionsInput) {
@@ -85,6 +87,25 @@ export function makeCalendarActions({
     setCalendarAnchorDate(toLocalIsoDate(new Date()));
   }
 
+  function resolveDropAssignee(movedJob: CalendarJob | undefined) {
+    const isUnscheduled = !movedJob?.dayKey || !movedJob?.time || movedJob.assignee === 'No technician';
+
+    if (activeCalendarTech === 'all' && isUnscheduled) {
+      setStatus('Select a technician before scheduling an unassigned job.');
+      setDraggingJobNumber('');
+      return '';
+    }
+
+    const assignee = activeCalendarTech !== 'all' ? activeCalendarTech : movedJob?.assignee;
+    if (!assignee || assignee === 'No technician') {
+      setStatus('Select a technician before scheduling this job.');
+      setDraggingJobNumber('');
+      return '';
+    }
+
+    return assignee;
+  }
+
   function handleCalendarDrop(event: DragEvent<HTMLDivElement>, dayKey: string, slotKey: string) {
     event.preventDefault();
     if (stopCalendarWrite('moving calendar appointments')) return;
@@ -92,8 +113,8 @@ export function makeCalendarActions({
     const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
     if (!jobNumber) return;
     const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
-    const assignee = activeCalendarTech !== 'all' ? activeCalendarTech : movedJob?.assignee;
-    if (!assignee || assignee === 'No technician') return;
+    const assignee = resolveDropAssignee(movedJob);
+    if (!assignee) return;
     const appointment = calendarAppointmentFromParts(dayKey, slotKey, calendarDropSlots);
     const durationMinutes = calendarAssignments[jobNumber]?.durationMinutes ?? movedJob?.durationMinutes ?? 120;
 
@@ -118,8 +139,8 @@ export function makeCalendarActions({
     const jobNumber = event.dataTransfer.getData('text/plain') || draggingJobNumber;
     if (!jobNumber) return;
     const movedJob = calendarJobs.find((job) => job.jobNumber === jobNumber);
-    const assignee = activeCalendarTech !== 'all' ? activeCalendarTech : movedJob?.assignee;
-    if (!assignee || assignee === 'No technician') return;
+    const assignee = resolveDropAssignee(movedJob);
+    if (!assignee) return;
 
     setMonthDropRequest({
       jobNumber,
