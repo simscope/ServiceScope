@@ -47,6 +47,8 @@ export function ClientPortalShell({
   visibleClientNavItems,
   signedInUser,
 }: ClientPortalShellProps) {
+  const companyLogoUrl = profile.logoUrl.trim();
+
   const handleNavClick = (page: ClientPage) => {
     if (page === 'allJobs') {
       window.sessionStorage.removeItem(ALL_JOBS_CONTEXT_STORAGE_KEY);
@@ -59,7 +61,20 @@ export function ClientPortalShell({
     <div className="client-app">
       <header className="client-topbar">
         <div className="client-brand">
-          <div className="client-logo">{selectedCompany.name.slice(0, 1).toUpperCase()}</div>
+          <div className="client-logo">
+            <span className="client-logo-fallback" aria-hidden="true">
+              {selectedCompany.name.slice(0, 1).toUpperCase()}
+            </span>
+            {companyLogoUrl ? (
+              <img
+                src={companyLogoUrl}
+                alt={`${selectedCompany.name} logo`}
+                onError={(event) => {
+                  event.currentTarget.hidden = true;
+                }}
+              />
+            ) : null}
+          </div>
           <div>
             <strong>{selectedCompany.name}</strong>
             <span>ServiceScope</span>
