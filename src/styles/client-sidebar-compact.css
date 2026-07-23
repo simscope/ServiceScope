@@ -1,0 +1,18 @@
+/* Keep the desktop sidebar only as wide as its longest navigation label. */
+.client-app {
+  grid-template-columns: 188px minmax(0, 1fr);
+}
+
+.client-topbar {
+  width: 188px;
+}
+
+.client-nav-item {
+  white-space: nowrap;
+}
+
+@media (max-width: 840px) {
+  .client-topbar {
+    width: 100%;
+  }
+}
