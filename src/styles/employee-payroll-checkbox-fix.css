@@ -1,0 +1,14 @@
+.employee-finance-table th:first-child,
+.employee-finance-table td:first-child {
+  width: 32px;
+}
+
+.employee-finance-table input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  margin: 0;
+  padding: 0;
+  vertical-align: middle;
+}
