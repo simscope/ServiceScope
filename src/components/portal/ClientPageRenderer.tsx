@@ -4,7 +4,7 @@ import { MapPage } from './MapPage';
 import { ClientBusinessPageRenderer } from './ClientBusinessPageRenderer';
 import { ClientJobsPageRenderer } from './ClientJobsPageRenderer';
 import { ClientOperationsPageRenderer } from './ClientOperationsPageRenderer';
-import { WarehousePage } from './WarehousePage';
+import { WarehouseAdjustmentsPage } from './WarehouseAdjustmentsPage';
 import type { ClientPageRendererContextGroups } from './clientPageRendererTypes';
 import { listCompanyJobMaterials } from '../../services/jobsStore';
 
@@ -55,7 +55,7 @@ export function ClientPageRenderer({ renderedClientPage, context }: ClientPageRe
 
   if (renderedClientPage === 'warehouse') {
     return (
-      <WarehousePage
+      <WarehouseAdjustmentsPage
         companyId={selectedCompanyId}
         onMaterialsChanged={async () => {
           const nextMaterials = await listCompanyJobMaterials(selectedCompanyId);
