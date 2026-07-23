@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && tsc -b && vite build",
+    "dev": "node scripts/patch-payroll-payment-history.cjs && vite --host 127.0.0.1",
+    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && tsc -b && vite build",
     "test:warehouse-import": "node scripts/warehouse-import-regression-tests.mjs",
     "test:warehouse-categories": "node scripts/warehouse-categories-regression-tests.mjs",
     "test:warehouse-daily": "node scripts/warehouse-daily-workflows-regression-tests.mjs",
@@ -14,6 +14,7 @@
     "test:calendar-technician": "node scripts/calendar-technician-selection-regression-tests.mjs",
     "test:calendar-persistence": "node scripts/calendar-persistence-regression-tests.mjs",
     "test:employee-payroll": "node scripts/employee-payroll-plans-regression-tests.mjs",
+    "test:payroll-history": "node scripts/payroll-payment-history-regression-tests.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tech:install": "npm install --prefix apps/technician-mobile/client",
     "tech:dev": "npm start --prefix apps/technician-mobile/client",
