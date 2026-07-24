@@ -13,6 +13,7 @@ import {
   MailPlus,
   Map,
   Rocket,
+  Settings,
   UploadCloud,
   Warehouse,
 } from 'lucide-react';
@@ -42,7 +43,7 @@ export const clientNavItems: ClientNavItem[] = [
   { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
   { page: 'import', label: 'Import', icon: <UploadCloud size={16} /> },
   { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },
-  { page: 'onboarding', label: 'Onboarding', icon: <Rocket size={16} /> },
+  { page: 'onboarding', label: 'Settings', icon: <Settings size={16} /> },
 ];
 
 export function resolveClientNavigation({
