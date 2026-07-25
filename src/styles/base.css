@@ -961,6 +961,163 @@ button {
   gap: 12px;
 }
 
+.social-post-modal {
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+}
+
+.social-post-toolbar,
+.social-post-photo-head,
+.social-post-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.social-post-toolbar h2,
+.social-post-photo-head h3 {
+  margin: 0;
+}
+
+.social-post-privacy {
+  margin: 0;
+  border: 1px solid #f2c779;
+  border-radius: 8px;
+  background: #fff8e8;
+  color: #6f4d00;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.social-post-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+  gap: 14px;
+  align-items: start;
+}
+
+.social-post-editor,
+.social-post-photos {
+  display: grid;
+  gap: 12px;
+}
+
+.social-post-editor label {
+  display: grid;
+  gap: 6px;
+  color: #4f5b53;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.social-post-editor input,
+.social-post-editor textarea {
+  background: #fbfcfd;
+  font-weight: 700;
+}
+
+.social-post-editor textarea {
+  min-height: 210px;
+  line-height: 1.45;
+}
+
+.social-post-meta {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: #667269;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.social-post-status {
+  margin: 0;
+  color: #526158;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.social-post-photo-head label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #526158;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.social-post-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.social-post-photo {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 8px;
+}
+
+.social-post-photo.selected {
+  border-color: #60a5fa;
+  background: #f8fbff;
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.1);
+}
+
+.social-post-photo label {
+  position: relative;
+  display: block;
+  min-height: 118px;
+}
+
+.social-post-photo input[type='checkbox'] {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 8px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
+.social-post-photo img,
+.social-post-photo label > span {
+  width: 100%;
+  height: 118px;
+  border-radius: 8px;
+}
+
+.social-post-photo img {
+  object-fit: cover;
+}
+
+.social-post-photo label > span {
+  display: grid;
+  place-items: center;
+  background: #eef3ef;
+  color: #667269;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.social-post-photo div {
+  display: grid;
+  gap: 6px;
+}
+
+.social-post-photo strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .job-files-header {
   display: flex;
   align-items: center;
