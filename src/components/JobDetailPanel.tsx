@@ -3,6 +3,7 @@ import type { EmailCompose, EmailComposeAttachment } from '../appTypes';
 import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobDocumentType, JobInvoice, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
 import { money } from '../utils/format';
+import { formatSocialPostForCopy, generateSocialPostDraft, type SocialPostDraft } from '../utils/socialPost';
 import { deleteJobFile } from '../services/jobFiles';
 
 type PaymentMethodOption = {
@@ -227,6 +228,10 @@ export function JobDetailPanel({
   const [previewAttachment, setPreviewAttachment] = useState<JobAttachment | null>(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<string[]>([]);
+  const [socialPostOpen, setSocialPostOpen] = useState(false);
+  const [socialPostDraft, setSocialPostDraft] = useState<SocialPostDraft>(() => generateSocialPostDraft(job));
+  const [selectedSocialPhotoIds, setSelectedSocialPhotoIds] = useState<string[]>([]);
+  const [socialPostStatus, setSocialPostStatus] = useState('');
   const [invoiceStatus, setInvoiceStatus] = useState('');
   const [invoiceEditorOpen, setInvoiceEditorOpen] = useState(false);
   const [selectedInvoiceIds, setSelectedInvoiceIds] = useState<string[]>([]);
@@ -253,6 +258,11 @@ export function JobDetailPanel({
   const attachments = draft.attachments ?? [];
   const selectedAttachments = attachments.filter((attachment) => selectedAttachmentIds.includes(attachment.id));
   const allAttachmentsSelected = attachments.length > 0 && selectedAttachments.length === attachments.length;
+  const jobPhotos = attachments.filter((attachment) => attachment.kind === 'photo');
+  const selectedSocialPhotos = jobPhotos.filter((attachment) => selectedSocialPhotoIds.includes(attachment.id));
+  const allSocialPhotosSelected = jobPhotos.length > 0 && selectedSocialPhotos.length === jobPhotos.length;
+  const canCreateSocialPost = draft.status === 'Completed' || draft.status === 'Warranty';
+  const socialCaptionForCount = [socialPostDraft.headline, socialPostDraft.caption, socialPostDraft.hashtags.join(' ')].filter(Boolean).join('\n\n');
 
   useEffect(() => {
     setDraft(job);
@@ -270,6 +280,10 @@ export function JobDetailPanel({
     setSaved(false);
     setMaterialsSaved(false);
     setUploadError('');
+    setSocialPostOpen(false);
+    setSocialPostDraft(generateSocialPostDraft(job));
+    setSelectedSocialPhotoIds((job.attachments ?? []).filter((attachment) => attachment.kind === 'photo').map((attachment) => attachment.id));
+    setSocialPostStatus('');
   }, [job, materials, profile.warrantyDays]);
 
   useEffect(() => {
@@ -422,6 +436,68 @@ export function JobDetailPanel({
       anchor.click();
       anchor.remove();
     }
+  }
+
+  function openSocialPost() {
+    setSocialPostDraft(generateSocialPostDraft(draft));
+    setSelectedSocialPhotoIds(jobPhotos.map((attachment) => attachment.id));
+    setSocialPostStatus('');
+    setSocialPostOpen(true);
+  }
+
+  function regenerateSocialPost() {
+    setSocialPostDraft(generateSocialPostDraft(draft));
+    setSocialPostStatus('Draft regenerated from current job data.');
+  }
+
+  function updateSocialHashtags(value: string) {
+    setSocialPostDraft((current) => ({
+      ...current,
+      hashtags: value
+        .split(/[\s,]+/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+        .map((tag) => (tag.startsWith('#') ? tag : `#${tag}`)),
+    }));
+  }
+
+  function toggleSocialPhotoSelection(attachmentId: string, checked: boolean) {
+    setSelectedSocialPhotoIds((ids) => (checked ? Array.from(new Set([...ids, attachmentId])) : ids.filter((id) => id !== attachmentId)));
+  }
+
+  function toggleAllSocialPhotos(checked: boolean) {
+    setSelectedSocialPhotoIds(checked ? jobPhotos.map((attachment) => attachment.id) : []);
+  }
+
+  async function copySocialCaption() {
+    const copyText = formatSocialPostForCopy(socialPostDraft, draft);
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyText);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = copyText;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        textarea.remove();
+      }
+      setSocialPostStatus('Caption copied with private job values scrubbed.');
+    } catch {
+      setSocialPostStatus('Copy failed. Select the caption text and copy it manually.');
+    }
+  }
+
+  async function downloadSelectedSocialPhotos() {
+    if (!selectedSocialPhotos.length) return;
+    setSocialPostStatus(`Downloading ${selectedSocialPhotos.length} selected photo${selectedSocialPhotos.length === 1 ? '' : 's'}...`);
+    for (const photo of selectedSocialPhotos) {
+      await downloadAttachment(photo);
+    }
+    setSocialPostStatus('Selected photo download started.');
   }
 
   function updateMaterial(rowId: string, patch: Partial<MaterialRow>) {
@@ -830,6 +906,11 @@ export function JobDetailPanel({
           Back
         </button>
         <h1>Edit Job #{jobNumber}</h1>
+        {canCreateSocialPost ? (
+          <button className="primary-button compact" type="button" onClick={openSocialPost}>
+            Create social post
+          </button>
+        ) : null}
       </header>
 
       <div className="job-detail-grid">
@@ -1158,6 +1239,95 @@ export function JobDetailPanel({
             ) : (
               <iframe className="job-attachment-preview-frame" src={previewUrl} title={previewAttachment.name} />
             )}
+          </section>
+        </div>
+      ) : null}
+
+      {socialPostOpen ? (
+        <div className="email-message-modal-backdrop" role="dialog" aria-modal="true">
+          <section className="email-message-modal social-post-modal">
+            <div className="social-post-toolbar">
+              <div>
+                <p className="eyebrow">Social draft</p>
+                <h2>Create social post</h2>
+              </div>
+              <button className="secondary-button compact" type="button" onClick={() => setSocialPostOpen(false)}>
+                Close
+              </button>
+            </div>
+
+            <p className="social-post-privacy">
+              Review before publishing. Client names, addresses, contact details, pricing, and job numbers are excluded automatically.
+            </p>
+
+            <div className="social-post-layout">
+              <div className="social-post-editor">
+                <label>
+                  Headline
+                  <input value={socialPostDraft.headline} onChange={(event) => setSocialPostDraft((current) => ({ ...current, headline: event.target.value }))} />
+                </label>
+                <label>
+                  Caption
+                  <textarea value={socialPostDraft.caption} onChange={(event) => setSocialPostDraft((current) => ({ ...current, caption: event.target.value }))} />
+                </label>
+                <label>
+                  Hashtags
+                  <input value={socialPostDraft.hashtags.join(' ')} onChange={(event) => updateSocialHashtags(event.target.value)} />
+                </label>
+                <div className="social-post-meta">
+                  <span>{socialCaptionForCount.length} characters</span>
+                  <span>{selectedSocialPhotos.length} of {jobPhotos.length} photos selected</span>
+                </div>
+                <div className="job-detail-actions">
+                  <button className="secondary-button compact" type="button" onClick={regenerateSocialPost}>
+                    Regenerate
+                  </button>
+                  <button className="primary-button" type="button" onClick={copySocialCaption}>
+                    Copy caption
+                  </button>
+                  <button className="secondary-button compact" type="button" onClick={downloadSelectedSocialPhotos} disabled={!selectedSocialPhotos.length}>
+                    Download selected photos
+                  </button>
+                  <button className="secondary-button compact" type="button" onClick={() => setSocialPostOpen(false)}>
+                    Cancel
+                  </button>
+                </div>
+                {socialPostStatus ? <p className="social-post-status">{socialPostStatus}</p> : null}
+              </div>
+
+              <div className="social-post-photos">
+                <div className="social-post-photo-head">
+                  <h3>Job photos</h3>
+                  <label>
+                    <input type="checkbox" checked={allSocialPhotosSelected} onChange={(event) => toggleAllSocialPhotos(event.target.checked)} disabled={!jobPhotos.length} />
+                    Select all
+                  </label>
+                </div>
+                {jobPhotos.length ? (
+                  <div className="social-post-photo-grid">
+                    {jobPhotos.map((photo) => {
+                      const url = attachmentUrl(photo);
+                      return (
+                        <article className={`social-post-photo ${selectedSocialPhotoIds.includes(photo.id) ? 'selected' : ''}`} key={photo.id}>
+                          <label>
+                            <input type="checkbox" checked={selectedSocialPhotoIds.includes(photo.id)} onChange={(event) => toggleSocialPhotoSelection(photo.id, event.target.checked)} />
+                            {url ? <img src={url} alt={photo.name} /> : <span>No preview</span>}
+                          </label>
+                          <div>
+                            <strong>{photo.name}</strong>
+                            <button className="secondary-button compact" type="button" onClick={() => downloadAttachment(photo)} disabled={!url}>
+                              Download
+                            </button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="empty-inline">No job photos yet. Add photos to the job before publishing a social post.</p>
+                )}
+              </div>
+            </div>
           </section>
         </div>
       ) : null}
