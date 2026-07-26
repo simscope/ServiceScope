@@ -44,7 +44,7 @@ export function makeJobActions({
   jobInboxFeature,
   stopCompanyWrite,
 }: JobActionsInput) {
-  async function handleSaveJob(updatedJob: JobCardData, openJobAfterSave = true, accessPage: CompanyPortalAccessPage = 'jobs') {
+  function handleSaveJob(updatedJob: JobCardData, openJobAfterSave = true, accessPage: CompanyPortalAccessPage = 'jobs') {
     if (stopCompanyWrite(accessPage, 'saving jobs')) return;
 
     setJobs((currentJobs) => currentJobs.map((job) => (job.id === updatedJob.id ? updatedJob : job)));
@@ -55,20 +55,19 @@ export function makeJobActions({
     }
     setJobsStatus('Saving job...');
 
-    try {
-      const savedJob = await saveServiceJob(companyId, updatedJob);
-      setJobs((currentJobs) => currentJobs.map((job) => (job.id === updatedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job)));
-      if (openJobAfterSave) {
-        setOpenedJob(savedJob);
-      } else {
-        setOpenedJob((currentJob) => (currentJob?.id === savedJob.id ? savedJob : currentJob));
-      }
-      setJobsStatus('Job saved.');
-      return savedJob;
-    } catch (error) {
-      setJobsStatus(error instanceof Error ? error.message : 'Job could not be saved.');
-      throw error;
-    }
+    saveServiceJob(companyId, updatedJob)
+      .then((savedJob) => {
+        setJobs((currentJobs) => currentJobs.map((job) => (job.id === updatedJob.id || job.jobNumber === savedJob.jobNumber ? savedJob : job)));
+        if (openJobAfterSave) {
+          setOpenedJob(savedJob);
+        } else {
+          setOpenedJob((currentJob) => (currentJob?.id === savedJob.id ? savedJob : currentJob));
+        }
+        setJobsStatus('Job saved.');
+      })
+      .catch((error) => {
+        setJobsStatus(error instanceof Error ? error.message : 'Job could not be saved.');
+      });
   }
 
   async function handleSaveCustomerBlacklist(job: ServiceJob, blacklist: string) {

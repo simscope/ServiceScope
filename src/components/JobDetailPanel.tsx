@@ -24,7 +24,7 @@ type JobDetailPanelProps = {
     role: JobComment['authorRole'];
   };
   onClose: () => void;
-  onSave: (job: JobCardData) => void | Promise<JobCardData | void>;
+  onSave: (job: JobCardData) => void;
   onSaveMaterials: (jobOrJobNumber: JobCardData | string, rows: MaterialRow[]) => void | Promise<void>;
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice?: (job: JobCardData, invoiceId: string) => Promise<void>;
@@ -134,11 +134,6 @@ function invoiceLineAmount(line: InvoiceLineDraft) {
   return Math.max(0, Number(line.quantity) || 0) * Math.max(0, Number(line.price) || 0);
 }
 
-function normalizeMoneyDraft(value: string) {
-  const amount = Number(value.replace(/[$,\s]/g, ''));
-  return Number.isFinite(amount) && amount > 0 ? String(amount) : '';
-}
-
 function fallbackInvoiceLine(job: JobCardData): InvoiceLineDraft {
   return {
     id: crypto.randomUUID(),
@@ -231,8 +226,6 @@ export function JobDetailPanel({
   const [materialDrafts, setMaterialDrafts] = useState<MaterialRow[]>(materials.length ? materials : [emptyMaterialRow(job.jobNumber)]);
   const [commentDraft, setCommentDraft] = useState('');
   const [saved, setSaved] = useState(false);
-  const [savingJob, setSavingJob] = useState(false);
-  const [saveError, setSaveError] = useState('');
   const [materialsSaved, setMaterialsSaved] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const [previewAttachment, setPreviewAttachment] = useState<JobAttachment | null>(null);
@@ -280,8 +273,6 @@ export function JobDetailPanel({
     });
     setSelectedInvoiceIds([]);
     setSaved(false);
-    setSavingJob(false);
-    setSaveError('');
     setMaterialsSaved(false);
     setUploadError('');
   }, [job, materials, profile.warrantyDays]);
@@ -298,33 +289,21 @@ export function JobDetailPanel({
 
   function updateDraft(patch: Partial<JobCardData>) {
     setSaved(false);
-    setSaveError('');
     setDraft((current) => ({ ...current, ...patch }));
   }
 
-  async function saveDraft() {
+  function saveDraft() {
     const assignee = draft.technician || 'No technician';
     const nextJob = {
       ...draft,
       technician: assignee,
       assignee,
-      serviceCallFee: normalizeMoneyDraft(draft.serviceCallFee),
-      labor: normalizeMoneyDraft(draft.labor),
       attachments: draft.attachments ?? [],
     };
 
-    setSavingJob(true);
-    setSaveError('');
-    try {
-      const savedJob = await Promise.resolve(onSave(nextJob));
-      setDraft(savedJob || nextJob);
-      setSaved(true);
-    } catch (error) {
-      setSaved(false);
-      setSaveError(error instanceof Error ? error.message : 'Job could not be saved.');
-    } finally {
-      setSavingJob(false);
-    }
+    onSave(nextJob);
+    setDraft(nextJob);
+    setSaved(true);
   }
 
   function archiveDraft() {
@@ -915,8 +894,8 @@ export function JobDetailPanel({
             </label>
           </div>
           <div className="job-detail-actions">
-            <button className="primary-button" type="button" onClick={saveDraft} disabled={savingJob}>
-              {savingJob ? 'Saving...' : 'Save job'}
+            <button className="primary-button" type="button" onClick={saveDraft}>
+              Save job
             </button>
             {aiAssistantReady && onOpenInAiAssistant ? (
               <button className="secondary-button compact" type="button" onClick={() => onOpenInAiAssistant(draft)}>
@@ -926,7 +905,7 @@ export function JobDetailPanel({
             <button className="secondary-button compact" type="button" onClick={onClose}>
               Back
             </button>
-            <span>{saveError || (saved ? 'Saved' : 'Unsaved changes stay here until Save job')}</span>
+            <span>{saved ? 'Saved' : 'Unsaved changes stay here until Save job'}</span>
           </div>
         </section>
 
