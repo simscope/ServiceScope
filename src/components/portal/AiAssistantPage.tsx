@@ -4,7 +4,7 @@ import type { MaterialRow, ServiceJob } from '../../types';
 import {
   ASSISTANT_CHANNELS,
   type AssistantChannel,
-  type AssistantDraftDirtyState,
+  type AssistantDraftWorkspaceState,
   type AssistantLocalFacts,
   type AssistantMediaLabel,
   type AssistantMediaState,
@@ -14,8 +14,9 @@ import {
   buildAssistantJobSummary,
   canOpenJobInAiAssistant,
   assistantMediaCounts,
-  hydrateAssistantDraftTexts,
+  hydrateAssistantDraftState,
   regenerateAssistantChannelDraft,
+  regenerateUneditedAssistantDrafts,
   scrubAssistantText,
 } from '../../features/ai-assistant/assistantModel';
 import { attachmentUrl, downloadJobAttachments } from '../../features/job-attachments/jobAttachmentFiles';
@@ -31,15 +32,13 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const [selectedChannels, setSelectedChannels] = useState<AssistantChannel[]>(['Instagram']);
   const [localFacts, setLocalFacts] = useState<AssistantLocalFacts>({});
   const [mediaState, setMediaState] = useState<AssistantMediaState[]>([]);
-  const [draftTextByChannel, setDraftTextByChannel] = useState<Partial<Record<AssistantChannel, string>>>({});
-  const [dirtyByChannel, setDirtyByChannel] = useState<AssistantDraftDirtyState>({});
+  const [draftWorkspace, setDraftWorkspace] = useState<AssistantDraftWorkspaceState>({ drafts: {}, statuses: {} });
   const [copyStatus, setCopyStatus] = useState('');
 
   useEffect(() => {
     setLocalFacts({});
     setMediaState([]);
-    setDraftTextByChannel({});
-    setDirtyByChannel({});
+    setDraftWorkspace({ drafts: {}, statuses: {} });
     setCopyStatus('');
   }, [selectedJob?.id]);
 
@@ -53,7 +52,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const generatedDrafts = useMemo(() => (assistantContext ? buildAssistantChannelDrafts(assistantContext) : []), [assistantContext]);
 
   useEffect(() => {
-    setDraftTextByChannel((current) => hydrateAssistantDraftTexts(generatedDrafts, current));
+    setDraftWorkspace((current) => hydrateAssistantDraftState(generatedDrafts, current.drafts, current.statuses));
   }, [generatedDrafts]);
 
   const selectedDrafts = generatedDrafts.filter((draft) => selectedChannels.includes(draft.channel));
@@ -98,7 +97,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   }
 
   async function copyDraft(channel: AssistantChannel) {
-    const text = draftTextByChannel[channel] ?? '';
+    const text = draftWorkspace.drafts[channel] ?? '';
     if (!assistantContext || !text.trim()) return;
     const copied = await copyText(scrubAssistantText(text, assistantContext));
     setCopyStatus(copied ? `${channel} draft copied.` : `${channel} draft could not be copied. Select the text and copy it manually.`);
@@ -106,16 +105,21 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
 
   async function copyAllSelected() {
     if (!assistantContext || selectedDrafts.length === 0) return;
-    const drafts = selectedDrafts.map((draft) => ({ ...draft, body: draftTextByChannel[draft.channel] ?? draft.body }));
+    const drafts = selectedDrafts.map((draft) => ({ ...draft, body: draftWorkspace.drafts[draft.channel] ?? draft.body }));
     const copied = await copyText(buildAssistantExportText(drafts, assistantContext));
     setCopyStatus(copied ? 'Selected drafts copied.' : 'Selected drafts could not be copied. Select the text and copy it manually.');
   }
 
   function regenerateDraft(channel: AssistantChannel) {
-    const result = regenerateAssistantChannelDraft(channel, generatedDrafts, draftTextByChannel, dirtyByChannel);
-    setDraftTextByChannel(result.drafts);
-    setDirtyByChannel(result.dirty);
+    const result = regenerateAssistantChannelDraft(channel, generatedDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
+    setDraftWorkspace({ drafts: result.drafts, statuses: result.statuses });
     setCopyStatus(result.regenerated ? `${channel} draft regenerated from current job context.` : `${channel} draft could not be regenerated.`);
+  }
+
+  function regenerateAllUneditedDrafts() {
+    const result = regenerateUneditedAssistantDrafts(generatedDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
+    setDraftWorkspace({ drafts: result.drafts, statuses: result.statuses });
+    setCopyStatus(`${result.regenerated} generated draft${result.regenerated === 1 ? '' : 's'} refreshed. Edited drafts were not changed.`);
   }
 
   async function downloadSelectedMedia() {
@@ -271,6 +275,9 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
               <Copy size={16} aria-hidden="true" />
               Copy all selected
             </button>
+            <button className="secondary-button" type="button" onClick={regenerateAllUneditedDrafts} disabled={generatedDrafts.length === 0}>
+              Regenerate all unedited drafts
+            </button>
             {copyStatus ? <span>{copyStatus}</span> : null}
           </section>
 
@@ -280,7 +287,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
                 <div className="ai-assistant-panel-heading">
                   <h2>{draft.channel}</h2>
                   <div className="ai-assistant-draft-buttons">
-                    {dirtyByChannel[draft.channel] ? <span>Edited</span> : null}
+                    <span>{draftWorkspace.statuses[draft.channel] === 'edited' ? 'Edited' : 'Generated'}</span>
                     <button className="secondary-button compact" type="button" onClick={() => regenerateDraft(draft.channel)}>
                       Regenerate draft
                     </button>
@@ -291,10 +298,12 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
                   </div>
                 </div>
                 <textarea
-                  value={draftTextByChannel[draft.channel] ?? draft.body}
+                  value={draftWorkspace.drafts[draft.channel] ?? draft.body}
                   onChange={(event) => {
-                    setDraftTextByChannel((current) => ({ ...current, [draft.channel]: event.target.value }));
-                    setDirtyByChannel((current) => ({ ...current, [draft.channel]: true }));
+                    setDraftWorkspace((current) => ({
+                      drafts: { ...current.drafts, [draft.channel]: event.target.value },
+                      statuses: { ...current.statuses, [draft.channel]: 'edited' },
+                    }));
                   }}
                 />
                 <div className="ai-assistant-evidence-list" aria-label={`${draft.channel} evidence`}>

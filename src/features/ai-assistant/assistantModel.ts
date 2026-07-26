@@ -104,7 +104,13 @@ export type AssistantChannelDraft = {
 };
 
 export type AssistantDraftTextState = Partial<Record<AssistantChannel, string>>;
-export type AssistantDraftDirtyState = Partial<Record<AssistantChannel, boolean>>;
+export type AssistantDraftStatus = 'generated' | 'edited';
+export type AssistantDraftStatusState = Partial<Record<AssistantChannel, AssistantDraftStatus>>;
+
+export type AssistantDraftWorkspaceState = {
+  drafts: AssistantDraftTextState;
+  statuses: AssistantDraftStatusState;
+};
 
 export const AI_ASSISTANT_SUPPORTED_STATUSES: ServiceJobStatus[] = ['Completed', 'Warranty'];
 
@@ -257,30 +263,53 @@ export function buildAssistantExportText(drafts: AssistantChannelDraft[], contex
   );
 }
 
-export function hydrateAssistantDraftTexts(
+export function hydrateAssistantDraftState(
   generatedDrafts: AssistantChannelDraft[],
   currentDrafts: AssistantDraftTextState = {},
-): AssistantDraftTextState {
-  return generatedDrafts.reduce<AssistantDraftTextState>((next, draft) => {
-    next[draft.channel] = currentDrafts[draft.channel] ?? draft.body;
+  currentStatuses: AssistantDraftStatusState = {},
+): AssistantDraftWorkspaceState {
+  return generatedDrafts.reduce<AssistantDraftWorkspaceState>((next, draft) => {
+    const status = currentStatuses[draft.channel];
+    if (status === 'edited') {
+      next.drafts[draft.channel] = currentDrafts[draft.channel] ?? draft.body;
+      next.statuses[draft.channel] = 'edited';
+      return next;
+    }
+
+    next.drafts[draft.channel] = draft.body;
+    next.statuses[draft.channel] = 'generated';
     return next;
-  }, { ...currentDrafts });
+  }, { drafts: { ...currentDrafts }, statuses: { ...currentStatuses } });
 }
 
 export function regenerateAssistantChannelDraft(
   channel: AssistantChannel,
   generatedDrafts: AssistantChannelDraft[],
   currentDrafts: AssistantDraftTextState = {},
-  currentDirty: AssistantDraftDirtyState = {},
+  currentStatuses: AssistantDraftStatusState = {},
 ) {
   const generated = generatedDrafts.find((draft) => draft.channel === channel);
-  if (!generated) return { drafts: currentDrafts, dirty: currentDirty, regenerated: false };
+  if (!generated) return { drafts: currentDrafts, statuses: currentStatuses, regenerated: false };
 
   return {
     drafts: { ...currentDrafts, [channel]: generated.body },
-    dirty: { ...currentDirty, [channel]: false },
+    statuses: { ...currentStatuses, [channel]: 'generated' as const },
     regenerated: true,
   };
+}
+
+export function regenerateUneditedAssistantDrafts(
+  generatedDrafts: AssistantChannelDraft[],
+  currentDrafts: AssistantDraftTextState = {},
+  currentStatuses: AssistantDraftStatusState = {},
+) {
+  return generatedDrafts.reduce<AssistantDraftWorkspaceState & { regenerated: number }>((next, draft) => {
+    if (currentStatuses[draft.channel] === 'edited') return next;
+    next.drafts[draft.channel] = draft.body;
+    next.statuses[draft.channel] = 'generated';
+    next.regenerated += 1;
+    return next;
+  }, { drafts: { ...currentDrafts }, statuses: { ...currentStatuses }, regenerated: 0 });
 }
 
 function buildChannelDraft(channel: AssistantChannel, context: AssistantJobContext): AssistantChannelDraft {

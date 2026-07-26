@@ -5,8 +5,9 @@ import {
   buildAssistantJobContext,
   buildAssistantJobSummary,
   generateDeterministicAssistantDescription,
-  hydrateAssistantDraftTexts,
+  hydrateAssistantDraftState,
   regenerateAssistantChannelDraft,
+  regenerateUneditedAssistantDrafts,
   scrubAssistantText,
 } from '../.tmp/ai-assistant-tests/features/ai-assistant/assistantModel.js';
 import {
@@ -79,8 +80,9 @@ assert.match(assistantModel, /export function assistantPhotoAttachments/);
 assert.match(assistantModel, /export function buildAssistantJobContext/);
 assert.match(assistantModel, /export function buildAssistantChannelDrafts/);
 assert.match(assistantModel, /export function buildAssistantExportText/);
-assert.match(assistantModel, /export function hydrateAssistantDraftTexts/);
+assert.match(assistantModel, /export function hydrateAssistantDraftState/);
 assert.match(assistantModel, /export function regenerateAssistantChannelDraft/);
+assert.match(assistantModel, /export function regenerateUneditedAssistantDrafts/);
 assert.match(assistantModel, /'Technician-entered fact'/);
 assert.match(assistantModel, /'Installed material'/);
 assert.match(assistantModel, /'Attachment metadata'/);
@@ -96,6 +98,9 @@ assert.match(assistantModel, /Final result missing/);
 assert.match(assistantPage, /Download selected media/);
 assert.match(assistantPage, /Copy all selected/);
 assert.match(assistantPage, /Regenerate draft/);
+assert.match(assistantPage, /Regenerate all unedited drafts/);
+assert.match(assistantPage, /Generated/);
+assert.match(assistantPage, /Edited/);
 assert.match(assistantPage, /navigator\.clipboard/);
 assert.match(assistantPage, /execCommand\('copy'\)/);
 assert.match(jobDetailPanel, /downloadJobAttachment/);
@@ -250,15 +255,58 @@ assert.equal(
 );
 assert.equal(repeatContext.publicSafe.media[0].id, 'video-1');
 
-const initialDraftTexts = hydrateAssistantDraftTexts(drafts, {});
-assert.equal(initialDraftTexts.Instagram, instagram.body);
+let draftWorkspace = hydrateAssistantDraftState(drafts, {}, {});
+assert.equal(draftWorkspace.drafts.Instagram, instagram.body, 'Initial Instagram should be generated from base context');
+assert.equal(draftWorkspace.statuses.Instagram, 'generated');
+
+const diagnosisOnlyContext = buildAssistantJobContext(privateJob, materials, {
+  diagnosis: 'Technician confirmed low airflow after inspection.',
+});
+const diagnosisOnlyDrafts = buildAssistantChannelDrafts(diagnosisOnlyContext);
+draftWorkspace = hydrateAssistantDraftState(diagnosisOnlyDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
+assert.equal(
+  draftWorkspace.drafts.Instagram,
+  diagnosisOnlyDrafts.find((draft) => draft.channel === 'Instagram').body,
+  'Adding diagnosis should automatically update pristine Instagram',
+);
+assert.match(draftWorkspace.drafts.Instagram, /Technician confirmed low airflow/);
+
+const repairResultContext = buildAssistantJobContext(privateJob, materials, {
+  diagnosis: 'Technician confirmed low airflow after inspection.',
+  repairPerformed: 'Replaced the confirmed door gasket.',
+  finalResult: 'Temperature pull-down verified by technician.',
+});
+const repairResultDrafts = buildAssistantChannelDrafts(repairResultContext);
+draftWorkspace = hydrateAssistantDraftState(repairResultDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
+assert.equal(
+  draftWorkspace.drafts.Facebook,
+  repairResultDrafts.find((draft) => draft.channel === 'Facebook').body,
+  'Adding repair/result should automatically update pristine Facebook',
+);
+assert.equal(
+  draftWorkspace.drafts.LinkedIn,
+  repairResultDrafts.find((draft) => draft.channel === 'LinkedIn').body,
+  'Adding repair/result should automatically update pristine LinkedIn',
+);
+assert.match(draftWorkspace.drafts.Facebook, /Replaced the confirmed door gasket/);
+assert.match(draftWorkspace.drafts.LinkedIn, /Temperature pull-down verified/);
+
+draftWorkspace = {
+  drafts: {
+    ...draftWorkspace.drafts,
+    Instagram: 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.',
+  },
+  statuses: {
+    ...draftWorkspace.statuses,
+    Instagram: 'edited',
+  },
+};
 let editedDraftTexts = {
-  ...initialDraftTexts,
+  ...draftWorkspace.drafts,
   Instagram: 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.',
-  Facebook: 'Manual Facebook edit stays exactly here.',
 };
 const reorderedContext = buildAssistantJobContext(privateJob, materials, {
-  diagnosis: 'Technician confirmed low airflow after inspection at Sample Bistro.',
+  diagnosis: 'Technician confirmed low airflow after inspection.',
   repairPerformed: 'Replaced the confirmed door gasket.',
   finalResult: 'Temperature pull-down verified by technician.',
 }, [
@@ -266,11 +314,17 @@ const reorderedContext = buildAssistantJobContext(privateJob, materials, {
   { id: 'video-1', selected: true, order: 1, label: 'Result' },
 ]);
 const reorderedDrafts = buildAssistantChannelDrafts(reorderedContext);
-editedDraftTexts = hydrateAssistantDraftTexts(reorderedDrafts, editedDraftTexts);
-assert.equal(editedDraftTexts.Instagram, 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.', 'Edited Instagram draft should survive media reorder');
+draftWorkspace = hydrateAssistantDraftState(reorderedDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
+assert.equal(draftWorkspace.drafts.Instagram, 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.', 'Edited Instagram draft should survive media reorder');
+assert.equal(
+  draftWorkspace.drafts.Facebook,
+  reorderedDrafts.find((draft) => draft.channel === 'Facebook').body,
+  'Pristine Facebook should still update after later context changes',
+);
+editedDraftTexts = draftWorkspace.drafts;
 
 const relabeledContext = buildAssistantJobContext(privateJob, materials, {
-  diagnosis: 'Technician confirmed low airflow after inspection at Sample Bistro.',
+  diagnosis: 'Technician confirmed low airflow after inspection.',
   repairPerformed: 'Replaced the confirmed door gasket.',
   finalResult: 'Temperature pull-down verified by technician.',
 }, [
@@ -278,19 +332,57 @@ const relabeledContext = buildAssistantJobContext(privateJob, materials, {
   { id: 'video-1', selected: true, order: 1, label: 'Result' },
 ]);
 const relabeledDrafts = buildAssistantChannelDrafts(relabeledContext);
-editedDraftTexts = hydrateAssistantDraftTexts(relabeledDrafts, editedDraftTexts);
-assert.equal(editedDraftTexts.Instagram, 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.', 'Edited Instagram draft should survive media label change');
+draftWorkspace = hydrateAssistantDraftState(relabeledDrafts, editedDraftTexts, draftWorkspace.statuses);
+assert.equal(draftWorkspace.drafts.Instagram, 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.', 'Edited Instagram draft should survive media label change');
 
-const regenResult = regenerateAssistantChannelDraft('Instagram', relabeledDrafts, editedDraftTexts, { Instagram: true, Facebook: true });
+draftWorkspace = {
+  drafts: {
+    ...draftWorkspace.drafts,
+    Facebook: 'Manual Facebook edit stays exactly here.',
+  },
+  statuses: {
+    ...draftWorkspace.statuses,
+    Facebook: 'edited',
+  },
+};
+
+const regenResult = regenerateAssistantChannelDraft('Instagram', relabeledDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
 assert.equal(regenResult.regenerated, true);
 assert.equal(regenResult.drafts.Instagram, relabeledDrafts.find((draft) => draft.channel === 'Instagram').body);
 assert.equal(regenResult.drafts.Facebook, 'Manual Facebook edit stays exactly here.');
-assert.equal(regenResult.dirty.Instagram, false);
-assert.equal(regenResult.dirty.Facebook, true);
+assert.equal(regenResult.statuses.Instagram, 'generated');
+assert.equal(regenResult.statuses.Facebook, 'edited');
+
+const workspaceBeforeRegenerateAll = {
+  drafts: {
+    ...regenResult.drafts,
+    Instagram: 'Manual Instagram edit after one-channel regenerate.',
+  },
+  statuses: {
+    ...regenResult.statuses,
+    Instagram: 'edited',
+    LinkedIn: 'generated',
+  },
+};
+const regenerateAllResult = regenerateUneditedAssistantDrafts(relabeledDrafts, workspaceBeforeRegenerateAll.drafts, workspaceBeforeRegenerateAll.statuses);
+assert.equal(
+  regenerateAllResult.drafts.Instagram,
+  'Manual Instagram edit after one-channel regenerate.',
+  'Regenerate all unedited should not replace edited Instagram',
+);
+assert.equal(regenerateAllResult.statuses.Instagram, 'edited');
+assert.equal(regenerateAllResult.drafts.Facebook, 'Manual Facebook edit stays exactly here.', 'Regenerate all unedited should not replace edited Facebook');
+assert.equal(
+  regenerateAllResult.drafts.LinkedIn,
+  relabeledDrafts.find((draft) => draft.channel === 'LinkedIn').body,
+  'Regenerate all unedited should refresh pristine LinkedIn',
+);
+assert.equal(regenerateAllResult.statuses.LinkedIn, 'generated');
 
 const secondJobContext = buildAssistantJobContext({ ...privateJob, id: 'job-two', system: 'Rooftop unit', issue: 'No cooling reported.' }, materials);
-const secondJobDrafts = hydrateAssistantDraftTexts(buildAssistantChannelDrafts(secondJobContext), {});
-assert.notEqual(secondJobDrafts.Instagram, 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.', 'Switching selected job should reset drafts');
+const secondJobDrafts = hydrateAssistantDraftState(buildAssistantChannelDrafts(secondJobContext), {}, {});
+assert.notEqual(secondJobDrafts.drafts.Instagram, 'Manual Instagram edit with Jane Customer and JANE@EXAMPLE.COM.', 'Switching selected job should reset drafts');
+assert.equal(secondJobDrafts.statuses.Instagram, 'generated', 'Switching selected job should reset draft state');
 
 installDownloadStubs();
 const dataUrlAttachment = { id: 'data-url', name: 'local.jpg', mimeType: 'image/jpeg', sizeBytes: 10, kind: 'photo', uploadedAt: '2026-07-26T00:00:00Z', dataUrl: 'data:image/jpeg;base64,AA==' };
