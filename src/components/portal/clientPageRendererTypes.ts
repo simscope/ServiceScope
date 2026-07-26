@@ -68,6 +68,7 @@ export type ClientPageRendererContext = {
   allJobsGroups: Array<{ technician: string; jobs: ServiceJob[] }>;
   allJobsRows: ServiceJob[];
   allJobsVisibility: 'active' | 'paid' | 'all';
+  aiAssistantJobId: string | null;
   applyEmailTemplate: (template: Parameters<ReturnType<typeof import('../../features/email/useEmailFeature').useEmailFeature>['applyEmailTemplate']>[0]) => void;
   calendarActions: ReturnType<typeof makeCalendarActions>;
   calendarAnchor: Date;
@@ -125,6 +126,7 @@ export type ClientPageRendererContext = {
   onboardingAdminFeature: ReturnType<typeof useOnboardingAdminFeature>;
   onboardingProfileActions: ReturnType<typeof makeOnboardingProfileActions>;
   openMaterialEditor: ReturnType<typeof import('../../features/materials/useMaterialsFeature').useMaterialsFeature>['openMaterialEditor'];
+  openJobInAiAssistant: (job: ServiceJob) => void;
   openedJob: JobCardData | null;
   openTickets: unknown[];
   paidJobsRows: ServiceJob[];
@@ -228,6 +230,7 @@ export type ClientPageRendererOperationsContext = Pick<ClientPageRendererContext
   | 'allJobsGroups'
   | 'allJobsRows'
   | 'allJobsVisibility'
+  | 'aiAssistantJobId'
   | 'calendarActions'
   | 'calendarAnchor'
   | 'calendarDropSlots'
@@ -252,6 +255,7 @@ export type ClientPageRendererOperationsContext = Pick<ClientPageRendererContext
   | 'monthDropRequest'
   | 'nextJobNumber'
   | 'openMaterialEditor'
+  | 'openJobInAiAssistant'
   | 'openedJob'
   | 'paidJobsRows'
   | 'resetMaterialFilters'

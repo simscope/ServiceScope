@@ -22,6 +22,7 @@ export const companyUserPageAccessDefinitions: Array<{
   { page: 'email', label: 'Email', detail: 'Company mailbox' },
   { page: 'finances', label: 'Finance', detail: 'Payments and payroll' },
   { page: 'aiBusiness', label: 'Business Analyst', detail: 'Business KPIs, payroll analytics, and opportunities' },
+  { page: 'aiAssistant', label: 'AI Assistant', detail: 'Safe assistant workspace for completed service jobs' },
   { page: 'knowledge', label: 'Library', detail: 'Service documents' },
   { page: 'import', label: 'Import', detail: 'Data migration tools' },
   { page: 'portal', label: 'Support', detail: 'Support requests' },

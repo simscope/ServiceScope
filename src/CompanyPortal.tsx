@@ -168,6 +168,7 @@ function CompanyPortalWithTenant({
   onReplyToTicket,
 }: Omit<CompanyPortalProps, 'selectedCompany'> & { selectedCompany: Company }) {
   const { clientPage, setClientPage } = useClientPageFeature(selectedCompany.id);
+  const [aiAssistantJobId, setAiAssistantJobId] = useState<string | null>(null);
   const {
     request,
     setRequest,
@@ -537,6 +538,11 @@ function CompanyPortalWithTenant({
     canWritePage,
     accessLevelForPage,
   });
+  const openJobInAiAssistant = (job: ServiceJob) => {
+    setAiAssistantJobId(job.id);
+    setOpenedJob(null);
+    setClientPage('aiAssistant');
+  };
   const supportActions = makeSupportActions({
     request,
     setRequestTouched,
@@ -569,6 +575,7 @@ function CompanyPortalWithTenant({
     operations: {
       activeCalendarTech,
       activeJobsRows,
+      aiAssistantJobId,
       allCalendarDays,
       allJobsGroups,
       allJobsRows,
@@ -596,6 +603,7 @@ function CompanyPortalWithTenant({
       materials,
       monthDropRequest,
       nextJobNumber,
+      openJobInAiAssistant,
       openMaterialEditor,
       openedJob,
       paidJobsRows,

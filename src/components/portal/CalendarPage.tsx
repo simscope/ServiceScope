@@ -47,6 +47,7 @@ export function CalendarPage({
   onCreateInvoice,
   onDeleteInvoice,
   onComposeEmail,
+  onOpenInAiAssistant,
   calendarRangeTitle,
   onMoveCalendar,
   onShowToday,
@@ -83,6 +84,7 @@ export function CalendarPage({
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
+  onOpenInAiAssistant: (job: JobCardData) => void;
   calendarRangeTitle: string;
   onMoveCalendar: (direction: -1 | 1) => void;
   onShowToday: () => void;
@@ -125,6 +127,7 @@ export function CalendarPage({
           onCreateInvoice={onCreateInvoice}
           onDeleteInvoice={onDeleteInvoice}
           onComposeEmail={onComposeEmail}
+          onOpenInAiAssistant={onOpenInAiAssistant}
         />
       </section>
     );

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   BookOpen,
+  Bot,
   Box,
   CalendarDays,
   CheckCircle2,
@@ -40,6 +41,7 @@ export const clientNavItems: ClientNavItem[] = [
   { page: 'email', label: 'Email', icon: <MailPlus size={16} /> },
   { page: 'finances', label: 'Finance', icon: <CreditCard size={16} /> },
   { page: 'aiBusiness', label: 'Business Analyst', icon: <ChartNoAxesCombined size={16} /> },
+  { page: 'aiAssistant', label: 'AI Assistant', icon: <Bot size={16} /> },
   { page: 'knowledge', label: 'Library', icon: <BookOpen size={16} /> },
   { page: 'import', label: 'Import', icon: <UploadCloud size={16} /> },
   { page: 'portal', label: 'Portal', icon: <Rocket size={16} /> },

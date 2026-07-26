@@ -45,6 +45,7 @@ export function ClientOperationsPageRenderer({
     materialWorkflow,
     materials,
     monthDropRequest,
+    openJobInAiAssistant,
     openMaterialEditor,
     openedJob,
     resetMaterialFilters,
@@ -81,6 +82,7 @@ export function ClientOperationsPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
+        onOpenInAiAssistant={openJobInAiAssistant}
         calendarRangeTitle={calendarRangeTitle}
         onMoveCalendar={calendarActions.moveCalendar}
         onShowToday={calendarActions.showTodayInCalendar}
@@ -157,6 +159,7 @@ export function ClientOperationsPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
+        onOpenInAiAssistant={openJobInAiAssistant}
         openTaskCount={tasksFeature.openTaskCount}
         autoTaskCount={tasksFeature.autoTaskCount}
         urgentTaskCount={tasksFeature.urgentTaskCount}

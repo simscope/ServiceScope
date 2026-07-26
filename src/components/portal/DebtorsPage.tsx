@@ -46,6 +46,7 @@ export function DebtorsPage({
   onCreateInvoice,
   onDeleteInvoice,
   onComposeEmail,
+  onOpenInAiAssistant,
   allJobsRows,
   onOpenJob,
   onSaveDebtorJob,
@@ -63,6 +64,7 @@ export function DebtorsPage({
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
+  onOpenInAiAssistant: (job: JobCardData) => void;
   allJobsRows: ServiceJob[];
   onOpenJob: (job: ServiceJob) => void;
   onSaveDebtorJob: (job: ServiceJob) => void;
@@ -208,6 +210,7 @@ export function DebtorsPage({
           onCreateInvoice={onCreateInvoice}
           onDeleteInvoice={onDeleteInvoice}
           onComposeEmail={onComposeEmail}
+          onOpenInAiAssistant={onOpenInAiAssistant}
         />
       </section>
     );
