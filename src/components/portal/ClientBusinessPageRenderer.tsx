@@ -158,6 +158,7 @@ export function ClientBusinessPageRenderer({
     return (
       <AiAssistantPage
         selectedJob={allJobsRows.find((job) => job.id === aiAssistantJobId) ?? null}
+        materials={materials}
       />
     );
   }

@@ -5,6 +5,7 @@ import type { JobCardData } from './JobCard';
 import { money } from '../utils/format';
 import { deleteJobFile } from '../services/jobFiles';
 import { canOpenJobInAiAssistant } from '../features/ai-assistant/assistantModel';
+import { attachmentUrl, downloadJobAttachment } from '../features/job-attachments/jobAttachmentFiles';
 
 type PaymentMethodOption = {
   value: string;
@@ -385,10 +386,6 @@ export function JobDetailPanel({
     setPreviewUrl('');
   }
 
-  function attachmentUrl(attachment: JobAttachment) {
-    return attachment.dataUrl ?? '';
-  }
-
   function openAttachment(attachment: JobAttachment) {
     const url = attachmentUrl(attachment);
     if (!url) {
@@ -400,32 +397,8 @@ export function JobDetailPanel({
   }
 
   async function downloadAttachment(attachment: JobAttachment) {
-    const url = attachmentUrl(attachment);
-    if (!url) {
-      setUploadError('Save the job first, then download this file.');
-      return;
-    }
-
-    try {
-      const response = await fetch(url);
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = attachment.name || 'attachment';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    } catch {
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = attachment.name || 'attachment';
-      anchor.target = '_blank';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-    }
+    const result = await downloadJobAttachment(attachment);
+    if (!result.ok) setUploadError(result.error ?? 'File could not be downloaded.');
   }
 
   function updateMaterial(rowId: string, patch: Partial<MaterialRow>) {
