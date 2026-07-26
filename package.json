@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/patch-payroll-payment-history.cjs && vite --host 127.0.0.1",
-    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && tsc -b && vite build",
+    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:job-financial-save && tsc -b && vite build",
     "test:social-post": "tsc scripts/social-post-regression-tests.ts --target ES2020 --module NodeNext --moduleResolution NodeNext --outDir .tmp/social-post-tests --skipLibCheck && node .tmp/social-post-tests/scripts/social-post-regression-tests.js",
     "test:warehouse-import": "node scripts/warehouse-import-regression-tests.mjs",
     "test:warehouse-categories": "node scripts/warehouse-categories-regression-tests.mjs",
@@ -13,6 +13,7 @@
     "test:warehouse-job-materials": "node scripts/warehouse-job-materials-regression-tests.mjs",
     "test:warehouse-adjustments": "node scripts/warehouse-adjustments-regression-tests.mjs",
     "test:ai-assistant": "tsc src/features/ai-assistant/assistantModel.ts src/features/job-attachments/jobAttachmentFiles.ts --target ES2020 --module NodeNext --moduleResolution NodeNext --outDir .tmp/ai-assistant-tests --skipLibCheck && node scripts/ai-assistant-regression-tests.mjs",
+    "test:job-financial-save": "node scripts/job-financial-save-regression-tests.mjs",
     "test:calendar-technician": "node scripts/calendar-technician-selection-regression-tests.mjs",
     "test:calendar-persistence": "node scripts/calendar-persistence-regression-tests.mjs",
     "test:employee-payroll": "node scripts/employee-payroll-plans-regression-tests.mjs",
