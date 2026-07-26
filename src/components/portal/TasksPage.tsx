@@ -19,6 +19,7 @@ export function TasksPage({
   onCreateInvoice,
   onDeleteInvoice,
   onComposeEmail,
+  onOpenInAiAssistant,
   openTaskCount,
   autoTaskCount,
   urgentTaskCount,
@@ -50,6 +51,7 @@ export function TasksPage({
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
+  onOpenInAiAssistant: (job: JobCardData) => void;
   openTaskCount: number;
   autoTaskCount: number;
   urgentTaskCount: number;
@@ -102,6 +104,7 @@ export function TasksPage({
           onCreateInvoice={onCreateInvoice}
           onDeleteInvoice={onDeleteInvoice}
           onComposeEmail={onComposeEmail}
+          onOpenInAiAssistant={onOpenInAiAssistant}
         />
       </section>
     );

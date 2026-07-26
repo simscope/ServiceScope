@@ -35,6 +35,7 @@ export function ClientJobsPageRenderer({
     materialWorkflow,
     materials,
     nextJobNumber,
+    openJobInAiAssistant,
     openedJob,
     paidJobsRows,
     selectedJobPrefix,
@@ -81,6 +82,7 @@ export function ClientJobsPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
+        onOpenInAiAssistant={openJobInAiAssistant}
         onCreateJob={jobActions.handleCreateJob}
         selectedJobPrefix={selectedJobPrefix}
         nextJobNumber={nextJobNumber}
@@ -105,6 +107,7 @@ export function ClientJobsPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
+        onOpenInAiAssistant={openJobInAiAssistant}
         jobStatusFilters={jobStatusFilters}
         allJobsRows={allJobsRows}
         allJobsGroups={allJobsGroups}
@@ -135,6 +138,7 @@ export function ClientJobsPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
+        onOpenInAiAssistant={openJobInAiAssistant}
         allJobsRows={allJobsRows}
         onOpenJob={setOpenedJob}
         onSaveDebtorJob={(job) => jobActions.handleSaveJob(job, false, 'debtors')}

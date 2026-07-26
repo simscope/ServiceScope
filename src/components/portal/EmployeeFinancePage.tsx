@@ -207,6 +207,7 @@ export function EmployeeFinancePage({
   onCreateInvoice,
   onDeleteInvoice,
   onComposeEmail,
+  onOpenInAiAssistant,
   financePeriod,
   onFinancePeriodChange,
   financeTechFilter,
@@ -228,6 +229,7 @@ export function EmployeeFinancePage({
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
+  onOpenInAiAssistant: (job: JobCardData) => void;
   financePeriod: FinancePeriod;
   onFinancePeriodChange: (period: FinancePeriod) => void;
   financeTechFilter: string;
@@ -489,6 +491,7 @@ export function EmployeeFinancePage({
           onCreateInvoice={onCreateInvoice}
           onDeleteInvoice={onDeleteInvoice}
           onComposeEmail={onComposeEmail}
+          onOpenInAiAssistant={onOpenInAiAssistant}
         />
       </section>
     );

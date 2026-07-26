@@ -16,6 +16,7 @@ const clientPageValues: ClientPage[] = [
   'email',
   'finances',
   'aiBusiness',
+  'aiAssistant',
   'knowledge',
   'import',
   'portal',
@@ -28,6 +29,7 @@ function parseClientPage(value: string | null): ClientPage | null {
 
 function readSavedClientPage(storageKey: string): ClientPage {
   if (window.location.pathname === '/ai-business') return 'aiBusiness';
+  if (window.location.pathname === '/ai-assistant') return 'aiAssistant';
 
   const hashPage = window.location.hash.replace(/^#/, '');
   const directHashPage = parseClientPage(hashPage);

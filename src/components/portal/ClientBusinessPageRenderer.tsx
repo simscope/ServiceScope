@@ -3,6 +3,7 @@ import { emailProviderLabels, initialEmailTemplates, libraryCategories, libraryF
 import type { ClientPage } from '../../appTypes';
 import { EmailPage } from './EmailPage';
 import { EmployeeFinancePage } from './EmployeeFinancePage';
+import { AiAssistantPage } from './AiAssistantPage';
 import { BusinessAnalyticsPage } from './BusinessAnalyticsPage';
 import { KnowledgePage } from './KnowledgePage';
 import { OnboardingPage } from './OnboardingPage';
@@ -59,11 +60,13 @@ export function ClientBusinessPageRenderer({
     setPayrollRules,
   } = business;
   const {
+    aiAssistantJobId,
     allJobsRows,
     invoiceActions,
     jobActions,
     materialWorkflow,
     materials,
+    openJobInAiAssistant,
     openedJob,
     setOpenedJob,
   } = operations;
@@ -129,6 +132,7 @@ export function ClientBusinessPageRenderer({
         onCreateInvoice={invoiceActions.handleCreateInvoice}
         onDeleteInvoice={invoiceActions.handleDeleteInvoice}
         onComposeEmail={emailActions.openEmailCompose}
+        onOpenInAiAssistant={openJobInAiAssistant}
         financePeriod={financePeriod}
         onFinancePeriodChange={setFinancePeriod}
         financeTechFilter={financeTechFilter}
@@ -146,6 +150,14 @@ export function ClientBusinessPageRenderer({
         selectedCompanyId={selectedCompanyId}
         accessLevel={shell.activePageAccessLevel}
         onNavigateClientPage={setClientPage}
+      />
+    );
+  }
+
+  if (renderedClientPage === 'aiAssistant') {
+    return (
+      <AiAssistantPage
+        selectedJob={allJobsRows.find((job) => job.id === aiAssistantJobId) ?? null}
       />
     );
   }

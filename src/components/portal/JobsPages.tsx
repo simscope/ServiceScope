@@ -176,6 +176,7 @@ export function JobsPage({
   onCreateInvoice,
   onDeleteInvoice,
   onComposeEmail,
+  onOpenInAiAssistant,
   onCreateJob,
   selectedJobPrefix,
   nextJobNumber,
@@ -195,6 +196,7 @@ export function JobsPage({
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
+  onOpenInAiAssistant: (job: ServiceJob) => void;
   onCreateJob: (event: FormEvent<HTMLFormElement>) => void;
   selectedJobPrefix: string;
   nextJobNumber: string;
@@ -322,6 +324,7 @@ export function JobsPage({
           onCreateInvoice={onCreateInvoice}
           onDeleteInvoice={onDeleteInvoice}
           onComposeEmail={onComposeEmail}
+          onOpenInAiAssistant={onOpenInAiAssistant}
         />
       </section>
     );
@@ -441,6 +444,7 @@ export function AllJobsPage({
   onCreateInvoice,
   onDeleteInvoice,
   onComposeEmail,
+  onOpenInAiAssistant,
   jobStatusFilters,
   allJobsRows,
   allJobsGroups,
@@ -465,6 +469,7 @@ export function AllJobsPage({
   onCreateInvoice: (job: JobCardData, materials: MaterialRow[], amount: number, documentType: JobDocumentType) => Promise<JobInvoice>;
   onDeleteInvoice: (job: JobCardData, invoiceId: string) => Promise<void>;
   onComposeEmail: (compose: EmailCompose, attachments?: EmailComposeAttachment[]) => void;
+  onOpenInAiAssistant: (job: ServiceJob) => void;
   jobStatusFilters: ServiceJobStatus[];
   allJobsRows: ServiceJob[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
@@ -575,6 +580,7 @@ export function AllJobsPage({
           onCreateInvoice={onCreateInvoice}
           onDeleteInvoice={onDeleteInvoice}
           onComposeEmail={onComposeEmail}
+          onOpenInAiAssistant={onOpenInAiAssistant}
         />
       </section>
     );
