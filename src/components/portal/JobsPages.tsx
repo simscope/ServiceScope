@@ -14,6 +14,11 @@ import type {
   ServiceJobStatus,
 } from '../../types';
 import { paymentMethodLabels } from '../../appLabels';
+import {
+  normalizeAllJobsVisibilityForStatus,
+  type AllJobsStatusFilter,
+  type AllJobsVisibility,
+} from '../../features/jobs/allJobsFilters';
 import { statusClassName } from '../../utils/format';
 
 const allJobsExportColumns = [
@@ -468,8 +473,8 @@ export function AllJobsPage({
   jobStatusFilters: ServiceJobStatus[];
   allJobsRows: ServiceJob[];
   allJobsGroups: { technician: string; jobs: ServiceJob[] }[];
-  allJobsVisibility: 'active' | 'paid' | 'all';
-  onAllJobsVisibilityChange: (value: 'active' | 'paid' | 'all') => void;
+  allJobsVisibility: AllJobsVisibility;
+  onAllJobsVisibilityChange: (value: AllJobsVisibility) => void;
   activeJobsCount: number;
   paidJobsCount: number;
   totalJobsCount: number;
@@ -478,7 +483,7 @@ export function AllJobsPage({
   onSaveInlineJob: (job: ServiceJob) => void;
   onOpenJob: (job: ServiceJob) => void;
 }) {
-  const [statusFilter, setStatusFilter] = useState<'all' | ServiceJobStatus>('all');
+  const [statusFilter, setStatusFilter] = useState<AllJobsStatusFilter>('all');
   const [technicianFilter, setTechnicianFilter] = useState('all');
   const [generalSearch, setGeneralSearch] = useState('');
   const [numberSearch, setNumberSearch] = useState('');
@@ -542,9 +547,24 @@ export function AllJobsPage({
     setGeneralSearch('');
     setNumberSearch('');
     setSortMode('job-desc');
+    onAllJobsVisibilityChange('active');
     setAllJobsContext(null);
     window.sessionStorage.removeItem(ALL_JOBS_CONTEXT_STORAGE_KEY);
   };
+  const changeStatusFilter = (nextStatus: AllJobsStatusFilter) => {
+    setStatusFilter(nextStatus);
+    const normalizedVisibility = normalizeAllJobsVisibilityForStatus(nextStatus, allJobsVisibility);
+    if (normalizedVisibility !== allJobsVisibility) {
+      onAllJobsVisibilityChange(normalizedVisibility);
+    }
+  };
+
+  useEffect(() => {
+    const normalizedVisibility = normalizeAllJobsVisibilityForStatus(statusFilter, allJobsVisibility);
+    if (normalizedVisibility !== allJobsVisibility) {
+      onAllJobsVisibilityChange(normalizedVisibility);
+    }
+  }, [allJobsVisibility, onAllJobsVisibilityChange, statusFilter]);
 
   useEffect(() => {
     if (allJobsContext && allJobsVisibility !== 'all') {
@@ -588,7 +608,7 @@ export function AllJobsPage({
       </div>
 
       <div className="all-jobs-toolbar">
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as 'all' | ServiceJobStatus)} aria-label="Filter by status">
+        <select value={statusFilter} onChange={(event) => changeStatusFilter(event.target.value as AllJobsStatusFilter)} aria-label="Filter by status">
           <option value="all">All statuses</option>
           {jobStatusFilters.map((status) => (
             <option value={status} key={status}>
@@ -604,7 +624,7 @@ export function AllJobsPage({
             </option>
           ))}
         </select>
-        <select value={allJobsVisibility} onChange={(event) => onAllJobsVisibilityChange(event.target.value as 'active' | 'paid' | 'all')} aria-label="Job visibility">
+        <select value={allJobsVisibility} onChange={(event) => onAllJobsVisibilityChange(event.target.value as AllJobsVisibility)} aria-label="Job visibility">
           <option value="active">Active ({activeJobsCount})</option>
           <option value="paid">Paid ({paidJobsCount})</option>
           <option value="all">All jobs ({totalJobsCount})</option>
@@ -643,7 +663,7 @@ export function AllJobsPage({
                   className={`job-status-tab ${statusClassName(status)} ${statusFilter === status ? 'active' : ''}`}
                   type="button"
                   key={status}
-                  onClick={() => setStatusFilter((current) => current === status ? 'all' : status)}
+                  onClick={() => changeStatusFilter(statusFilter === status ? 'all' : status)}
                   aria-pressed={statusFilter === status}
                 >
                   {status}
