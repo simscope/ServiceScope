@@ -9,11 +9,23 @@ export const qaPhotoOneId = '00000000-0000-4000-8000-000000000674';
 export const qaPhotoTwoId = '00000000-0000-4000-8000-000000000774';
 export const jobFilesBucket = 'job-files';
 
-const safePngBytes = Uint8Array.from([
-  137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0, 0, 0, 144, 119, 83, 222,
-  0, 0, 0, 12, 73, 68, 65, 84, 8, 215, 99, 248, 207, 192, 0, 0, 3, 1, 1, 0, 24, 221, 141, 181, 0, 0, 0, 0, 73, 69, 78, 68,
-  174, 66, 96, 130,
-]);
+const imageSize = 512;
+
+export function projectRefFromSupabaseUrl(supabaseUrl) {
+  try {
+    return new URL(supabaseUrl).hostname.split('.')[0] ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function assertServerGate({ enabled, supabaseUrl, allowedProjectRef }) {
+  if (enabled !== 'true') throw new Error('QA_WORKSPACE_DISABLED');
+  const expectedRef = String(allowedProjectRef ?? '').trim();
+  if (expectedRef && projectRefFromSupabaseUrl(supabaseUrl) !== expectedRef) {
+    throw new Error('QA_WORKSPACE_WRONG_PROJECT');
+  }
+}
 
 export function parseQaWorkspaceRequest(value) {
   const body = value && typeof value === 'object' ? value : {};
@@ -37,8 +49,14 @@ export function assertOwnerSession(sessionRows) {
 }
 
 export function assertQaCompany(company) {
-  if (!company || typeof company.name !== 'string' || !company.name.startsWith(qaPrefix)) throw new Error('QA_COMPANY_REQUIRED');
+  if (!company || company.id !== qaCompanyId || typeof company.name !== 'string' || !company.name.startsWith(qaPrefix)) throw new Error('QA_COMPANY_REQUIRED');
   return company;
+}
+
+export function assertQaCompanySlot(company) {
+  if (!company) return null;
+  if (company.id === qaCompanyId && typeof company.name === 'string' && company.name.startsWith(qaPrefix)) return company;
+  throw new Error('QA_COMPANY_ID_COLLISION');
 }
 
 export function qaAccessRules() {
@@ -85,6 +103,9 @@ export async function handleQaWorkspace(deps, requestBody) {
 }
 
 export async function createQaWorkspace(deps, request) {
+  const company = await loadQaCompany(deps.adminClient);
+  assertQaCompanySlot(company);
+
   const existingUser = await findAuthUserByEmail(deps.adminClient, request.email);
   if (existingUser && !isQaAuthUser(existingUser)) throw new Error('QA_USER_EMAIL_ALREADY_EXISTS');
   const authUser = existingUser ?? (await createAuthUser(deps.adminClient, request));
@@ -141,9 +162,11 @@ export async function createQaWorkspace(deps, request) {
 export async function disableQaWorkspace(deps) {
   const company = await loadQaCompany(deps.adminClient);
   assertQaCompany(company);
+  const authUserIds = await loadQaAuthUserIds(deps.adminClient);
   await deps.adminClient.from('company_users').update({ status: 'disabled', updated_at: new Date().toISOString() }).eq('company_id', qaCompanyId);
   await deps.adminClient.from('company_profiles').update({ access_rules: { ...qaAccessRules(), aiAssistant: 'off' } }).eq('company_id', qaCompanyId);
-  return safeQaResult('disable');
+  const disabledAuthUsers = await disableQaAuthUsers(deps.adminClient, authUserIds);
+  return safeQaResult('disable', { disabledAuthUsers });
 }
 
 export async function deleteQaWorkspace(deps) {
@@ -156,7 +179,8 @@ export async function deleteQaWorkspace(deps) {
   }
   await deps.adminClient.from('companies').delete().eq('id', qaCompanyId);
   await deleteQaAuthUsers(deps.adminClient, authUserIds);
-  return safeQaResult('delete', { remainingRows: 0 });
+  const remainingRows = await countRemainingQaRows(deps.adminClient);
+  return safeQaResult('delete', { remainingRows });
 }
 
 async function loadQaCompany(adminClient) {
@@ -195,6 +219,7 @@ async function updateAuthUser(adminClient, userId, request) {
   const { error } = await adminClient.auth.admin.updateUserById(userId, {
     password: request.temporaryPassword,
     email_confirm: true,
+    ban_duration: 'none',
     user_metadata: { name: 'AI QA User', companyId: qaCompanyId, role: 'manager', qa: true },
   });
   if (error) throw error;
@@ -217,6 +242,19 @@ async function deleteQaAuthUsers(adminClient, authUserIds) {
     const { error: deleteError } = await adminClient.auth.admin.deleteUser(authUserId);
     if (deleteError) throw deleteError;
   }
+}
+
+async function disableQaAuthUsers(adminClient, authUserIds) {
+  let disabled = 0;
+  for (const authUserId of authUserIds) {
+    const { data, error } = await adminClient.auth.admin.getUserById(authUserId);
+    if (error) throw error;
+    if (!isQaAuthUser(data?.user)) continue;
+    const { error: updateError } = await adminClient.auth.admin.updateUserById(authUserId, { ban_duration: '876000h' });
+    if (updateError) throw updateError;
+    disabled += 1;
+  }
+  return disabled;
 }
 
 async function upsertRows(adminClient, table, rows, onConflict) {
@@ -267,11 +305,12 @@ function qaJob(id, jobNumber, status, system, issue) {
 
 async function uploadQaAttachments(adminClient) {
   const attachments = [
-    { id: qaPhotoOneId, jobId: qaCompletedJobId, name: `${qaPrefix}photo_overview.png` },
-    { id: qaPhotoTwoId, jobId: qaCompletedJobId, name: `${qaPrefix}photo_result.png` },
+    { id: qaPhotoOneId, jobId: qaCompletedJobId, name: `${qaPrefix}photo_overview.png`, scene: 'overview' },
+    { id: qaPhotoTwoId, jobId: qaCompletedJobId, name: `${qaPrefix}photo_result.png`, scene: 'result' },
   ];
   for (const attachment of attachments) {
     const path = `${qaCompanyId}/${attachment.jobId}/${attachment.id}-${attachment.name}`;
+    const safePngBytes = createSyntheticPngBytes(attachment.scene);
     await adminClient.storage.from(jobFilesBucket).upload(path, new Blob([safePngBytes], { type: 'image/png' }), {
       upsert: true,
       contentType: 'image/png',
@@ -294,7 +333,7 @@ async function deleteQaStorage(adminClient) {
   const { data } = await adminClient.from('job_attachments').select('storage_bucket,storage_path').eq('company_id', qaCompanyId);
   const pathsByBucket = new Map();
   for (const attachment of data ?? []) {
-    if (!attachment.storage_bucket || !attachment.storage_path || !attachment.storage_path.includes(qaCompanyId)) continue;
+    if (!attachment.storage_bucket || !attachment.storage_path || !attachment.storage_path.startsWith(`${qaCompanyId}/`)) continue;
     const paths = pathsByBucket.get(attachment.storage_bucket) ?? [];
     paths.push(attachment.storage_path);
     pathsByBucket.set(attachment.storage_bucket, paths);
@@ -302,4 +341,110 @@ async function deleteQaStorage(adminClient) {
   for (const [bucket, paths] of pathsByBucket) {
     if (paths.length) await adminClient.storage.from(bucket).remove(paths);
   }
+}
+
+async function countRemainingQaRows(adminClient) {
+  const companyScopedTables = ['job_attachments', 'job_comments', 'job_materials', 'job_invoices', 'job_payments', 'appointments', 'jobs', 'customer_locations', 'customers', 'company_users', 'company_profiles', 'company_onboarding_steps', 'company_job_workflow_settings', 'company_job_types'];
+  let total = 0;
+  for (const table of companyScopedTables) {
+    const { count, error } = await adminClient.from(table).select('company_id', { count: 'exact', head: true }).eq('company_id', qaCompanyId);
+    if (error) throw error;
+    total += count ?? 0;
+  }
+  const { count, error } = await adminClient.from('companies').select('id', { count: 'exact', head: true }).eq('id', qaCompanyId);
+  if (error) throw error;
+  return total + (count ?? 0);
+}
+
+export function createSyntheticPngBytes(scene) {
+  const raw = new Uint8Array((imageSize * 3 + 1) * imageSize);
+  let offset = 0;
+  for (let y = 0; y < imageSize; y += 1) {
+    raw[offset++] = 0;
+    for (let x = 0; x < imageSize; x += 1) {
+      const pixel = syntheticPixel(scene, x, y);
+      raw[offset++] = pixel[0];
+      raw[offset++] = pixel[1];
+      raw[offset++] = pixel[2];
+    }
+  }
+  const png = [
+    ...pngSignature(),
+    ...pngChunk('IHDR', uint32Bytes(imageSize), uint32Bytes(imageSize), [8, 2, 0, 0, 0]),
+    ...pngChunk('IDAT', zlibNoCompression(raw)),
+    ...pngChunk('IEND', []),
+  ];
+  return Uint8Array.from(png);
+}
+
+function syntheticPixel(scene, x, y) {
+  const background = scene === 'result' ? [233, 243, 238] : [236, 241, 245];
+  let color = [...background];
+  const cabinet = x >= 108 && x <= 404 && y >= 146 && y <= 360;
+  const panel = x >= 146 && x <= 366 && y >= 190 && y <= 312;
+  const vent = y >= 218 && y <= 244 && x >= 168 && x <= 344 && x % 22 < 14;
+  const pipe = x >= 256 && x <= 276 && y >= 92 && y <= 146;
+  const base = x >= 84 && x <= 428 && y >= 360 && y <= 382;
+  if (cabinet) color = scene === 'result' ? [196, 218, 205] : [198, 212, 224];
+  if (panel) color = scene === 'result' ? [215, 231, 221] : [216, 226, 234];
+  if (vent) color = [91, 112, 126];
+  if (pipe || base) color = [125, 143, 138];
+  if (scene === 'overview' && x >= 124 && x <= 180 && y >= 118 && y <= 156) color = [154, 171, 183];
+  if (scene === 'result' && x >= 330 && x <= 380 && y >= 118 && y <= 168) color = [119, 180, 139];
+  if (scene === 'result' && x >= 344 && x <= 368 && y >= 132 && y <= 156) color = [238, 248, 241];
+  if ((x + y) % 47 === 0) color = color.map((value) => Math.max(0, value - 4));
+  return color;
+}
+
+function pngSignature() {
+  return [137, 80, 78, 71, 13, 10, 26, 10];
+}
+
+function pngChunk(type, ...parts) {
+  const typeBytes = asciiBytes(type);
+  const data = parts.flat();
+  return [
+    ...uint32Bytes(data.length),
+    ...typeBytes,
+    ...data,
+    ...uint32Bytes(crc32([...typeBytes, ...data])),
+  ];
+}
+
+function zlibNoCompression(data) {
+  const blocks = [0x78, 0x01];
+  for (let offset = 0; offset < data.length; offset += 65535) {
+    const chunk = data.slice(offset, offset + 65535);
+    const final = offset + 65535 >= data.length ? 1 : 0;
+    blocks.push(final, chunk.length & 255, (chunk.length >> 8) & 255, (~chunk.length) & 255, ((~chunk.length) >> 8) & 255, ...chunk);
+  }
+  blocks.push(...uint32Bytes(adler32(data)));
+  return blocks;
+}
+
+function asciiBytes(value) {
+  return [...value].map((char) => char.charCodeAt(0));
+}
+
+function uint32Bytes(value) {
+  return [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255];
+}
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function adler32(bytes) {
+  let a = 1;
+  let b = 0;
+  for (const byte of bytes) {
+    a = (a + byte) % 65521;
+    b = (b + a) % 65521;
+  }
+  return ((b << 16) | a) >>> 0;
 }

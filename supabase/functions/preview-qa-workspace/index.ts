@@ -1,5 +1,5 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { handleQaWorkspace } from '../_shared/preview-qa-workspace/service.js';
+import { assertServerGate, handleQaWorkspace } from '../_shared/preview-qa-workspace/service.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,6 +21,9 @@ const publicErrorCodes = new Set([
   'QA_EMAIL_REQUIRED',
   'QA_TEMPORARY_PASSWORD_REQUIRED',
   'QA_USER_EMAIL_ALREADY_EXISTS',
+  'QA_WORKSPACE_DISABLED',
+  'QA_WORKSPACE_WRONG_PROJECT',
+  'QA_COMPANY_ID_COLLISION',
 ]);
 
 function safeErrorCode(error: unknown) {
@@ -34,6 +37,18 @@ Deno.serve(async (request) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+  try {
+    assertServerGate({
+      enabled: Deno.env.get('PREVIEW_QA_WORKSPACE_ENABLED'),
+      supabaseUrl,
+      allowedProjectRef: Deno.env.get('PREVIEW_QA_ALLOWED_PROJECT_REF'),
+    });
+  } catch (error) {
+    const code = safeErrorCode(error);
+    const status = code === 'QA_WORKSPACE_DISABLED' ? 404 : 403;
+    return jsonResponse({ error: code }, status);
+  }
+
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !supabaseAnonKey || !serviceRoleKey) return jsonResponse({ error: 'QA workspace function is not configured.' }, 500);
 
@@ -53,11 +68,15 @@ Deno.serve(async (request) => {
     const code = safeErrorCode(error);
     const status = code === 'OWNER_REQUIRED'
       ? 403
-      : code === 'QA_USER_EMAIL_ALREADY_EXISTS'
+      : code === 'QA_USER_EMAIL_ALREADY_EXISTS' || code === 'QA_COMPANY_ID_COLLISION'
         ? 409
-        : code.includes('REQUIRED') || code.includes('INVALID')
-          ? 400
-          : 500;
+        : code === 'QA_WORKSPACE_DISABLED'
+          ? 404
+          : code === 'QA_WORKSPACE_WRONG_PROJECT'
+            ? 403
+            : code.includes('REQUIRED') || code.includes('INVALID')
+              ? 400
+              : 500;
     return jsonResponse({ error: code }, status);
   }
 });

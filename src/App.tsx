@@ -86,7 +86,7 @@ import {
 } from './services/companyOnboardingStore';
 import { resolveCurrentAuthSession, signInAndResolveSession } from './services/authBackend';
 import { saveUserAccess, type AccessActionMode } from './services/accessInvite';
-import { managePreviewQaWorkspace, type PreviewQaWorkspaceAction } from './services/previewQaWorkspace';
+import { managePreviewQaWorkspace, shouldShowPreviewQaTools, type PreviewQaWorkspaceAction } from './services/previewQaWorkspace';
 import { clearLegacyLocalBusinessData, loadOwnerWorkspaceFromBackend } from './services/backendData';
 import { saveCompanyAccessRulesToBackend, saveCompanyCoreToBackend, saveCompanyOnboardingStepsToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import { getSupabaseAccessToken, isSupabaseConfigured, restoreSupabaseAccessToken, setSupabaseAccessToken, setSupabaseAuthTokens, SUPABASE_AUTH_EXPIRED_CODE } from './services/supabaseRest';
@@ -475,6 +475,11 @@ export function App() {
         : 'viewer'
     : 'viewer';
   const ownerCanAccess = (candidate: AppPage) => canAccessOwnerPage(currentOwnerRole, candidate);
+  const previewQaToolsVisible = shouldShowPreviewQaTools({
+    authSession,
+    currentOwnerRole,
+    env: (import.meta as unknown as { env?: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string | boolean } }).env ?? {},
+  });
   const newSupportCount = supportTickets.filter((ticket) => ticket.status === 'new').length;
 
   useEffect(() => {
@@ -779,9 +784,10 @@ export function App() {
             ? 'QA workspace disabled.'
             : 'QA workspace deleted.',
       );
-      if (action === 'delete') setQaPassword('');
+      setQaPassword('');
     } catch (error) {
       setQaStatus(error instanceof Error ? error.message : 'QA workspace action failed.');
+      setQaPassword('');
     } finally {
       setQaPending(false);
     }
@@ -1197,7 +1203,7 @@ export function App() {
           <AccessPage
             users={platformUsers}
             form={accessForm}
-            qaTools={{
+            qaTools={previewQaToolsVisible ? {
               email: qaEmail,
               password: qaPassword,
               status: qaStatus,
@@ -1207,7 +1213,7 @@ export function App() {
               onCreate: () => runPreviewQaAction('create'),
               onDisable: () => runPreviewQaAction('disable'),
               onDelete: () => runPreviewQaAction('delete'),
-            }}
+            } : undefined}
             onFormChange={setAccessForm}
             onInvite={(event) => {
               event.preventDefault();
