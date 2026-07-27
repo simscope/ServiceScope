@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { buildAuthorizedMediaContext, mediaKindFor } from '../supabase/functions/_shared/media-analysis/authorization.js';
 import { handleMediaAnalysis, mediaFingerprint } from '../supabase/functions/_shared/media-analysis/applicationService.js';
 import {
@@ -62,6 +63,11 @@ const [edgeIndex, aiPage, publicContracts, openAiAdapter, appService] = await Pr
   readFile('supabase/functions/_shared/media-analysis/providers/openai.js', 'utf8'),
   readFile('supabase/functions/_shared/media-analysis/applicationService.js', 'utf8'),
 ]);
+const [mediaClientApi, mediaClientContracts, mediaWorkspaceState] = await Promise.all([
+  readFile('src/features/media-analysis/clientApi.ts', 'utf8'),
+  readFile('src/features/media-analysis/contracts.ts', 'utf8'),
+  readFile('src/features/media-analysis/workspaceState.ts', 'utf8'),
+]);
 
 assert.match(edgeIndex, /handleMediaAnalysis/);
 assert.match(edgeIndex, /createMediaProviderFromEnv/);
@@ -70,7 +76,89 @@ assert.doesNotMatch(edgeIndex, /api\.openai\.com|OPENAI_API_KEY|buildMediaPrompt
 assert.match(openAiAdapter, /api\.openai\.com\/v1\/responses/);
 assert.match(openAiAdapter, /OPENAI_API_KEY|json_schema|input_image/);
 assert.doesNotMatch(appService, /api\.openai\.com|OPENAI_API_KEY|input_image|buildMediaPrompt/);
-assert.doesNotMatch(`${aiPage}\n${publicContracts}`, /ai-media-analyze|AI_MEDIA_PROVIDER|AI_MEDIA_MODEL|api\.openai\.com|OPENAI_API_KEY/);
+assert.doesNotMatch(`${aiPage}\n${publicContracts}\n${mediaClientApi}\n${mediaClientContracts}\n${mediaWorkspaceState}`, /AI_MEDIA_PROVIDER|AI_MEDIA_MODEL|api\.openai\.com|OPENAI_API_KEY|signed URL|storage service-role/i);
+assert.match(mediaClientApi, /supabaseFunction<MediaAnalysisResult>\('ai-media-analyze'/);
+assert.doesNotMatch(mediaClientApi, /companyId|mediaUrl|dataUrl|base64|filename|approval|findings|provider|model/i);
+assert.match(aiPage, /Analyze selected media/);
+assert.match(aiPage, /Media Findings Review/);
+assert.match(aiPage, /Approve for use/);
+assert.match(aiPage, /Mark false positive/);
+assert.match(aiPage, /Up to \{MEDIA_ANALYSIS_MAX_PHOTOS\} photos per request/);
+
+execFileSync(process.execPath, [
+  'node_modules/typescript/bin/tsc',
+  'src/features/media-analysis/contracts.ts',
+  'src/features/media-analysis/workspaceState.ts',
+  '--target',
+  'ES2020',
+  '--module',
+  'NodeNext',
+  '--moduleResolution',
+  'NodeNext',
+  '--outDir',
+  '.tmp/media-analysis-client-tests',
+  '--skipLibCheck',
+], { stdio: 'pipe' });
+const clientContracts = await import('../.tmp/media-analysis-client-tests/features/media-analysis/contracts.js');
+const clientState = await import('../.tmp/media-analysis-client-tests/features/media-analysis/workspaceState.js');
+
+const clientRequest = clientContracts.buildMediaAnalysisRequest({
+  jobId: 'job-1',
+  attachmentIds: ['photo-1'],
+  idempotencyKey: 'media-request-1',
+});
+assert.deepEqual(Object.keys(clientRequest).sort(), ['analysisMode', 'attachmentIds', 'idempotencyKey', 'jobId', 'schemaVersion']);
+assert.equal(clientRequest.schemaVersion, 'media-analysis-request-v1');
+assert.equal(clientRequest.analysisMode, 'media_review');
+assert.doesNotMatch(JSON.stringify(clientRequest), /companyId|mediaUrl|dataUrl|base64|filename|approval|findings/i);
+assert.deepEqual(clientContracts.MEDIA_ANALYSIS_CLIENT_REQUEST_KEYS, ['schemaVersion', 'jobId', 'attachmentIds', 'analysisMode', 'idempotencyKey']);
+assert.equal(clientContracts.normalizeMediaAnalysisError(new Error('MEDIA_PROVIDER_QUOTA_EXCEEDED: quota')).message, 'Media analysis quota is unavailable. Manual review is required.');
+assert.equal(clientContracts.normalizeMediaAnalysisError(new Error('vendor raw error')).message, 'Media analysis is temporarily unavailable.');
+
+const selectedMedia = [
+  { id: 'photo-1', kind: 'photo', selected: true },
+  { id: 'video-1', kind: 'file', selected: true },
+];
+assert.deepEqual(clientContracts.validateMediaAnalysisSelection(selectedMedia).attachmentIds, ['photo-1', 'video-1']);
+assert.equal(clientContracts.validateMediaAnalysisSelection(selectedMedia.map((item) => ({ ...item, selected: false }))).code, 'MEDIA_NOT_SELECTED');
+assert.equal(clientContracts.validateMediaAnalysisSelection(['1', '2', '3', '4', '5'].map((id) => ({ id, kind: 'photo', selected: true }))).code, 'MEDIA_REQUEST_TOO_LARGE');
+
+const pageWorkspace = {
+  technicianFacts: { diagnosis: 'safe diagnosis' },
+  draftWorkspace: { drafts: { Instagram: 'Generated', Facebook: 'Manual edit' }, statuses: { Instagram: 'generated', Facebook: 'edited' } },
+  selectedChannels: ['Instagram'],
+  mediaState: [{ id: 'photo-1', selected: true, order: 2, label: 'Overview' }],
+};
+let analysisState = clientState.createMediaAnalysisWorkspaceState('job-1');
+const firstStart = clientState.beginMediaAnalysisRequest(analysisState, 'request-1');
+assert.equal(firstStart.shouldRequest, true);
+const secondStart = clientState.beginMediaAnalysisRequest(firstStart.state, 'request-2');
+assert.equal(secondStart.shouldRequest, false);
+const successfulAnalysis = mediaAnalysisResultFixture();
+analysisState = clientState.applyMediaAnalysisResult(firstStart.state, successfulAnalysis, 'request-1', 'job-1');
+assert.equal(analysisState.status, 'succeeded');
+assert.equal(pageWorkspace.technicianFacts.diagnosis, 'safe diagnosis');
+assert.equal(pageWorkspace.draftWorkspace.drafts.Instagram, 'Generated');
+assert.equal(pageWorkspace.draftWorkspace.drafts.Facebook, 'Manual edit');
+assert.equal(pageWorkspace.draftWorkspace.statuses.Facebook, 'edited');
+assert.deepEqual(pageWorkspace.selectedChannels, ['Instagram']);
+assert.deepEqual(pageWorkspace.mediaState, [{ id: 'photo-1', selected: true, order: 2, label: 'Overview' }]);
+assert.equal(analysisState.approvals['photo-1'], 'pending');
+assert.equal(analysisState.approvals['video-1'], 'pending');
+assert.equal(clientState.setMediaApproval(analysisState, 'photo-1', 'approved').approvals['photo-1'], 'approved');
+assert.equal(clientState.setMediaApproval(analysisState, 'photo-1', 'excluded').approvals['photo-1'], 'excluded');
+assert.equal(clientState.setMediaApproval(analysisState, 'photo-1', 'false_positive').approvals['photo-1'], 'false_positive');
+assert.equal(analysisState.approvals['photo-1'], 'pending');
+const staleBase = clientState.beginMediaAnalysisRequest(clientState.createMediaAnalysisWorkspaceState('job-1'), 'request-stale').state;
+const staleApplied = clientState.applyMediaAnalysisResult(staleBase, { ...successfulAnalysis, jobId: 'old-job' }, 'request-stale', 'new-job');
+assert.equal(staleApplied.status, 'pending');
+assert.equal(clientState.resetMediaAnalysisWorkspace('job-2').result, undefined);
+assert.equal(clientState.mediaStatusMessage('metadata_only', false), 'Visual analysis was not completed. Review this media manually.');
+assert.equal(clientState.mediaStatusMessage('video_analysis_not_supported_v1', false), 'Video visual analysis is not supported in this version.');
+assert.equal(clientState.mediaStatusLabel('metadata_only'), 'metadata only');
+assert.equal(clientContracts.privacyRiskPriority('possible_face'), 'High');
+assert.equal(clientContracts.privacyRiskPriority('possible_serial_or_nameplate'), 'Medium');
+assert.doesNotMatch(`${aiPage}\n${mediaWorkspaceState}`, /raw provider JSON|raw prompt|OCR text|storage path|signed URL/i);
 
 const basePayload = {
   schemaVersion: 'media-analysis-request-v1',
@@ -497,6 +585,64 @@ function providerPayload(overrides = {}) {
     recommendations: ['Review findings before using selected photos.'],
     missingShots: ['Finished result photo may be useful if available.'],
     ...overrides,
+  };
+}
+
+function mediaAnalysisResultFixture() {
+  return {
+    schemaVersion: 'media-analysis-result-v1',
+    analysisVersion: 'media-analysis-v1',
+    analysisMode: 'media_review',
+    jobId: 'job-1',
+    provider: 'mock-media-provider',
+    model: 'mock-media-model',
+    requiresUserApproval: true,
+    attachments: [
+      {
+        id: 'photo-1',
+        kind: 'photo',
+        mimeType: 'image/jpeg',
+        sizeBytes: 500000,
+        status: 'analyzed',
+        visualAnalysisPerformed: true,
+        manualReviewRequired: true,
+        findings: [
+          {
+            findingId: 'finding-1',
+            evidenceType: 'visual_suggestion',
+            category: 'equipment_overview',
+            confidence: 0.73,
+            explanation: 'Could be useful as an overview.',
+            riskLevel: 'low',
+            requiresUserApproval: true,
+          },
+          {
+            findingId: 'finding-2',
+            evidenceType: 'privacy_risk_suggestion',
+            category: 'possible_serial_or_nameplate',
+            confidence: 0.42,
+            explanation: 'May contain a serial or nameplate.',
+            riskLevel: 'medium',
+            requiresUserApproval: true,
+          },
+        ],
+      },
+      {
+        id: 'video-1',
+        kind: 'video',
+        mimeType: 'video/mp4',
+        sizeBytes: 2000000,
+        status: 'video_analysis_not_supported_v1',
+        visualAnalysisPerformed: false,
+        manualReviewRequired: true,
+        findings: [],
+      },
+    ],
+    recommendations: ['Review findings before using selected photos.'],
+    missingShots: ['Finished result photo may be useful if available.'],
+    warnings: [],
+    safety: { ok: true, privacy: 'passed', grounding: 'passed', blockedReasons: [] },
+    telemetry: { correlationId: 'request-1', attempts: 1, latencyMs: 1 },
   };
 }
 

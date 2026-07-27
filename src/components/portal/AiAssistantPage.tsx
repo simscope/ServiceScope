@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Image, Lock, Video } from 'lucide-react';
+import { AlertTriangle, Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Image, Lock, Video } from 'lucide-react';
 import type { MaterialRow, ServiceJob } from '../../types';
 import {
   ASSISTANT_CHANNELS,
@@ -22,6 +22,27 @@ import {
 import { attachmentUrl, downloadJobAttachments } from '../../features/job-attachments/jobAttachmentFiles';
 import { generateAiContent } from '../../features/content-engine/clientApi';
 import type { AssistantTone, ContentGenerationResult } from '../../features/content-engine/contracts';
+import { analyzeSelectedMedia } from '../../features/media-analysis/clientApi';
+import {
+  MEDIA_ANALYSIS_ERROR_MESSAGES,
+  MEDIA_ANALYSIS_MAX_PHOTOS,
+  isPrivacyFinding,
+  normalizeMediaAnalysisError,
+  privacyRiskPriority,
+  validateMediaAnalysisSelection,
+  type MediaAnalysisAttachmentResult,
+  type MediaAnalysisFinding,
+} from '../../features/media-analysis/contracts';
+import {
+  applyMediaAnalysisError,
+  applyMediaAnalysisResult,
+  beginMediaAnalysisRequest,
+  createMediaAnalysisWorkspaceState,
+  mediaStatusLabel,
+  mediaStatusMessage,
+  setMediaApproval,
+  type MediaReviewApprovalState,
+} from '../../features/media-analysis/workspaceState';
 
 const mediaLabels: AssistantMediaLabel[] = ['Overview', 'Problem', 'Repair', 'Part', 'Result'];
 const assistantTones: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
@@ -41,6 +62,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const [locale, setLocale] = useState('en-US');
   const [aiStatusByChannel, setAiStatusByChannel] = useState<Partial<Record<AssistantChannel, string>>>({});
   const [aiPendingChannel, setAiPendingChannel] = useState<AssistantChannel | null>(null);
+  const [mediaAnalysisWorkspace, setMediaAnalysisWorkspace] = useState(() => createMediaAnalysisWorkspaceState(selectedJob?.id));
 
   useEffect(() => {
     setLocalFacts({});
@@ -49,6 +71,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
     setCopyStatus('');
     setAiStatusByChannel({});
     setAiPendingChannel(null);
+    setMediaAnalysisWorkspace(createMediaAnalysisWorkspaceState(selectedJob?.id));
   }, [selectedJob?.id]);
 
   const summary = selectedJob ? buildAssistantJobSummary(selectedJob) : null;
@@ -67,10 +90,13 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const selectedDrafts = generatedDrafts.filter((draft) => selectedChannels.includes(draft.channel));
   const selectedMediaIds = new Set(assistantContext?.publicSafe.media.filter((item) => item.selected).map((item) => item.id) ?? []);
   const selectedMediaAttachments = (selectedJob?.attachments ?? []).filter((attachment) => selectedMediaIds.has(attachment.id));
+  const selectedMediaCount = selectedMediaIds.size;
+  const selectedPhotoCount = assistantContext?.publicSafe.media.filter((item) => item.selected && item.kind === 'photo').length ?? 0;
   const attachmentById = useMemo(
     () => new Map((selectedJob?.attachments ?? []).map((attachment) => [attachment.id, attachment])),
     [selectedJob],
   );
+  const analysisResultAttachments = mediaAnalysisWorkspace.result?.attachments ?? [];
 
   function updateLocalFact(field: keyof AssistantLocalFacts, value: string) {
     setLocalFacts((current) => ({ ...current, [field]: value }));
@@ -177,6 +203,41 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
     }
   }
 
+  async function analyzeMedia() {
+    if (!selectedJob || !assistantContext || mediaAnalysisWorkspace.status === 'pending') return;
+    const selection = validateMediaAnalysisSelection(assistantContext.publicSafe.media);
+    if (!selection.ok) {
+      setMediaAnalysisWorkspace((current) => ({
+        ...current,
+        status: 'failed',
+        error: MEDIA_ANALYSIS_ERROR_MESSAGES[selection.code],
+      }));
+      return;
+    }
+
+    const requestJobId = selectedJob.id;
+    const requestId = `${requestJobId}:media:${Date.now()}:${crypto.randomUUID()}`;
+    const started = beginMediaAnalysisRequest(mediaAnalysisWorkspace, requestId);
+    if (!started.shouldRequest) return;
+    setMediaAnalysisWorkspace(started.state);
+
+    try {
+      const result = await analyzeSelectedMedia({
+        jobId: requestJobId,
+        attachmentIds: selection.attachmentIds,
+        idempotencyKey: requestId,
+      });
+      setMediaAnalysisWorkspace((current) => applyMediaAnalysisResult(current, result, requestId, requestJobId));
+    } catch (error) {
+      const normalized = normalizeMediaAnalysisError(error);
+      setMediaAnalysisWorkspace((current) => applyMediaAnalysisError(current, normalized.message, requestId));
+    }
+  }
+
+  function updateMediaApproval(attachmentId: string, approval: MediaReviewApprovalState) {
+    setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, approval));
+  }
+
   return (
     <section className="ai-assistant-page">
       <header className="ai-assistant-header">
@@ -239,6 +300,35 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
             <Download size={16} aria-hidden="true" />
             Download selected media
           </button>
+          <button
+            className="secondary-button compact"
+            type="button"
+            onClick={analyzeMedia}
+            disabled={selectedMediaCount === 0 || mediaAnalysisWorkspace.status === 'pending'}
+          >
+            <Image size={16} aria-hidden="true" />
+            {mediaAnalysisWorkspace.status === 'pending' ? 'Analyzing...' : `Analyze selected media (${selectedMediaCount})`}
+          </button>
+          <p className="ai-assistant-media-limits">
+            Up to {MEDIA_ANALYSIS_MAX_PHOTOS} photos per request. JPEG, PNG, and WEBP are supported. Video is accepted for
+            metadata/manual review only. Analysis runs only when you start it.
+          </p>
+          {selectedPhotoCount > MEDIA_ANALYSIS_MAX_PHOTOS ? (
+            <p className="ai-assistant-status-note">Select {MEDIA_ANALYSIS_MAX_PHOTOS} or fewer photos before analysis.</p>
+          ) : null}
+          {mediaAnalysisWorkspace.error ? (
+            <p className="ai-assistant-analysis-error">
+              <AlertTriangle size={16} aria-hidden="true" />
+              {mediaAnalysisWorkspace.error}
+            </p>
+          ) : null}
+          {mediaAnalysisWorkspace.result ? (
+            <p className="ai-assistant-ai-status">
+              Provider: {safeProviderLabel(mediaAnalysisWorkspace.result.provider)}
+              {mediaAnalysisWorkspace.result.model ? ` / ${safeProviderLabel(mediaAnalysisWorkspace.result.model)}` : ''}.
+              {mediaAnalysisWorkspace.result.warnings.length ? ` ${mediaAnalysisWorkspace.result.warnings.map((warning) => warning.message).join(' ')}` : ''}
+            </p>
+          ) : null}
         </section>
 
         <section className="ai-assistant-panel privacy">
@@ -298,6 +388,26 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
             ))}
             {assistantContext.publicSafe.media.length === 0 ? <p className="empty-inline">No photos or videos attached.</p> : null}
           </section>
+
+          {analysisResultAttachments.length ? (
+            <section className="ai-assistant-panel ai-assistant-media-analysis" aria-label="Media analysis review">
+              <div className="ai-assistant-panel-heading">
+                <h2>Media Findings Review</h2>
+                <AlertTriangle size={18} aria-hidden="true" />
+              </div>
+              <div className="ai-assistant-analysis-results">
+                {analysisResultAttachments.map((result) => (
+                  <MediaAnalysisResultCard
+                    key={result.id}
+                    result={result}
+                    attachment={attachmentById.get(result.id)}
+                    approval={mediaAnalysisWorkspace.approvals[result.id] ?? 'pending'}
+                    onApproval={(approval) => updateMediaApproval(result.id, approval)}
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           <section className="ai-assistant-capabilities" aria-label="Assistant channels">
             {ASSISTANT_CHANNELS.map((label) => {
@@ -386,10 +496,83 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
       ) : null}
 
       <p className="ai-assistant-phase-note">
-        Drafts are deterministic and grounded in selected job data. No LLM calls, image recognition, publishing, OAuth, or database writes run here.
+        Drafts stay grounded in selected job data. Media analysis uses the secure server function only; no provider keys,
+        private media links, publishing, OAuth, or database writes run in the browser.
       </p>
     </section>
   );
+}
+
+type MediaAnalysisResultCardProps = {
+  result: MediaAnalysisAttachmentResult;
+  attachment?: { name: string; dataUrl?: string; mimeType: string };
+  approval: MediaReviewApprovalState;
+  onApproval: (approval: MediaReviewApprovalState) => void;
+};
+
+function MediaAnalysisResultCard({ result, attachment, approval, onApproval }: MediaAnalysisResultCardProps) {
+  const contentFindings = result.findings.filter((finding) => !isPrivacyFinding(finding.category));
+  const privacyFindings = result.findings.filter((finding) => isPrivacyFinding(finding.category));
+  const statusMessage = mediaStatusMessage(result.status, result.visualAnalysisPerformed);
+  const previewUrl = attachment ? attachmentUrl(attachment) : '';
+
+  return (
+    <article className="ai-assistant-analysis-card">
+      {result.kind === 'photo' && previewUrl ? (
+        <img src={previewUrl} alt={attachment?.name ?? 'Selected media'} />
+      ) : (
+        <div className="ai-assistant-media-placeholder">{result.kind === 'video' ? 'Video' : 'Media'}</div>
+      )}
+      <div className="ai-assistant-analysis-card-body">
+        <div className="ai-assistant-analysis-meta">
+          <span>{result.kind}</span>
+          <span>{mediaStatusLabel(result.status)}</span>
+          <span>Manual review required</span>
+        </div>
+        {statusMessage ? <p className="ai-assistant-analysis-note">{statusMessage}</p> : null}
+        <FindingGroup title="Content suggestions" findings={contentFindings} />
+        <FindingGroup title="Privacy review" findings={privacyFindings} privacy />
+        <div className="ai-assistant-approval-controls">
+          <span>Review state: {approvalLabel(approval)}</span>
+          <button className="secondary-button compact" type="button" onClick={() => onApproval('approved')}>Approve for use</button>
+          <button className="secondary-button compact" type="button" onClick={() => onApproval('excluded')}>Exclude</button>
+          <button className="secondary-button compact" type="button" onClick={() => onApproval('false_positive')}>Mark false positive</button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function FindingGroup({ title, findings, privacy = false }: { title: string; findings: MediaAnalysisFinding[]; privacy?: boolean }) {
+  if (!findings.length) return null;
+  return (
+    <div className="ai-assistant-finding-group">
+      <h3>{title}</h3>
+      {findings.map((finding) => (
+        <div className="ai-assistant-finding" key={finding.findingId}>
+          <div>
+            <strong>{privacy ? 'Possible privacy concern' : 'AI suggestion'}</strong>
+            <span>{formatCategory(finding.category)} · {Math.round(finding.confidence * 100)}% · Not verified</span>
+          </div>
+          <p>{finding.explanation}</p>
+          {privacy ? <span className={`ai-assistant-risk ${finding.riskLevel}`}>{privacyRiskPriority(finding.category) || 'Review before use'}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatCategory(value: string) {
+  return value.replace(/_/g, ' ');
+}
+
+function approvalLabel(value: MediaReviewApprovalState) {
+  if (value === 'false_positive') return 'False positive';
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function safeProviderLabel(value: string) {
+  return value.replace(/[^A-Za-z0-9_. -]/g, '').slice(0, 80);
 }
 
 function contentResultToDraftText(result: ContentGenerationResult) {

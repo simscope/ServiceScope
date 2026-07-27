@@ -879,6 +879,124 @@ button {
   font-weight: 800;
 }
 
+.ai-assistant-media-limits,
+.ai-assistant-analysis-note {
+  margin: 0;
+  color: #526158;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ai-assistant-analysis-error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  border: 1px solid #f0aaa5;
+  border-radius: 8px;
+  background: #fff3f2;
+  color: #9b1c16;
+  padding: 8px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-assistant-media-analysis {
+  gap: 12px;
+}
+
+.ai-assistant-analysis-results {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-assistant-analysis-card {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  background: #fbfcfd;
+  padding: 10px;
+}
+
+.ai-assistant-analysis-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 6px;
+  object-fit: cover;
+  background: #edf1f5;
+}
+
+.ai-assistant-analysis-card-body,
+.ai-assistant-finding-group {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-assistant-analysis-meta,
+.ai-assistant-approval-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-assistant-analysis-meta span,
+.ai-assistant-approval-controls span,
+.ai-assistant-risk {
+  border: 1px solid #e3e9e4;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 4px 8px;
+  color: #526158;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.ai-assistant-finding-group h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.ai-assistant-finding {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e3e9e4;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px;
+}
+
+.ai-assistant-finding div {
+  display: grid;
+  gap: 2px;
+}
+
+.ai-assistant-finding strong {
+  font-size: 13px;
+}
+
+.ai-assistant-finding span,
+.ai-assistant-finding p {
+  margin: 0;
+  color: #526158;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ai-assistant-risk.high {
+  border-color: #f0aaa5;
+  background: #fff3f2;
+  color: #9b1c16;
+}
+
+.ai-assistant-risk.medium {
+  border-color: #f2c779;
+  background: #fff8e8;
+  color: #765200;
+}
+
 .ai-assistant-drafts {
   display: grid;
   gap: 12px;
@@ -916,7 +1034,8 @@ button {
   .ai-assistant-grid,
   .ai-assistant-capabilities,
   .ai-assistant-facts,
-  .ai-assistant-media-browser {
+  .ai-assistant-media-browser,
+  .ai-assistant-analysis-card {
     grid-template-columns: 1fr;
   }
 }
