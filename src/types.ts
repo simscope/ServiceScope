@@ -272,6 +272,7 @@ export type JobInvoice = {
   documentType: JobDocumentType;
   status: JobInvoiceStatus;
   amount: number;
+  pdfStoragePath?: string;
   createdAt: string;
   sentAt: string;
   paidAt: string;

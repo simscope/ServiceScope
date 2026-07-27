@@ -5,7 +5,7 @@ import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobDocumentTy
 import type { JobCardData } from './JobCard';
 import { money } from '../utils/format';
 import { deleteJobFile } from '../services/jobFiles';
-import { sqlEq, supabaseRequest, uploadSupabaseStorageFile } from '../services/supabaseRest';
+import { downloadSupabaseStorageFile, getSupabasePublicStorageUrl, sqlEq, supabaseRequest, uploadSupabaseStorageFile } from '../services/supabaseRest';
 import { canOpenJobInAiAssistant } from '../features/ai-assistant/assistantModel';
 import { attachmentUrl, downloadJobAttachment } from '../features/job-attachments/jobAttachmentFiles';
 
@@ -652,7 +652,19 @@ export function JobDetailPanel({
     }
   }
 
+  function invoicePdfPublicUrl(invoice: JobInvoice) {
+    return invoice.pdfStoragePath ? getSupabasePublicStorageUrl(JOB_FILES_BUCKET, invoice.pdfStoragePath) : '';
+  }
+
   function openInvoice(invoice: JobInvoice, printableDraft = invoiceDraft, targetWindow?: Window | null, print = true) {
+    const pdfUrl = invoicePdfPublicUrl(invoice);
+    if (pdfUrl) {
+      const invoiceWindow = targetWindow ?? window.open(pdfUrl, '_blank');
+      if (targetWindow) targetWindow.location.href = pdfUrl;
+      invoiceWindow?.focus();
+      return;
+    }
+
     const invoiceWindow = targetWindow ?? window.open('', '_blank');
     if (!invoiceWindow) return;
     writeInvoiceDocument(invoiceWindow, makeInvoiceHtml(invoice, printableDraft), print);
@@ -793,8 +805,14 @@ export function JobDetailPanel({
     return storagePath;
   }
 
-  function downloadInvoice(invoice: JobInvoice) {
-    const blob = makeInvoicePdfBlob(invoice);
+  async function getInvoicePdfBlob(invoice: JobInvoice, printableDraft = invoiceDraft) {
+    return invoice.pdfStoragePath
+      ? downloadSupabaseStorageFile(JOB_FILES_BUCKET, invoice.pdfStoragePath)
+      : makeInvoicePdfBlob(invoice, printableDraft);
+  }
+
+  async function downloadInvoice(invoice: JobInvoice) {
+    const blob = await getInvoicePdfBlob(invoice);
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -820,15 +838,16 @@ export function JobDetailPanel({
       } catch (error) {
         setInvoiceStatus(error instanceof Error ? `Invoice created, but PDF was not saved: ${error.message}` : 'Invoice created, but PDF was not saved.');
       }
+      const savedInvoice = pdfStoragePath ? { ...invoice, pdfStoragePath } : invoice;
       const nextJob = {
         ...draft,
-        invoices: [invoice, ...(draft.invoices ?? [])],
+        invoices: [savedInvoice, ...(draft.invoices ?? [])],
       };
       setDraft(nextJob);
-      setSelectedInvoiceIds([invoice.id]);
+      setSelectedInvoiceIds([savedInvoice.id]);
       setInvoiceEditorOpen(false);
       if (pdfStoragePath) setInvoiceStatus('Invoice created and PDF saved.');
-      openInvoice(invoice, currentInvoiceDraft, invoiceWindow);
+      openInvoice(savedInvoice, currentInvoiceDraft, invoiceWindow);
     } catch (error) {
       const message = invoiceErrorMessage(error);
       setInvoiceStatus(message);
@@ -852,7 +871,7 @@ export function JobDetailPanel({
   }
 
   async function makeInvoiceEmailAttachment(invoice: JobInvoice): Promise<EmailComposeAttachment> {
-    const blob = makeInvoicePdfBlob(invoice);
+    const blob = await getInvoicePdfBlob(invoice);
     return {
       id: `invoice-email-${invoice.id}`,
       fileName: `${invoice.invoiceNumber}.pdf`,
