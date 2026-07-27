@@ -987,6 +987,7 @@ alter table jobs enable row level security;
 alter table appointments enable row level security;
 alter table job_comments enable row level security;
 alter table job_attachments enable row level security;
+grant select, insert, delete on table public.job_attachments to authenticated;
 alter table job_materials enable row level security;
 alter table job_payments enable row level security;
 alter table job_invoices enable row level security;
