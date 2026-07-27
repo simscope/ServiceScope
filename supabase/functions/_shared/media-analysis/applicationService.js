@@ -1,9 +1,10 @@
 import { buildAuthorizedMediaContext } from './authorization.js';
-import { analysisVersion, maxRequestBytes } from './contracts.js';
+import { analysisVersion, maxRequestBytes, maxVisionPhotos } from './contracts.js';
 import { MediaAnalysisError, httpError, normalizeMediaErrorCode, statusForMediaCode } from './errors.js';
 import { assertNoPrivateValues, assertNoUnsafeClientMediaInput } from './privacy.js';
 import {
   buildMediaAnalysisResult,
+  parseProviderMediaResult,
   validateMediaAnalysisRequestBody,
   validateMediaAnalysisResultShape,
 } from './schemas.js';
@@ -17,13 +18,16 @@ export async function handleMediaAnalysis({ rawBody, authorization, auth, reposi
   const session = await auth.resolveSession(authorization);
   const context = await buildAuthorizedMediaContext({ request, session, repository });
   assertNoPrivateValues(context.attachments, context.privateValues);
+  const visionPhotos = context.attachments.filter((attachment) => attachment.mediaKind === 'photo');
+  if (visionPhotos.length > maxVisionPhotos) throw httpError('MEDIA_REQUEST_TOO_LARGE');
 
-  const cacheKey = [context.companyId, context.actorId, request.jobId, request.analysisMode, request.attachmentIds.join(','), request.idempotencyKey].join(':');
+  const fingerprint = mediaFingerprint({ request, context, config });
+  const cacheKey = [context.companyId, context.actorId, fingerprint, request.idempotencyKey].join(':');
   const cached = guards?.get?.(cacheKey);
   if (cached) return cached;
 
   const start = clock.now();
-  const result = provider
+  const result = provider && visionPhotos.length
     ? await analyzeWithProvider({ request, context, provider, config, telemetry, clock, start })
     : buildMediaAnalysisResult({
         request,
@@ -57,15 +61,19 @@ export { MediaAnalysisError as HttpError };
 
 async function analyzeWithProvider({ request, context, provider, config, telemetry, clock, start }) {
   try {
-    const response = await callWithRetry(provider, { request, context }, config);
-    const result = response.result;
+    const mediaInputs = await buildSignedMediaInputs({ context, repository: config.repository });
+    const response = await callWithRetry(provider, { request, context, mediaInputs }, config);
+    const result = parseProviderMediaResult(response.result.rawJson, {
+      request,
+      context,
+      provider: response.result.provider ?? provider.id,
+      model: response.result.model ?? config?.model ?? 'unknown',
+      usage: response.result.usage,
+      attempts: response.attempts,
+      latencyMs: clock.now() - start,
+    });
     assertNoPrivateValues(result, context.privateValues);
-    return {
-      ...result,
-      provider: result.provider ?? provider.id,
-      model: result.model ?? config?.model ?? 'unknown',
-      telemetry: { ...(result.telemetry ?? {}), attempts: response.attempts, latencyMs: clock.now() - start },
-    };
+    return result;
   } catch (error) {
     const code = normalizeMediaErrorCode(error);
     emitTelemetry(telemetry, {
@@ -103,7 +111,7 @@ async function callWithRetry(provider, providerRequest, config = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), Number(config.timeoutMs) || 10_000);
     try {
-      const result = await provider.analyze(providerRequest, { signal: controller.signal, timeoutMs: config.timeoutMs });
+      const result = await provider.analyze(providerRequest, { signal: controller.signal, timeoutMs: config.timeoutMs, maxOutputTokens: config.maxOutputTokens });
       return { result, attempts: attempt };
     } catch (error) {
       lastError = controller.signal.aborted ? new MediaAnalysisError('MEDIA_PROVIDER_TIMEOUT', { retryable: true }) : error;
@@ -119,6 +127,44 @@ async function callWithRetry(provider, providerRequest, config = {}) {
 
 function shouldRetry(error) {
   return Boolean(error?.retryable) || ['MEDIA_PROVIDER_RATE_LIMITED', 'MEDIA_PROVIDER_TIMEOUT', 'MEDIA_PROVIDER_UNAVAILABLE'].includes(error?.code ?? error?.message);
+}
+
+async function buildSignedMediaInputs({ context, repository }) {
+  const photoAttachments = context.attachments.filter((attachment) => attachment.mediaKind === 'photo');
+  const inputs = [];
+  for (const attachment of photoAttachments) {
+    const signedUrl = await repository.createSignedMediaUrl(attachment);
+    if (!signedUrl) throw httpError('MEDIA_PROVIDER_UNAVAILABLE');
+    inputs.push({
+      attachmentId: attachment.id,
+      mimeType: attachment.mimeType,
+      kind: attachment.mediaKind,
+      imageUrl: signedUrl,
+    });
+  }
+  return inputs;
+}
+
+export function mediaFingerprint({ request, context, config = {} }) {
+  const attachmentVersion = context.attachments
+    .map((attachment) => [
+      attachment.id,
+      attachment.storagePath,
+      attachment.updatedAt || attachment.createdAt || '',
+      attachment.sizeBytes,
+      attachment.mimeType,
+    ].join('@'))
+    .sort()
+    .join('|');
+  return [
+    context.companyId,
+    context.jobId,
+    request.analysisMode,
+    analysisVersion,
+    config.providerId ?? 'deterministic-fallback',
+    config.model ?? 'unknown',
+    attachmentVersion,
+  ].join(':');
 }
 
 function emitTelemetry(telemetry, event) {

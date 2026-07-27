@@ -83,6 +83,7 @@ export function validateAttachment({ attachment, job, company }) {
     storageBucket: String(attachment.storage_bucket),
     storagePath: String(attachment.storage_path),
     createdAt: attachment.created_at ? String(attachment.created_at) : '',
+    updatedAt: attachment.updated_at ? String(attachment.updated_at) : '',
   };
 }
 

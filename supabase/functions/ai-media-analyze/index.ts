@@ -1,6 +1,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleMediaAnalysis, HttpError, statusForCode } from '../_shared/media-analysis/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
+import { createMediaProviderFromEnv } from '../_shared/media-analysis/providers/openai.js';
+import { signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -34,16 +36,20 @@ function makeDependencies() {
   const serviceRoleKey = getServiceRoleKey();
   if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new HttpError('MEDIA_PROVIDER_NOT_CONFIGURED', 503);
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
+  const repository = createContextRepository(adminClient);
+  const { provider, providerId, model } = createMediaProviderFromEnv((key: string) => Deno.env.get(key));
   return {
     auth: createAuthRepository(supabaseUrl, anonKey),
-    repository: createContextRepository(adminClient),
-    provider: null,
+    repository,
+    provider,
     guards,
     config: {
-      providerId: Deno.env.get('AI_MEDIA_PROVIDER') ?? 'deterministic-fallback',
-      model: Deno.env.get('AI_MEDIA_MODEL') ?? 'not-configured',
+      providerId,
+      model,
       timeoutMs: Math.min(30_000, Math.max(3000, Number(Deno.env.get('AI_MEDIA_TIMEOUT_MS')) || 12_000)),
       maxAttempts: Math.min(3, Math.max(1, Number(Deno.env.get('AI_MEDIA_MAX_ATTEMPTS')) || 2)),
+      maxOutputTokens: Math.min(1400, Math.max(300, Number(Deno.env.get('AI_MEDIA_MAX_OUTPUT_TOKENS')) || 900)),
+      repository,
     },
     telemetry: { record: (event: unknown) => console.info('ai-media-analysis', event) },
   };
@@ -143,6 +149,13 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         .in('id', attachmentIds)
         .limit(50);
       return data ?? [];
+    },
+    async createSignedMediaUrl(attachment: { storageBucket: string; storagePath: string }) {
+      const { data, error } = await adminClient.storage
+        .from(attachment.storageBucket)
+        .createSignedUrl(attachment.storagePath, signedUrlTtlSeconds);
+      if (error || !data?.signedUrl) return null;
+      return data.signedUrl;
     },
   };
 }
