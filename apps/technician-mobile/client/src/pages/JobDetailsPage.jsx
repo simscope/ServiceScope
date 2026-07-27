@@ -111,7 +111,7 @@ const MODAL_BOX = {
 };
 
 /* ---------- Storage ---------- */
-const PHOTOS_BUCKET = 'job-photos';
+const PHOTOS_BUCKET = 'job-files';
 const INVOICES_BUCKET = 'invoices';
 const storage = () => supabase.storage.from(PHOTOS_BUCKET);
 const invStorage = () => supabase.storage.from(INVOICES_BUCKET);
@@ -233,11 +233,14 @@ function slugifyFileName(name) {
     .replace(/(^-|-$)/g, '');
   return `${translit || 'file'}.${ext}`;
 }
-function makeSafeStorageKey(jobId, originalName) {
+function makeSafeStorageKey(companyId, jobId, originalName) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const safeName = slugifyFileName(originalName);
-  return `${jobId}/${stamp}_${safeName}`;
+  return `${companyId}/${jobId}/${stamp}_${safeName}`;
 }
+const storageNameFromPath = (path) => String(path || '').split('/').pop() || 'file';
+const kindFromFile = (file) => (file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp|heic|heif)$/i.test(file.name) ? 'photo' : 'file');
+const kindFromMimeName = (mimeType, name) => (/^image\//i.test(mimeType) || /\.(jpg|jpeg|png|webp|gif|bmp|heic|heif)$/i.test(name) ? 'photo' : 'file');
 const isHeicLike = (file) =>
   file &&
   (file.type === 'image/heic' ||
@@ -398,7 +401,7 @@ export default function JobDetailsPage() {
       const { data: m } = await supabase.from('materials').select('*').eq('job_id', jobId).order('id', { ascending: true });
       setMaterials(m || []);
 
-      await loadPhotos();
+      await loadPhotos(j);
       await loadComments();
       await loadInvoices();
 
@@ -436,16 +439,48 @@ export default function JobDetailsPage() {
   }, [job, jobId]);
 
   /* ---------- photos load ---------- */
-  const loadPhotos = async () => {
-    const { data, error } = await storage().list(`${jobId}`, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
+  const companyIdForJob = (sourceJob = job) => profile?.company_id || profile?.org_id || sourceJob?.company_id || null;
+
+  const loadPhotos = async (sourceJob = job) => {
+    const companyId = companyIdForJob(sourceJob);
+    if (!companyId) {
+      setPhotos([]);
+      return;
+    }
+
+    const { data: rows, error: rowsError } = await supabase
+      .from('job_attachments')
+      .select('id,name,mime_type,size_bytes,kind,storage_bucket,storage_path,created_at')
+      .eq('job_id', jobId)
+      .order('created_at', { ascending: true });
+
+    if (!rowsError && rows?.length) {
+      setPhotos(rows.map((row) => {
+        const { data: pub } = supabase.storage.from(row.storage_bucket || PHOTOS_BUCKET).getPublicUrl(row.storage_path);
+        return {
+          id: row.id,
+          name: row.name || storageNameFromPath(row.storage_path),
+          mimeType: row.mime_type || 'application/octet-stream',
+          kind: row.kind || kindFromMimeName(row.mime_type, row.name),
+          path: row.storage_path,
+          bucket: row.storage_bucket || PHOTOS_BUCKET,
+          url: pub.publicUrl,
+        };
+      }));
+      setChecked({});
+      return;
+    }
+
+    const prefix = `${companyId}/${jobId}`;
+    const { data, error } = await storage().list(prefix, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
     if (error) {
       setPhotos([]);
       return;
     }
     const mapped = (data || []).map((o) => {
-      const full = `${jobId}/${o.name}`;
+      const full = `${prefix}/${o.name}`;
       const { data: pub } = storage().getPublicUrl(full);
-      return { name: o.name, url: pub.publicUrl };
+      return { name: o.name, mimeType: o.metadata?.mimetype || 'application/octet-stream', kind: kindFromMimeName(o.metadata?.mimetype, o.name), path: full, bucket: PHOTOS_BUCKET, url: pub.publicUrl };
     });
     setPhotos(mapped);
     setChecked({});
@@ -713,6 +748,12 @@ export default function JobDetailsPage() {
   const onPick = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
+    const companyId = companyIdForJob();
+    if (!companyId) {
+      alert('Company is not loaded yet. Refresh the job and try again.');
+      if (fileRef.current) fileRef.current.value = '';
+      return;
+    }
     setUploadBusy(true);
     try {
       for (const original of files) {
@@ -736,7 +777,7 @@ export default function JobDetailsPage() {
           file = original;
         }
 
-        const key = makeSafeStorageKey(jobId, file.name);
+        const key = makeSafeStorageKey(companyId, jobId, file.name);
         try {
           const { error } = await storage().upload(key, file, {
             cacheControl: '3600',
@@ -744,8 +785,21 @@ export default function JobDetailsPage() {
             contentType: file.type || 'application/octet-stream',
           });
           if (error) throw error;
+          const attachment = {
+            company_id: companyId,
+            job_id: jobId,
+            uploaded_by_user_id: user?.id ?? null,
+            name: file.name || storageNameFromPath(key),
+            mime_type: file.type || 'application/octet-stream',
+            size_bytes: file.size || 0,
+            kind: kindFromFile(file),
+            storage_bucket: PHOTOS_BUCKET,
+            storage_path: key,
+          };
+          const { error: attachmentError } = await supabase.from('job_attachments').insert(attachment);
+          if (attachmentError) throw attachmentError;
         } catch (upErr) {
-          alert(`Failed to upload file: ${file.name}`);
+          alert(`Failed to upload file: ${file.name}: ${upErr.message || 'error'}`);
         }
       }
     } finally {
@@ -756,17 +810,24 @@ export default function JobDetailsPage() {
   };
 
   // Delete file (edge auth + fallback)
-  const delPhoto = async (name) => {
+  const delPhoto = async (photo) => {
     if (!window.confirm('Delete file?')) return;
+    const target = typeof photo === 'string' ? photos.find((p) => p.name === photo) : photo;
+    if (!target?.path) return;
     try {
-      await callEdgeAuth('admin-delete-photo', { bucket: PHOTOS_BUCKET, path: `${jobId}/${name}` });
+      if (target.id) {
+        const { error: dbError } = await supabase.from('job_attachments').delete().eq('id', target.id);
+        if (dbError) throw dbError;
+      }
+      await callEdgeAuth('admin-delete-photo', { bucket: target.bucket || PHOTOS_BUCKET, path: target.path });
       await loadPhotos();
     } catch (e) {
-      const { error } = await storage().remove([`${jobId}/${name}`]);
+      const { error } = await supabase.storage.from(target.bucket || PHOTOS_BUCKET).remove([target.path]);
       if (error) {
         alert(`Failed to delete file: ${e.message || error.message || 'error'}`);
         return;
       }
+      if (target.id) await supabase.from('job_attachments').delete().eq('id', target.id);
       await loadPhotos();
     }
   };
@@ -776,7 +837,9 @@ export default function JobDetailsPage() {
   };
   const toggleOnePhoto = (name) => setChecked((s) => ({ ...s, [name]: !s[name] }));
   const downloadOne = async (name) => {
-    const { data, error } = await storage().download(`${jobId}/${name}`);
+    const target = photos.find((p) => p.name === name);
+    if (!target?.path) return;
+    const { data, error } = await supabase.storage.from(target.bucket || PHOTOS_BUCKET).download(target.path);
     if (error || !data) {
       alert('Failed to download file');
       return;
@@ -1624,7 +1687,7 @@ Services Licensed & Insured | Serving NYC and NJ`;
                 <button style={BTN} onClick={() => downloadOne(p.name)}>
                   Download
                 </button>
-                <button style={DANGER} onClick={() => delPhoto(p.name)}>
+                <button style={DANGER} onClick={() => delPhoto(p)}>
                   Delete
                 </button>
               </div>
