@@ -4,8 +4,20 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const filePath = path.join(root, 'src/components/portal/EmployeeFinancePage.tsx');
 let source = fs.readFileSync(filePath, 'utf8');
+const newline = source.includes('\r\n') ? '\r\n' : '\n';
+source = source.replace(/\r\n/g, '\n');
 
-if (source.includes('const selectedCommissionAmount = selectedCommissionJobs')) {
+function hasExpectedFinalState(value) {
+  return [
+    'const selectedCommissionAmount = selectedCommissionJobs.reduce',
+    'const commissionPaymentGroups = new Map<string, PayrollItemRow[]>',
+    '<h2>Payment history</h2>',
+    'Pay selected {money(selectedCommissionAmount)}',
+    'new Date(payment.paidAt).toLocaleString',
+  ].every((marker) => value.includes(marker));
+}
+
+if (hasExpectedFinalState(source)) {
   console.log('Payroll payment totals/history patch already applied.');
   process.exit(0);
 }
@@ -139,5 +151,5 @@ source = source.replace(
   "{periodDraft.paidAt ? `Paid ${new Date(periodDraft.paidAt).toLocaleString('en-US')}` : 'Not paid'}",
 );
 
-fs.writeFileSync(filePath, source);
+fs.writeFileSync(filePath, source.replace(/\n/g, newline));
 console.log('Payroll payment totals/history patch applied.');
