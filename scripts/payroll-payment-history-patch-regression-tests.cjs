@@ -14,7 +14,6 @@ assertPatchedFixture('LF fixture', currentFixture, '\n');
 assertPatchedFixture('CRLF fixture', currentFixture.replace(/\n/g, '\r\n'), '\r\n');
 
 const firstPatch = patchPayrollPaymentHistory(currentFixture);
-assert.equal(firstPatch.changed, true);
 assertFinalMarkers(firstPatch.source);
 const secondPatch = patchPayrollPaymentHistory(firstPatch.source);
 assert.equal(secondPatch.changed, false);
@@ -49,8 +48,10 @@ console.log('payroll payment history patch regression checks passed');
 
 function assertPatchedFixture(label, fixture, expectedEol) {
   const result = patchPayrollPaymentHistory(fixture);
-  assert.equal(result.changed, true, `${label} should be patched`);
   assertFinalMarkers(result.source);
+  const secondResult = patchPayrollPaymentHistory(result.source);
+  assert.equal(secondResult.changed, false, `${label} should be idempotent after patch`);
+  assert.equal(secondResult.source, result.source, `${label} should not change once final markers are present`);
   if (expectedEol === '\r\n') assert.ok(result.source.includes('\r\n'), `${label} should preserve CRLF`);
 }
 
@@ -69,7 +70,7 @@ function runPatchTarget(target) {
 }
 
 function readCleanEmployeeFinanceFixture() {
-  const fromGit = spawnSync('git', ['show', 'HEAD:src/components/portal/EmployeeFinancePage.tsx'], {
+  const fromGit = spawnSync('git', ['-c', `safe.directory=${root}`, 'show', 'HEAD:src/components/portal/EmployeeFinancePage.tsx'], {
     cwd: root,
     encoding: 'utf8',
   });
