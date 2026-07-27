@@ -41,6 +41,7 @@ using (
 );
 
 alter table public.job_attachments enable row level security;
+grant select, insert, delete on table public.job_attachments to authenticated;
 
 drop policy if exists job_attachments_insert_for_company_members on public.job_attachments;
 create policy job_attachments_insert_for_company_members
