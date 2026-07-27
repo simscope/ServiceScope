@@ -1,9 +1,11 @@
 import { ChangeEvent, useEffect, useState } from 'react';
+import { jsPDF } from 'jspdf';
 import type { EmailCompose, EmailComposeAttachment } from '../appTypes';
 import type { CompanyOnboardingProfile, JobAttachment, JobComment, JobDocumentType, JobInvoice, MaterialRow, MaterialStatus, ServiceJobStatus } from '../types';
 import type { JobCardData } from './JobCard';
 import { money } from '../utils/format';
 import { deleteJobFile } from '../services/jobFiles';
+import { sqlEq, supabaseRequest, uploadSupabaseStorageFile } from '../services/supabaseRest';
 import { canOpenJobInAiAssistant } from '../features/ai-assistant/assistantModel';
 import { attachmentUrl, downloadJobAttachment } from '../features/job-attachments/jobAttachmentFiles';
 
@@ -67,6 +69,7 @@ const jobStatuses: ServiceJobStatus[] = [
 
 const acceptedFileTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
 const acceptedExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.pdf'];
+const JOB_FILES_BUCKET = 'job-files';
 const materialStatuses: MaterialStatus[] = ['Needed', 'Ordered', 'Received', 'Installed', 'Returned'];
 
 function formatFileSize(sizeBytes: number) {
@@ -186,8 +189,9 @@ function nextInvoiceNumberPreview(jobNumber: string, invoices: JobInvoice[]) {
   return `INV-${jobNumber}-${String(nextIndex).padStart(2, '0')}`;
 }
 
-function textToBase64(value: string) {
-  const bytes = new TextEncoder().encode(value);
+async function blobToBase64(blob: Blob) {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
   let binary = '';
   bytes.forEach((byte) => {
     binary += String.fromCharCode(byte);
@@ -654,12 +658,147 @@ export function JobDetailPanel({
     writeInvoiceDocument(invoiceWindow, makeInvoiceHtml(invoice, printableDraft), print);
   }
 
+  function makeInvoicePdfBlob(invoice: JobInvoice, printableDraft = invoiceDraft) {
+    const documentType = invoice.documentType || printableDraft.documentType;
+    const lines = printableDraft.lines.filter((line) => line.name.trim() || invoiceLineAmount(line) > 0);
+    const subtotal = lines.reduce((sum, line) => sum + invoiceLineAmount(line), 0);
+    const total = Math.max(0, Number(printableDraft.balanceDue) || 0);
+    const companyName = profile.displayName || profile.legalName || 'Service company';
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 44;
+    let y = 44;
+
+    const drawText = (text: string, x: number, yy: number, options?: { align?: 'left' | 'center' | 'right' | 'justify' }) => {
+      doc.text(String(text || ''), x, yy, options);
+    };
+    const moneyText = (value: number) => money(value);
+    const addWrapped = (text: string, x: number, yy: number, width: number, lineHeight = 13) => {
+      const chunks = doc.splitTextToSize(String(text || ''), width);
+      chunks.forEach((chunk: string, index: number) => drawText(chunk, x, yy + index * lineHeight));
+      return yy + Math.max(1, chunks.length) * lineHeight;
+    };
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    drawText(companyName, margin, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    y += 16;
+    [profile.serviceAddress, profile.phone, profile.billingEmail, profile.website].filter(Boolean).forEach((line) => {
+      drawText(String(line), margin, y);
+      y += 12;
+    });
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(32);
+    drawText(documentType.toUpperCase(), pageWidth - margin, 54, { align: 'right' });
+    doc.setFontSize(10);
+    drawText(`# ${invoice.invoiceNumber}`, pageWidth - margin, 78, { align: 'right' });
+    drawText(`Date: ${printableDraft.invoiceDate}`, pageWidth - margin, 94, { align: 'right' });
+    doc.setFillColor(247, 249, 251);
+    doc.rect(pageWidth - margin - 210, 108, 210, 34, 'F');
+    doc.setFontSize(11);
+    drawText('Balance Due:', pageWidth - margin - 198, 130);
+    drawText(moneyText(total), pageWidth - margin - 12, 130, { align: 'right' });
+
+    y = 156;
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    drawText('Bill To:', margin, y);
+    y += 15;
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    [draft.organization || draft.clientName || 'Customer', draft.clientName, draft.address, draft.phone, draft.email].filter(Boolean).forEach((line) => {
+      drawText(String(line), margin, y);
+      y += 13;
+    });
+
+    y = Math.max(y + 18, 235);
+    const tableLeft = margin;
+    const col = { desc: tableLeft, qty: 352, price: 420, amount: 510 };
+    doc.setFillColor(52, 52, 52);
+    doc.rect(tableLeft, y, pageWidth - margin * 2, 24, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    drawText('Description', col.desc + 8, y + 16);
+    drawText('Qty', col.qty, y + 16, { align: 'right' });
+    drawText('Unit Price', col.price + 48, y + 16, { align: 'right' });
+    drawText('Amount', pageWidth - margin - 8, y + 16, { align: 'right' });
+    doc.setTextColor(5, 11, 18);
+    y += 24;
+    doc.setFont('helvetica', 'normal');
+
+    lines.forEach((line) => {
+      if (y > 700) {
+        doc.addPage();
+        y = 44;
+      }
+      const description = line.name.trim() || 'Service';
+      const wrapped = doc.splitTextToSize(description, 290);
+      const rowHeight = Math.max(26, wrapped.length * 12 + 12);
+      doc.setDrawColor(207, 216, 209);
+      doc.rect(tableLeft, y, pageWidth - margin * 2, rowHeight);
+      doc.setFontSize(9);
+      wrapped.forEach((chunk: string, index: number) => drawText(chunk, col.desc + 8, y + 16 + index * 12));
+      drawText(String(line.quantity), col.qty, y + 16, { align: 'right' });
+      drawText(moneyText(line.price), col.price + 48, y + 16, { align: 'right' });
+      drawText(moneyText(invoiceLineAmount(line)), pageWidth - margin - 8, y + 16, { align: 'right' });
+      y += rowHeight;
+    });
+
+    y += 18;
+    doc.setFont('helvetica', 'bold');
+    drawText('Subtotal:', pageWidth - margin - 150, y);
+    drawText(moneyText(subtotal), pageWidth - margin, y, { align: 'right' });
+    y += 18;
+    drawText('Total:', pageWidth - margin - 150, y);
+    drawText(moneyText(total), pageWidth - margin, y, { align: 'right' });
+
+    if (printableDraft.includeWarranty) {
+      y += 34;
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'bold');
+      drawText(`Warranty (${Number(printableDraft.warrantyDays) || 0} days):`, margin, y);
+      doc.setFont('helvetica', 'normal');
+      y = addWrapped(
+        `A ${Number(printableDraft.warrantyDays) || 0}-day limited warranty applies ONLY to the work performed and/or parts installed by ${companyName}. The warranty does not cover other components, normal wear, consumables, external damage, or third-party tampering. The warranty starts on the job completion date and is valid only when the invoice is paid in full.`,
+        margin,
+        y + 14,
+        pageWidth - margin * 2,
+      );
+    }
+
+    y += 20;
+    doc.setFontSize(8);
+    doc.setTextColor(82, 97, 88);
+    addWrapped(profile.paymentNotes || 'Thank you for your business.', margin, y, pageWidth - margin * 2, 11);
+
+    return doc.output('blob');
+  }
+
+  async function saveInvoicePdfFile(invoice: JobInvoice, printableDraft = invoiceDraft) {
+    const companyId = invoice.companyId || draft.companyId || job.companyId;
+    if (!companyId || !draft.id) return '';
+
+    const safeInvoiceNumber = invoice.invoiceNumber.replace(/[^a-zA-Z0-9._-]+/g, '-') || invoice.id;
+    const storagePath = `${companyId}/${draft.id}/invoices/${invoice.id}-${safeInvoiceNumber}.pdf`;
+    const pdfBlob = makeInvoicePdfBlob(invoice, printableDraft);
+    await uploadSupabaseStorageFile(JOB_FILES_BUCKET, storagePath, pdfBlob, 'application/pdf');
+    await supabaseRequest(`job_invoices?id=${sqlEq(invoice.id)}&company_id=${sqlEq(companyId)}`, {
+      method: 'PATCH',
+      body: { pdf_storage_path: storagePath },
+    });
+    return storagePath;
+  }
+
   function downloadInvoice(invoice: JobInvoice) {
-    const blob = new Blob([makeInvoiceHtml(invoice)], { type: 'text/html;charset=utf-8' });
+    const blob = makeInvoicePdfBlob(invoice);
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `${invoice.invoiceNumber}.html`;
+    anchor.download = `${invoice.invoiceNumber}.pdf`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -675,6 +814,12 @@ export function JobDetailPanel({
     try {
       const currentInvoiceDraft = invoiceDraft;
       const invoice = await onCreateInvoice(draft, materialDrafts, invoiceTotal, currentInvoiceDraft.documentType);
+      let pdfStoragePath = '';
+      try {
+        pdfStoragePath = await saveInvoicePdfFile(invoice, currentInvoiceDraft);
+      } catch (error) {
+        setInvoiceStatus(error instanceof Error ? `Invoice created, but PDF was not saved: ${error.message}` : 'Invoice created, but PDF was not saved.');
+      }
       const nextJob = {
         ...draft,
         invoices: [invoice, ...(draft.invoices ?? [])],
@@ -682,7 +827,7 @@ export function JobDetailPanel({
       setDraft(nextJob);
       setSelectedInvoiceIds([invoice.id]);
       setInvoiceEditorOpen(false);
-      setInvoiceStatus('Invoice created.');
+      if (pdfStoragePath) setInvoiceStatus('Invoice created and PDF saved.');
       openInvoice(invoice, currentInvoiceDraft, invoiceWindow);
     } catch (error) {
       const message = invoiceErrorMessage(error);
@@ -706,14 +851,14 @@ export function JobDetailPanel({
     ].join('\n');
   }
 
-  function makeInvoiceEmailAttachment(invoice: JobInvoice): EmailComposeAttachment {
-    const html = makeInvoiceHtml(invoice);
+  async function makeInvoiceEmailAttachment(invoice: JobInvoice): Promise<EmailComposeAttachment> {
+    const blob = makeInvoicePdfBlob(invoice);
     return {
       id: `invoice-email-${invoice.id}`,
-      fileName: `${invoice.invoiceNumber}.html`,
-      mimeType: 'text/html',
-      sizeBytes: new Blob([html]).size,
-      contentBase64: textToBase64(html),
+      fileName: `${invoice.invoiceNumber}.pdf`,
+      mimeType: 'application/pdf',
+      sizeBytes: blob.size,
+      contentBase64: await blobToBase64(blob),
     };
   }
 
@@ -757,9 +902,10 @@ export function JobDetailPanel({
     );
   }
 
-  function sendInvoices(items = selectedInvoices.length ? selectedInvoices : invoices) {
+  async function sendInvoices(items = selectedInvoices.length ? selectedInvoices : invoices) {
     if (!items.length) return;
-    composeEmail(`Invoice for job ${draft.jobNumber}`, makeInvoiceEmailBody(items), items.map(makeInvoiceEmailAttachment));
+    const attachments = await Promise.all(items.map(makeInvoiceEmailAttachment));
+    composeEmail(`Invoice for job ${draft.jobNumber}`, makeInvoiceEmailBody(items), attachments);
   }
 
   async function deleteInvoice(invoiceId: string) {
