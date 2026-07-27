@@ -782,17 +782,23 @@ button {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.ai-assistant-generation-settings {
+  grid-template-columns: 1fr 1fr;
+}
+
 .ai-assistant-facts .ai-assistant-panel-heading {
   grid-column: 1 / -1;
 }
 
 .ai-assistant-facts label,
+.ai-assistant-generation-settings label,
 .ai-assistant-draft {
   display: grid;
   gap: 8px;
 }
 
-.ai-assistant-facts label {
+.ai-assistant-facts label,
+.ai-assistant-generation-settings label {
   color: #526158;
   font-size: 13px;
   font-weight: 900;
@@ -864,6 +870,13 @@ button {
 
 .ai-assistant-draft-buttons {
   justify-content: flex-end;
+}
+
+.ai-assistant-ai-status {
+  margin: 0;
+  color: #526158;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 .ai-assistant-drafts {

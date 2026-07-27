@@ -20,8 +20,11 @@ import {
   scrubAssistantText,
 } from '../../features/ai-assistant/assistantModel';
 import { attachmentUrl, downloadJobAttachments } from '../../features/job-attachments/jobAttachmentFiles';
+import { generateAiContent } from '../../features/content-engine/clientApi';
+import type { AssistantTone, ContentGenerationResult } from '../../features/content-engine/contracts';
 
 const mediaLabels: AssistantMediaLabel[] = ['Overview', 'Problem', 'Repair', 'Part', 'Result'];
+const assistantTones: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
 
 type AiAssistantPageProps = {
   selectedJob: ServiceJob | null;
@@ -34,12 +37,18 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const [mediaState, setMediaState] = useState<AssistantMediaState[]>([]);
   const [draftWorkspace, setDraftWorkspace] = useState<AssistantDraftWorkspaceState>({ drafts: {}, statuses: {} });
   const [copyStatus, setCopyStatus] = useState('');
+  const [tone, setTone] = useState<AssistantTone>('Professional');
+  const [locale, setLocale] = useState('en-US');
+  const [aiStatusByChannel, setAiStatusByChannel] = useState<Partial<Record<AssistantChannel, string>>>({});
+  const [aiPendingChannel, setAiPendingChannel] = useState<AssistantChannel | null>(null);
 
   useEffect(() => {
     setLocalFacts({});
     setMediaState([]);
     setDraftWorkspace({ drafts: {}, statuses: {} });
     setCopyStatus('');
+    setAiStatusByChannel({});
+    setAiPendingChannel(null);
   }, [selectedJob?.id]);
 
   const summary = selectedJob ? buildAssistantJobSummary(selectedJob) : null;
@@ -120,6 +129,39 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
     const result = regenerateUneditedAssistantDrafts(generatedDrafts, draftWorkspace.drafts, draftWorkspace.statuses);
     setDraftWorkspace({ drafts: result.drafts, statuses: result.statuses });
     setCopyStatus(`${result.regenerated} generated draft${result.regenerated === 1 ? '' : 's'} refreshed. Edited drafts were not changed.`);
+  }
+
+  async function generateChannelWithAi(channel: AssistantChannel) {
+    if (!selectedJob || !assistantContext || aiPendingChannel) return;
+    const requestJobId = selectedJob.id;
+    setAiPendingChannel(channel);
+    setAiStatusByChannel((current) => ({ ...current, [channel]: 'Generating with AI...' }));
+    try {
+      const result = await generateAiContent({
+        jobId: requestJobId,
+        channel,
+        tone,
+        locale,
+        localFacts,
+        mediaState,
+        idempotencyKey: `${requestJobId}:${channel}:${Date.now()}:${crypto.randomUUID()}`,
+      });
+      if (selectedJob.id !== requestJobId) return;
+      setDraftWorkspace((current) => ({
+        drafts: { ...current.drafts, [channel]: contentResultToDraftText(result) },
+        statuses: { ...current.statuses, [channel]: 'generated' },
+      }));
+      const providerLabel = result.provider === 'deterministic-fallback' ? 'Deterministic fallback' : `AI provider: ${result.provider}`;
+      const warningText = result.warnings.length ? ` ${result.warnings.map((warning) => warning.message).join(' ')}` : '';
+      setAiStatusByChannel((current) => ({ ...current, [channel]: `${providerLabel}.${warningText}`.trim() }));
+    } catch (error) {
+      setAiStatusByChannel((current) => ({
+        ...current,
+        [channel]: error instanceof Error ? error.message : 'AI generation failed. Existing draft was kept.',
+      }));
+    } finally {
+      setAiPendingChannel((current) => (current === channel ? null : current));
+    }
   }
 
   async function downloadSelectedMedia() {
@@ -270,6 +312,23 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
             })}
           </section>
 
+          <section className="ai-assistant-panel ai-assistant-generation-settings">
+            <div className="ai-assistant-panel-heading">
+              <h2>AI Generation</h2>
+              <Bot size={18} aria-hidden="true" />
+            </div>
+            <label>
+              Tone
+              <select value={tone} onChange={(event) => setTone(event.target.value as AssistantTone)}>
+                {assistantTones.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Locale
+              <input value={locale} onChange={(event) => setLocale(event.target.value)} />
+            </label>
+          </section>
+
           <section className="ai-assistant-draft-actions">
             <button className="primary-button" type="button" onClick={copyAllSelected} disabled={selectedDrafts.length === 0}>
               <Copy size={16} aria-hidden="true" />
@@ -288,6 +347,14 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
                   <h2>{draft.channel}</h2>
                   <div className="ai-assistant-draft-buttons">
                     <span>{draftWorkspace.statuses[draft.channel] === 'edited' ? 'Edited' : 'Generated'}</span>
+                    <button
+                      className="secondary-button compact"
+                      type="button"
+                      onClick={() => generateChannelWithAi(draft.channel)}
+                      disabled={Boolean(aiPendingChannel)}
+                    >
+                      {aiPendingChannel === draft.channel ? 'Generating...' : 'Generate with AI'}
+                    </button>
                     <button className="secondary-button compact" type="button" onClick={() => regenerateDraft(draft.channel)}>
                       Regenerate draft
                     </button>
@@ -311,6 +378,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
                     <span key={`${draft.channel}-${claim.id}`}>{claim.label}: {claim.source}</span>
                   ))}
                 </div>
+                {aiStatusByChannel[draft.channel] ? <p className="ai-assistant-ai-status">{aiStatusByChannel[draft.channel]}</p> : null}
               </article>
             ))}
           </section>
@@ -322,6 +390,15 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
       </p>
     </section>
   );
+}
+
+function contentResultToDraftText(result: ContentGenerationResult) {
+  return [
+    result.content.headline,
+    result.content.body,
+    result.content.callToAction ? `CTA: ${result.content.callToAction}` : '',
+    result.content.hashtags.length ? result.content.hashtags.join(' ') : '',
+  ].filter(Boolean).join('\n');
 }
 
 async function copyText(text: string) {
