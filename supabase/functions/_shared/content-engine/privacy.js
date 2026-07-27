@@ -26,8 +26,26 @@ export function safeTelemetryPayload(event) {
     code,
     latencyMs,
     attempts,
+    httpStatus,
+    providerRequestId,
+    providerErrorType,
+    providerErrorCode,
   } = event;
-  return { correlationId, provider, model, channel, promptVersion, success, code, latencyMs, attempts };
+  return {
+    correlationId,
+    provider,
+    model,
+    channel,
+    promptVersion,
+    success,
+    code,
+    latencyMs,
+    attempts,
+    httpStatus,
+    providerRequestId,
+    providerErrorType,
+    providerErrorCode,
+  };
 }
 
 function escapeRegExp(value) {

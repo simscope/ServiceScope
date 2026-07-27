@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { handleContentGeneration } from '../supabase/functions/_shared/content-engine/applicationService.js';
 import { createMemoryGuards } from '../supabase/functions/_shared/content-engine/rateLimit.js';
-import { createOpenAiProvider, createProviderFromEnv } from '../supabase/functions/_shared/content-engine/providers/openai.js';
+import { createOpenAiProvider, createProviderFromEnv, mapOpenAiError, preflightOpenAiCredentials } from '../supabase/functions/_shared/content-engine/providers/openai.js';
 import { validateRequestBody } from '../supabase/functions/_shared/content-engine/schemas.js';
 import { buildPrompt } from '../supabase/functions/_shared/content-engine/prompts.js';
 
@@ -209,6 +209,54 @@ const nonRetry = await handleContentGeneration(makeDependencies({
 assert.equal(nonRetryCalls, 1);
 assert.equal(nonRetry.provider, 'deterministic-fallback');
 
+const providerMappings = [
+  { status: 401, body: { error: { type: 'invalid_request_error', code: 'invalid_api_key' } }, code: 'PROVIDER_AUTH_FAILED', retryable: false },
+  { status: 403, body: { error: { type: 'insufficient_permissions', code: 'access_denied' } }, code: 'PROVIDER_ACCESS_DENIED', retryable: false },
+  { status: 404, body: { error: { type: 'invalid_request_error', code: 'model_not_found' } }, code: 'PROVIDER_MODEL_UNAVAILABLE', retryable: false },
+  { status: 429, body: { error: { type: 'insufficient_quota', code: 'insufficient_quota' } }, code: 'PROVIDER_QUOTA_EXCEEDED', retryable: false },
+  { status: 429, body: { error: { type: 'rate_limit_exceeded', code: 'rate_limit_exceeded' } }, code: 'PROVIDER_RATE_LIMITED', retryable: true },
+  { status: 500, body: { error: { type: 'server_error', code: 'server_error' } }, code: 'PROVIDER_UNAVAILABLE', retryable: true },
+];
+for (const row of providerMappings) {
+  const mappedError = mapOpenAiError(mockResponse(row.status), row.body);
+  assert.equal(mappedError.code, row.code);
+  assert.equal(mappedError.retryable, row.retryable);
+  assert.equal(mappedError.httpStatus, row.status);
+  assert.equal(mappedError.providerRequestId, 'req-test');
+}
+
+for (const row of providerMappings.filter((item) => !item.retryable)) {
+  let calls = 0;
+  const result = await handleContentGeneration(makeDependencies({
+    provider: {
+      id: 'mock-provider',
+      async generate() {
+        calls += 1;
+        throw mapOpenAiError(mockResponse(row.status), row.body);
+      },
+    },
+    config: { maxAttempts: 3 },
+  }));
+  assert.equal(calls, 1, `${row.code} should not be retried`);
+  assert.equal(result.provider, 'deterministic-fallback');
+  assert.match(result.warnings.map((warning) => warning.code).join(','), new RegExp(row.code));
+}
+
+let rateLimitCalls = 0;
+const rateLimited = await handleContentGeneration(makeDependencies({
+  provider: {
+    id: 'mock-provider',
+    async generate(providerRequest) {
+      rateLimitCalls += 1;
+      if (rateLimitCalls === 1) throw mapOpenAiError(mockResponse(429), { error: { type: 'rate_limit_exceeded', code: 'rate_limit_exceeded' } });
+      return providerResult(providerRequest.channel, [{ text: 'work', evidenceIds: ['repair-performed'] }]);
+    },
+  },
+  config: { maxAttempts: 2 },
+}));
+assert.equal(rateLimitCalls, 2);
+assert.equal(rateLimited.provider, 'mock-provider');
+
 const sharedGuards = createMemoryGuards();
 let idempotentCalls = 0;
 const idemDeps = makeDependencies({
@@ -252,6 +300,31 @@ const mapped = await openAiProvider.generate({ channel: 'Instagram', prompt: 'pr
 assert.equal(mapped.provider, 'openai');
 assert.equal(mapped.rawJson.schemaVersion, 'content-generation-result-v1');
 assert.equal(mapped.usage.totalTokens, 10);
+
+const openAiAuthFailure = createOpenAiProvider({
+  apiKey: 'server-only-key',
+  model: 'test-model',
+  async fetchImpl() {
+    return mockResponse(401, { error: { type: 'invalid_request_error', code: 'invalid_api_key', message: 'do not expose' } });
+  },
+});
+await assert.rejects(() => openAiAuthFailure.generate({ channel: 'Instagram', prompt: 'prompt' }, { signal: new AbortController().signal }), /PROVIDER_AUTH_FAILED/);
+
+const modelPreflight = await preflightOpenAiCredentials({
+  apiKey: 'server-only-key',
+  model: 'test-model',
+  async fetchImpl(url, init) {
+    assert.match(url, /api\.openai\.com\/v1\/models\/test-model/);
+    assert.match(init.headers.Authorization, /server-only-key/);
+    return mockResponse(404, { error: { type: 'invalid_request_error', code: 'model_not_found', message: 'do not expose' } });
+  },
+});
+assert.equal(modelPreflight.ok, false);
+assert.equal(modelPreflight.code, 'PROVIDER_MODEL_UNAVAILABLE');
+assert.equal(modelPreflight.httpStatus, 404);
+assert.equal(modelPreflight.providerRequestId, 'req-test');
+assert.equal(modelPreflight.providerErrorCode, 'model_not_found');
+
 const configured = createProviderFromEnv((key) => ({
   AI_CONTENT_PROVIDER: 'openai',
   AI_CONTENT_MODEL: 'test-model',
@@ -304,6 +377,15 @@ function providerResult(channel, claims, content = {}) {
       content: { body: 'Service update based on documented evidence.', hashtags: ['#ServiceUpdate'], ...content },
       claims,
     },
+  };
+}
+
+function mockResponse(status, body = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name) => (String(name).toLowerCase() === 'x-request-id' ? 'req-test' : undefined) },
+    async json() { return body; },
   };
 }
 

@@ -1,7 +1,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleContentGeneration, HttpError } from '../_shared/content-engine/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
-import { createProviderFromEnv } from '../_shared/content-engine/providers/openai.js';
+import { createPreflightFromEnv, createProviderFromEnv } from '../_shared/content-engine/providers/openai.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -14,9 +14,14 @@ Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed', code: 'INVALID_REQUEST' }, 405);
   try {
+    const rawBody = await request.text();
+    const parsedBody = safeJson(rawBody);
+    if (parsedBody?.schemaVersion === 'content-engine-provider-preflight-v1') {
+      return jsonResponse(await handleProviderPreflight(request.headers.get('Authorization') ?? ''));
+    }
     const dependencies = makeDependencies();
     const result = await handleContentGeneration({
-      rawBody: await request.text(),
+      rawBody,
       authorization: request.headers.get('Authorization') ?? '',
       ...dependencies,
     });
@@ -28,6 +33,38 @@ Deno.serve(async (request) => {
   }
 });
 
+async function handleProviderPreflight(authorization: string) {
+  if (!authorization?.startsWith('Bearer ')) throw new HttpError('AUTH_REQUIRED', 401);
+  const dependencies = makeDependencies();
+  await dependencies.auth.resolveSession(authorization);
+  if (dependencies.config.providerId !== 'openai') {
+    return { ok: false, provider: dependencies.config.providerId, model: dependencies.config.model, code: 'ENGINE_NOT_CONFIGURED' };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), dependencies.config.timeoutMs);
+  try {
+    const result = await dependencies.preflight({ signal: controller.signal });
+    dependencies.telemetry.record({
+      correlationId: 'provider-preflight',
+      provider: 'openai',
+      model: dependencies.config.model,
+      channel: 'preflight',
+      promptVersion: 'provider-preflight-v1',
+      success: result.ok,
+      code: result.code,
+      latencyMs: 0,
+      attempts: 1,
+      httpStatus: result.httpStatus,
+      providerRequestId: result.providerRequestId,
+      providerErrorType: result.providerErrorType,
+      providerErrorCode: result.providerErrorCode,
+    });
+    return result;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function makeDependencies() {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
@@ -35,10 +72,12 @@ function makeDependencies() {
   if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new HttpError('ENGINE_NOT_CONFIGURED', 500);
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   const { provider, providerId, model } = createProviderFromEnv((key) => Deno.env.get(key));
+  const preflight = createPreflightFromEnv((key) => Deno.env.get(key));
   return {
     auth: createAuthRepository(supabaseUrl, anonKey),
     repository: createContextRepository(adminClient),
     provider,
+    preflight,
     guards,
     config: {
       providerId,
@@ -168,6 +207,15 @@ function statusForCode(code: string) {
   if (code === 'FORBIDDEN' || code === 'JOB_NOT_FOUND') return 404;
   if (code === 'ENGINE_NOT_CONFIGURED') return 500;
   return 400;
+}
+
+function safeJson(rawBody: string) {
+  try {
+    const value = JSON.parse(rawBody || '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
 }
 
 function getServiceRoleKey() {
