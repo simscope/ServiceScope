@@ -128,7 +128,7 @@ export function parseProviderMediaResult(rawJson, { request, context, provider, 
 }
 
 export function validateProviderPayloadShape(value, context) {
-  const diagnostics = { missingFields: [], unexpectedFields: [], invalidTypePaths: [] };
+  const diagnostics = { missingFields: [], unexpectedFields: [], invalidTypePaths: [], privacyDiagnostics: [] };
   if (!isPlainObject(value)) throw invalidProviderOutput(withSubreason(diagnostics, ['$']));
   collectObjectDiagnostics(value, providerRootFields, '$', diagnostics);
   rejectForbiddenFields(value, '$', diagnostics);
@@ -156,13 +156,14 @@ export function validateProviderPayloadShape(value, context) {
       } else {
         if (attachment.findings.length > maxFindingsPerAttachment) diagnostics.invalidTypePaths.push(`${path}.findings`);
         totalFindings += attachment.findings.length;
-        attachment.findings.forEach((finding, findingIndex) => validateProviderFinding(finding, `${path}.findings[${findingIndex}]`, diagnostics, context.privateValues));
+        attachment.findings.forEach((finding, findingIndex) => validateProviderFinding(finding, `${path}.findings[${findingIndex}]`, diagnostics, context.privateValues, attachment.attachmentId));
       }
     });
     if (totalFindings > maxTotalFindings) diagnostics.invalidTypePaths.push('$.attachments.findings');
   }
   validateStringArray(value.recommendations, '$.recommendations', diagnostics, maxRecommendationCount, 160);
   validateStringArray(value.missingShots, '$.missingShots', diagnostics, maxMissingShotCount, 120);
+  if (diagnostics.privacyDiagnostics.length) throw privacyProviderOutput(diagnostics);
   if (diagnostics.missingFields.length || diagnostics.unexpectedFields.length || diagnostics.invalidTypePaths.length) throw invalidProviderOutput(diagnostics);
   return {
     schemaVersion: providerPayloadSchemaVersion,
@@ -295,7 +296,7 @@ function safeWarningMessage(code) {
   return 'Media analysis could not be completed; metadata-only fallback was returned.';
 }
 
-function validateProviderFinding(finding, path, diagnostics, privateValues) {
+function validateProviderFinding(finding, path, diagnostics, privateValues, attachmentId) {
   if (!isPlainObject(finding)) {
     diagnostics.invalidTypePaths.push(path);
     return;
@@ -309,9 +310,17 @@ function validateProviderFinding(finding, path, diagnostics, privateValues) {
     diagnostics.invalidTypePaths.push(`${path}.explanation`);
   } else {
     try {
-      assertSafeFindingText(finding.explanation, privateValues);
-    } catch {
-      diagnostics.invalidTypePaths.push(`${path}.explanation`);
+      assertSafeFindingText(finding.explanation, privateValues, {
+        path: `${path}.explanation`,
+        attachmentId,
+        findingCategory: typeof finding.category === 'string' ? finding.category : undefined,
+      });
+    } catch (error) {
+      if (error?.code === 'MEDIA_PRIVACY_VALIDATION_FAILED' && Array.isArray(error?.details?.privacyDiagnostics)) {
+        diagnostics.privacyDiagnostics.push(...error.details.privacyDiagnostics);
+      } else {
+        diagnostics.invalidTypePaths.push(`${path}.explanation`);
+      }
     }
   }
   if (!riskLevels.includes(finding.riskLevel)) diagnostics.invalidTypePaths.push(`${path}.riskLevel`);
@@ -361,6 +370,12 @@ function invalidProviderOutput(diagnostics) {
   });
 }
 
+function privacyProviderOutput(diagnostics) {
+  throw httpError('MEDIA_PRIVACY_VALIDATION_FAILED', 500, {
+    details: { privacyDiagnostics: uniqueDiagnostics(diagnostics.privacyDiagnostics) },
+  });
+}
+
 function withSubreason(diagnostics, extraInvalidPaths = []) {
   diagnostics.invalidTypePaths.push(...extraInvalidPaths);
   return diagnostics;
@@ -372,6 +387,18 @@ function isPlainObject(value) {
 
 function uniqueSorted(values) {
   return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function uniqueDiagnostics(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(value);
+  }
+  return result;
 }
 
 export { evidenceTypes };

@@ -15,6 +15,7 @@ export function safeMediaTelemetryPayload(event) {
     providerRequestId: event.providerRequestId,
     providerErrorType: event.providerErrorType,
     providerErrorCode: event.providerErrorCode,
+    privacyDiagnostics: safePrivacyDiagnostics(event.privacyDiagnostics),
     attachmentCount: attachments.length,
     mediaKindCounts: countBy(attachments, 'mediaKind'),
     byteBucket: bucketBytes(totalBytes),
@@ -37,4 +38,17 @@ function countBy(items, field) {
     acc[key] = (acc[key] ?? 0) + 1;
     return acc;
   }, {});
+}
+
+function safePrivacyDiagnostics(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 8).map((item) => ({
+    subreason: String(item?.subreason ?? 'UNKNOWN_PRIVACY_REASON'),
+    path: String(item?.path ?? '$'),
+    detector: String(item?.detector ?? 'unknown'),
+    patternClass: String(item?.patternClass ?? item?.subreason ?? 'UNKNOWN_PRIVACY_REASON'),
+    stringLengthBucket: String(item?.stringLengthBucket ?? 'unknown'),
+    attachmentId: typeof item?.attachmentId === 'string' ? item.attachmentId : undefined,
+    findingCategory: typeof item?.findingCategory === 'string' ? item.findingCategory : undefined,
+  }));
 }

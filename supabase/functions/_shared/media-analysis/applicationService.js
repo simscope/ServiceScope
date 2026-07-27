@@ -90,6 +90,7 @@ async function analyzeWithProvider({ request, context, provider, config, telemet
       providerRequestId: error?.providerRequestId,
       providerErrorType: error?.providerErrorType,
       providerErrorCode: error?.providerErrorCode,
+      privacyDiagnostics: error?.details?.privacyDiagnostics,
       attachments: context.attachments,
     });
     return buildMediaAnalysisResult({

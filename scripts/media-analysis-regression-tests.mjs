@@ -19,6 +19,11 @@ import {
   mapOpenAiMediaError,
 } from '../supabase/functions/_shared/media-analysis/providers/openai.js';
 import { createMemoryGuards } from '../supabase/functions/_shared/content-engine/rateLimit.js';
+import {
+  assertNoPrivateValues,
+  buildKnownPrivateValues,
+  collectPrivacyDiagnostics,
+} from '../supabase/functions/_shared/media-analysis/privacy.js';
 
 const assert = {
   equal(actual, expected, message = `Expected ${actual} to equal ${expected}`) {
@@ -320,6 +325,56 @@ for (const [label, override] of invalidPayloads) {
   assert.throws(() => validateProviderPayloadShape(providerPayload(override), context), /MEDIA_INVALID_PROVIDER_OUTPUT|MEDIA_PRIVACY_VALIDATION_FAILED/, label);
 }
 
+const safeFindingPayloads = [
+  ['equipment overview', { category: 'equipment_overview', confidence: 0.73, explanation: 'Could be useful as an equipment overview.', riskLevel: 'low' }],
+  ['possible problem detail without diagnosis', { category: 'possible_problem_detail', confidence: 0.61, explanation: 'Possible area for technician review near the connection.', riskLevel: 'medium' }],
+  ['pipe dimensions', { category: 'equipment_overview', confidence: 0.54, explanation: 'Pipe sizes may include 1/2 and 3/4 inch sections.', riskLevel: 'low' }],
+  ['temperature and pressure values', { category: 'equipment_overview', confidence: 0.44, explanation: 'May show gauge context around 72F and 120 psi.', riskLevel: 'low' }],
+  ['confidence decimal wording', { category: 'unclear', confidence: 0.42, explanation: 'Confidence is limited because part of the equipment is unclear.', riskLevel: 'low' }],
+  ['possible serial without transcription', { category: 'possible_serial_or_nameplate', confidence: 0.52, explanation: 'May contain a serial or nameplate.', riskLevel: 'medium' }],
+  ['possible screen without OCR', { category: 'possible_screen', confidence: 0.48, explanation: 'Possible screen visible. Review for identifying information.', riskLevel: 'medium' }],
+  ['generic pipe wording', { category: 'equipment_overview', confidence: 0.66, explanation: 'Pipe and equipment connection may be useful for manual review.', riskLevel: 'low' }],
+];
+for (const [label, finding] of safeFindingPayloads) {
+  const safePayload = providerPayload({ attachments: [{ attachmentId: 'photo-1', findings: [finding] }] });
+  const parsedSafe = validateProviderPayloadShape(safePayload, context);
+  assert.equal(parsedSafe.attachments[0].findings[0].category, finding.category, `${label} should pass`);
+}
+
+const unsafeFindingPayloads = [
+  ['known customer name', { category: 'possible_personal_identifier', confidence: 0.5, explanation: 'Shows Jane Customer.', riskLevel: 'high' }, 'KNOWN_PRIVATE_VALUE_MATCH'],
+  ['organization', { category: 'possible_customer_document', confidence: 0.5, explanation: 'Shows Private Org.', riskLevel: 'high' }, 'KNOWN_PRIVATE_VALUE_MATCH'],
+  ['email', { category: 'possible_phone_or_email', confidence: 0.5, explanation: 'Shows jane@example.test.', riskLevel: 'high' }, 'EMAIL_PATTERN'],
+  ['phone', { category: 'possible_phone_or_email', confidence: 0.5, explanation: 'Shows 555-123-4567.', riskLevel: 'high' }, 'PHONE_PATTERN'],
+  ['full address', { category: 'possible_address', confidence: 0.5, explanation: 'Shows 123 Market Street.', riskLevel: 'high' }, 'ADDRESS_PATTERN'],
+  ['long serial digits', { category: 'possible_serial_or_nameplate', confidence: 0.5, explanation: 'Serial number may be 123456789.', riskLevel: 'high' }, 'LONG_DIGIT_SEQUENCE'],
+  ['barcode transcription', { category: 'possible_barcode', confidence: 0.5, explanation: 'Barcode reads 9876543210.', riskLevel: 'high' }, 'OCR_LIKE_TRANSCRIPTION'],
+  ['ocr sentence', { category: 'possible_screen', confidence: 0.5, explanation: 'Screen says service code ready.', riskLevel: 'high' }, 'OCR_LIKE_TRANSCRIPTION'],
+  ['confirmed brand model serial', { category: 'possible_serial_or_nameplate', confidence: 0.5, explanation: 'Model is XR95 and serial number is AB1234567.', riskLevel: 'high' }, 'FORBIDDEN_CONFIRMED_IDENTITY'],
+  ['diagnosis', { category: 'possible_problem_detail', confidence: 0.5, explanation: 'Diagnosed a failed compressor.', riskLevel: 'high' }, 'FORBIDDEN_DIAGNOSTIC_CLAIM'],
+  ['repair success', { category: 'finished_result', confidence: 0.5, explanation: 'Repair completed and verified operation.', riskLevel: 'high' }, 'FORBIDDEN_DIAGNOSTIC_CLAIM'],
+];
+for (const [label, finding, subreason] of unsafeFindingPayloads) {
+  const error = assert.throws(() => validateProviderPayloadShape(providerPayload({ attachments: [{ attachmentId: 'photo-1', findings: [finding] }] }), context), /MEDIA_PRIVACY_VALIDATION_FAILED/);
+  assert.equal(error.code, 'MEDIA_PRIVACY_VALIDATION_FAILED', `${label} should fail privacy validation`);
+  assert.equal(error.details.privacyDiagnostics[0].subreason, subreason, `${label} should report safe subreason`);
+  assert.equal(error.details.privacyDiagnostics[0].path, '$.attachments[0].findings[0].explanation');
+  assert.equal(error.details.privacyDiagnostics[0].attachmentId, 'photo-1');
+  assert.equal(error.details.privacyDiagnostics[0].findingCategory, finding.category);
+  assert.doesNotMatch(JSON.stringify(error.details.privacyDiagnostics), /Jane Customer|Private Org|jane@example|123 Market|123456789|AB1234567|failed compressor|Repair completed/i);
+}
+
+assert.deepEqual(buildKnownPrivateValues(['', null, 0, '0', 'in', 'job', 'open', 'Completed', 'Appliance', 'pipe', '120']), []);
+assert.deepEqual(buildKnownPrivateValues(['Jane Customer', 'Private Org', '123 Market Street']).sort(), ['123 Market Street', 'Jane Customer', 'Private Org'].sort());
+assertNoPrivateValues('Open pipe and equipment overview.', ['', null, 0, '0', 'in', 'job', 'open', 'Completed', 'Appliance', 'pipe', '120']);
+assert.throws(() => assertNoPrivateValues('Technician noted jane customer near paperwork.', ['Jane Customer']), /MEDIA_PRIVACY_VALIDATION_FAILED/);
+assert.throws(() => assertNoPrivateValues('Technician noted JANE CUSTOMER near paperwork.', ['Jane Customer']), /MEDIA_PRIVACY_VALIDATION_FAILED/);
+assert.throws(() => assertNoPrivateValues('Technician noted Jane-Customer near paperwork.', ['Jane Customer']), /MEDIA_PRIVACY_VALIDATION_FAILED/);
+const safeDiagnostics = collectPrivacyDiagnostics('Screen says service code ready.', ['Jane Customer'], { path: '$.attachments[0].findings[0].explanation', attachmentId: 'photo-1', findingCategory: 'possible_screen' });
+assert.equal(safeDiagnostics[0].subreason, 'OCR_LIKE_TRANSCRIPTION');
+assert.deepEqual(Object.keys(safeDiagnostics[0]).sort(), ['attachmentId', 'detector', 'findingCategory', 'path', 'patternClass', 'stringLengthBucket', 'subreason'].sort());
+assert.doesNotMatch(JSON.stringify(safeDiagnostics), /service code ready|Jane Customer/i);
+
 const prompt = buildMediaPrompt({ request: validated, context, mediaInputs: [{ attachmentId: 'photo-1', mimeType: 'image/jpeg' }] });
 assert.match(prompt, /suggestions, not facts/);
 assert.match(prompt, /Never diagnose equipment/);
@@ -446,12 +501,17 @@ const incompleteFallback = await handleMediaAnalysis(makeDependencies({
 assert.equal(incompleteFallback.provider, 'deterministic-fallback');
 assert.match(incompleteFallback.warnings.map((warning) => warning.code).join(','), /MEDIA_ANALYSIS_INCOMPLETE/);
 
+const unsafeTelemetryEvents = [];
 const unsafeOutputFallback = await handleMediaAnalysis(makeDependencies({
+  telemetry: { record: (event) => unsafeTelemetryEvents.push(event) },
   provider: { id: 'mock-media-provider', async analyze() { return providerRawResult(providerPayload({ attachments: [{ attachmentId: 'photo-1', findings: [{ category: 'possible_address', confidence: 0.5, explanation: 'Shows 123 Market Street.', riskLevel: 'high' }] }] })); } },
 }));
 assert.equal(unsafeOutputFallback.provider, 'deterministic-fallback');
 assert.match(unsafeOutputFallback.warnings.map((warning) => warning.code).join(','), /MEDIA_INVALID_PROVIDER_OUTPUT|MEDIA_PRIVACY_VALIDATION_FAILED/);
 assert.equal(unsafeOutputFallback.attachments[0].visualAnalysisPerformed, false);
+assert.equal(unsafeTelemetryEvents[0].privacyDiagnostics[0].subreason, 'ADDRESS_PATTERN');
+assert.deepEqual(Object.keys(unsafeTelemetryEvents[0].privacyDiagnostics[0]).sort(), ['attachmentId', 'detector', 'findingCategory', 'path', 'patternClass', 'stringLengthBucket', 'subreason'].sort());
+assert.doesNotMatch(JSON.stringify(unsafeTelemetryEvents[0]), /123 Market|Shows 123|Jane Customer|Private Org|prompt|response|signed|token/i);
 
 let videoOnlyCalls = 0;
 const videoOnly = await handleMediaAnalysis(makeDependencies({

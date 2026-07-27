@@ -7,6 +7,7 @@ import {
   supportedVideoMimeTypes,
 } from './contracts.js';
 import { httpError } from './errors.js';
+import { buildKnownPrivateValues } from './privacy.js';
 
 export async function buildAuthorizedMediaContext({ request, session, repository }) {
   const job = await repository.getJob(request.jobId);
@@ -44,7 +45,7 @@ export async function buildAuthorizedMediaContext({ request, session, repository
     actorId: actorId(session),
     status: String(job.status),
     attachments: validatedAttachments,
-    privateValues: unique([
+    privateValues: buildKnownPrivateValues([
       job.job_number,
       job.notes,
       job.service_call_fee_cents,
@@ -99,6 +100,3 @@ function actorId(session) {
   return String(session.user_id ?? session.auth_user_id ?? session.id ?? session.email ?? 'unknown');
 }
 
-function unique(values) {
-  return Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
-}
