@@ -61,12 +61,13 @@ const assert = {
   },
 };
 
-const [edgeIndex, aiPage, publicContracts, openAiAdapter, appService] = await Promise.all([
+const [edgeIndex, aiPage, publicContracts, openAiAdapter, appService, supabaseRest] = await Promise.all([
   readFile('supabase/functions/ai-media-analyze/index.ts', 'utf8'),
   readFile('src/components/portal/AiAssistantPage.tsx', 'utf8'),
   readFile('src/features/content-engine/contracts.ts', 'utf8'),
   readFile('supabase/functions/_shared/media-analysis/providers/openai.js', 'utf8'),
   readFile('supabase/functions/_shared/media-analysis/applicationService.js', 'utf8'),
+  readFile('src/services/supabaseRest.ts', 'utf8'),
 ]);
 const [mediaClientApi, mediaClientContracts, mediaWorkspaceState] = await Promise.all([
   readFile('src/features/media-analysis/clientApi.ts', 'utf8'),
@@ -77,11 +78,16 @@ const [mediaClientApi, mediaClientContracts, mediaWorkspaceState] = await Promis
 assert.match(edgeIndex, /handleMediaAnalysis/);
 assert.match(edgeIndex, /createMediaProviderFromEnv/);
 assert.match(edgeIndex, /createSignedUrl\(attachment\.storagePath, signedUrlTtlSeconds\)/);
+assert.match(edgeIndex, /safeTopLevelFailureEvent/);
+assert.match(edgeIndex, /providerCallStarted: false/);
+assert.doesNotMatch(edgeIndex, /console\.info\([^)]*['"]ai-media-analysis['"],\s*(?:rawBody|request|authorization|signedUrl)/i);
 assert.doesNotMatch(edgeIndex, /api\.openai\.com|OPENAI_API_KEY|buildMediaPrompt|text: \{ format|Vision|storyboard|carousel/i);
 assert.match(openAiAdapter, /api\.openai\.com\/v1\/responses/);
 assert.match(openAiAdapter, /OPENAI_API_KEY|json_schema|input_image/);
 assert.doesNotMatch(appService, /api\.openai\.com|OPENAI_API_KEY|input_image|buildMediaPrompt/);
 assert.doesNotMatch(`${aiPage}\n${publicContracts}\n${mediaClientApi}\n${mediaClientContracts}\n${mediaWorkspaceState}`, /AI_MEDIA_PROVIDER|AI_MEDIA_MODEL|api\.openai\.com|OPENAI_API_KEY|signed URL|storage service-role/i);
+assert.match(supabaseRest, /parsed\.code/);
+assert.match(supabaseRest, /\$\{normalizedCode\}: \$\{clean\}/);
 assert.match(mediaClientApi, /supabaseFunction<MediaAnalysisResult>\('ai-media-analyze'/);
 assert.doesNotMatch(mediaClientApi, /companyId|mediaUrl|dataUrl|base64|filename|approval|findings|provider|model/i);
 assert.match(aiPage, /Analyze selected media/);
@@ -118,6 +124,8 @@ assert.equal(clientRequest.analysisMode, 'media_review');
 assert.doesNotMatch(JSON.stringify(clientRequest), /companyId|mediaUrl|dataUrl|base64|filename|approval|findings/i);
 assert.deepEqual(clientContracts.MEDIA_ANALYSIS_CLIENT_REQUEST_KEYS, ['schemaVersion', 'jobId', 'attachmentIds', 'analysisMode', 'idempotencyKey']);
 assert.equal(clientContracts.normalizeMediaAnalysisError(new Error('MEDIA_PROVIDER_QUOTA_EXCEEDED: quota')).message, 'Media analysis quota is unavailable. Manual review is required.');
+assert.equal(clientContracts.normalizeMediaAnalysisError(new Error('MEDIA_NOT_SELECTED: Media analysis request was rejected.')).message, 'Select at least one photo or video.');
+assert.equal(clientContracts.normalizeMediaAnalysisError(new Error('INVALID_REQUEST: Media analysis request was rejected.')).message, 'Media analysis request was rejected.');
 assert.equal(clientContracts.normalizeMediaAnalysisError(new Error('vendor raw error')).message, 'Media analysis is temporarily unavailable.');
 
 const selectedMedia = [

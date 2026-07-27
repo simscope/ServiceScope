@@ -14,8 +14,10 @@ const guards = createMemoryGuards();
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed', code: 'INVALID_REQUEST' }, 405);
+  const start = Date.now();
+  let rawBody = '';
   try {
-    const rawBody = await request.text();
+    rawBody = await request.text();
     const dependencies = makeDependencies();
     const result = await handleMediaAnalysis({
       rawBody,
@@ -26,6 +28,7 @@ Deno.serve(async (request) => {
   } catch (error) {
     const code = error instanceof HttpError ? error.code : error instanceof Error ? error.message : 'INVALID_REQUEST';
     const status = error instanceof HttpError ? error.status : statusForCode(code);
+    console.info('ai-media-analysis', safeTopLevelFailureEvent({ rawBody, code, status, start }));
     return jsonResponse({ error: 'Media analysis request was rejected.', code }, status);
   }
 });
@@ -162,6 +165,32 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+}
+
+function safeTopLevelFailureEvent({ rawBody, code, status, start }: { rawBody: string; code: string; status: number; start: number }) {
+  const body = safeRequestShape(rawBody);
+  return {
+    correlationId: body.idempotencyKey,
+    stage: 'edge-rejection',
+    code,
+    httpStatus: status,
+    providerCallStarted: false,
+    attachmentCount: body.attachmentCount,
+    latencyMs: Math.max(0, Date.now() - start),
+  };
+}
+
+function safeRequestShape(rawBody: string) {
+  try {
+    const parsed = JSON.parse(rawBody || '{}');
+    const idempotencyKey = typeof parsed.idempotencyKey === 'string' && /^[A-Za-z0-9:_-]{8,160}$/.test(parsed.idempotencyKey)
+      ? parsed.idempotencyKey
+      : undefined;
+    const attachmentCount = Array.isArray(parsed.attachmentIds) ? parsed.attachmentIds.length : 0;
+    return { idempotencyKey, attachmentCount };
+  } catch {
+    return { idempotencyKey: undefined, attachmentCount: 0 };
+  }
 }
 
 function getServiceRoleKey() {

@@ -102,6 +102,10 @@ export type MediaAnalysisResult = {
 };
 
 export type MediaAnalysisErrorCode =
+  | 'AUTH_REQUIRED'
+  | 'FORBIDDEN'
+  | 'INVALID_REQUEST'
+  | 'UNSUPPORTED_STATUS'
   | 'MEDIA_NOT_SELECTED'
   | 'MEDIA_NOT_FOUND'
   | 'MEDIA_WRONG_TENANT'
@@ -130,6 +134,10 @@ export const MEDIA_ANALYSIS_CLIENT_REQUEST_KEYS: Array<keyof MediaAnalysisReques
 ];
 
 export const MEDIA_ANALYSIS_ERROR_MESSAGES: Record<MediaAnalysisErrorCode, string> = {
+  AUTH_REQUIRED: 'Sign in again to analyze media.',
+  FORBIDDEN: 'Media analysis is unavailable for this workspace.',
+  INVALID_REQUEST: 'Media analysis request was rejected.',
+  UNSUPPORTED_STATUS: 'Media analysis is available for Completed and Warranty jobs.',
   MEDIA_NOT_SELECTED: 'Select at least one photo or video.',
   MEDIA_NOT_FOUND: 'Selected media is unavailable. Manual review is required.',
   MEDIA_WRONG_TENANT: 'Selected media is unavailable. Manual review is required.',
@@ -187,9 +195,10 @@ export function normalizeMediaAnalysisError(error: unknown): { code: MediaAnalys
 }
 
 export function mediaAnalysisErrorCodeFromText(text: string): MediaAnalysisErrorCode {
-  const match = text.match(/MEDIA_[A-Z_]+/);
-  const code = match?.[0] as MediaAnalysisErrorCode | undefined;
-  return code && code in MEDIA_ANALYSIS_ERROR_MESSAGES ? code : 'UNKNOWN';
+  for (const code of Object.keys(MEDIA_ANALYSIS_ERROR_MESSAGES) as MediaAnalysisErrorCode[]) {
+    if (code !== 'UNKNOWN' && text.includes(code)) return code;
+  }
+  return 'UNKNOWN';
 }
 
 export function selectedMediaAnalysisItems(media: AssistantMediaItem[]) {

@@ -125,8 +125,11 @@ async function readSupabaseError(response: Response) {
   }
 
   try {
-    const parsed = JSON.parse(message) as { error?: string; message?: string };
+    const parsed = JSON.parse(message) as { code?: string; error?: string; message?: string };
     const clean = parsed.error || parsed.message;
+    const normalizedCode = typeof parsed.code === 'string' && /^[A-Z0-9_]+$/.test(parsed.code) ? parsed.code : '';
+    if (normalizedCode && clean) throw new Error(`${normalizedCode}: ${clean}`);
+    if (normalizedCode) throw new Error(normalizedCode);
     if (clean) throw new Error(clean);
   } catch (error) {
     if (error instanceof Error && error.message !== message) throw error;
