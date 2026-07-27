@@ -7,8 +7,15 @@ export type ContentProviderId = 'openai' | 'deterministic-fallback' | string;
 export type ContentWarning = {
   code:
     | 'ENGINE_NOT_CONFIGURED'
+    | 'PROVIDER_AUTH_FAILED'
+    | 'PROVIDER_ACCESS_DENIED'
+    | 'PROVIDER_MODEL_UNAVAILABLE'
+    | 'PROVIDER_QUOTA_EXCEEDED'
+    | 'PROVIDER_RATE_LIMITED'
     | 'PROVIDER_TIMEOUT'
     | 'PROVIDER_UNAVAILABLE'
+    | 'PROVIDER_REFUSAL'
+    | 'PROVIDER_INCOMPLETE'
     | 'INVALID_PROVIDER_OUTPUT'
     | 'GROUNDING_FAILED'
     | 'PRIVACY_FAILED'

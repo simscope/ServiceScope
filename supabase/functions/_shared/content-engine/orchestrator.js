@@ -35,6 +35,13 @@ export async function generateWithProvider({ request, context, provider, config,
       providerRequestId: error?.providerRequestId,
       providerErrorType: error?.providerErrorType,
       providerErrorCode: error?.providerErrorCode,
+      providerOutputSubreason: error?.providerOutputSubreason,
+      missingFields: error?.missingFields,
+      unexpectedFields: error?.unexpectedFields,
+      invalidTypePaths: error?.invalidTypePaths,
+      parsedJsonBytes: error?.parsedJsonBytes,
+      responseStatus: error?.responseStatus,
+      incompleteReason: error?.incompleteReason,
     });
     return fallback(request, context, code, safeMessage(code));
   }
@@ -79,6 +86,8 @@ function normalizeErrorCode(error) {
   if (message.includes('PRIVACY_FAILED')) return 'PRIVACY_FAILED';
   if (message.includes('GROUNDING_FAILED')) return 'GROUNDING_FAILED';
   if (message.includes('INVALID_PROVIDER_OUTPUT')) return 'INVALID_PROVIDER_OUTPUT';
+  if (message.includes('PROVIDER_REFUSAL')) return 'PROVIDER_REFUSAL';
+  if (message.includes('PROVIDER_INCOMPLETE')) return 'PROVIDER_INCOMPLETE';
   if (message.includes('PROVIDER_TIMEOUT')) return 'PROVIDER_TIMEOUT';
   if (message.includes('PROVIDER_AUTH_FAILED')) return 'PROVIDER_AUTH_FAILED';
   if (message.includes('PROVIDER_ACCESS_DENIED')) return 'PROVIDER_ACCESS_DENIED';
@@ -94,6 +103,8 @@ function safeMessage(code) {
   if (code === 'PRIVACY_FAILED') return 'Unsafe private data was detected; fallback draft was generated.';
   if (code === 'GROUNDING_FAILED') return 'AI output could not be grounded to evidence; fallback draft was generated.';
   if (code === 'INVALID_PROVIDER_OUTPUT') return 'AI output was malformed; fallback draft was generated.';
+  if (code === 'PROVIDER_REFUSAL') return 'AI provider refused the request; fallback draft was generated.';
+  if (code === 'PROVIDER_INCOMPLETE') return 'AI provider returned an incomplete response; fallback draft was generated.';
   if (code === 'PROVIDER_TIMEOUT') return 'AI provider timed out; fallback draft was generated.';
   if (code === 'PROVIDER_AUTH_FAILED') return 'AI provider authentication failed; fallback draft was generated.';
   if (code === 'PROVIDER_ACCESS_DENIED') return 'AI provider access was denied; fallback draft was generated.';
@@ -104,7 +115,7 @@ function safeMessage(code) {
 }
 
 function isRetryable(error) {
-  if (error instanceof ProviderError) return isRetryableProviderCode(error.code);
+  if (error instanceof ProviderError) return Boolean(error.retryable) || isRetryableProviderCode(error.code);
   const message = error instanceof Error ? error.message : String(error);
   return message.includes('PROVIDER_TIMEOUT') || message.includes('PROVIDER_UNAVAILABLE') || message.includes('PROVIDER_RATE_LIMITED');
 }

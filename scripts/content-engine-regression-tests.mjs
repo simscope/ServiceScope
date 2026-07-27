@@ -1,13 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import { handleContentGeneration } from '../supabase/functions/_shared/content-engine/applicationService.js';
 import { createMemoryGuards } from '../supabase/functions/_shared/content-engine/rateLimit.js';
-import { createOpenAiProvider, createProviderFromEnv, mapOpenAiError, preflightOpenAiCredentials } from '../supabase/functions/_shared/content-engine/providers/openai.js';
-import { validateRequestBody } from '../supabase/functions/_shared/content-engine/schemas.js';
+import { createOpenAiProvider, createProviderFromEnv, extractResponsesOutputText, mapOpenAiError, preflightOpenAiCredentials } from '../supabase/functions/_shared/content-engine/providers/openai.js';
+import { buildProviderOutputJsonSchema, buildProviderOutputResponseFormat, getProviderOutputSchemaName, parseProviderResult, validateProviderPayloadShape, validateRequestBody } from '../supabase/functions/_shared/content-engine/schemas.js';
 import { buildPrompt } from '../supabase/functions/_shared/content-engine/prompts.js';
 
 const assert = {
   equal(actual, expected, message = `Expected ${actual} to equal ${expected}`) {
     if (actual !== expected) throw new Error(message);
+  },
+  deepEqual(actual, expected, message = 'Expected values to be deeply equal') {
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(message);
   },
   ok(value, message = 'Expected value to be truthy') {
     if (!value) throw new Error(message);
@@ -90,6 +93,39 @@ assert.equal(validated.locale, 'en-US');
 assert.equal(validated.localFacts.diagnosis, 'Confirmed airflow issue.');
 assert.throws(() => validateRequestBody({ ...basePayload, extra: true }), /INVALID_REQUEST/);
 assert.throws(() => validateRequestBody({ ...basePayload, idempotencyKey: 'bad key with spaces' }), /INVALID_REQUEST/);
+
+const providerResponseFormat = buildProviderOutputResponseFormat();
+const providerJsonSchema = buildProviderOutputJsonSchema();
+assert.equal(providerResponseFormat.type, 'json_schema');
+assert.equal(providerResponseFormat.name, 'service_scope_content_generation_v1');
+assert.equal(getProviderOutputSchemaName(), 'service_scope_content_generation_v1');
+assert.equal(providerResponseFormat.strict, true);
+assert.equal(providerResponseFormat.schema.additionalProperties, false);
+assert.deepEqual(providerResponseFormat.schema, providerJsonSchema);
+assert.deepEqual(providerResponseFormat.schema.required, ['schemaVersion', 'channel', 'content', 'claims', 'warnings', 'missingInformation']);
+if (!Array.isArray(providerResponseFormat.schema.required) || providerResponseFormat.schema.required.join(',') !== 'schemaVersion,channel,content,claims,warnings,missingInformation') {
+  throw new Error('Provider schema required fields drifted');
+}
+assert.equal(providerResponseFormat.schema.properties.content.additionalProperties, false);
+assert.equal(providerResponseFormat.schema.properties.claims.items.additionalProperties, false);
+
+const strictPayload = strictProviderPayload('Instagram');
+const strictParsed = parseProviderResult(strictPayload, 'Instagram', 'mock-provider', 'mock-model');
+assert.equal(strictParsed.channel, 'Instagram');
+assert.equal(strictParsed.content.body, 'Service update based on documented evidence.');
+assert.throws(() => parseProviderResult(withoutKey(strictPayload, 'schemaVersion'), 'Instagram', 'mock-provider', 'mock-model'), /INVALID_PROVIDER_OUTPUT/);
+assert.throws(() => parseProviderResult(withoutKey(strictPayload, 'claims'), 'Instagram', 'mock-provider', 'mock-model'), /INVALID_PROVIDER_OUTPUT/);
+assert.throws(() => parseProviderResult({ ...strictPayload, channel: 'Facebook' }, 'Instagram', 'mock-provider', 'mock-model'), /INVALID_PROVIDER_OUTPUT/);
+assert.throws(() => parseProviderResult({ ...strictPayload, extra: true }, 'Instagram', 'mock-provider', 'mock-model'), /INVALID_PROVIDER_OUTPUT/);
+assert.throws(() => parseProviderResult({ ...strictPayload, claims: [{ text: 'bad', evidenceIds: 'complaint' }] }, 'Instagram', 'mock-provider', 'mock-model'), /INVALID_PROVIDER_OUTPUT/);
+assert.throws(() => parseProviderResult({ ...strictPayload, content: { ...strictPayload.content, body: '   ' } }, 'Instagram', 'mock-provider', 'mock-model'), /INVALID_PROVIDER_OUTPUT/);
+const missingSchemaDiagnostics = validateProviderPayloadShape(withoutKey(strictPayload, 'schemaVersion'), 'Instagram');
+assert.equal(missingSchemaDiagnostics.providerOutputSubreason, 'INVALID_PROVIDER_OUTPUT_MISSING_FIELD');
+assert.ok(missingSchemaDiagnostics.missingFields.includes('$.schemaVersion'));
+const unknownFieldDiagnostics = validateProviderPayloadShape({ ...strictPayload, generatedText: 'private generated body' }, 'Instagram');
+assert.equal(unknownFieldDiagnostics.providerOutputSubreason, 'INVALID_PROVIDER_OUTPUT_UNKNOWN_FIELD');
+assert.ok(unknownFieldDiagnostics.unexpectedFields.includes('$.generatedText'));
+assert.doesNotMatch(JSON.stringify(unknownFieldDiagnostics), /private generated body|Jane Customer|123 Market/);
 
 const injectionPayload = validateRequestBody({
   ...basePayload,
@@ -279,17 +315,18 @@ const openAiProvider = createOpenAiProvider({
   async fetchImpl(url, init) {
     assert.match(url, /api\.openai\.com\/v1\/responses/);
     assert.match(init.headers.Authorization, /server-only-key/);
+    const body = JSON.parse(init.body);
+    assert.equal(body.text.format.type, 'json_schema');
+    assert.equal(body.text.format.name, 'service_scope_content_generation_v1');
+    assert.equal(body.text.format.strict, true);
+    assert.equal(body.text.format.schema.additionalProperties, false);
     return {
       ok: true,
       headers: { get: () => 'req-1' },
       async json() {
         return {
-          output_text: JSON.stringify({
-            schemaVersion: 'content-generation-result-v1',
-            channel: 'Instagram',
-            content: { body: 'Service update based on the reported issue.', hashtags: ['#ServiceUpdate'] },
-            claims: [{ text: 'reported issue', evidenceIds: ['complaint'] }],
-          }),
+          status: 'completed',
+          output_text: JSON.stringify(strictProviderPayload('Instagram', [{ text: 'reported issue', evidenceIds: ['complaint'] }], { body: 'Service update based on the reported issue.' })),
           usage: { input_tokens: 4, output_tokens: 6, total_tokens: 10 },
         };
       },
@@ -300,6 +337,35 @@ const mapped = await openAiProvider.generate({ channel: 'Instagram', prompt: 'pr
 assert.equal(mapped.provider, 'openai');
 assert.equal(mapped.rawJson.schemaVersion, 'content-generation-result-v1');
 assert.equal(mapped.usage.totalTokens, 10);
+
+const nestedOutputText = extractResponsesOutputText({
+  status: 'completed',
+  output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(strictProviderPayload('Instagram')) }] }],
+}, 'req-nested');
+assert.match(nestedOutputText, /content-generation-result-v1/);
+await assert.rejects(() => Promise.resolve(extractResponsesOutputText({
+  status: 'completed',
+  output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'safe refusal text' }] }],
+}, 'req-refusal')), /PROVIDER_REFUSAL/);
+await assert.rejects(() => Promise.resolve(extractResponsesOutputText({
+  status: 'incomplete',
+  incomplete_details: { reason: 'max_output_tokens' },
+}, 'req-incomplete')), /PROVIDER_INCOMPLETE/);
+
+const openAiMalformed = createOpenAiProvider({
+  apiKey: 'server-only-key',
+  model: 'test-model',
+  async fetchImpl() {
+    return {
+      ok: true,
+      headers: { get: () => 'req-malformed' },
+      async json() {
+        return { status: 'completed', output_text: '{"schemaVersion":' };
+      },
+    };
+  },
+});
+await assert.rejects(() => openAiMalformed.generate({ channel: 'Instagram', prompt: 'prompt' }, { signal: new AbortController().signal }), /INVALID_PROVIDER_OUTPUT/);
 
 const openAiAuthFailure = createOpenAiProvider({
   apiKey: 'server-only-key',
@@ -371,13 +437,31 @@ function providerResult(channel, claims, content = {}) {
   return {
     provider: 'mock-provider',
     model: 'mock-model',
-    rawJson: {
-      schemaVersion: 'content-generation-result-v1',
-      channel,
-      content: { body: 'Service update based on documented evidence.', hashtags: ['#ServiceUpdate'], ...content },
-      claims,
-    },
+    rawJson: strictProviderPayload(channel, claims, content),
   };
+}
+
+function strictProviderPayload(channel, claims = [{ text: 'reported issue', evidenceIds: ['complaint'] }], content = {}) {
+  return {
+    schemaVersion: 'content-generation-result-v1',
+    channel,
+    content: {
+      headline: null,
+      body: 'Service update based on documented evidence.',
+      hashtags: ['#ServiceUpdate'],
+      callToAction: null,
+      ...content,
+    },
+    claims,
+    warnings: [],
+    missingInformation: [],
+  };
+}
+
+function withoutKey(value, key) {
+  const copy = { ...value };
+  delete copy[key];
+  return copy;
 }
 
 function mockResponse(status, body = {}) {

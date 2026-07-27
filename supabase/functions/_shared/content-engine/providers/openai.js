@@ -1,4 +1,5 @@
 import { ProviderError, isRetryableProviderCode } from '../errors.js';
+import { buildProviderOutputResponseFormat } from '../schemas.js';
 
 export function createOpenAiProvider({ apiKey, model, fetchImpl = fetch }) {
   if (!apiKey || !model) return null;
@@ -18,7 +19,7 @@ export function createOpenAiProvider({ apiKey, model, fetchImpl = fetch }) {
           body: JSON.stringify({
             model,
             input: request.prompt,
-            text: { format: { type: 'json_object' } },
+            text: { format: buildProviderOutputResponseFormat() },
             max_output_tokens: 1200,
           }),
         });
@@ -27,12 +28,13 @@ export function createOpenAiProvider({ apiKey, model, fetchImpl = fetch }) {
       }
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw mapOpenAiError(response, payload);
-      const text = payload.output_text ?? payload.output?.[0]?.content?.[0]?.text ?? '';
+      const providerRequestId = response.headers.get('x-request-id') ?? undefined;
+      const text = extractResponsesOutputText(payload, providerRequestId);
       return {
         provider: 'openai',
         model,
-        providerRequestId: response.headers.get('x-request-id') ?? undefined,
-        rawJson: JSON.parse(text),
+        providerRequestId,
+        rawJson: parseProviderJsonText(text, { providerRequestId, responseStatus: payload.status }),
         usage: payload.usage ? {
           inputTokens: payload.usage.input_tokens,
           outputTokens: payload.usage.output_tokens,
@@ -121,8 +123,73 @@ export function normalizeOpenAiErrorCode(httpStatus, providerErrorType, provider
   return 'PROVIDER_UNAVAILABLE';
 }
 
+export function extractResponsesOutputText(payload = {}, providerRequestId) {
+  const status = typeof payload.status === 'string' ? payload.status : undefined;
+  if (status === 'incomplete') {
+    throw providerError('PROVIDER_INCOMPLETE', {
+      retryable: isRetryableIncomplete(payload.incomplete_details?.reason),
+      providerOutputSubreason: 'PROVIDER_INCOMPLETE',
+      responseStatus: status,
+      incompleteReason: typeof payload.incomplete_details?.reason === 'string' ? payload.incomplete_details.reason : undefined,
+      providerRequestId,
+    });
+  }
+  if (status && status !== 'completed') {
+    throw providerError('PROVIDER_UNAVAILABLE', { retryable: true, responseStatus: status, providerRequestId });
+  }
+  const refusal = findResponsesRefusal(payload);
+  if (refusal) {
+    throw providerError('PROVIDER_REFUSAL', {
+      retryable: false,
+      providerOutputSubreason: 'PROVIDER_REFUSAL',
+      responseStatus: status,
+      providerRequestId,
+    });
+  }
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) return payload.output_text;
+  const message = Array.isArray(payload.output) ? payload.output.find((item) => item?.type === 'message') : undefined;
+  const outputText = Array.isArray(message?.content)
+    ? message.content.find((item) => item?.type === 'output_text' && typeof item.text === 'string')?.text
+    : undefined;
+  if (typeof outputText === 'string' && outputText.trim()) return outputText;
+  throw providerError('INVALID_PROVIDER_OUTPUT', {
+    retryable: false,
+    providerOutputSubreason: 'INVALID_PROVIDER_OUTPUT_PARSE_FAILED',
+    responseStatus: status,
+    providerRequestId,
+  });
+}
+
+export function parseProviderJsonText(text, diagnostics = {}) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw providerError('INVALID_PROVIDER_OUTPUT', {
+      retryable: false,
+      providerOutputSubreason: 'INVALID_PROVIDER_OUTPUT_PARSE_FAILED',
+      parsedJsonBytes: byteLength(String(text ?? '')),
+      responseStatus: diagnostics.responseStatus,
+      providerRequestId: diagnostics.providerRequestId,
+    });
+  }
+}
+
 function providerError(code, details) {
   return new ProviderError(code, details);
+}
+
+function findResponsesRefusal(payload) {
+  if (typeof payload.refusal === 'string' && payload.refusal.trim()) return true;
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  return output.some((item) => Array.isArray(item?.content) && item.content.some((content) => content?.type === 'refusal' || typeof content?.refusal === 'string'));
+}
+
+function isRetryableIncomplete(reason) {
+  return reason === 'server_error' || reason === 'rate_limit_exceeded';
+}
+
+function byteLength(text) {
+  return new TextEncoder().encode(text).byteLength;
 }
 
 function safePreflightResult({ provider, model, error }) {

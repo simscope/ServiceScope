@@ -30,6 +30,13 @@ export function safeTelemetryPayload(event) {
     providerRequestId,
     providerErrorType,
     providerErrorCode,
+    providerOutputSubreason,
+    missingFields,
+    unexpectedFields,
+    invalidTypePaths,
+    parsedJsonBytes,
+    responseStatus,
+    incompleteReason,
   } = event;
   return {
     correlationId,
@@ -45,6 +52,13 @@ export function safeTelemetryPayload(event) {
     providerRequestId,
     providerErrorType,
     providerErrorCode,
+    providerOutputSubreason,
+    missingFields,
+    unexpectedFields,
+    invalidTypePaths,
+    parsedJsonBytes,
+    responseStatus,
+    incompleteReason,
   };
 }
 
