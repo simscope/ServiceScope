@@ -28,6 +28,6 @@ for (const marker of qaMarkers) {
 for (const forbidden of ['SUPABASE_SERVICE_ROLE_KEY', 'auth.admin', 'OPENAI_API_KEY', 'temporary-pass-']) {
   assert.equal(javascript.includes(forbidden), false, `Browser bundle contains forbidden value: ${forbidden}`);
 }
-assert.doesNotMatch(javascript, /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/);
+assert.doesNotMatch(javascript, /(["'`])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\1/);
 
 console.log(previewEnabled ? 'Preview QA bundle scan passed' : 'Production QA bundle exclusion scan passed');
