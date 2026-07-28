@@ -511,6 +511,10 @@ assert.match(incompleteFallback.warnings.map((warning) => warning.code).join(','
 
 const unsafeTelemetryEvents = [];
 const unsafeOutputFallback = await handleMediaAnalysis(makeDependencies({
+  payload: {
+    ...basePayload,
+    idempotencyKey: '00000000-0000-4000-8000-000000000374:media:1785201639885:090cc74b-4ada-4581-b776-fb533b7a8c2e',
+  },
   telemetry: { record: (event) => unsafeTelemetryEvents.push(event) },
   provider: { id: 'mock-media-provider', async analyze() { return providerRawResult(providerPayload({ attachments: [{ attachmentId: 'photo-1', findings: [{ category: 'possible_address', confidence: 0.5, explanation: 'Shows 123 Market Street.', riskLevel: 'high' }] }] })); } },
 }));

@@ -39,7 +39,7 @@ export async function handleMediaAnalysis({ rawBody, authorization, auth, reposi
         attempts: 0,
       });
 
-  assertNoPrivateValues(result, context.privateValues);
+  assertNoPrivateValues(mediaResultPrivacySurface(result), context.privateValues);
   validateMediaAnalysisResultShape(result);
   emitTelemetry(telemetry, {
     correlationId: request.idempotencyKey,
@@ -72,7 +72,7 @@ async function analyzeWithProvider({ request, context, provider, config, telemet
       attempts: response.attempts,
       latencyMs: clock.now() - start,
     });
-    assertNoPrivateValues(result, context.privateValues);
+    assertNoPrivateValues(mediaResultPrivacySurface(result), context.privateValues);
     return result;
   } catch (error) {
     const code = normalizeMediaErrorCode(error);
@@ -170,6 +170,19 @@ export function mediaFingerprint({ request, context, config = {} }) {
 
 function emitTelemetry(telemetry, event) {
   telemetry?.record?.(safeMediaTelemetryPayload(event));
+}
+
+function mediaResultPrivacySurface(result) {
+  return {
+    recommendations: result?.recommendations,
+    missingShots: result?.missingShots,
+    warnings: (result?.warnings ?? []).map((warning) => warning?.message),
+    findings: (result?.attachments ?? []).flatMap((attachment) => (
+      attachment?.findings ?? []
+    ).map((finding) => ({
+      explanation: finding?.explanation,
+    }))),
+  };
 }
 
 function parseJson(rawBody) {
