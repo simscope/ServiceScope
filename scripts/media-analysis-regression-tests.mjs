@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
+import ts from 'typescript';
 import { buildAuthorizedMediaContext, mediaKindFor } from '../supabase/functions/_shared/media-analysis/authorization.js';
 import { handleMediaAnalysis, mediaFingerprint } from '../supabase/functions/_shared/media-analysis/applicationService.js';
 import {
@@ -61,13 +62,14 @@ const assert = {
   },
 };
 
-const [edgeIndex, aiPage, publicContracts, openAiAdapter, appService, supabaseRest] = await Promise.all([
+const [edgeIndex, aiPage, publicContracts, openAiAdapter, appService, supabaseRest, appShell] = await Promise.all([
   readFile('supabase/functions/ai-media-analyze/index.ts', 'utf8'),
   readFile('src/components/portal/AiAssistantPage.tsx', 'utf8'),
   readFile('src/features/content-engine/contracts.ts', 'utf8'),
   readFile('supabase/functions/_shared/media-analysis/providers/openai.js', 'utf8'),
   readFile('supabase/functions/_shared/media-analysis/applicationService.js', 'utf8'),
   readFile('src/services/supabaseRest.ts', 'utf8'),
+  readFile('src/App.tsx', 'utf8'),
 ]);
 const [mediaClientApi, mediaClientContracts, mediaWorkspaceState] = await Promise.all([
   readFile('src/features/media-analysis/clientApi.ts', 'utf8'),
@@ -95,6 +97,223 @@ assert.match(aiPage, /Media Findings Review/);
 assert.match(aiPage, /Approve for use/);
 assert.match(aiPage, /Mark false positive/);
 assert.match(aiPage, /Up to \{MEDIA_ANALYSIS_MAX_PHOTOS\} photos per request/);
+assert.doesNotMatch(supabaseRest, /Authorization:\s*`Bearer \$\{accessToken \|\| supabaseAnonKey\}`/);
+assert.doesNotMatch(supabaseRest, /console\.(?:log|info|warn|error)\([^)]*(?:accessToken|refreshToken|access_token|refresh_token)/i);
+assert.match(appShell, /addEventListener\(SUPABASE_AUTH_EXPIRED_EVENT, handleSupabaseAuthExpired\)/);
+assert.match(appShell, /setAuthNotice\(SUPABASE_AUTH_EXPIRED_MESSAGE\)/);
+assert.match(appShell, /replaceState\(null, '', '#login'\)/);
+
+const authTestSource = supabaseRest
+  .replace(
+    "const supabaseUrl = viteEnv.VITE_SUPABASE_URL?.replace(/\\/$/, '') ?? '';",
+    "const supabaseUrl = 'https://auth-test.supabase.co';",
+  )
+  .replace(
+    "const supabaseAnonKey = viteEnv.VITE_SUPABASE_ANON_KEY ?? '';",
+    "const supabaseAnonKey = 'test-anon-key';",
+  );
+assert.doesNotMatch(authTestSource, /const supabaseUrl = viteEnv|const supabaseAnonKey = viteEnv/);
+const authTestModuleSource = ts.transpileModule(authTestSource, {
+  compilerOptions: {
+    module: ts.ModuleKind.ESNext,
+    target: ts.ScriptTarget.ES2020,
+  },
+}).outputText;
+const authClient = await import(`data:text/javascript;base64,${Buffer.from(authTestModuleSource).toString('base64')}`);
+const authStorage = new Map();
+const authEvents = [];
+const originalWindow = globalThis.window;
+const originalFetch = globalThis.fetch;
+const originalSetTimeout = globalThis.setTimeout;
+const originalClearTimeout = globalThis.clearTimeout;
+globalThis.window = {
+  localStorage: {
+    getItem(key) { return authStorage.get(key) ?? null; },
+    setItem(key, value) { authStorage.set(key, String(value)); },
+    removeItem(key) { authStorage.delete(key); },
+  },
+  setTimeout: originalSetTimeout,
+  clearTimeout: originalClearTimeout,
+  dispatchEvent(event) {
+    authEvents.push(event.type);
+    return true;
+  },
+};
+
+function resetAuthHarness() {
+  authStorage.clear();
+  authEvents.length = 0;
+}
+
+function authResponse(status, body = {}) {
+  const text = JSON.stringify(body);
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    async json() { return body; },
+    async text() { return text; },
+  };
+}
+
+resetAuthHarness();
+authClient.setSupabaseAuthTokens('valid-user-token', 'valid-refresh-token', 3600);
+let validRefreshCalls = 0;
+let validFunctionCalls = 0;
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes('grant_type=refresh_token')) validRefreshCalls += 1;
+  if (String(url).includes('/functions/v1/ai-media-analyze')) {
+    validFunctionCalls += 1;
+    assert.equal(init.headers.apikey, 'test-anon-key');
+    assert.equal(init.headers.Authorization, 'Bearer valid-user-token');
+    return authResponse(200, { ok: true });
+  }
+  throw new Error('Unexpected auth test endpoint');
+};
+await authClient.supabaseFunction('ai-media-analyze', { test: true });
+assert.equal(validRefreshCalls, 0);
+assert.equal(validFunctionCalls, 1);
+
+resetAuthHarness();
+authClient.setSupabaseAuthTokens('expiring-user-token', 'refresh-once-token', 30);
+let expiringRefreshCalls = 0;
+let expiringFunctionCalls = 0;
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes('grant_type=refresh_token')) {
+    expiringRefreshCalls += 1;
+    assert.equal(init.headers.apikey, 'test-anon-key');
+    assert.equal(Object.hasOwn(init.headers, 'Authorization'), false);
+    return authResponse(200, {
+      access_token: 'refreshed-user-token',
+      refresh_token: 'next-refresh-token',
+      expires_in: 3600,
+      token_type: 'bearer',
+      user: { id: 'user-1' },
+    });
+  }
+  if (String(url).includes('/functions/v1/ai-media-analyze')) {
+    expiringFunctionCalls += 1;
+    assert.equal(init.headers.Authorization, 'Bearer refreshed-user-token');
+    return authResponse(200, { ok: true });
+  }
+  throw new Error('Unexpected auth test endpoint');
+};
+await authClient.supabaseFunction('ai-media-analyze', { test: true });
+assert.equal(expiringRefreshCalls, 1);
+assert.equal(expiringFunctionCalls, 1);
+
+resetAuthHarness();
+authClient.setSupabaseAuthTokens('concurrent-expiring-token', 'concurrent-refresh-token', 30);
+let concurrentRefreshCalls = 0;
+let concurrentFunctionCalls = 0;
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes('grant_type=refresh_token')) {
+    concurrentRefreshCalls += 1;
+    await new Promise((resolve) => originalSetTimeout(resolve, 5));
+    return authResponse(200, {
+      access_token: 'concurrent-refreshed-token',
+      refresh_token: 'concurrent-next-refresh-token',
+      expires_in: 3600,
+      token_type: 'bearer',
+      user: { id: 'user-1' },
+    });
+  }
+  if (String(url).includes('/functions/v1/ai-media-analyze')) {
+    concurrentFunctionCalls += 1;
+    assert.equal(init.headers.Authorization, 'Bearer concurrent-refreshed-token');
+    return authResponse(200, { ok: true });
+  }
+  throw new Error('Unexpected auth test endpoint');
+};
+await Promise.all([
+  authClient.supabaseFunction('ai-media-analyze', { request: 1 }),
+  authClient.supabaseFunction('ai-media-analyze', { request: 2 }),
+]);
+assert.equal(concurrentRefreshCalls, 1);
+assert.equal(concurrentFunctionCalls, 2);
+
+resetAuthHarness();
+let missingTokenFetchCalls = 0;
+globalThis.fetch = async () => {
+  missingTokenFetchCalls += 1;
+  return authResponse(500);
+};
+const missingTokenError = await assert.rejects(
+  () => authClient.supabaseFunction('ai-media-analyze', { test: true }),
+  /Your session expired/,
+);
+assert.equal(missingTokenError.name, authClient.SUPABASE_AUTH_EXPIRED_CODE);
+assert.equal(missingTokenFetchCalls, 0);
+assert.equal(authEvents.filter((event) => event === authClient.SUPABASE_AUTH_EXPIRED_EVENT).length, 1);
+
+resetAuthHarness();
+authClient.setSupabaseAuthTokens('refresh-failure-user-token', 'refresh-failure-token', 30);
+let refreshFailureCalls = 0;
+let refreshFailureFunctionCalls = 0;
+globalThis.fetch = async (url) => {
+  if (String(url).includes('grant_type=refresh_token')) {
+    refreshFailureCalls += 1;
+    return authResponse(400, { error: 'refresh_failed' });
+  }
+  refreshFailureFunctionCalls += 1;
+  return authResponse(200, { ok: true });
+};
+const refreshFailureError = await assert.rejects(
+  () => authClient.supabaseFunction('ai-media-analyze', { test: true }),
+  /Your session expired/,
+);
+assert.equal(refreshFailureError.name, authClient.SUPABASE_AUTH_EXPIRED_CODE);
+assert.equal(refreshFailureCalls, 1);
+assert.equal(refreshFailureFunctionCalls, 0);
+assert.equal(authStorage.has('servicescope.supabaseAccessToken'), false);
+assert.equal(authEvents.filter((event) => event === authClient.SUPABASE_AUTH_EXPIRED_EVENT).length, 1);
+assert.doesNotMatch(String(refreshFailureError), /refresh-failure-user-token|refresh-failure-token/);
+
+resetAuthHarness();
+authClient.setSupabaseAuthTokens('rejected-user-token', 'rejected-refresh-token', 3600);
+let unauthorizedFunctionCalls = 0;
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes('/functions/v1/ai-media-analyze')) {
+    unauthorizedFunctionCalls += 1;
+    assert.equal(init.headers.Authorization, 'Bearer rejected-user-token');
+    return authResponse(401, { message: 'Invalid JWT' });
+  }
+  throw new Error('Unexpected auth test endpoint');
+};
+const unauthorizedError = await assert.rejects(
+  () => authClient.supabaseFunction('ai-media-analyze', { test: true }),
+  /Your session expired/,
+);
+assert.equal(unauthorizedError.name, authClient.SUPABASE_AUTH_EXPIRED_CODE);
+assert.equal(unauthorizedFunctionCalls, 1);
+assert.equal(authStorage.has('servicescope.supabaseAccessToken'), false);
+assert.equal(authEvents.filter((event) => event === authClient.SUPABASE_AUTH_EXPIRED_EVENT).length, 1);
+assert.doesNotMatch(String(unauthorizedError), /rejected-user-token|rejected-refresh-token/);
+
+resetAuthHarness();
+let passwordGrantCalls = 0;
+globalThis.fetch = async (url, init) => {
+  passwordGrantCalls += 1;
+  assert.match(String(url), /auth\/v1\/token\?grant_type=password/);
+  assert.equal(init.headers.apikey, 'test-anon-key');
+  assert.equal(Object.hasOwn(init.headers, 'Authorization'), false);
+  return authResponse(200, {
+    access_token: 'signed-in-user-token',
+    refresh_token: 'signed-in-refresh-token',
+    expires_in: 3600,
+    token_type: 'bearer',
+    user: { id: 'user-1' },
+  });
+};
+await authClient.signInWithSupabasePassword('synthetic@example.test', 'synthetic-password');
+const savedSignInSession = JSON.parse(authStorage.get('servicescope.supabaseAccessToken'));
+assert.equal(passwordGrantCalls, 1);
+assert.equal(savedSignInSession.accessToken, 'signed-in-user-token');
+assert.equal(savedSignInSession.refreshToken, 'signed-in-refresh-token');
+assert.ok(savedSignInSession.expiresAt > Date.now());
+
+globalThis.fetch = originalFetch;
+if (originalWindow === undefined) delete globalThis.window;
+else globalThis.window = originalWindow;
 
 execFileSync(process.execPath, [
   'node_modules/typescript/bin/tsc',
