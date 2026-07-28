@@ -109,7 +109,11 @@ export async function createQaWorkspace(deps, request) {
   assertQaCompanySlot(company);
 
   const existingUser = await findAuthUserByEmail(deps.adminClient, request.email);
-  if (existingUser && !isQaAuthUser(existingUser)) throw new Error('QA_USER_EMAIL_ALREADY_EXISTS');
+  if (existingUser
+    && !isQaAuthUser(existingUser)
+    && !await isTrustedLegacyQaAuthUser(deps.adminClient, existingUser, request.email)) {
+    throw new Error('QA_USER_EMAIL_ALREADY_EXISTS');
+  }
   const authUser = existingUser ?? (await createAuthUser(deps.adminClient, request));
   if (existingUser) await updateAuthUser(deps.adminClient, existingUser, request);
 
@@ -155,7 +159,7 @@ export async function createQaWorkspace(deps, request) {
 export async function disableQaWorkspace(deps) {
   const company = await loadQaCompany(deps.adminClient);
   assertQaCompany(company);
-  const qaAuthUsers = await findQaAuthUsers(deps.adminClient);
+  const qaAuthUsers = await findTrustedQaAuthUsers(deps.adminClient);
   await updateQaMemberships(deps.adminClient, qaAuthUsers, 'disabled');
   await updateRows(deps.adminClient, 'company_profiles', { access_rules: { ...qaAccessRules(), aiAssistant: 'off' } }, [['company_id', qaCompanyId]]);
   const disabledAuthUsers = await disableQaAuthUsers(deps.adminClient, qaAuthUsers);
@@ -166,7 +170,10 @@ export async function enableQaWorkspace(deps, request) {
   const company = await loadQaCompany(deps.adminClient);
   assertQaCompany(company);
   const authUser = await findAuthUserByEmail(deps.adminClient, request.email);
-  if (!isQaAuthUser(authUser)) throw new Error('QA_USER_REQUIRED');
+  if (!isQaAuthUser(authUser)
+    && !await isTrustedLegacyQaAuthUser(deps.adminClient, authUser, request.email)) {
+    throw new Error('QA_USER_REQUIRED');
+  }
   await updateAuthUser(deps.adminClient, authUser, request);
   await upsertRows(deps.adminClient, 'company_users', [qaCompanyUser(authUser.id, request.email)], 'company_id,email');
   await updateRows(deps.adminClient, 'company_profiles', { access_rules: qaAccessRules() }, [['company_id', qaCompanyId]]);
@@ -176,16 +183,16 @@ export async function enableQaWorkspace(deps, request) {
 export async function deleteQaWorkspace(deps) {
   const company = await loadQaCompany(deps.adminClient);
   assertQaCompanySlot(company);
-  const qaAuthUsers = await findQaAuthUsers(deps.adminClient);
+  const qaAuthUsers = await findTrustedQaAuthUsers(deps.adminClient);
   await deleteQaStorage(deps.adminClient);
+  await deleteQaAuthUsers(deps.adminClient, qaAuthUsers);
   for (const table of ['job_attachments', 'job_comments', 'job_materials', 'job_invoices', 'job_payments', 'appointments', 'jobs', 'customer_locations', 'customers', 'company_users', 'company_profiles', 'company_onboarding_steps', 'company_job_workflow_settings', 'company_job_types']) {
     await deleteRows(deps.adminClient, table, [['company_id', qaCompanyId]]);
   }
   await deleteRows(deps.adminClient, 'companies', [['id', qaCompanyId]]);
-  await deleteQaAuthUsers(deps.adminClient, qaAuthUsers);
   const remainingRows = await countRemainingQaRows(deps.adminClient);
   const remainingStorageObjects = await countRemainingQaStorageObjects(deps.adminClient);
-  const remainingAuthUsers = (await findQaAuthUsers(deps.adminClient)).length;
+  const remainingAuthUsers = (await findTrustedQaAuthUsers(deps.adminClient)).length;
   if (remainingRows || remainingStorageObjects || remainingAuthUsers) {
     const error = new Error('QA_CLEANUP_INCOMPLETE');
     error.safeDetails = { remainingRows, remainingStorageObjects, remainingAuthUsers };
@@ -213,6 +220,10 @@ async function findAuthUserByEmail(adminClient, email) {
 
 function isQaAuthUser(user) {
   return user?.app_metadata?.previewQaWorkspace === true && user?.app_metadata?.companyId === qaCompanyId;
+}
+
+function isLegacyQaAuthUser(user) {
+  return user?.user_metadata?.qa === true && user?.user_metadata?.companyId === qaCompanyId;
 }
 
 async function createAuthUser(adminClient, request) {
@@ -251,20 +262,43 @@ function qaCompanyUser(authUserId, email) {
   };
 }
 
-async function findQaAuthUsers(adminClient) {
+async function findTrustedQaAuthUsers(adminClient) {
+  const memberships = await loadQaMemberships(adminClient);
   const users = [];
   for (let page = 1; page <= 10; page += 1) {
     const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw error;
-    users.push(...data.users.filter(isQaAuthUser));
+    users.push(...data.users.filter((user) => isQaAuthUser(user) || hasTrustedLegacyQaMembership(user, memberships)));
     if (data.users.length < 1000) break;
   }
   return users;
 }
 
+async function isTrustedLegacyQaAuthUser(adminClient, user, email) {
+  if (!user || user.email?.toLowerCase() !== email || !isLegacyQaAuthUser(user)) return false;
+  return hasTrustedLegacyQaMembership(user, await loadQaMemberships(adminClient));
+}
+
+async function loadQaMemberships(adminClient) {
+  const { data, error } = await adminClient
+    .from('company_users')
+    .select('company_id,auth_user_id,email,role')
+    .eq('company_id', qaCompanyId);
+  if (error) throw error;
+  return data ?? [];
+}
+
+function hasTrustedLegacyQaMembership(user, memberships) {
+  if (!isLegacyQaAuthUser(user)) return false;
+  return memberships.some((membership) => membership.company_id === qaCompanyId
+    && membership.auth_user_id === user.id
+    && membership.email?.toLowerCase() === user.email?.toLowerCase()
+    && membership.role === 'manager');
+}
+
 async function deleteQaAuthUsers(adminClient, authUsers) {
   for (const authUser of authUsers) {
-    if (!isQaAuthUser(authUser)) continue;
+    if (!isQaAuthUser(authUser) && !isLegacyQaAuthUser(authUser)) continue;
     const { error: deleteError } = await adminClient.auth.admin.deleteUser(authUser.id);
     if (deleteError) throw deleteError;
   }
@@ -273,7 +307,7 @@ async function deleteQaAuthUsers(adminClient, authUsers) {
 async function disableQaAuthUsers(adminClient, authUsers) {
   let disabled = 0;
   for (const authUser of authUsers) {
-    if (!isQaAuthUser(authUser)) continue;
+    if (!isQaAuthUser(authUser) && !isLegacyQaAuthUser(authUser)) continue;
     const { error: updateError } = await adminClient.auth.admin.updateUserById(authUser.id, { ban_duration: '876000h' });
     if (updateError) throw updateError;
     disabled += 1;
@@ -283,7 +317,7 @@ async function disableQaAuthUsers(adminClient, authUsers) {
 
 async function updateQaMemberships(adminClient, authUsers, status) {
   for (const authUser of authUsers) {
-    if (!isQaAuthUser(authUser)) continue;
+    if (!isQaAuthUser(authUser) && !isLegacyQaAuthUser(authUser)) continue;
     await updateRows(
       adminClient,
       'company_users',

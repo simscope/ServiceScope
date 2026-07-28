@@ -61,7 +61,8 @@ function makeBuilder(client, table) {
       }
       client.calls.push({ type: 'select', table, selected: this.selected, filters: [...this.filters] });
       const count = this.options?.count === 'exact' ? (client.remainingCounts?.[table] ?? 0) : null;
-      return Promise.resolve({ data: [], count, error: null }).then(resolve, reject);
+      const data = table === 'company_users' ? client.companyUsers : [];
+      return Promise.resolve({ data, count, error: null }).then(resolve, reject);
     },
   };
   return builder;
@@ -70,7 +71,17 @@ function makeBuilder(client, table) {
 function makeAdminClient({
   existingUser = null,
   qaCompany = { id: qaCompanyId, name: qaCompanyName },
-  authUsers = [{ id: 'auth-user-1', app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId } }],
+  authUsers = [{
+    id: 'auth-user-1',
+    email: 'existing-qa@example.test',
+    app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId },
+  }],
+  companyUsers = [{
+    company_id: qaCompanyId,
+    auth_user_id: 'auth-user-1',
+    email: 'existing-qa@example.test',
+    role: 'manager',
+  }],
   storageObjects = qaStorageObjects().map((object) => ({ bucket: object.bucket, path: object.path })),
   remainingCounts = {},
 } = {}) {
@@ -79,6 +90,7 @@ function makeAdminClient({
     calls: [],
     qaCompany,
     authUsers: initialUsers,
+    companyUsers,
     storageObjects: [...storageObjects],
     remainingCounts,
     auth: {
@@ -288,6 +300,43 @@ async function testExistingNonQaUserIsRejected() {
   assert.equal(adminClient.calls.filter((call) => call.type === 'updateUserById').length, 0);
 }
 
+async function testLegacyQaUserRequiresMatchingMembership() {
+  const legacyUser = {
+    id: 'legacy-user',
+    email: 'legacy-qa@example.test',
+    app_metadata: {},
+    user_metadata: { qa: true, companyId: qaCompanyId },
+  };
+  const spoofedClient = makeAdminClient({ existingUser: legacyUser, authUsers: [], companyUsers: [] });
+  await assert.rejects(
+    () => createQaWorkspace(
+      { adminClient: spoofedClient },
+      { action: 'create', email: legacyUser.email, temporaryPassword: 'temporary-pass-legacy' },
+    ),
+    /QA_USER_EMAIL_ALREADY_EXISTS/,
+  );
+  assert.equal(spoofedClient.calls.filter((call) => call.type === 'updateUserById').length, 0);
+
+  const legacyClient = makeAdminClient({
+    existingUser: legacyUser,
+    authUsers: [],
+    companyUsers: [{
+      company_id: qaCompanyId,
+      auth_user_id: legacyUser.id,
+      email: legacyUser.email,
+      role: 'manager',
+    }],
+  });
+  await createQaWorkspace(
+    { adminClient: legacyClient },
+    { action: 'create', email: legacyUser.email, temporaryPassword: 'temporary-pass-legacy' },
+  );
+  const migrationCall = legacyClient.calls.find((call) => call.type === 'updateUserById');
+  assert.equal(migrationCall.id, legacyUser.id);
+  assert.equal(migrationCall.payload.app_metadata.previewQaWorkspace, true);
+  assert.equal(migrationCall.payload.app_metadata.companyId, qaCompanyId);
+}
+
 async function testEnableRequiresQaAppMetadata() {
   const nonQaClient = makeAdminClient({
     existingUser: { id: 'real-user', email: 'qa@example.test', user_metadata: { qa: true, companyId: qaCompanyId }, app_metadata: {} },
@@ -357,6 +406,7 @@ async function testDeleteOnlyQaScopedRowsAndStorage() {
 async function testDeleteDoesNotRemoveNonQaAuthUser() {
   const adminClient = makeAdminClient({
     authUsers: [{ id: 'auth-user-1', user_metadata: { qa: true, companyId: qaCompanyId }, app_metadata: {} }],
+    companyUsers: [],
   });
   await deleteQaWorkspace({ adminClient });
   assert.equal(adminClient.calls.filter((call) => call.type === 'deleteUser').length, 0);
@@ -371,6 +421,27 @@ async function testCleanupReportsRemainingRows() {
       && error.safeDetails.remainingStorageObjects === 0
       && error.safeDetails.remainingAuthUsers === 0,
   );
+}
+
+async function testDeleteRemovesTrustedLegacyQaAuthUser() {
+  const legacyUser = {
+    id: 'legacy-user',
+    email: 'legacy-qa@example.test',
+    app_metadata: {},
+    user_metadata: { qa: true, companyId: qaCompanyId },
+  };
+  const adminClient = makeAdminClient({
+    authUsers: [legacyUser],
+    companyUsers: [{
+      company_id: qaCompanyId,
+      auth_user_id: legacyUser.id,
+      email: legacyUser.email,
+      role: 'manager',
+    }],
+  });
+  const result = await deleteQaWorkspace({ adminClient });
+  assert.equal(adminClient.calls.filter((call) => call.type === 'deleteUser' && call.id === legacyUser.id).length, 1);
+  assert.equal(result.remainingAuthUsers, 0);
 }
 
 async function testRepeatedCleanupIsSafe() {
@@ -463,10 +534,12 @@ await testCreateUsesServerAdminAndIsolatedTenant();
 await testDuplicateCreateUpdatesExistingUser();
 await testCompanyIdCollisionStopsBeforeAuthOrStorage();
 await testExistingNonQaUserIsRejected();
+await testLegacyQaUserRequiresMatchingMembership();
 await testEnableRequiresQaAppMetadata();
 await testDisableTurnsOffAiAssistant();
 await testDeleteOnlyQaScopedRowsAndStorage();
 await testDeleteDoesNotRemoveNonQaAuthUser();
+await testDeleteRemovesTrustedLegacyQaAuthUser();
 await testCleanupReportsRemainingRows();
 await testRepeatedCleanupIsSafe();
 testDeleteGuardRejectsNonQaCompany();
