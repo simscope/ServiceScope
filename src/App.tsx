@@ -89,7 +89,16 @@ import { saveUserAccess, type AccessActionMode } from './services/accessInvite';
 import { managePreviewQaWorkspace, shouldShowPreviewQaTools, type PreviewQaWorkspaceAction } from './services/previewQaWorkspace';
 import { clearLegacyLocalBusinessData, loadOwnerWorkspaceFromBackend } from './services/backendData';
 import { saveCompanyAccessRulesToBackend, saveCompanyCoreToBackend, saveCompanyOnboardingStepsToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
-import { getSupabaseAccessToken, isSupabaseConfigured, restoreSupabaseAccessToken, setSupabaseAccessToken, setSupabaseAuthTokens, SUPABASE_AUTH_EXPIRED_CODE } from './services/supabaseRest';
+import {
+  getSupabaseAccessToken,
+  isSupabaseConfigured,
+  restoreSupabaseAccessToken,
+  setSupabaseAccessToken,
+  setSupabaseAuthTokens,
+  SUPABASE_AUTH_EXPIRED_CODE,
+  SUPABASE_AUTH_EXPIRED_EVENT,
+  SUPABASE_AUTH_EXPIRED_MESSAGE,
+} from './services/supabaseRest';
 import { createServiceJob, listCompanyJobs, saveCompanyJobs } from './services/jobsStore';
 import type {
   AuditEvent,
@@ -484,6 +493,24 @@ export function App() {
 
   useEffect(() => {
     clearLegacyLocalBusinessData();
+  }, []);
+
+  useEffect(() => {
+    function handleSupabaseAuthExpired() {
+      setAuthSession(null);
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+      setAuthNotice(SUPABASE_AUTH_EXPIRED_MESSAGE);
+      setAuthRestoring(false);
+      setBackendLoading(false);
+      setBackendLoaded(false);
+      setBackendError('');
+      window.history.replaceState(null, '', '#login');
+    }
+
+    window.addEventListener(SUPABASE_AUTH_EXPIRED_EVENT, handleSupabaseAuthExpired);
+    return () => {
+      window.removeEventListener(SUPABASE_AUTH_EXPIRED_EVENT, handleSupabaseAuthExpired);
+    };
   }, []);
 
   useEffect(() => {

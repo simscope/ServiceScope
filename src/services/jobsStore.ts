@@ -6,7 +6,7 @@ type CustomerLocationRow = { id: string; company_id: string; customer_id: string
 type TechnicianRow = { id: string; name: string };
 type JobRow = { id: string; company_id: string; customer_id: string | null; customer_location_id: string | null; technician_id: string | null; job_type_id: string | null; job_number: string; status: ServiceJobStatus; system: string | null; issue: string | null; notes: string | null; service_call_fee_cents: number | null; labor_cents: number | null; created_at: string };
 type JobPaymentRow = { id: string; company_id: string; job_id: string; scope: 'scf' | 'labor' | 'invoice' | 'subscription'; method: string | null; amount_cents: number };
-type JobInvoiceRow = { id: string; company_id: string; job_id: string; invoice_number: string; document_type?: JobDocumentType | null; status: JobInvoiceStatus; amount_cents: number; sent_at: string | null; paid_at: string | null; created_at: string };
+type JobInvoiceRow = { id: string; company_id: string; job_id: string; invoice_number: string; document_type?: JobDocumentType | null; status: JobInvoiceStatus; amount_cents: number; pdf_storage_path?: string | null; sent_at: string | null; paid_at: string | null; created_at: string };
 type AppointmentRow = { id: string; company_id: string; job_id: string; technician_id: string | null; starts_at: string; ends_at: string; timezone: string };
 type JobMaterialRow = {
   id: string;
@@ -49,7 +49,7 @@ function appointmentDurationMinutes(appointment?: AppointmentRow) {
 function commentRole(role: string): JobComment['authorRole'] { return role === 'Manager' || role === 'Technician' ? role : 'Admin'; }
 function mapComment(row: JobCommentRow): JobComment { return { id: row.id, authorName: row.author_name, authorRole: commentRole(row.author_role), message: row.message, createdAt: row.created_at }; }
 function mapAttachment(row: JobAttachmentRow): JobAttachment { return { id: row.id, name: row.name, mimeType: row.mime_type, sizeBytes: Number(row.size_bytes) || 0, kind: row.kind, uploadedAt: row.created_at, storageBucket: row.storage_bucket, storagePath: row.storage_path, dataUrl: getSupabasePublicStorageUrl(row.storage_bucket, row.storage_path) }; }
-function mapInvoice(row: JobInvoiceRow): JobInvoice { return { id: row.id, companyId: row.company_id, jobId: row.job_id, invoiceNumber: row.invoice_number, documentType: row.document_type ?? 'Invoice', status: row.status, amount: toMoneyNumber(row.amount_cents), createdAt: row.created_at?.slice(0, 10) ?? todayIso(), sentAt: row.sent_at?.slice(0, 10) ?? '', paidAt: row.paid_at?.slice(0, 10) ?? '' }; }
+function mapInvoice(row: JobInvoiceRow): JobInvoice { return { id: row.id, companyId: row.company_id, jobId: row.job_id, invoiceNumber: row.invoice_number, documentType: row.document_type ?? 'Invoice', status: row.status, amount: toMoneyNumber(row.amount_cents), pdfStoragePath: row.pdf_storage_path ?? '', createdAt: row.created_at?.slice(0, 10) ?? todayIso(), sentAt: row.sent_at?.slice(0, 10) ?? '', paidAt: row.paid_at?.slice(0, 10) ?? '' }; }
 function mapMaterial(row: JobMaterialRow, jobNumber: string): MaterialRow {
   return {
     id: row.id,

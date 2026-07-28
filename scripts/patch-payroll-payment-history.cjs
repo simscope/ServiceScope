@@ -2,34 +2,27 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const filePath = path.join(root, 'src/components/portal/EmployeeFinancePage.tsx');
-let source = fs.readFileSync(filePath, 'utf8');
-const newline = source.includes('\r\n') ? '\r\n' : '\n';
-source = source.replace(/\r\n/g, '\n');
+const defaultFilePath = path.join(root, 'src/components/portal/EmployeeFinancePage.tsx');
 
-function hasExpectedFinalState(value) {
-  return [
-    'const selectedCommissionAmount = selectedCommissionJobs.reduce',
-    'const commissionPaymentGroups = new Map<string, PayrollItemRow[]>',
-    '<h2>Payment history</h2>',
-    'Pay selected {money(selectedCommissionAmount)}',
-    'new Date(payment.paidAt).toLocaleString',
-  ].every((marker) => value.includes(marker));
-}
+const finalStateMarkers = [
+  'const selectedCommissionAmount = selectedCommissionJobs',
+  'const paymentHistory = settingDraft.payType ===',
+  '<h2>Payment history</h2>',
+  'Pay selected {money(selectedCommissionAmount)}',
+  'Paid ${new Date(row.paidAt).toLocaleString',
+  'Paid ${new Date(periodDraft.paidAt).toLocaleString',
+];
 
-if (hasExpectedFinalState(source)) {
-  console.log('Payroll payment totals/history patch already applied.');
-  process.exit(0);
-}
+function patchPayrollPaymentHistory(source) {
+  const eol = source.includes('\r\n') ? '\r\n' : '\n';
+  let normalized = source.replace(/\r\n/g, '\n');
 
-function replaceRequired(from, to, label) {
-  if (!source.includes(from)) {
-    throw new Error(`Payroll payment history patch could not find: ${label}`);
+  if (hasFinalState(normalized)) {
+    return { source, changed: false, message: 'Payroll payment totals/history patch already applied.' };
   }
-  source = source.replace(from, to);
-}
 
-replaceRequired(
+  normalized = replaceRequired(
+    normalized,
 `  if (selectedSummary && settingDraft) {
     const unpaidJobs = selectedSummary.jobs.filter((job) => !job.paid);
     const paidJobs = selectedSummary.jobs.filter((job) => job.paid);
@@ -87,10 +80,11 @@ replaceRequired(
       }));
     paymentHistory.sort((left, right) => new Date(right.paidAt).getTime() - new Date(left.paidAt).getTime());
     const lastPaymentAt = paymentHistory[0]?.paidAt ?? '';`,
-  'selected employee totals block',
-);
+    'selected employee totals block',
+  );
 
-replaceRequired(
+  normalized = replaceRequired(
+    normalized,
 `            <button className="secondary-button compact" type="button" onClick={() => setSelectedEmployeeId('')}>Back to finance</button>
           </div>
 
@@ -106,10 +100,11 @@ replaceRequired(
           </div>
 
           <section className="employee-pay-plan-panel">`,
-  'lifetime payroll metrics',
-);
+    'lifetime payroll metrics',
+  );
 
-replaceRequired(
+  normalized = replaceRequired(
+    normalized,
 `              <div className="payroll-batch-actions">
                 <span><strong>{selectedCommissionJobs.length}</strong> selected</span>
                 <button className="primary-button compact" type="button" disabled={!selectedCommissionJobs.length} onClick={() => setCommissionJobsPaid(selectedSummary, selectedCommissionJobs, true)}>Confirm selected paid</button>
@@ -121,10 +116,11 @@ replaceRequired(
                 </div>
                 <button className="primary-button compact" type="button" disabled={!selectedCommissionJobs.length} onClick={() => setCommissionJobsPaid(selectedSummary, selectedCommissionJobs, true)}>Pay selected {money(selectedCommissionAmount)}</button>
               </div>`,
-  'selected commission amount',
-);
+    'selected commission amount',
+  );
 
-replaceRequired(
+  normalized = replaceRequired(
+    normalized,
 `              <details className="employee-finance-section collapsed-payroll"><summary><span>Paid commission</span><strong>{paidJobs.length} jobs</strong></summary><div className="employee-finance-table-wrap"><table className="employee-finance-table"><thead><tr><th>Job</th><th>Client</th><th>Payroll</th><th>Paid</th><th>Action</th></tr></thead><tbody>{paidJobs.map((job) => <tr key={job.id}><td><button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>#{job.jobNumber}</button></td><td>{job.organization}</td><td>{money(job.payrollAmount)}</td><td>{job.paidAt}</td><td><button className="secondary-button compact" type="button" onClick={() => setCommissionJobsPaid(selectedSummary, [job.jobNumber], false)}>Return unpaid</button></td></tr>)}</tbody></table></div></details>`,
 `              <details className="employee-finance-section collapsed-payroll"><summary><span>Paid commission</span><strong>{paidJobs.length} jobs</strong></summary><div className="employee-finance-table-wrap"><table className="employee-finance-table"><thead><tr><th>Job</th><th>Client</th><th>Payroll</th><th>Paid</th><th>Action</th></tr></thead><tbody>{paidJobs.map((job) => <tr key={job.id}><td><button className="job-number-link" type="button" onClick={() => onOpenJob(job)}>#{job.jobNumber}</button></td><td>{job.organization}</td><td>{money(job.payrollAmount)}</td><td>{job.paidAt ? new Date(job.paidAt).toLocaleString('en-US') : ''}</td><td><button className="secondary-button compact" type="button" onClick={() => setCommissionJobsPaid(selectedSummary, [job.jobNumber], false)}>Return unpaid</button></td></tr>)}</tbody></table></div></details>
               <section className="employee-finance-section">
@@ -139,17 +135,56 @@ replaceRequired(
                   </table>
                 </div>
               </section>`,
-  'commission payment history',
-);
+    'commission payment history',
+  );
 
-source = source.replace(
-  "{row.paidAt ? `Paid ${row.paidAt.slice(0, 10)}` : 'Unpaid'}",
-  "{row.paidAt ? `Paid ${new Date(row.paidAt).toLocaleString('en-US')}` : 'Unpaid'}",
-);
-source = source.replace(
-  "{periodDraft.paidAt ? `Paid ${periodDraft.paidAt.slice(0, 10)}` : 'Not paid'}",
-  "{periodDraft.paidAt ? `Paid ${new Date(periodDraft.paidAt).toLocaleString('en-US')}` : 'Not paid'}",
-);
+  normalized = replaceRequired(
+    normalized,
+    "{row.paidAt ? `Paid ${row.paidAt.slice(0, 10)}` : 'Unpaid'}",
+    "{row.paidAt ? `Paid ${new Date(row.paidAt).toLocaleString('en-US')}` : 'Unpaid'}",
+    'period row paid date display',
+  );
+  normalized = replaceRequired(
+    normalized,
+    "{periodDraft.paidAt ? `Paid ${periodDraft.paidAt.slice(0, 10)}` : 'Not paid'}",
+    "{periodDraft.paidAt ? `Paid ${new Date(periodDraft.paidAt).toLocaleString('en-US')}` : 'Not paid'}",
+    'period draft paid date display',
+  );
 
-fs.writeFileSync(filePath, source.replace(/\n/g, newline));
-console.log('Payroll payment totals/history patch applied.');
+  assertFinalState(normalized);
+  return { source: normalized.replace(/\n/g, eol), changed: true, message: 'Payroll payment totals/history patch applied.' };
+}
+
+function hasFinalState(source) {
+  return finalStateMarkers.every((marker) => source.includes(marker));
+}
+
+function assertFinalState(source) {
+  if (!hasFinalState(source)) {
+    const missing = finalStateMarkers.filter((marker) => !source.includes(marker));
+    throw new Error(`Payroll payment history patch incomplete; missing final marker: ${missing[0]}`);
+  }
+}
+
+function replaceRequired(source, from, to, label) {
+  if (!source.includes(from)) {
+    throw new Error(`Payroll payment history patch could not find: ${label}`);
+  }
+  return source.replace(from, to);
+}
+
+function run(filePath = process.env.PAYROLL_PATCH_TARGET || defaultFilePath) {
+  const source = fs.readFileSync(filePath, 'utf8');
+  const result = patchPayrollPaymentHistory(source);
+  if (result.changed) fs.writeFileSync(filePath, result.source);
+  console.log(result.message);
+  return result;
+}
+
+if (require.main === module) run();
+
+module.exports = {
+  finalStateMarkers,
+  patchPayrollPaymentHistory,
+  run,
+};

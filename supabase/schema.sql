@@ -987,6 +987,7 @@ alter table jobs enable row level security;
 alter table appointments enable row level security;
 alter table job_comments enable row level security;
 alter table job_attachments enable row level security;
+grant select, insert, delete on table public.job_attachments to authenticated;
 alter table job_materials enable row level security;
 alter table job_payments enable row level security;
 alter table job_invoices enable row level security;
@@ -1101,6 +1102,10 @@ create policy "job comments insertable by company or platform" on job_comments
 
 create policy "job attachments readable by company or platform" on job_attachments
   for select using (public.can_access_company(company_id));
+create policy "job attachments insertable by company members" on job_attachments
+  for insert with check (public.can_access_company(company_id));
+create policy "job attachments deletable by uploader or company manager" on job_attachments
+  for delete using (public.can_manage_company(company_id) or (uploaded_by_user_id = auth.uid() and public.can_access_company(company_id)));
 create policy "job attachments manageable by company or platform" on job_attachments
   for all using (public.can_manage_company(company_id)) with check (public.can_manage_company(company_id));
 
@@ -1212,7 +1217,7 @@ create policy "audit insertable by authenticated users" on audit_events
 
 insert into storage.buckets (id, name, public)
 values
-  ('job-files', 'job-files', false),
+  ('job-files', 'job-files', true),
   ('library', 'library', false),
   ('email-files', 'email-files', true),
   ('company-logos', 'company-logos', true)
@@ -1247,10 +1252,10 @@ create policy "company members can read job files" on storage.objects
     and public.can_access_company((storage.foldername(name))[1]::uuid)
   );
 
-create policy "company managers can upload job files" on storage.objects
+create policy "company members can upload job files" on storage.objects
   for insert with check (
     bucket_id = 'job-files'
-    and public.can_manage_company((storage.foldername(name))[1]::uuid)
+    and public.can_access_company((storage.foldername(name))[1]::uuid)
   );
 
 create policy "company members can read library files" on storage.objects
