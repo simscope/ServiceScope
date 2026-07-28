@@ -87,6 +87,8 @@ assert.doesNotMatch(edgeIndex, /api\.openai\.com|OPENAI_API_KEY|buildMediaPrompt
 assert.match(openAiAdapter, /api\.openai\.com\/v1\/responses/);
 assert.match(openAiAdapter, /OPENAI_API_KEY|json_schema|input_image/);
 assert.doesNotMatch(appService, /api\.openai\.com|OPENAI_API_KEY|input_image|buildMediaPrompt/);
+assert.doesNotMatch(appService, /assertNoPrivateValues\(context\.attachments/);
+assert.match(appService, /buildProviderSafeRequest/);
 assert.doesNotMatch(`${aiPage}\n${publicContracts}\n${mediaClientApi}\n${mediaClientContracts}\n${mediaWorkspaceState}`, /AI_MEDIA_PROVIDER|AI_MEDIA_MODEL|api\.openai\.com|OPENAI_API_KEY|signed URL|storage service-role/i);
 assert.match(supabaseRest, /parsed\.code/);
 assert.match(supabaseRest, /\$\{normalizedCode\}: \$\{clean\}/);
@@ -493,6 +495,184 @@ assert.equal(telemetryEvents[0].mediaKindCounts.photo, 1);
 assert.equal(telemetryEvents[0].mediaKindCounts.video, 1);
 assert.doesNotMatch(JSON.stringify(telemetryEvents[0]), /photo\.jpg|storage|signed|Jane Customer|123 Market|JOB-74|Gate code|prompt|response|jwt|key/i);
 
+const technicalAttachmentId = '11111111-2222-4333-8444-555555555555';
+const technicalCompanyId = '22222222-3333-4444-8555-666666666666';
+const technicalJobId = '33333333-4444-4555-8666-777777777777';
+const technicalActorId = '44444444-5555-4666-8777-888888888888';
+const technicalStoragePath = `${technicalCompanyId}/${technicalJobId}/20260728031908000000/${technicalAttachmentId}`;
+let technicalProviderCalls = 0;
+let capturedProviderRequest;
+const technicalBoundaryResult = await handleMediaAnalysis(makeDependencies({
+  payload: {
+    ...basePayload,
+    jobId: technicalJobId,
+    attachmentIds: [technicalAttachmentId],
+    idempotencyKey: 'technical-boundary-1',
+  },
+  job: {
+    ...baseJob,
+    id: technicalJobId,
+    company_id: technicalCompanyId,
+  },
+  company: {
+    id: technicalCompanyId,
+    owner_email: 'synthetic-owner@example.test',
+    access_rules: { aiAssistant: 'full' },
+  },
+  companyUser: {
+    id: technicalActorId,
+    company_id: technicalCompanyId,
+    status: 'active',
+    role: 'manager',
+    portal_access_rules: { aiAssistant: 'full' },
+  },
+  session: {
+    kind: 'company',
+    company_id: technicalCompanyId,
+    user_id: technicalActorId,
+    email: 'synthetic-user@example.test',
+  },
+  attachments: [attachment({
+    id: technicalAttachmentId,
+    company_id: technicalCompanyId,
+    job_id: technicalJobId,
+    storage_bucket: 'synthetic-media-bucket',
+    storage_path: technicalStoragePath,
+    size_bytes: 769000,
+    created_at: '2026-07-28T03:00:00Z',
+    updated_at: '2026-07-28T03:10:00Z',
+  })],
+  repositoryOverrides: {
+    async createSignedMediaUrl() {
+      return `https://signed.example.test/${technicalAttachmentId}?token=synthetic`;
+    },
+  },
+  provider: {
+    id: 'mock-media-provider',
+    async analyze(providerRequest) {
+      technicalProviderCalls += 1;
+      capturedProviderRequest = providerRequest;
+      return providerRawResult(providerPayload({
+        attachments: [{
+          attachmentId: technicalAttachmentId,
+          findings: [{
+            category: 'equipment_overview',
+            confidence: 0.71,
+            explanation: 'Could be useful as an equipment overview.',
+            riskLevel: 'low',
+          }],
+        }],
+      }));
+    },
+  },
+}));
+assert.equal(technicalProviderCalls, 1);
+assert.equal(technicalBoundaryResult.provider, 'mock-media-provider');
+assert.equal(technicalBoundaryResult.attachments[0].status, 'analyzed');
+assert.deepEqual(Object.keys(capturedProviderRequest).sort(), ['context', 'mediaInputs', 'request']);
+assert.deepEqual(capturedProviderRequest.request, { analysisMode: 'media_review' });
+assert.deepEqual(capturedProviderRequest.context, { status: 'Completed' });
+assert.equal(capturedProviderRequest.mediaInputs.length, 1);
+assert.deepEqual(
+  Object.keys(capturedProviderRequest.mediaInputs[0]).sort(),
+  ['attachmentId', 'imageUrl', 'kind', 'mimeType'],
+);
+assert.equal(capturedProviderRequest.mediaInputs[0].attachmentId, technicalAttachmentId);
+assert.equal(capturedProviderRequest.mediaInputs[0].mimeType, 'image/jpeg');
+assert.equal(capturedProviderRequest.mediaInputs[0].kind, 'photo');
+assert.ok(
+  String(capturedProviderRequest.mediaInputs[0].imageUrl).startsWith('https://signed.example.test/'),
+  'Expected a signed image URL only in the provider image input',
+);
+const redactedProviderBoundary = {
+  ...capturedProviderRequest,
+  mediaInputs: capturedProviderRequest.mediaInputs.map((input) => ({ ...input, imageUrl: '[redacted]' })),
+};
+assert.doesNotMatch(
+  JSON.stringify(redactedProviderBoundary),
+  /privateValues|companyId|actorId|jobId|idempotencyKey|storageBucket|storagePath|createdAt|updatedAt|sizeBytes|customer|invoice|comment/i,
+);
+
+const syntheticPromptPrivateValues = [
+  'Synthetic Private Customer',
+  'private-customer@example.test',
+  '555-867-5309',
+  '987 Synthetic Avenue',
+  'Synthetic private job note',
+  'SYNTH-INVOICE-9001',
+  'Synthetic private comment',
+];
+const promptBoundary = buildMediaPrompt({
+  request: {
+    analysisMode: 'media_review',
+    jobId: technicalJobId,
+    privateValues: syntheticPromptPrivateValues,
+  },
+  context: {
+    status: 'Completed',
+    companyId: technicalCompanyId,
+    jobId: technicalJobId,
+    privateValues: syntheticPromptPrivateValues,
+    jobNote: syntheticPromptPrivateValues[4],
+    invoiceNumber: syntheticPromptPrivateValues[5],
+    comment: syntheticPromptPrivateValues[6],
+  },
+  mediaInputs: [{
+    attachmentId: technicalAttachmentId,
+    mimeType: 'image/jpeg',
+    kind: 'photo',
+    imageUrl: 'https://signed.example.test/private-image?token=synthetic',
+    storageBucket: 'synthetic-media-bucket',
+    storagePath: technicalStoragePath,
+    filename: 'synthetic-private-filename.png',
+    sizeBytes: 769000,
+  }],
+});
+assert.match(promptBoundary, new RegExp(technicalAttachmentId));
+for (const privateValue of syntheticPromptPrivateValues) {
+  assert.ok(!promptBoundary.includes(privateValue), 'Prompt must not contain synthetic private values');
+}
+for (const technicalValue of [
+  technicalCompanyId,
+  technicalJobId,
+  technicalStoragePath,
+  'synthetic-media-bucket',
+  'synthetic-private-filename.png',
+  'signed.example.test',
+]) {
+  assert.ok(!promptBoundary.includes(technicalValue), 'Prompt must not contain non-prompt technical metadata');
+}
+
+const preProviderTelemetryEvents = [];
+let preProviderTelemetryProviderCalls = 0;
+await assert.rejects(() => handleMediaAnalysis(makeDependencies({
+  payload: { ...basePayload, attachmentIds: ['photo-1'] },
+  attachments: [attachment({ id: 'photo-1' })],
+  repositoryOverrides: {
+    async getCustomer() {
+      return { organization: 'media review' };
+    },
+  },
+  telemetry: { record: (event) => preProviderTelemetryEvents.push(event) },
+  provider: {
+    id: 'mock-media-provider',
+    async analyze() {
+      preProviderTelemetryProviderCalls += 1;
+      return providerRawResult(providerPayload());
+    },
+  },
+})), /MEDIA_PRIVACY_VALIDATION_FAILED/);
+assert.equal(preProviderTelemetryProviderCalls, 0);
+assert.equal(preProviderTelemetryEvents.length, 1);
+assert.equal(preProviderTelemetryEvents[0].stage, 'pre-provider-validation');
+assert.equal(preProviderTelemetryEvents[0].code, 'MEDIA_PRIVACY_VALIDATION_FAILED');
+assert.equal(preProviderTelemetryEvents[0].providerCallStarted, false);
+assert.equal(preProviderTelemetryEvents[0].httpStatus, 400);
+assert.equal(preProviderTelemetryEvents[0].attachmentCount, 1);
+assert.equal(preProviderTelemetryEvents[0].privacyDiagnostics[0].subreason, 'KNOWN_PRIVATE_VALUE_MATCH');
+assert.equal(preProviderTelemetryEvents[0].privacyDiagnostics[0].path, '$.analysisMode');
+assert.doesNotMatch(JSON.stringify(preProviderTelemetryEvents[0]), /media review|synthetic|storage|signed|token|prompt|response/i);
+
 let providerCalls = 0;
 let signedUrlCalls = 0;
 const providerResult = await handleMediaAnalysis(makeDependencies({
@@ -612,8 +792,8 @@ assert.doesNotMatch(prompt, /Jane Customer|123 Market|JOB-74|Gate code/);
 const openAiRequest = buildOpenAiMediaRequest({
   model: 'gpt-4.1-mini',
   providerRequest: {
-    request: validated,
-    context,
+    request: { analysisMode: validated.analysisMode },
+    context: { status: context.status },
     mediaInputs: [
       { attachmentId: 'photo-1', mimeType: 'image/jpeg', imageUrl: 'https://signed.example.test/photo-1?token=secret' },
     ],
@@ -643,8 +823,8 @@ const openAiProvider = createOpenAiMediaProvider({
   },
 });
 const openAiResult = await openAiProvider.analyze({
-  request: validated,
-  context,
+  request: { analysisMode: validated.analysisMode },
+  context: { status: context.status },
   mediaInputs: [{ attachmentId: 'photo-1', mimeType: 'image/jpeg', imageUrl: 'https://signed.example.test/photo-1?token=secret' }],
 }, { signal: new AbortController().signal });
 assert.equal(openAiResult.provider, 'openai');
@@ -664,8 +844,8 @@ const malformedProvider = createOpenAiMediaProvider({
   },
 });
 await assert.rejects(() => malformedProvider.analyze({
-  request: validated,
-  context,
+  request: { analysisMode: validated.analysisMode },
+  context: { status: context.status },
   mediaInputs: [{ attachmentId: 'photo-1', mimeType: 'image/jpeg', imageUrl: 'https://signed.example.test/photo-1?token=secret' }],
 }, { signal: new AbortController().signal }), /MEDIA_INVALID_PROVIDER_OUTPUT/);
 
@@ -729,20 +909,39 @@ assert.equal(incompleteFallback.provider, 'deterministic-fallback');
 assert.match(incompleteFallback.warnings.map((warning) => warning.code).join(','), /MEDIA_ANALYSIS_INCOMPLETE/);
 
 const unsafeTelemetryEvents = [];
+let unsafeOutputProviderCalls = 0;
 const unsafeOutputFallback = await handleMediaAnalysis(makeDependencies({
   payload: {
     ...basePayload,
     idempotencyKey: '00000000-0000-4000-8000-000000000374:media:1785201639885:090cc74b-4ada-4581-b776-fb533b7a8c2e',
   },
   telemetry: { record: (event) => unsafeTelemetryEvents.push(event) },
-  provider: { id: 'mock-media-provider', async analyze() { return providerRawResult(providerPayload({ attachments: [{ attachmentId: 'photo-1', findings: [{ category: 'possible_address', confidence: 0.5, explanation: 'Shows 123 Market Street.', riskLevel: 'high' }] }] })); } },
+  provider: {
+    id: 'mock-media-provider',
+    async analyze() {
+      unsafeOutputProviderCalls += 1;
+      return providerRawResult(providerPayload({
+        attachments: [{
+          attachmentId: 'photo-1',
+          findings: [{
+            category: 'possible_phone_or_email',
+            confidence: 0.5,
+            explanation: 'Shows boundary-private@example.test.',
+            riskLevel: 'high',
+          }],
+        }],
+      }));
+    },
+  },
 }));
+assert.equal(unsafeOutputProviderCalls, 1);
 assert.equal(unsafeOutputFallback.provider, 'deterministic-fallback');
 assert.match(unsafeOutputFallback.warnings.map((warning) => warning.code).join(','), /MEDIA_INVALID_PROVIDER_OUTPUT|MEDIA_PRIVACY_VALIDATION_FAILED/);
 assert.equal(unsafeOutputFallback.attachments[0].visualAnalysisPerformed, false);
-assert.equal(unsafeTelemetryEvents[0].privacyDiagnostics[0].subreason, 'ADDRESS_PATTERN');
+assert.deepEqual(unsafeOutputFallback.attachments.flatMap((item) => item.findings), []);
+assert.equal(unsafeTelemetryEvents[0].privacyDiagnostics[0].subreason, 'EMAIL_PATTERN');
 assert.deepEqual(Object.keys(unsafeTelemetryEvents[0].privacyDiagnostics[0]).sort(), ['attachmentId', 'detector', 'findingCategory', 'path', 'patternClass', 'stringLengthBucket', 'subreason'].sort());
-assert.doesNotMatch(JSON.stringify(unsafeTelemetryEvents[0]), /123 Market|Shows 123|Jane Customer|Private Org|prompt|response|signed|token/i);
+assert.doesNotMatch(JSON.stringify(unsafeTelemetryEvents[0]), /boundary-private|Jane Customer|Private Org|prompt|response|signed|token/i);
 
 let videoOnlyCalls = 0;
 const videoOnly = await handleMediaAnalysis(makeDependencies({

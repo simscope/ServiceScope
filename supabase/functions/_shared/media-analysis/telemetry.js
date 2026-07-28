@@ -2,6 +2,8 @@ export function safeMediaTelemetryPayload(event) {
   const attachments = Array.isArray(event.attachments) ? event.attachments : [];
   const totalBytes = attachments.reduce((sum, attachment) => sum + (Number(attachment.sizeBytes) || 0), 0);
   return {
+    stage: normalizeStage(event.stage),
+    providerCallStarted: typeof event.providerCallStarted === 'boolean' ? event.providerCallStarted : undefined,
     correlationId: event.correlationId,
     provider: event.provider,
     model: event.model,
@@ -20,6 +22,10 @@ export function safeMediaTelemetryPayload(event) {
     mediaKindCounts: countBy(attachments, 'mediaKind'),
     byteBucket: bucketBytes(totalBytes),
   };
+}
+
+function normalizeStage(value) {
+  return value === 'pre-provider-validation' ? value : undefined;
 }
 
 export function bucketBytes(bytes) {

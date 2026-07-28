@@ -12,12 +12,19 @@ import { safeMediaTelemetryPayload } from './telemetry.js';
 
 export async function handleMediaAnalysis({ rawBody, authorization, auth, repository, provider, guards, config, telemetry, clock = Date }) {
   if (!authorization?.startsWith('Bearer ')) throw httpError('AUTH_REQUIRED', 401);
+  const requestStart = clock.now();
   if (byteLength(rawBody) > maxRequestBytes) throw httpError('MEDIA_REQUEST_TOO_LARGE');
   const request = validateMediaAnalysisRequestBody(parseJson(rawBody));
   assertNoUnsafeClientMediaInput(request);
   const session = await auth.resolveSession(authorization);
   const context = await buildAuthorizedMediaContext({ request, session, repository });
-  assertNoPrivateValues(context.attachments, context.privateValues);
+  assertProviderPromptPrivacy({
+    request,
+    context,
+    telemetry,
+    clock,
+    requestStart,
+  });
   const visionPhotos = context.attachments.filter((attachment) => attachment.mediaKind === 'photo');
   if (visionPhotos.length > maxVisionPhotos) throw httpError('MEDIA_REQUEST_TOO_LARGE');
 
@@ -62,7 +69,8 @@ export { MediaAnalysisError as HttpError };
 async function analyzeWithProvider({ request, context, provider, config, telemetry, clock, start }) {
   try {
     const mediaInputs = await buildSignedMediaInputs({ context, repository: config.repository });
-    const response = await callWithRetry(provider, { request, context, mediaInputs }, config);
+    const providerRequest = buildProviderSafeRequest({ request, context, mediaInputs });
+    const response = await callWithRetry(provider, providerRequest, config);
     const result = parseProviderMediaResult(response.result.rawJson, {
       request,
       context,
@@ -103,6 +111,47 @@ async function analyzeWithProvider({ request, context, provider, config, telemet
       attempts: error?.attempts ?? 1,
     });
   }
+}
+
+function assertProviderPromptPrivacy({ request, context, telemetry, clock, requestStart }) {
+  try {
+    assertNoPrivateValues({
+      analysisMode: request.analysisMode,
+      status: context.status,
+    }, context.privateValues);
+  } catch (error) {
+    const code = normalizeMediaErrorCode(error);
+    if (code === 'MEDIA_PRIVACY_VALIDATION_FAILED') {
+      emitTelemetry(telemetry, {
+        stage: 'pre-provider-validation',
+        code,
+        providerCallStarted: false,
+        success: false,
+        httpStatus: error?.status ?? statusForMediaCode(code),
+        latencyMs: clock.now() - requestStart,
+        privacyDiagnostics: error?.details?.privacyDiagnostics,
+        attachments: context.attachments,
+      });
+    }
+    throw error;
+  }
+}
+
+function buildProviderSafeRequest({ request, context, mediaInputs }) {
+  return {
+    request: {
+      analysisMode: request.analysisMode,
+    },
+    context: {
+      status: context.status,
+    },
+    mediaInputs: mediaInputs.map((input) => ({
+      attachmentId: input.attachmentId,
+      mimeType: input.mimeType,
+      kind: input.kind,
+      imageUrl: input.imageUrl,
+    })),
+  };
 }
 
 async function callWithRetry(provider, providerRequest, config = {}) {
