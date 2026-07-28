@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { DragEvent, PointerEvent } from 'react';
 import {
   Activity,
@@ -86,7 +86,6 @@ import {
 } from './services/companyOnboardingStore';
 import { resolveCurrentAuthSession, signInAndResolveSession } from './services/authBackend';
 import { saveUserAccess, type AccessActionMode } from './services/accessInvite';
-import { managePreviewQaWorkspace, shouldShowPreviewQaTools, type PreviewQaWorkspaceAction } from './services/previewQaWorkspace';
 import { clearLegacyLocalBusinessData, loadOwnerWorkspaceFromBackend } from './services/backendData';
 import { saveCompanyAccessRulesToBackend, saveCompanyCoreToBackend, saveCompanyOnboardingStepsToBackend, saveOnboardingProfileToBackend } from './services/onboardingBackend';
 import {
@@ -183,6 +182,13 @@ import type {
 import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
+
+const previewQaToolsBuildEnabled = (import.meta as unknown as {
+  env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string };
+}).env.VITE_PREVIEW_QA_TOOLS_ENABLED === 'true';
+const PreviewQaToolsPanel = previewQaToolsBuildEnabled
+  ? lazy(() => import('./components/PreviewQaToolsPanel').then((module) => ({ default: module.PreviewQaToolsPanel })))
+  : null;
 
 function TechnicianMobileHandoff({ onSignOut }: { onSignOut: () => void }) {
   const technicianAppUrl = ((import.meta as unknown as { env?: { VITE_TECHNICIAN_APP_URL?: string } }).env?.VITE_TECHNICIAN_APP_URL
@@ -465,10 +471,6 @@ export function App() {
   const [backendError, setBackendError] = useState('');
   const [companyCreateStatus, setCompanyCreateStatus] = useState('');
   const [ownerAccessStatusByCompany, setOwnerAccessStatusByCompany] = useState<Record<string, string>>({});
-  const [qaEmail, setQaEmail] = useState('');
-  const [qaPassword, setQaPassword] = useState('');
-  const [qaStatus, setQaStatus] = useState('');
-  const [qaPending, setQaPending] = useState(false);
 
   const selectedCompany = companies.find((company) => company.id === selectedCompanyId) ?? companies[0];
   const selectedOnboardingProfile = onboardingProfiles.find((profile) => profile.companyId === selectedCompany?.id);
@@ -484,11 +486,9 @@ export function App() {
         : 'viewer'
     : 'viewer';
   const ownerCanAccess = (candidate: AppPage) => canAccessOwnerPage(currentOwnerRole, candidate);
-  const previewQaToolsVisible = shouldShowPreviewQaTools({
-    authSession,
-    currentOwnerRole,
-    env: (import.meta as unknown as { env?: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string | boolean } }).env ?? {},
-  });
+  const previewQaToolsVisible = previewQaToolsBuildEnabled
+    && authSession?.kind === 'owner'
+    && currentOwnerRole === 'owner';
   const newSupportCount = supportTickets.filter((ticket) => ticket.status === 'new').length;
 
   useEffect(() => {
@@ -777,47 +777,6 @@ export function App() {
       saveAuditEvents(nextEvents);
       return nextEvents;
     });
-  }
-
-  async function runPreviewQaAction(action: PreviewQaWorkspaceAction) {
-    if (authSession?.kind !== 'owner' || currentOwnerRole !== 'owner') {
-      setQaStatus('Only the platform owner can manage the Preview QA workspace.');
-      return;
-    }
-
-    if (action === 'create') {
-      if (!qaEmail.trim()) {
-        setQaStatus('QA email is required.');
-        return;
-      }
-      if (qaPassword.trim().length < 12) {
-        setQaStatus('Temporary password must be at least 12 characters.');
-        return;
-      }
-    }
-
-    setQaPending(true);
-    setQaStatus(action === 'create' ? 'Creating QA workspace...' : action === 'disable' ? 'Disabling QA workspace...' : 'Deleting QA workspace...');
-    try {
-      const result = await managePreviewQaWorkspace({
-        action,
-        email: action === 'create' ? qaEmail : undefined,
-        temporaryPassword: action === 'create' ? qaPassword : undefined,
-      });
-      setQaStatus(
-        action === 'create'
-          ? `QA workspace ready for ${result.email}. Use the ordinary Preview login form.`
-          : action === 'disable'
-            ? 'QA workspace disabled.'
-            : 'QA workspace deleted.',
-      );
-      setQaPassword('');
-    } catch (error) {
-      setQaStatus(error instanceof Error ? error.message : 'QA workspace action failed.');
-      setQaPassword('');
-    } finally {
-      setQaPending(false);
-    }
   }
 
   async function sendCompanyOwnerAccess(company: Company, mode: AccessActionMode, password: string) {
@@ -1230,17 +1189,11 @@ export function App() {
           <AccessPage
             users={platformUsers}
             form={accessForm}
-            qaTools={previewQaToolsVisible ? {
-              email: qaEmail,
-              password: qaPassword,
-              status: qaStatus,
-              pending: qaPending,
-              onEmailChange: setQaEmail,
-              onPasswordChange: setQaPassword,
-              onCreate: () => runPreviewQaAction('create'),
-              onDisable: () => runPreviewQaAction('disable'),
-              onDelete: () => runPreviewQaAction('delete'),
-            } : undefined}
+            qaTools={previewQaToolsVisible && PreviewQaToolsPanel ? (
+              <Suspense fallback={null}>
+                <PreviewQaToolsPanel />
+              </Suspense>
+            ) : undefined}
             onFormChange={setAccessForm}
             onInvite={(event) => {
               event.preventDefault();

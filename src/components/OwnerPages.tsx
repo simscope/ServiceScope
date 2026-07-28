@@ -970,17 +970,7 @@ export function AccessPage({
   onInvite: (event: FormEvent<HTMLFormElement>) => void;
   onRoleChange: (userId: string, role: PlatformUserRole) => void;
   onStatusChange: (userId: string, status: PlatformUserStatus) => void;
-  qaTools?: {
-    email: string;
-    password: string;
-    status: string;
-    pending: boolean;
-    onEmailChange: (value: string) => void;
-    onPasswordChange: (value: string) => void;
-    onCreate: () => void;
-    onDisable: () => void;
-    onDelete: () => void;
-  };
+  qaTools?: ReactNode;
 }) {
   const [accessSearch, setAccessSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | PlatformUserRole>('all');
@@ -1051,47 +1041,7 @@ export function AccessPage({
           </form>
         </section>
 
-        {qaTools ? (
-          <section className="panel invite-panel access-qa-tools-card">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Admin / QA Tools</p>
-                <h2>Preview QA workspace</h2>
-              </div>
-              <ServerCog size={20} aria-hidden="true" />
-            </div>
-            <p className="access-note">
-              Creates an isolated AI_QA_ tenant and non-owner QA user through the server-side admin flow.
-              Use a temporary password and delete the workspace after smoke testing.
-            </p>
-            <label>
-              QA email
-              <input value={qaTools.email} onChange={(event) => qaTools.onEmailChange(event.target.value)} placeholder="qa-user@example.com" />
-            </label>
-            <label>
-              Temporary password
-              <input
-                type="password"
-                value={qaTools.password}
-                onChange={(event) => qaTools.onPasswordChange(event.target.value)}
-                placeholder="Temporary password"
-                autoComplete="new-password"
-              />
-            </label>
-            <div className="access-qa-actions">
-              <button className="primary-button compact" type="button" onClick={qaTools.onCreate} disabled={qaTools.pending}>
-                Create QA workspace
-              </button>
-              <button className="secondary-button compact" type="button" onClick={qaTools.onDisable} disabled={qaTools.pending}>
-                Disable QA user
-              </button>
-              <button className="secondary-button compact danger-button" type="button" onClick={qaTools.onDelete} disabled={qaTools.pending}>
-                Delete QA workspace
-              </button>
-            </div>
-            {qaTools.status ? <p className="access-status">{qaTools.status}</p> : null}
-          </section>
-        ) : null}
+        {qaTools}
 
         <section className="panel access-matrix-panel">
           <div className="panel-heading">

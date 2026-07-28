@@ -1,7 +1,5 @@
 import { supabaseFunction } from './supabaseRest';
-import type { AuthSession } from '../appTypes';
-
-export type PreviewQaWorkspaceAction = 'create' | 'disable' | 'delete';
+export type PreviewQaWorkspaceAction = 'create' | 'disable' | 'enable' | 'delete';
 
 export type PreviewQaWorkspaceResult = {
   ok: true;
@@ -11,21 +9,9 @@ export type PreviewQaWorkspaceResult = {
   email?: string;
   loginReady?: boolean;
   remainingRows?: number;
+  remainingStorageObjects?: number;
+  remainingAuthUsers?: number;
 };
-
-export function isPreviewQaToolsEnabled(env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string | boolean | undefined }) {
-  return env.VITE_PREVIEW_QA_TOOLS_ENABLED === true || env.VITE_PREVIEW_QA_TOOLS_ENABLED === 'true';
-}
-
-export function shouldShowPreviewQaTools(input: {
-  authSession: AuthSession | null;
-  currentOwnerRole: string;
-  env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string | boolean | undefined };
-}) {
-  return input.authSession?.kind === 'owner'
-    && input.currentOwnerRole === 'owner'
-    && isPreviewQaToolsEnabled(input.env);
-}
 
 export async function managePreviewQaWorkspace(input: {
   action: PreviewQaWorkspaceAction;

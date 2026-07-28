@@ -9,11 +9,13 @@ import {
   createQaWorkspace,
   deleteQaWorkspace,
   disableQaWorkspace,
+  enableQaWorkspace,
   handleQaWorkspace,
   projectRefFromSupabaseUrl,
   qaAccessRules,
   qaCompanyId,
-  qaPrefix,
+  qaCompanyName,
+  qaStorageObjects,
   safeQaResult,
 } from '../supabase/functions/_shared/preview-qa-workspace/service.js';
 
@@ -46,10 +48,6 @@ function makeBuilder(client, table) {
     },
     eq(column, value) {
       this.filters.push({ column, value });
-      if (this.op === 'update' || this.op === 'delete') {
-        client.calls.push({ type: this.op, table, patch: this.patch, filters: [...this.filters] });
-        return Promise.resolve({ error: null });
-      }
       return this;
     },
     maybeSingle() {
@@ -57,16 +55,13 @@ function makeBuilder(client, table) {
       return Promise.resolve({ data: client.qaCompany, error: null });
     },
     then(resolve, reject) {
+      if (this.op === 'update' || this.op === 'delete') {
+        client.calls.push({ type: this.op, table, patch: this.patch, filters: [...this.filters] });
+        return Promise.resolve({ error: null }).then(resolve, reject);
+      }
       client.calls.push({ type: 'select', table, selected: this.selected, filters: [...this.filters] });
-      const data = table === 'job_attachments'
-        ? client.attachments
-        : table === 'company_users'
-          ? client.companyUsers
-          : [];
-      const count = this.options?.count === 'exact'
-        ? (client.remainingCounts?.[table] ?? 0)
-        : null;
-      return Promise.resolve({ data, count, error: null }).then(resolve, reject);
+      const count = this.options?.count === 'exact' ? (client.remainingCounts?.[table] ?? 0) : null;
+      return Promise.resolve({ data: [], count, error: null }).then(resolve, reject);
     },
   };
   return builder;
@@ -74,39 +69,38 @@ function makeBuilder(client, table) {
 
 function makeAdminClient({
   existingUser = null,
-  qaCompany = { id: qaCompanyId, name: `${qaPrefix}Preview Workspace` },
-  attachments = [{ storage_bucket: 'job-files', storage_path: `${qaCompanyId}/job/file.png` }],
-  companyUsers = [{ auth_user_id: 'auth-user-1' }],
-  authUsersById = { 'auth-user-1': { id: 'auth-user-1', user_metadata: { qa: true, companyId: qaCompanyId } } },
+  qaCompany = { id: qaCompanyId, name: qaCompanyName },
+  authUsers = [{ id: 'auth-user-1', app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId } }],
+  storageObjects = qaStorageObjects().map((object) => ({ bucket: object.bucket, path: object.path })),
   remainingCounts = {},
 } = {}) {
+  const initialUsers = existingUser ? [existingUser, ...authUsers.filter((user) => user.id !== existingUser.id)] : [...authUsers];
   const client = {
     calls: [],
     qaCompany,
-    attachments,
-    companyUsers,
-    authUsersById,
+    authUsers: initialUsers,
+    storageObjects: [...storageObjects],
     remainingCounts,
     auth: {
       admin: {
         listUsers: async () => {
           client.calls.push({ type: 'listUsers' });
-          return { data: { users: existingUser ? [existingUser] : [] }, error: null };
+          return { data: { users: [...client.authUsers] }, error: null };
         },
         createUser: async (payload) => {
           client.calls.push({ type: 'createUser', payload });
-          return { data: { user: { id: 'auth-user-1', email: payload.email } }, error: null };
+          const user = { id: 'created-auth-user', email: payload.email, app_metadata: payload.app_metadata, user_metadata: payload.user_metadata };
+          client.authUsers.push(user);
+          return { data: { user }, error: null };
         },
         updateUserById: async (id, payload) => {
           client.calls.push({ type: 'updateUserById', id, payload });
+          client.authUsers = client.authUsers.map((user) => user.id === id ? { ...user, ...payload } : user);
           return { data: { user: { id } }, error: null };
-        },
-        getUserById: async (id) => {
-          client.calls.push({ type: 'getUserById', id });
-          return { data: { user: client.authUsersById[id] ?? { id, user_metadata: { qa: false } } }, error: null };
         },
         deleteUser: async (id) => {
           client.calls.push({ type: 'deleteUser', id });
+          client.authUsers = client.authUsers.filter((user) => user.id !== id);
           return { data: { user: { id } }, error: null };
         },
       },
@@ -116,11 +110,25 @@ function makeAdminClient({
         return {
           upload: async (storagePath, body, options) => {
             client.calls.push({ type: 'upload', bucket, storagePath, options, size: body.size });
+            client.storageObjects = client.storageObjects.filter((object) => !(object.bucket === bucket && object.path === storagePath));
+            client.storageObjects.push({ bucket, path: storagePath });
             return { data: { path: storagePath }, error: null };
           },
           remove: async (paths) => {
             client.calls.push({ type: 'removeStorage', bucket, paths });
+            client.storageObjects = client.storageObjects.filter((object) => object.bucket !== bucket || !paths.includes(object.path));
             return { data: paths, error: null };
+          },
+          list: async (folder, options) => {
+            client.calls.push({ type: 'listStorage', bucket, folder, options });
+            const prefix = `${folder}/`;
+            return {
+              data: client.storageObjects
+                .filter((object) => object.bucket === bucket && object.path.startsWith(prefix))
+                .map((object) => ({ name: object.path.slice(prefix.length) }))
+                .filter((object) => !options?.search || object.name.includes(options.search)),
+              error: null,
+            };
           },
         };
       },
@@ -133,7 +141,7 @@ function makeAdminClient({
 }
 
 function ownerCaller() {
-  return { rpc: async (name) => ({ data: name === 'app_current_session' ? [{ kind: 'owner', status: 'active' }] : [], error: null }) };
+  return { rpc: async (name) => ({ data: name === 'app_current_session' ? [{ kind: 'owner', role: 'owner', status: 'active' }] : [], error: null }) };
 }
 
 function companyCaller() {
@@ -160,17 +168,46 @@ function testServerGates() {
     () => assertServerGate({ enabled: 'true', supabaseUrl: 'https://wrongref.supabase.co', allowedProjectRef: 'sizdqtgejoikjlgukbqh' }),
     /QA_WORKSPACE_WRONG_PROJECT/,
   );
+  assert.throws(
+    () => assertServerGate({ enabled: 'true', supabaseUrl: 'https://sizdqtgejoikjlgukbqh.supabase.co', allowedProjectRef: undefined }),
+    /QA_WORKSPACE_WRONG_PROJECT/,
+  );
   assert.doesNotThrow(
     () => assertServerGate({ enabled: 'true', supabaseUrl: 'https://sizdqtgejoikjlgukbqh.supabase.co', allowedProjectRef: 'sizdqtgejoikjlgukbqh' }),
   );
 }
 
 async function testOwnerOnlyCreate() {
+  await handleQaWorkspace({ callerClient: ownerCaller(), adminClient: makeAdminClient({ qaCompany: null, authUsers: [] }) }, {
+    action: 'create',
+    email: 'qa@example.test',
+    temporaryPassword: 'temporary-pass-123',
+  });
   await assert.rejects(
     () => handleQaWorkspace({ callerClient: companyCaller(), adminClient: makeAdminClient() }, {
       action: 'create',
       email: 'qa@example.test',
       temporaryPassword: 'temporary-pass-123',
+    }),
+    /OWNER_REQUIRED/,
+  );
+  await assert.rejects(
+    () => handleQaWorkspace({
+      callerClient: { rpc: async () => ({ data: [{ kind: 'owner', role: 'admin', status: 'active' }], error: null }) },
+      adminClient: makeAdminClient(),
+    }, {
+      action: 'create',
+      email: 'qa@example.test',
+      temporaryPassword: 'temporary-pass-123',
+    }),
+    /OWNER_REQUIRED/,
+  );
+  await assert.rejects(
+    () => handleQaWorkspace({
+      callerClient: { rpc: async () => ({ data: [{ kind: 'company', role: 'manager', status: 'active' }], error: null }) },
+      adminClient: makeAdminClient(),
+    }, {
+      action: 'delete',
     }),
     /OWNER_REQUIRED/,
   );
@@ -193,6 +230,8 @@ async function testCreateUsesServerAdminAndIsolatedTenant() {
   assert.ok(createUserCall, 'server admin user creation should be used');
   assert.equal(createUserCall.payload.email, 'qa@example.test');
   assert.equal(createUserCall.payload.password, password);
+  assert.equal(createUserCall.payload.app_metadata.previewQaWorkspace, true);
+  assert.equal(createUserCall.payload.app_metadata.companyId, qaCompanyId);
 
   const companyUserUpsert = adminClient.calls.find((call) => call.type === 'upsert' && call.table === 'company_users');
   assert.equal(companyUserUpsert.rows[0].company_id, qaCompanyId);
@@ -211,7 +250,9 @@ async function testCreateUsesServerAdminAndIsolatedTenant() {
 }
 
 async function testDuplicateCreateUpdatesExistingUser() {
-  const adminClient = makeAdminClient({ existingUser: { id: 'existing-user', email: 'qa@example.test', user_metadata: { qa: true, companyId: qaCompanyId } } });
+  const adminClient = makeAdminClient({
+    existingUser: { id: 'existing-user', email: 'qa@example.test', app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId } },
+  });
   await createQaWorkspace({ adminClient }, { action: 'create', email: 'qa@example.test', temporaryPassword: 'temporary-pass-456' });
   assert.equal(adminClient.calls.filter((call) => call.type === 'createUser').length, 0);
   const updateCalls = adminClient.calls.filter((call) => call.type === 'updateUserById');
@@ -224,7 +265,7 @@ async function testDuplicateCreateUpdatesExistingUser() {
 async function testCompanyIdCollisionStopsBeforeAuthOrStorage() {
   const adminClient = makeAdminClient({
     qaCompany: { id: qaCompanyId, name: 'Real Customer Company' },
-    existingUser: { id: 'existing-user', email: 'qa@example.test', user_metadata: { qa: true, companyId: qaCompanyId } },
+    existingUser: { id: 'existing-user', email: 'qa@example.test', app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId } },
   });
   await assert.rejects(
     () => createQaWorkspace({ adminClient }, { action: 'create', email: 'qa@example.test', temporaryPassword: 'temporary-pass-111' }),
@@ -236,12 +277,43 @@ async function testCompanyIdCollisionStopsBeforeAuthOrStorage() {
 }
 
 async function testExistingNonQaUserIsRejected() {
-  const adminClient = makeAdminClient({ existingUser: { id: 'real-user', email: 'qa@example.test', user_metadata: { qa: false } } });
+  const adminClient = makeAdminClient({
+    existingUser: { id: 'real-user', email: 'qa@example.test', app_metadata: {} },
+    authUsers: [],
+  });
   await assert.rejects(
     () => createQaWorkspace({ adminClient }, { action: 'create', email: 'qa@example.test', temporaryPassword: 'temporary-pass-789' }),
     /QA_USER_EMAIL_ALREADY_EXISTS/,
   );
   assert.equal(adminClient.calls.filter((call) => call.type === 'updateUserById').length, 0);
+}
+
+async function testEnableRequiresQaAppMetadata() {
+  const nonQaClient = makeAdminClient({
+    existingUser: { id: 'real-user', email: 'qa@example.test', user_metadata: { qa: true, companyId: qaCompanyId }, app_metadata: {} },
+    authUsers: [],
+  });
+  await assert.rejects(
+    () => enableQaWorkspace({ adminClient: nonQaClient }, { action: 'enable', email: 'qa@example.test', temporaryPassword: 'temporary-pass-246' }),
+    /QA_USER_REQUIRED/,
+  );
+  assert.equal(nonQaClient.calls.filter((call) => call.type === 'updateUserById').length, 0);
+
+  const qaClient = makeAdminClient({
+    existingUser: {
+      id: 'existing-user',
+      email: 'qa@example.test',
+      app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId },
+    },
+    authUsers: [],
+  });
+  const result = await enableQaWorkspace(
+    { adminClient: qaClient },
+    { action: 'enable', email: 'qa@example.test', temporaryPassword: 'temporary-pass-246' },
+  );
+  assert.equal(result.action, 'enable');
+  assert.equal(result.loginReady, true);
+  assert.equal(qaClient.calls.find((call) => call.type === 'updateUserById').payload.ban_duration, 'none');
 }
 
 async function testDisableTurnsOffAiAssistant() {
@@ -258,25 +330,33 @@ async function testDisableTurnsOffAiAssistant() {
 }
 
 async function testDeleteOnlyQaScopedRowsAndStorage() {
+  const expectedObjects = qaStorageObjects();
   const adminClient = makeAdminClient({
-    attachments: [
-      { storage_bucket: 'job-files', storage_path: `${qaCompanyId}/job/file.png` },
-      { storage_bucket: 'job-files', storage_path: `foreign/${qaCompanyId}/not-owned.png` },
+    storageObjects: [
+      ...expectedObjects.map((object) => ({ bucket: object.bucket, path: object.path })),
+      { bucket: 'job-files', path: `foreign/${qaCompanyId}/not-owned.png` },
+      { bucket: 'other-bucket', path: expectedObjects[0].path },
     ],
   });
-  await deleteQaWorkspace({ adminClient });
+  const result = await deleteQaWorkspace({ adminClient });
   const deletes = adminClient.calls.filter((call) => call.type === 'delete');
   assert.ok(deletes.every((call) => call.table === 'companies'
     ? call.filters.some((filter) => filter.column === 'id' && filter.value === qaCompanyId)
     : call.filters.some((filter) => filter.column === 'company_id' && filter.value === qaCompanyId)));
   const storageRemove = adminClient.calls.find((call) => call.type === 'removeStorage');
-  assert.deepEqual(storageRemove.paths, [`${qaCompanyId}/job/file.png`]);
+  assert.equal(storageRemove.bucket, 'job-files');
+  assert.deepEqual(storageRemove.paths, expectedObjects.map((object) => object.path));
   assert.equal(adminClient.calls.filter((call) => call.type === 'deleteUser').length, 1);
+  assert.equal(result.remainingRows, 0);
+  assert.equal(result.remainingStorageObjects, 0);
+  assert.equal(result.remainingAuthUsers, 0);
+  assert.ok(adminClient.storageObjects.some((object) => object.path.startsWith('foreign/')));
+  assert.ok(adminClient.storageObjects.some((object) => object.bucket === 'other-bucket'));
 }
 
 async function testDeleteDoesNotRemoveNonQaAuthUser() {
   const adminClient = makeAdminClient({
-    authUsersById: { 'auth-user-1': { id: 'auth-user-1', user_metadata: { qa: false, companyId: 'real-company' } } },
+    authUsers: [{ id: 'auth-user-1', user_metadata: { qa: true, companyId: qaCompanyId }, app_metadata: {} }],
   });
   await deleteQaWorkspace({ adminClient });
   assert.equal(adminClient.calls.filter((call) => call.type === 'deleteUser').length, 0);
@@ -284,8 +364,27 @@ async function testDeleteDoesNotRemoveNonQaAuthUser() {
 
 async function testCleanupReportsRemainingRows() {
   const adminClient = makeAdminClient({ remainingCounts: { jobs: 2, companies: 1 } });
-  const result = await deleteQaWorkspace({ adminClient });
-  assert.equal(result.remainingRows, 3);
+  await assert.rejects(
+    () => deleteQaWorkspace({ adminClient }),
+    (error) => error.message === 'QA_CLEANUP_INCOMPLETE'
+      && error.safeDetails.remainingRows === 3
+      && error.safeDetails.remainingStorageObjects === 0
+      && error.safeDetails.remainingAuthUsers === 0,
+  );
+}
+
+async function testRepeatedCleanupIsSafe() {
+  const adminClient = makeAdminClient({ qaCompany: null, authUsers: [], storageObjects: [] });
+  const first = await deleteQaWorkspace({ adminClient });
+  const second = await deleteQaWorkspace({ adminClient });
+  assert.deepEqual(
+    [first.remainingRows, first.remainingStorageObjects, first.remainingAuthUsers],
+    [0, 0, 0],
+  );
+  assert.deepEqual(
+    [second.remainingRows, second.remainingStorageObjects, second.remainingAuthUsers],
+    [0, 0, 0],
+  );
 }
 
 function testDeleteGuardRejectsNonQaCompany() {
@@ -334,17 +433,18 @@ function testConfigAndFrontendSecretBoundary() {
 
 function testPreviewQaUiGateAndPasswordHandling() {
   const root = process.cwd();
-  const frontendService = fs.readFileSync(path.join(root, 'src/services/previewQaWorkspace.ts'), 'utf8');
   const app = fs.readFileSync(path.join(root, 'src/App.tsx'), 'utf8');
-  assert.match(frontendService, /VITE_PREVIEW_QA_TOOLS_ENABLED/);
-  assert.match(frontendService, /authSession\?\.[\s\S]*kind === 'owner'/);
-  assert.match(frontendService, /currentOwnerRole === 'owner'/);
-  assert.match(app, /qaTools=\{previewQaToolsVisible \?/);
-  assert.match(app, /setQaPassword\(''\);[\s\S]*catch/);
-  assert.match(app, /catch \(error\)[\s\S]*setQaPassword\(''\)/);
-  assert.doesNotMatch(app, /localStorage\.[A-Za-z]+\([^)]*qaPassword/);
-  assert.doesNotMatch(app, /sessionStorage\.[A-Za-z]+\([^)]*qaPassword/);
-  assert.doesNotMatch(app, /window\.history\.[A-Za-z]+\([^)]*qaPassword/);
+  const ownerPages = fs.readFileSync(path.join(root, 'src/components/OwnerPages.tsx'), 'utf8');
+  const panel = fs.readFileSync(path.join(root, 'src/components/PreviewQaToolsPanel.tsx'), 'utf8');
+  assert.match(app, /import\.meta[\s\S]*\.env\.VITE_PREVIEW_QA_TOOLS_ENABLED === 'true'/);
+  assert.match(app, /previewQaToolsBuildEnabled[\s\S]*authSession\?\.kind === 'owner'[\s\S]*currentOwnerRole === 'owner'/);
+  assert.match(app, /previewQaToolsBuildEnabled[\s\S]*lazy\(\(\) => import\('\.\/components\/PreviewQaToolsPanel'\)/);
+  assert.match(app, /qaTools=\{previewQaToolsVisible && PreviewQaToolsPanel/);
+  assert.doesNotMatch(ownerPages, /Preview QA workspace|Create QA workspace|preview-qa-workspace|AI_QA_/);
+  assert.match(panel, /finally \{[\s\S]*setTemporaryPassword\(''\)/);
+  assert.doesNotMatch(panel, /localStorage|sessionStorage|window\.history/);
+  assert.doesNotMatch(panel, /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/);
+  assert.doesNotMatch(panel, /temporary-pass-/);
 }
 
 function testServerErrorTaxonomy() {
@@ -363,10 +463,12 @@ await testCreateUsesServerAdminAndIsolatedTenant();
 await testDuplicateCreateUpdatesExistingUser();
 await testCompanyIdCollisionStopsBeforeAuthOrStorage();
 await testExistingNonQaUserIsRejected();
+await testEnableRequiresQaAppMetadata();
 await testDisableTurnsOffAiAssistant();
 await testDeleteOnlyQaScopedRowsAndStorage();
 await testDeleteDoesNotRemoveNonQaAuthUser();
 await testCleanupReportsRemainingRows();
+await testRepeatedCleanupIsSafe();
 testDeleteGuardRejectsNonQaCompany();
 testSafeAccessRules();
 testSafeResultHasNoCredentialFields();

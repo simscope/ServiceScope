@@ -20,7 +20,9 @@ const publicErrorCodes = new Set([
   'QA_COMPANY_REQUIRED',
   'QA_EMAIL_REQUIRED',
   'QA_TEMPORARY_PASSWORD_REQUIRED',
+  'QA_USER_REQUIRED',
   'QA_USER_EMAIL_ALREADY_EXISTS',
+  'QA_CLEANUP_INCOMPLETE',
   'QA_WORKSPACE_DISABLED',
   'QA_WORKSPACE_WRONG_PROJECT',
   'QA_COMPANY_ID_COLLISION',
@@ -29,6 +31,18 @@ const publicErrorCodes = new Set([
 function safeErrorCode(error: unknown) {
   const code = error instanceof Error ? error.message : '';
   return publicErrorCodes.has(code) ? code : 'QA_WORKSPACE_FAILED';
+}
+
+function safeErrorDetails(error: unknown) {
+  const details = error && typeof error === 'object' && 'safeDetails' in error
+    ? (error as { safeDetails?: Record<string, unknown> }).safeDetails
+    : undefined;
+  if (!details) return {};
+  return {
+    remainingRows: Number(details.remainingRows ?? 0),
+    remainingStorageObjects: Number(details.remainingStorageObjects ?? 0),
+    remainingAuthUsers: Number(details.remainingAuthUsers ?? 0),
+  };
 }
 
 Deno.serve(async (request) => {
@@ -68,7 +82,7 @@ Deno.serve(async (request) => {
     const code = safeErrorCode(error);
     const status = code === 'OWNER_REQUIRED'
       ? 403
-      : code === 'QA_USER_EMAIL_ALREADY_EXISTS' || code === 'QA_COMPANY_ID_COLLISION'
+      : code === 'QA_USER_EMAIL_ALREADY_EXISTS' || code === 'QA_COMPANY_ID_COLLISION' || code === 'QA_CLEANUP_INCOMPLETE'
         ? 409
         : code === 'QA_WORKSPACE_DISABLED'
           ? 404
@@ -77,6 +91,6 @@ Deno.serve(async (request) => {
             : code.includes('REQUIRED') || code.includes('INVALID')
               ? 400
               : 500;
-    return jsonResponse({ error: code }, status);
+    return jsonResponse({ error: code, ...safeErrorDetails(error) }, status);
   }
 });

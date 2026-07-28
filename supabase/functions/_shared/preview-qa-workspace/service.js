@@ -1,4 +1,5 @@
 export const qaPrefix = 'AI_QA_';
+export const qaCompanyName = `${qaPrefix}Preview Workspace`;
 export const qaCompanyId = '00000000-0000-4000-8000-000000000074';
 export const qaCustomerId = '00000000-0000-4000-8000-000000000174';
 export const qaLocationId = '00000000-0000-4000-8000-000000000274';
@@ -22,7 +23,7 @@ export function projectRefFromSupabaseUrl(supabaseUrl) {
 export function assertServerGate({ enabled, supabaseUrl, allowedProjectRef }) {
   if (enabled !== 'true') throw new Error('QA_WORKSPACE_DISABLED');
   const expectedRef = String(allowedProjectRef ?? '').trim();
-  if (expectedRef && projectRefFromSupabaseUrl(supabaseUrl) !== expectedRef) {
+  if (!expectedRef || projectRefFromSupabaseUrl(supabaseUrl) !== expectedRef) {
     throw new Error('QA_WORKSPACE_WRONG_PROJECT');
   }
 }
@@ -30,11 +31,11 @@ export function assertServerGate({ enabled, supabaseUrl, allowedProjectRef }) {
 export function parseQaWorkspaceRequest(value) {
   const body = value && typeof value === 'object' ? value : {};
   const action = String(body.action ?? '').trim();
-  if (!['create', 'disable', 'delete'].includes(action)) throw new Error('INVALID_QA_ACTION');
+  if (!['create', 'disable', 'enable', 'delete'].includes(action)) throw new Error('INVALID_QA_ACTION');
 
   const email = String(body.email ?? '').trim().toLowerCase();
   const password = String(body.temporaryPassword ?? '').trim();
-  if (action === 'create') {
+  if (action === 'create' || action === 'enable') {
     if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error('QA_EMAIL_REQUIRED');
     if (password.length < 12) throw new Error('QA_TEMPORARY_PASSWORD_REQUIRED');
   }
@@ -44,18 +45,18 @@ export function parseQaWorkspaceRequest(value) {
 
 export function assertOwnerSession(sessionRows) {
   const session = Array.isArray(sessionRows) ? sessionRows[0] : null;
-  if (!session || session.kind !== 'owner' || session.status !== 'active') throw new Error('OWNER_REQUIRED');
+  if (!session || session.kind !== 'owner' || session.role !== 'owner' || session.status !== 'active') throw new Error('OWNER_REQUIRED');
   return session;
 }
 
 export function assertQaCompany(company) {
-  if (!company || company.id !== qaCompanyId || typeof company.name !== 'string' || !company.name.startsWith(qaPrefix)) throw new Error('QA_COMPANY_REQUIRED');
+  if (!company || company.id !== qaCompanyId || company.name !== qaCompanyName) throw new Error('QA_COMPANY_REQUIRED');
   return company;
 }
 
 export function assertQaCompanySlot(company) {
   if (!company) return null;
-  if (company.id === qaCompanyId && typeof company.name === 'string' && company.name.startsWith(qaPrefix)) return company;
+  if (company.id === qaCompanyId && company.name === qaCompanyName) return company;
   throw new Error('QA_COMPANY_ID_COLLISION');
 }
 
@@ -86,7 +87,7 @@ export function safeQaResult(action, extra = {}) {
     ok: true,
     action,
     companyId: qaCompanyId,
-    companyName: `${qaPrefix}Preview Workspace`,
+    companyName: qaCompanyName,
     ...extra,
   };
 }
@@ -99,6 +100,7 @@ export async function handleQaWorkspace(deps, requestBody) {
 
   if (request.action === 'create') return createQaWorkspace(deps, request);
   if (request.action === 'disable') return disableQaWorkspace(deps);
+  if (request.action === 'enable') return enableQaWorkspace(deps, request);
   return deleteQaWorkspace(deps);
 }
 
@@ -109,11 +111,11 @@ export async function createQaWorkspace(deps, request) {
   const existingUser = await findAuthUserByEmail(deps.adminClient, request.email);
   if (existingUser && !isQaAuthUser(existingUser)) throw new Error('QA_USER_EMAIL_ALREADY_EXISTS');
   const authUser = existingUser ?? (await createAuthUser(deps.adminClient, request));
-  if (existingUser) await updateAuthUser(deps.adminClient, existingUser.id, request);
+  if (existingUser) await updateAuthUser(deps.adminClient, existingUser, request);
 
   await upsertRows(deps.adminClient, 'companies', [{
     id: qaCompanyId,
-    name: `${qaPrefix}Preview Workspace`,
+    name: qaCompanyName,
     owner_name: 'QA Workspace Owner',
     owner_email: 'ai-qa-owner@example.invalid',
     domain: 'qa.preview.local',
@@ -130,7 +132,7 @@ export async function createQaWorkspace(deps, request) {
 
   await upsertRows(deps.adminClient, 'company_profiles', [{
     company_id: qaCompanyId,
-    legal_name: `${qaPrefix}Preview Workspace`,
+    legal_name: qaCompanyName,
     display_name: `${qaPrefix}Preview`,
     website: 'https://qa.preview.local',
     phone: null,
@@ -142,16 +144,7 @@ export async function createQaWorkspace(deps, request) {
     access_rules: qaAccessRules(),
   }], 'company_id');
 
-  await upsertRows(deps.adminClient, 'company_users', [{
-    company_id: qaCompanyId,
-    auth_user_id: authUser.id,
-    name: 'AI QA User',
-    email: request.email,
-    role: 'manager',
-    status: 'active',
-    portal_access_rules: qaAccessRules(),
-    updated_at: new Date().toISOString(),
-  }], 'company_id,email');
+  await upsertRows(deps.adminClient, 'company_users', [qaCompanyUser(authUser.id, request.email)], 'company_id,email');
 
   await upsertQaJobs(deps.adminClient);
   await uploadQaAttachments(deps.adminClient);
@@ -162,25 +155,43 @@ export async function createQaWorkspace(deps, request) {
 export async function disableQaWorkspace(deps) {
   const company = await loadQaCompany(deps.adminClient);
   assertQaCompany(company);
-  const authUserIds = await loadQaAuthUserIds(deps.adminClient);
-  await deps.adminClient.from('company_users').update({ status: 'disabled', updated_at: new Date().toISOString() }).eq('company_id', qaCompanyId);
-  await deps.adminClient.from('company_profiles').update({ access_rules: { ...qaAccessRules(), aiAssistant: 'off' } }).eq('company_id', qaCompanyId);
-  const disabledAuthUsers = await disableQaAuthUsers(deps.adminClient, authUserIds);
+  const qaAuthUsers = await findQaAuthUsers(deps.adminClient);
+  await updateQaMemberships(deps.adminClient, qaAuthUsers, 'disabled');
+  await updateRows(deps.adminClient, 'company_profiles', { access_rules: { ...qaAccessRules(), aiAssistant: 'off' } }, [['company_id', qaCompanyId]]);
+  const disabledAuthUsers = await disableQaAuthUsers(deps.adminClient, qaAuthUsers);
   return safeQaResult('disable', { disabledAuthUsers });
+}
+
+export async function enableQaWorkspace(deps, request) {
+  const company = await loadQaCompany(deps.adminClient);
+  assertQaCompany(company);
+  const authUser = await findAuthUserByEmail(deps.adminClient, request.email);
+  if (!isQaAuthUser(authUser)) throw new Error('QA_USER_REQUIRED');
+  await updateAuthUser(deps.adminClient, authUser, request);
+  await upsertRows(deps.adminClient, 'company_users', [qaCompanyUser(authUser.id, request.email)], 'company_id,email');
+  await updateRows(deps.adminClient, 'company_profiles', { access_rules: qaAccessRules() }, [['company_id', qaCompanyId]]);
+  return safeQaResult('enable', { email: request.email, loginReady: true });
 }
 
 export async function deleteQaWorkspace(deps) {
   const company = await loadQaCompany(deps.adminClient);
-  assertQaCompany(company);
-  const authUserIds = await loadQaAuthUserIds(deps.adminClient);
+  assertQaCompanySlot(company);
+  const qaAuthUsers = await findQaAuthUsers(deps.adminClient);
   await deleteQaStorage(deps.adminClient);
   for (const table of ['job_attachments', 'job_comments', 'job_materials', 'job_invoices', 'job_payments', 'appointments', 'jobs', 'customer_locations', 'customers', 'company_users', 'company_profiles', 'company_onboarding_steps', 'company_job_workflow_settings', 'company_job_types']) {
-    await deps.adminClient.from(table).delete().eq('company_id', qaCompanyId);
+    await deleteRows(deps.adminClient, table, [['company_id', qaCompanyId]]);
   }
-  await deps.adminClient.from('companies').delete().eq('id', qaCompanyId);
-  await deleteQaAuthUsers(deps.adminClient, authUserIds);
+  await deleteRows(deps.adminClient, 'companies', [['id', qaCompanyId]]);
+  await deleteQaAuthUsers(deps.adminClient, qaAuthUsers);
   const remainingRows = await countRemainingQaRows(deps.adminClient);
-  return safeQaResult('delete', { remainingRows });
+  const remainingStorageObjects = await countRemainingQaStorageObjects(deps.adminClient);
+  const remainingAuthUsers = (await findQaAuthUsers(deps.adminClient)).length;
+  if (remainingRows || remainingStorageObjects || remainingAuthUsers) {
+    const error = new Error('QA_CLEANUP_INCOMPLETE');
+    error.safeDetails = { remainingRows, remainingStorageObjects, remainingAuthUsers };
+    throw error;
+  }
+  return safeQaResult('delete', { remainingRows, remainingStorageObjects, remainingAuthUsers });
 }
 
 async function loadQaCompany(adminClient) {
@@ -201,7 +212,7 @@ async function findAuthUserByEmail(adminClient, email) {
 }
 
 function isQaAuthUser(user) {
-  return user?.user_metadata?.qa === true && user?.user_metadata?.companyId === qaCompanyId;
+  return user?.app_metadata?.previewQaWorkspace === true && user?.app_metadata?.companyId === qaCompanyId;
 }
 
 async function createAuthUser(adminClient, request) {
@@ -209,56 +220,95 @@ async function createAuthUser(adminClient, request) {
     email: request.email,
     password: request.temporaryPassword,
     email_confirm: true,
+    app_metadata: { previewQaWorkspace: true, companyId: qaCompanyId },
     user_metadata: { name: 'AI QA User', companyId: qaCompanyId, role: 'manager', qa: true },
   });
   if (error) throw error;
   return data.user;
 }
 
-async function updateAuthUser(adminClient, userId, request) {
-  const { error } = await adminClient.auth.admin.updateUserById(userId, {
+async function updateAuthUser(adminClient, user, request) {
+  const { error } = await adminClient.auth.admin.updateUserById(user.id, {
     password: request.temporaryPassword,
     email_confirm: true,
     ban_duration: 'none',
+    app_metadata: { ...(user.app_metadata ?? {}), previewQaWorkspace: true, companyId: qaCompanyId },
     user_metadata: { name: 'AI QA User', companyId: qaCompanyId, role: 'manager', qa: true },
   });
   if (error) throw error;
 }
 
-async function loadQaAuthUserIds(adminClient) {
-  const { data, error } = await adminClient
-    .from('company_users')
-    .select('auth_user_id')
-    .eq('company_id', qaCompanyId);
-  if (error) throw error;
-  return [...new Set((data ?? []).map((row) => row.auth_user_id).filter(Boolean))];
+function qaCompanyUser(authUserId, email) {
+  return {
+    company_id: qaCompanyId,
+    auth_user_id: authUserId,
+    name: 'AI QA User',
+    email,
+    role: 'manager',
+    status: 'active',
+    portal_access_rules: qaAccessRules(),
+    updated_at: new Date().toISOString(),
+  };
 }
 
-async function deleteQaAuthUsers(adminClient, authUserIds) {
-  for (const authUserId of authUserIds) {
-    const { data, error } = await adminClient.auth.admin.getUserById(authUserId);
+async function findQaAuthUsers(adminClient) {
+  const users = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 1000 });
     if (error) throw error;
-    if (!isQaAuthUser(data?.user)) continue;
-    const { error: deleteError } = await adminClient.auth.admin.deleteUser(authUserId);
+    users.push(...data.users.filter(isQaAuthUser));
+    if (data.users.length < 1000) break;
+  }
+  return users;
+}
+
+async function deleteQaAuthUsers(adminClient, authUsers) {
+  for (const authUser of authUsers) {
+    if (!isQaAuthUser(authUser)) continue;
+    const { error: deleteError } = await adminClient.auth.admin.deleteUser(authUser.id);
     if (deleteError) throw deleteError;
   }
 }
 
-async function disableQaAuthUsers(adminClient, authUserIds) {
+async function disableQaAuthUsers(adminClient, authUsers) {
   let disabled = 0;
-  for (const authUserId of authUserIds) {
-    const { data, error } = await adminClient.auth.admin.getUserById(authUserId);
-    if (error) throw error;
-    if (!isQaAuthUser(data?.user)) continue;
-    const { error: updateError } = await adminClient.auth.admin.updateUserById(authUserId, { ban_duration: '876000h' });
+  for (const authUser of authUsers) {
+    if (!isQaAuthUser(authUser)) continue;
+    const { error: updateError } = await adminClient.auth.admin.updateUserById(authUser.id, { ban_duration: '876000h' });
     if (updateError) throw updateError;
     disabled += 1;
   }
   return disabled;
 }
 
+async function updateQaMemberships(adminClient, authUsers, status) {
+  for (const authUser of authUsers) {
+    if (!isQaAuthUser(authUser)) continue;
+    await updateRows(
+      adminClient,
+      'company_users',
+      { status, updated_at: new Date().toISOString() },
+      [['company_id', qaCompanyId], ['auth_user_id', authUser.id]],
+    );
+  }
+}
+
 async function upsertRows(adminClient, table, rows, onConflict) {
   const { error } = await adminClient.from(table).upsert(rows, { onConflict });
+  if (error) throw error;
+}
+
+async function updateRows(adminClient, table, patch, filters) {
+  let query = adminClient.from(table).update(patch);
+  for (const [column, value] of filters) query = query.eq(column, value);
+  const { error } = await query;
+  if (error) throw error;
+}
+
+async function deleteRows(adminClient, table, filters) {
+  let query = adminClient.from(table).delete();
+  for (const [column, value] of filters) query = query.eq(column, value);
+  const { error } = await query;
   if (error) throw error;
 }
 
@@ -304,17 +354,14 @@ function qaJob(id, jobNumber, status, system, issue) {
 }
 
 async function uploadQaAttachments(adminClient) {
-  const attachments = [
-    { id: qaPhotoOneId, jobId: qaCompletedJobId, name: `${qaPrefix}photo_overview.png`, scene: 'overview' },
-    { id: qaPhotoTwoId, jobId: qaCompletedJobId, name: `${qaPrefix}photo_result.png`, scene: 'result' },
-  ];
+  const attachments = qaStorageObjects();
   for (const attachment of attachments) {
-    const path = `${qaCompanyId}/${attachment.jobId}/${attachment.id}-${attachment.name}`;
     const safePngBytes = createSyntheticPngBytes(attachment.scene);
-    await adminClient.storage.from(jobFilesBucket).upload(path, new Blob([safePngBytes], { type: 'image/png' }), {
+    const { error: uploadError } = await adminClient.storage.from(attachment.bucket).upload(attachment.path, new Blob([safePngBytes], { type: 'image/png' }), {
       upsert: true,
       contentType: 'image/png',
     });
+    if (uploadError) throw uploadError;
     await upsertRows(adminClient, 'job_attachments', [{
       id: attachment.id,
       company_id: qaCompanyId,
@@ -323,24 +370,47 @@ async function uploadQaAttachments(adminClient) {
       mime_type: 'image/png',
       size_bytes: safePngBytes.length,
       kind: 'photo',
-      storage_bucket: jobFilesBucket,
-      storage_path: path,
+      storage_bucket: attachment.bucket,
+      storage_path: attachment.path,
     }], 'id');
   }
 }
 
+export function qaStorageObjects() {
+  return [
+    qaStorageObject(qaPhotoOneId, `${qaPrefix}photo_overview.png`, 'overview'),
+    qaStorageObject(qaPhotoTwoId, `${qaPrefix}photo_result.png`, 'result'),
+  ];
+}
+
+function qaStorageObject(id, name, scene) {
+  return {
+    id,
+    jobId: qaCompletedJobId,
+    name,
+    scene,
+    bucket: jobFilesBucket,
+    path: `${qaCompanyId}/${qaCompletedJobId}/${id}-${name}`,
+  };
+}
+
 async function deleteQaStorage(adminClient) {
-  const { data } = await adminClient.from('job_attachments').select('storage_bucket,storage_path').eq('company_id', qaCompanyId);
-  const pathsByBucket = new Map();
-  for (const attachment of data ?? []) {
-    if (!attachment.storage_bucket || !attachment.storage_path || !attachment.storage_path.startsWith(`${qaCompanyId}/`)) continue;
-    const paths = pathsByBucket.get(attachment.storage_bucket) ?? [];
-    paths.push(attachment.storage_path);
-    pathsByBucket.set(attachment.storage_bucket, paths);
+  const paths = qaStorageObjects().map((object) => object.path);
+  const { error } = await adminClient.storage.from(jobFilesBucket).remove(paths);
+  if (error) throw error;
+}
+
+async function countRemainingQaStorageObjects(adminClient) {
+  let remaining = 0;
+  for (const object of qaStorageObjects()) {
+    const separator = object.path.lastIndexOf('/');
+    const folder = object.path.slice(0, separator);
+    const name = object.path.slice(separator + 1);
+    const { data, error } = await adminClient.storage.from(object.bucket).list(folder, { limit: 100, search: name });
+    if (error) throw error;
+    if ((data ?? []).some((entry) => entry.name === name)) remaining += 1;
   }
-  for (const [bucket, paths] of pathsByBucket) {
-    if (paths.length) await adminClient.storage.from(bucket).remove(paths);
-  }
+  return remaining;
 }
 
 async function countRemainingQaRows(adminClient) {
