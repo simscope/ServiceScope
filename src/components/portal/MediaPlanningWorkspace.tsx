@@ -22,6 +22,7 @@ import {
   updateMissingShotStatus,
   updateSceneOverlayText,
   type MediaPlanningState,
+  type MediaPlanningOutputPrivacyStatus,
 } from '../../features/media-planning/planningState';
 import { attachmentUrl } from '../../features/job-attachments/jobAttachmentFiles';
 
@@ -83,7 +84,7 @@ export function MediaPlanningWorkspace({
         {state.blockedAttachmentIds.length ? (
           <p className="ai-assistant-analysis-error">
             <ShieldCheck size={16} aria-hidden="true" />
-            {state.blockedAttachmentIds.length} approved media item{state.blockedAttachmentIds.length === 1 ? '' : 's'} blocked by unresolved privacy review.
+            {state.blockedAttachmentIds.length} media item{state.blockedAttachmentIds.length === 1 ? '' : 's'} require{state.blockedAttachmentIds.length === 1 ? 's' : ''} privacy review before planning.
           </p>
         ) : null}
 
@@ -129,7 +130,7 @@ export function MediaPlanningWorkspace({
                 <div className="ai-media-plan-copy">
                   <div>
                     <strong>{suggestedRoleLabel(slot.suggestedRole)}</strong>
-                    <span><ShieldCheck size={14} aria-hidden="true" /> Privacy passed</span>
+                    <span><ShieldCheck size={14} aria-hidden="true" /> {privacyStatusLabel(slot.privacyStatus)}</span>
                   </div>
                   <p>{slot.explanation}</p>
                 </div>
@@ -290,7 +291,7 @@ export function MediaPlanningWorkspace({
                   <strong>{suggestedRoleLabel(scene.sceneRole)}</strong>
                   <span>{item?.name ?? 'Approved attachment'}</span>
                   <span>Evidence: {scene.evidenceFindingId ?? 'approved media only'}</span>
-                  <span><ShieldCheck size={14} aria-hidden="true" /> Privacy passed</span>
+                  <span><ShieldCheck size={14} aria-hidden="true" /> {privacyStatusLabel(scene.privacyStatus)}</span>
                 </div>
                 <label>
                   Optional overlay text
@@ -312,4 +313,8 @@ export function MediaPlanningWorkspace({
       </section>
     </div>
   );
+}
+
+function privacyStatusLabel(status: MediaPlanningOutputPrivacyStatus) {
+  return status === 'reviewed' ? 'Privacy reviewed and approved' : 'Privacy passed';
 }

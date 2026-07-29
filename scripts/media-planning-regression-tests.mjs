@@ -114,25 +114,111 @@ assert.equal(basicState.orderedAttachmentIds.includes('excluded'), false);
 assert.equal(basicState.orderedAttachmentIds.includes('false-positive'), false);
 assert.deepEqual(basicState.excludedAttachmentIds, ['excluded', 'false-positive']);
 
-// 5. Blocking privacy warnings fail closed even after approval.
+// 5. Approved media without privacy findings enters planning as passed.
+assert.equal(basicState.carouselSlots[0].privacyStatus, 'passed');
+assert.equal(basicState.shortVideoScenes[0].privacyStatus, 'passed');
+
+// 6-11. Attachment privacy findings follow the existing attachment review decision.
 const privacyResult = resultFor(jobId, [
   attachment('safe', [finding('safe-overview', 'equipment_overview')]),
-  attachment('private', [
+  attachment('face', [
     finding('face-risk', 'possible_face', 0.95, { riskLevel: 'high' }),
   ]),
+  attachment('serial', [
+    finding('serial-risk', 'possible_serial_or_nameplate', 0.9, { riskLevel: 'medium' }),
+  ]),
+  attachment('excluded-private', [
+    finding('excluded-face-risk', 'possible_face', 0.8, { riskLevel: 'high' }),
+  ]),
+  attachment('false-private', [
+    finding('false-serial-risk', 'possible_serial_or_nameplate', 0.8, { riskLevel: 'medium' }),
+  ]),
 ]);
-const privacyState = reconcile(privacyResult, approvalsFor(['safe', 'private']));
-assert.deepEqual(privacyState.orderedAttachmentIds, ['safe']);
-assert.deepEqual(privacyState.blockedAttachmentIds, ['private']);
+const privacyIds = ['safe', 'face', 'serial', 'excluded-private', 'false-private'];
+const pendingPrivacyState = reconcile(privacyResult, {
+  safe: 'approved',
+  face: 'pending',
+  serial: 'pending',
+  'excluded-private': 'excluded',
+  'false-private': 'false_positive',
+}, privacyIds);
+assert.deepEqual(pendingPrivacyState.orderedAttachmentIds, ['safe']);
+assert.deepEqual(pendingPrivacyState.blockedAttachmentIds, ['face', 'serial']);
+assert.equal(
+  planning.mediaPlanningPrivacyStatus(privacyResult.attachments[1], privacyResult, 'pending'),
+  'blocked',
+);
+
+const approvedPrivacyState = reconcile(privacyResult, {
+  safe: 'approved',
+  face: 'approved',
+  serial: 'approved',
+  'excluded-private': 'excluded',
+  'false-private': 'false_positive',
+}, privacyIds, pendingPrivacyState);
+assert.deepEqual(approvedPrivacyState.orderedAttachmentIds, ['safe', 'face', 'serial']);
+assert.deepEqual(approvedPrivacyState.blockedAttachmentIds, []);
+assert.equal(
+  approvedPrivacyState.carouselSlots.find((slot) => slot.attachmentId === 'face').privacyStatus,
+  'reviewed',
+);
+assert.equal(
+  approvedPrivacyState.carouselSlots.find((slot) => slot.attachmentId === 'serial').privacyStatus,
+  'reviewed',
+);
+assert.equal(
+  approvedPrivacyState.shortVideoScenes.find((scene) => scene.attachmentId === 'face').privacyStatus,
+  'reviewed',
+);
+assert.equal(
+  approvedPrivacyState.shortVideoScenes.find((scene) => scene.attachmentId === 'serial').privacyStatus,
+  'reviewed',
+);
+
+const revertedPrivacyState = reconcile(privacyResult, {
+  safe: 'approved',
+  face: 'pending',
+  serial: 'approved',
+  'excluded-private': 'excluded',
+  'false-private': 'false_positive',
+}, privacyIds, approvedPrivacyState);
+assert.deepEqual(revertedPrivacyState.orderedAttachmentIds, ['safe', 'serial']);
+assert.deepEqual(revertedPrivacyState.blockedAttachmentIds, ['face']);
+assert.equal(revertedPrivacyState.shortVideoScenes.some((scene) => scene.attachmentId === 'face'), false);
+assert.equal(revertedPrivacyState.blockedAttachmentIds.includes('excluded-private'), false);
+assert.equal(revertedPrivacyState.blockedAttachmentIds.includes('false-private'), false);
+
+// 12. Global privacy failure remains a hard block after attachment approval.
 const globalPrivacyState = reconcile(
-  resultFor(jobId, [attachment('safe', [finding('safe-overview', 'equipment_overview')])], {
+  resultFor(jobId, privacyResult.attachments, {
     safety: { ok: false, privacy: 'failed', grounding: 'passed', blockedReasons: ['privacy'] },
   }),
-  { safe: 'approved' },
+  approvalsFor(privacyIds),
+  privacyIds,
 );
 assert.deepEqual(globalPrivacyState.orderedAttachmentIds, []);
+assert.deepEqual(globalPrivacyState.carouselSlots, []);
+assert.deepEqual(globalPrivacyState.shortVideoScenes, []);
 
-// 6. Suggested ordering follows the safe category priority.
+// 13-14. Carousel and scene outputs preserve passed versus reviewed status.
+assert.equal(
+  approvedPrivacyState.carouselSlots.find((slot) => slot.attachmentId === 'safe').privacyStatus,
+  'passed',
+);
+assert.equal(
+  approvedPrivacyState.shortVideoScenes.find((scene) => scene.attachmentId === 'safe').privacyStatus,
+  'passed',
+);
+
+// 15. UI renders both privacy labels from slot/scene status, never unconditionally.
+assert.equal(
+  (planningUiSource.match(/privacyStatusLabel\((?:slot|scene)\.privacyStatus\)/g) ?? []).length,
+  2,
+);
+assert.match(planningUiSource, /Privacy reviewed and approved/);
+assert.doesNotMatch(planningUiSource, /<ShieldCheck[^>]*\/>\s*Privacy passed/);
+
+// 16. Suggested ordering follows the safe category priority.
 const orderedResult = resultFor(jobId, [
   attachment('support', [finding('support-finding', 'low_information', 0.99)]),
   attachment('finish', [finding('finish-finding', 'finished_result', 0.8)]),
@@ -144,7 +230,7 @@ const orderedResult = resultFor(jobId, [
 let orderedState = reconcile(orderedResult, approvalsFor(originalIds), originalIds);
 assert.deepEqual(orderedState.orderedAttachmentIds, ['overview', 'detail', 'repair', 'part', 'finish', 'support']);
 
-// 7. Original attachment order is the stable tie-breaker.
+// 17. Original attachment order is the stable tie-breaker.
 const tieResult = resultFor(jobId, [
   attachment('first', [finding('same-a', 'equipment_overview', 0.8)]),
   attachment('second', [finding('same-b', 'equipment_overview', 0.8)]),
@@ -152,19 +238,19 @@ const tieResult = resultFor(jobId, [
 const tieState = reconcile(tieResult, approvalsFor(['first', 'second']), ['second', 'first']);
 assert.deepEqual(tieState.orderedAttachmentIds, ['second', 'first']);
 
-// 8. Manual reorder survives reconciliation and overrides the suggestion.
+// 18. Manual reorder survives reconciliation and overrides the suggestion.
 orderedState = planning.movePlanningAttachment(orderedState, 'support', 0);
 assert.equal(orderedState.manualOrder, true);
 orderedState = reconcile(orderedResult, approvalsFor(originalIds), originalIds, orderedState);
 assert.equal(orderedState.orderedAttachmentIds[0], 'support');
 
-// 9. Move up/down preserves every attachment exactly once.
+// 19. Move up/down preserves every attachment exactly once.
 const movedState = planning.movePlanningAttachmentByOffset(orderedState, 'finish', -1);
 assert.equal(new Set(movedState.orderedAttachmentIds).size, originalIds.length);
 assert.deepEqual([...movedState.orderedAttachmentIds].sort(), [...originalIds].sort());
 assert.deepEqual(movedState.carouselSlots.map((slot) => slot.position), [1, 2, 3, 4, 5, 6]);
 
-// 10. Removing and restoring media is deterministic and idempotent.
+// 20. Removing and restoring media is deterministic and idempotent.
 const removedState = planning.setMediaPlanningInclusion(movedState, 'detail', false);
 assert.equal(removedState.orderedAttachmentIds.includes('detail'), false);
 const restoredState = planning.setMediaPlanningInclusion(removedState, 'detail', true);
@@ -172,19 +258,19 @@ assert.equal(restoredState.orderedAttachmentIds.at(-1), 'detail');
 assert.equal(restoredState.orderedAttachmentIds.filter((id) => id === 'detail').length, 1);
 assert.equal(planning.setMediaPlanningInclusion(restoredState, 'detail', true), restoredState);
 
-// 11. Missing-shot suggestions never create attachments or plan slots.
+// 21. Missing-shot suggestions never create attachments or plan slots.
 assert.equal(restoredState.missingShotSuggestions.length, 2);
 assert.deepEqual(restoredState.orderedAttachmentIds, restoredState.carouselSlots.map((slot) => slot.attachmentId));
 assert.equal(restoredState.missingShotSuggestions.some((item) => restoredState.orderedAttachmentIds.includes(item.id)), false);
 
-// 12. Dismiss/restore is local-only and deterministic.
+// 22. Dismiss/restore is local-only and deterministic.
 const suggestionId = restoredState.missingShotSuggestions[0].id;
 const dismissedState = planning.updateMissingShotStatus(restoredState, suggestionId, 'dismissed');
 assert.equal(dismissedState.missingShotSuggestions.find((item) => item.id === suggestionId).status, 'dismissed');
 const restoredSuggestionState = planning.updateMissingShotStatus(dismissedState, suggestionId, 'suggested');
 assert.equal(restoredSuggestionState.missingShotSuggestions.find((item) => item.id === suggestionId).status, 'suggested');
 
-// 13. Storyboard scenes reference only current approved, selected attachments.
+// 23. Storyboard scenes reference only current approved, selected attachments.
 assert.deepEqual(
   restoredSuggestionState.shortVideoScenes.map((scene) => scene.attachmentId),
   restoredSuggestionState.orderedAttachmentIds,
@@ -194,7 +280,7 @@ assert.equal(
   true,
 );
 
-// 14. Overlay privacy validation rejects known and patterned private values.
+// 24. Overlay privacy validation rejects known and patterned private values.
 const privateOverlay = planning.updateSceneOverlayText(
   restoredSuggestionState,
   restoredSuggestionState.shortVideoScenes[0].attachmentId,
@@ -212,7 +298,7 @@ const safeOverlay = planning.updateSceneOverlayText(
 assert.equal(safeOverlay.accepted, true);
 assert.equal(safeOverlay.state.shortVideoScenes[0].overlayText, 'Review the approved equipment overview');
 
-// 15. Job changes reset every planning collection and local edit.
+// 25. Job changes reset every planning collection and local edit.
 const switchedState = planning.reconcileMediaPlanningState(safeOverlay.state, {
   jobId: 'job-planning-2',
   originalAttachmentIds: [],
@@ -224,7 +310,7 @@ assert.deepEqual(switchedState.orderedAttachmentIds, []);
 assert.deepEqual(switchedState.shortVideoScenes, []);
 assert.deepEqual(switchedState.missingShotSuggestions, []);
 
-// 16. A new accepted result resets manual order and stale suggestion decisions.
+// 26. A new accepted result resets manual order and stale suggestion decisions.
 const revisedResult = resultFor(jobId, orderedResult.attachments, {
   missingShots: ['Capture a new approved angle if available.'],
 });
@@ -233,7 +319,7 @@ assert.equal(revisedState.manualOrder, false);
 assert.deepEqual(revisedState.orderedAttachmentIds, ['overview', 'detail', 'repair', 'part', 'finish', 'support']);
 assert.deepEqual(revisedState.missingShotSuggestions.map((item) => item.status), ['suggested', 'suggested']);
 
-// 17. Planning controls perform zero Edge/provider calls.
+// 27. Planning controls perform zero Edge/provider calls.
 let networkCalls = 0;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async () => {
@@ -247,7 +333,7 @@ planning.updateSceneOverlayText(restoredSuggestionState, 'detail', 'Safe local o
 assert.equal(networkCalls, 0);
 globalThis.fetch = originalFetch;
 
-// 18. Planning leaves facts, drafts, channels, jobs, attachments and analysis untouched.
+// 28. Planning leaves facts, drafts, channels, jobs, attachments and analysis untouched.
 const existingWorkspace = {
   facts: { diagnosis: 'Existing diagnosis' },
   drafts: { Instagram: 'Existing draft' },
@@ -260,13 +346,13 @@ const beforePlanning = JSON.stringify(existingWorkspace);
 planning.movePlanningAttachment(restoredSuggestionState, 'detail', 0);
 assert.equal(JSON.stringify(existingWorkspace), beforePlanning);
 
-// 19-20. Unsupported statuses are hidden; Completed and Warranty remain supported.
+// 29-30. Unsupported statuses are hidden; Completed and Warranty remain supported.
 assert.equal(assistant.canOpenJobInAiAssistant('In progress'), false);
 assert.equal(assistant.canOpenJobInAiAssistant('Completed'), true);
 assert.equal(assistant.canOpenJobInAiAssistant('Warranty'), true);
 assert.match(aiPageSource, /!unsupportedStatus && mediaAnalysisWorkspace\.result\?\.jobId === selectedJob\?\.id/);
 
-// 21. Planning has no persistence, Edge or provider boundary.
+// 31. Planning has no persistence, Edge or provider boundary.
 const planningBrowserSource = `${planningSource}\n${planningUiSource}`;
 assert.doesNotMatch(planningBrowserSource, /localStorage|sessionStorage|indexedDB|supabaseFunction|analyzeSelectedMedia|generateAiContent|api\.openai\.com|OPENAI_API_KEY|fetch\s*\(/i);
 assert.doesNotMatch(
@@ -274,4 +360,4 @@ assert.doesNotMatch(
   /companyId|storagePath|signedUrl|supabaseFunction|adminClient|callerClient|\.rpc\s*\(/i,
 );
 
-console.log('Media planning regression tests passed (21/21).');
+console.log('Media planning regression tests passed (31/31).');

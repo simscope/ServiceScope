@@ -14,7 +14,8 @@ export type MediaPlanningRole =
   | 'finished_result'
   | 'supporting_image';
 
-export type MediaPlanningPrivacyStatus = 'passed' | 'blocked';
+export type MediaPlanningPrivacyStatus = 'passed' | 'reviewed' | 'blocked';
+export type MediaPlanningOutputPrivacyStatus = Exclude<MediaPlanningPrivacyStatus, 'blocked'>;
 export type MissingShotPlanningStatus = 'suggested' | 'planned' | 'dismissed';
 
 export type MediaPlanningSource = {
@@ -33,7 +34,7 @@ export type CarouselPlanSlot = {
   suggestedRole: MediaPlanningRole;
   explanation: string;
   evidenceFindingId?: string;
-  privacyStatus: 'passed';
+  privacyStatus: MediaPlanningOutputPrivacyStatus;
 };
 
 export type ShortVideoScene = {
@@ -42,7 +43,7 @@ export type ShortVideoScene = {
   sceneRole: MediaPlanningRole;
   overlayText: string;
   evidenceFindingId?: string;
-  privacyStatus: 'passed';
+  privacyStatus: MediaPlanningOutputPrivacyStatus;
 };
 
 export type MissingShotSuggestion = {
@@ -133,14 +134,19 @@ export function reconcileMediaPlanningState(
     const reviewState = input.approvals[id];
     return resultAttachmentIds.has(id) && (reviewState === 'excluded' || reviewState === 'false_positive');
   });
-  const sources = buildMediaPlanningSources(originalAttachmentIds, result);
+  const sources = buildMediaPlanningSources(originalAttachmentIds, result, input.approvals);
   const sourceById = new Map(sources.map((source) => [source.attachmentId, source]));
-  const blockedAttachmentIds = approvedAttachmentIds.filter((id) => (
-    sourceById.get(id)?.privacyStatus === 'blocked'
-  ));
+  const blockedAttachmentIds = originalAttachmentIds.filter((id) => {
+    const reviewState = input.approvals[id];
+    return resultAttachmentIds.has(id)
+      && reviewState !== 'approved'
+      && reviewState !== 'excluded'
+      && reviewState !== 'false_positive'
+      && sourceById.get(id)?.privacyStatus === 'blocked';
+  });
   const eligibleMedia = suggestedMediaOrder(sources.filter((source) => (
     approvedAttachmentIds.includes(source.attachmentId)
-      && !blockedAttachmentIds.includes(source.attachmentId)
+      && source.privacyStatus !== 'blocked'
       && currentJobAttachmentIds.has(source.attachmentId)
   )));
   const eligibleIds = eligibleMedia.map((source) => source.attachmentId);
@@ -330,15 +336,15 @@ export function updateSceneOverlayText(
   };
 }
 
-export function hasBlockingPrivacyWarning(
+export function mediaPlanningPrivacyStatus(
   attachment: MediaAnalysisAttachmentResult,
   result: Pick<MediaAnalysisResult, 'safety'>,
-) {
-  if (result.safety.privacy !== 'passed') return true;
-  return attachment.findings.some((finding) => (
-    isPrivacyFinding(finding.category)
-      && (finding.requiresUserApproval || finding.riskLevel === 'medium' || finding.riskLevel === 'high')
-  ));
+  reviewState: MediaReviewApprovalState | undefined,
+): MediaPlanningPrivacyStatus {
+  if (result.safety.privacy !== 'passed') return 'blocked';
+  const hasPrivacyFinding = attachment.findings.some((finding) => isPrivacyFinding(finding.category));
+  if (!hasPrivacyFinding) return 'passed';
+  return reviewState === 'approved' ? 'reviewed' : 'blocked';
 }
 
 export function suggestedRoleLabel(role: MediaPlanningRole) {
@@ -352,6 +358,7 @@ export function suggestedRoleLabel(role: MediaPlanningRole) {
 function buildMediaPlanningSources(
   originalAttachmentIds: string[],
   result: MediaAnalysisResult,
+  approvals: Record<string, MediaReviewApprovalState>,
 ): MediaPlanningSource[] {
   const resultById = new Map(result.attachments.map((attachment) => [attachment.id, attachment]));
   return originalAttachmentIds.flatMap((attachmentId, originalPosition) => {
@@ -365,7 +372,7 @@ function buildMediaPlanningSources(
       explanation: evidence?.explanation.trim() || 'Approved media. No specific visual role was confirmed.',
       evidenceFindingId: evidence?.findingId,
       confidence: evidence?.confidence ?? 0,
-      privacyStatus: hasBlockingPrivacyWarning(attachment, result) ? 'blocked' : 'passed',
+      privacyStatus: mediaPlanningPrivacyStatus(attachment, result, approvals[attachmentId]),
     }];
   });
 }
@@ -398,7 +405,11 @@ function roleForFinding(finding: MediaAnalysisFinding): MediaPlanningRole {
 }
 
 function rebuildPlanningState(state: MediaPlanningState): MediaPlanningState {
-  const sourceById = new Map(state.eligibleMedia.map((source) => [source.attachmentId, source]));
+  const sourceById = new Map(
+    state.eligibleMedia
+      .filter((source) => source.privacyStatus !== 'blocked')
+      .map((source) => [source.attachmentId, source]),
+  );
   const orderedAttachmentIds = uniqueIds(state.orderedAttachmentIds).filter((id) => sourceById.has(id));
   const previousSceneById = new Map(state.shortVideoScenes.map((scene) => [scene.attachmentId, scene]));
   return {
@@ -413,7 +424,7 @@ function rebuildPlanningState(state: MediaPlanningState): MediaPlanningState {
         suggestedRole: source.suggestedRole,
         explanation: source.explanation,
         evidenceFindingId: source.evidenceFindingId,
-        privacyStatus: 'passed',
+        privacyStatus: source.privacyStatus === 'reviewed' ? 'reviewed' : 'passed',
       };
     }),
     shortVideoScenes: orderedAttachmentIds.map((attachmentId, index) => {
@@ -424,7 +435,7 @@ function rebuildPlanningState(state: MediaPlanningState): MediaPlanningState {
         sceneRole: source.suggestedRole,
         overlayText: previousSceneById.get(attachmentId)?.overlayText ?? '',
         evidenceFindingId: source.evidenceFindingId,
-        privacyStatus: 'passed',
+        privacyStatus: source.privacyStatus === 'reviewed' ? 'reviewed' : 'passed',
       };
     }),
   };
