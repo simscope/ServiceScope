@@ -43,6 +43,11 @@ import {
   setMediaApproval,
   type MediaReviewApprovalState,
 } from '../../features/media-analysis/workspaceState';
+import {
+  createMediaPlanningState,
+  reconcileMediaPlanningState,
+} from '../../features/media-planning/planningState';
+import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
 
 const mediaLabels: AssistantMediaLabel[] = ['Overview', 'Problem', 'Repair', 'Part', 'Result'];
 const assistantTones: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
@@ -63,6 +68,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const [aiStatusByChannel, setAiStatusByChannel] = useState<Partial<Record<AssistantChannel, string>>>({});
   const [aiPendingChannel, setAiPendingChannel] = useState<AssistantChannel | null>(null);
   const [mediaAnalysisWorkspace, setMediaAnalysisWorkspace] = useState(() => createMediaAnalysisWorkspaceState(selectedJob?.id));
+  const [mediaPlanningState, setMediaPlanningState] = useState(() => createMediaPlanningState(selectedJob?.id));
 
   useEffect(() => {
     setLocalFacts({});
@@ -72,6 +78,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
     setAiStatusByChannel({});
     setAiPendingChannel(null);
     setMediaAnalysisWorkspace(createMediaAnalysisWorkspaceState(selectedJob?.id));
+    setMediaPlanningState(createMediaPlanningState(selectedJob?.id));
   }, [selectedJob?.id]);
 
   const summary = selectedJob ? buildAssistantJobSummary(selectedJob) : null;
@@ -97,6 +104,26 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
     [selectedJob],
   );
   const analysisResultAttachments = mediaAnalysisWorkspace.result?.attachments ?? [];
+  const originalPlanningAttachmentIds = useMemo(() => {
+    const assistantMediaIds = new Set(assistantContext?.publicSafe.media.map((item) => item.id) ?? []);
+    return (selectedJob?.attachments ?? [])
+      .map((attachment) => attachment.id)
+      .filter((attachmentId) => assistantMediaIds.has(attachmentId));
+  }, [assistantContext?.publicSafe.media, selectedJob?.attachments]);
+
+  useEffect(() => {
+    setMediaPlanningState((current) => reconcileMediaPlanningState(current, {
+      jobId: selectedJob?.id,
+      originalAttachmentIds: originalPlanningAttachmentIds,
+      result: mediaAnalysisWorkspace.result,
+      approvals: mediaAnalysisWorkspace.approvals,
+    }));
+  }, [
+    selectedJob?.id,
+    originalPlanningAttachmentIds,
+    mediaAnalysisWorkspace.result,
+    mediaAnalysisWorkspace.approvals,
+  ]);
 
   function updateLocalFact(field: keyof AssistantLocalFacts, value: string) {
     setLocalFacts((current) => ({ ...current, [field]: value }));
@@ -407,6 +434,15 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
                 ))}
               </div>
             </section>
+          ) : null}
+
+          {!unsupportedStatus && mediaAnalysisWorkspace.result?.jobId === selectedJob?.id ? (
+            <MediaPlanningWorkspace
+              state={mediaPlanningState}
+              media={assistantContext.publicSafe.media}
+              privateValues={assistantContext.privateValues}
+              onChange={setMediaPlanningState}
+            />
           ) : null}
 
           <section className="ai-assistant-capabilities" aria-label="Assistant channels">

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/patch-payroll-payment-history.cjs && vite --host 127.0.0.1",
-    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-patch && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:content-engine && npm run test:media-analysis && npm run test:preview-qa && tsc -b && vite build && npm run test:preview-qa-bundle",
+    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-patch && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:content-engine && npm run test:media-analysis && npm run test:media-planning && npm run test:preview-qa && tsc -b && vite build && npm run test:preview-qa-bundle",
     "test:social-post": "tsc scripts/social-post-regression-tests.ts --target ES2020 --module NodeNext --moduleResolution NodeNext --outDir .tmp/social-post-tests --skipLibCheck && node .tmp/social-post-tests/scripts/social-post-regression-tests.js",
     "test:warehouse-import": "node scripts/warehouse-import-regression-tests.mjs",
     "test:warehouse-categories": "node scripts/warehouse-categories-regression-tests.mjs",
@@ -15,6 +15,7 @@
     "test:ai-assistant": "tsc src/features/ai-assistant/assistantModel.ts src/features/job-attachments/jobAttachmentFiles.ts --target ES2020 --module NodeNext --moduleResolution NodeNext --outDir .tmp/ai-assistant-tests --skipLibCheck && node scripts/ai-assistant-regression-tests.mjs",
     "test:content-engine": "node scripts/content-engine-regression-tests.mjs",
     "test:media-analysis": "node scripts/media-analysis-regression-tests.mjs",
+    "test:media-planning": "node scripts/media-planning-regression-tests.mjs",
     "test:payroll-patch": "node scripts/payroll-payment-history-patch-regression-tests.cjs",
     "test:preview-qa": "node scripts/preview-qa-workspace-regression-tests.mjs",
     "test:preview-qa-bundle": "node scripts/preview-qa-bundle-scan.mjs",
