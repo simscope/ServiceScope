@@ -962,6 +962,7 @@ export function AccessPage({
   onInvite,
   onRoleChange,
   onStatusChange,
+  qaTools,
 }: {
   users: PlatformUser[];
   form: NewPlatformUserForm;
@@ -969,6 +970,7 @@ export function AccessPage({
   onInvite: (event: FormEvent<HTMLFormElement>) => void;
   onRoleChange: (userId: string, role: PlatformUserRole) => void;
   onStatusChange: (userId: string, status: PlatformUserStatus) => void;
+  qaTools?: ReactNode;
 }) {
   const [accessSearch, setAccessSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'all' | PlatformUserRole>('all');
@@ -1038,6 +1040,8 @@ export function AccessPage({
             </button>
           </form>
         </section>
+
+        {qaTools}
 
         <section className="panel access-matrix-panel">
           <div className="panel-heading">

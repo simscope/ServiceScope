@@ -34,6 +34,9 @@ verify_jwt = true
 [functions.ai-media-analyze]
 verify_jwt = true
 
+[functions.preview-qa-workspace]
+verify_jwt = true
+
 [functions.mailbox-oauth-callback]
 verify_jwt = false
 

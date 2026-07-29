@@ -1,4 +1,4 @@
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from 'react';
+import { ChangeEvent, FormEvent, lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { DragEvent, PointerEvent } from 'react';
 import {
   Activity,
@@ -182,6 +182,13 @@ import type {
 import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
+
+const previewQaToolsBuildEnabled = (import.meta as unknown as {
+  env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string };
+}).env.VITE_PREVIEW_QA_TOOLS_ENABLED === 'true';
+const PreviewQaToolsPanel = previewQaToolsBuildEnabled
+  ? lazy(() => import('./components/PreviewQaToolsPanel').then((module) => ({ default: module.PreviewQaToolsPanel })))
+  : null;
 
 function TechnicianMobileHandoff({ onSignOut }: { onSignOut: () => void }) {
   const technicianAppUrl = ((import.meta as unknown as { env?: { VITE_TECHNICIAN_APP_URL?: string } }).env?.VITE_TECHNICIAN_APP_URL
@@ -479,6 +486,9 @@ export function App() {
         : 'viewer'
     : 'viewer';
   const ownerCanAccess = (candidate: AppPage) => canAccessOwnerPage(currentOwnerRole, candidate);
+  const previewQaToolsVisible = previewQaToolsBuildEnabled
+    && authSession?.kind === 'owner'
+    && currentOwnerRole === 'owner';
   const newSupportCount = supportTickets.filter((ticket) => ticket.status === 'new').length;
 
   useEffect(() => {
@@ -1179,6 +1189,11 @@ export function App() {
           <AccessPage
             users={platformUsers}
             form={accessForm}
+            qaTools={previewQaToolsVisible && PreviewQaToolsPanel ? (
+              <Suspense fallback={null}>
+                <PreviewQaToolsPanel />
+              </Suspense>
+            ) : undefined}
             onFormChange={setAccessForm}
             onInvite={(event) => {
               event.preventDefault();
