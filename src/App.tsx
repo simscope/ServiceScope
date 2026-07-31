@@ -182,6 +182,8 @@ import type {
 import { emptyMaterialDraft } from './appTypes';
 import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toLocalIsoDate } from './utils/calendar';
 import { googleRouteUrl, money, statusClassName } from './utils/format';
+import { consumeMetaOAuthCallbackLocation } from './features/meta-connection/callback';
+import { MetaOAuthCallbackPage } from './features/meta-connection/MetaOAuthCallbackPage';
 
 const previewQaToolsBuildEnabled = (import.meta as unknown as {
   env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string };
@@ -189,6 +191,7 @@ const previewQaToolsBuildEnabled = (import.meta as unknown as {
 const PreviewQaToolsPanel = previewQaToolsBuildEnabled
   ? lazy(() => import('./components/PreviewQaToolsPanel').then((module) => ({ default: module.PreviewQaToolsPanel })))
   : null;
+const initialMetaOAuthCallback = consumeMetaOAuthCallbackLocation();
 
 function TechnicianMobileHandoff({ onSignOut }: { onSignOut: () => void }) {
   const technicianAppUrl = ((import.meta as unknown as { env?: { VITE_TECHNICIAN_APP_URL?: string } }).env?.VITE_TECHNICIAN_APP_URL
@@ -891,6 +894,19 @@ export function App() {
 
   if (authRestoring) {
     return <main className="auth-shell"><p className="auth-notice">Restoring your secure session...</p></main>;
+  }
+
+  if (initialMetaOAuthCallback) {
+    const allowedRole = authSession?.kind === 'company'
+      && (authSession.role === 'Admin' || authSession.role === 'Manager');
+    return (
+      <MetaOAuthCallbackPage
+        callback={initialMetaOAuthCallback}
+        authenticated={Boolean(authSession)}
+        allowedRole={allowedRole}
+        onReturn={() => window.location.assign('/#portal')}
+      />
+    );
   }
 
   if (!authSession) {

@@ -18,6 +18,7 @@ import { MiniStat } from '../OwnerPages';
 import { SetupGuide } from './SetupGuide';
 import { companyUserPageAccessDefinitions, defaultCompanyUserPageAccess, normalizeCompanyUserPageAccess } from '../../features/access/companyUserAccess';
 import { CompanyVoiceSettingsPanel } from '../../features/company-voice/CompanyVoiceSettingsPanel';
+import { SocialConnectionsPanel } from '../../features/meta-connection/SocialConnectionsPanel';
 
 type ProfessionTemplate = NewCompanyJobTypeForm & { id: string };
 
@@ -561,6 +562,7 @@ export function OnboardingPage({
                 logoUrl={profile.logoUrl}
                 readOnly={settingsReadOnly}
               />
+              {!settingsReadOnly ? <SocialConnectionsPanel companyId={selectedCompany.id} /> : null}
 
               <section className="panel website-intake-panel">
                 <div className="panel-heading">

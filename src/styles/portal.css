@@ -1057,6 +1057,151 @@
   color: #a52727;
 }
 
+.social-connections-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 16px;
+}
+
+.social-provider-heading,
+.social-connected-summary,
+.social-asset-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.social-provider-heading p,
+.social-connection-state p,
+.social-connected-summary p {
+  margin: 4px 0 0;
+  color: #52605a;
+}
+
+.social-provider-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  background: #e8f0fe;
+  color: #1756a9;
+}
+
+.social-connection-state {
+  display: grid;
+  gap: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e3e9e4;
+}
+
+.social-connection-state.warning-state {
+  color: #8a4b12;
+}
+
+.social-connection-state.connected-state > .social-connected-summary > svg {
+  color: #15803d;
+}
+
+.social-scope-list,
+.social-connection-actions,
+.social-disconnect-confirmation > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.social-scope-list span {
+  padding: 5px 8px;
+  border: 1px solid #d7e1db;
+  border-radius: 5px;
+  background: #f7faf8;
+  color: #405049;
+  font: 700 11px/1.2 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.social-asset-list {
+  display: grid;
+  border: 1px solid #dce4df;
+  border-radius: 6px;
+}
+
+.social-asset-row {
+  justify-content: space-between;
+  padding: 12px;
+  border-bottom: 1px solid #e3e9e4;
+}
+
+.social-asset-row:last-child {
+  border-bottom: 0;
+}
+
+.social-asset-row span,
+.social-asset-row small,
+.social-connected-summary p {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.social-asset-row small {
+  margin-top: 5px;
+  color: #66736d;
+}
+
+.social-connection-metadata {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+
+.social-connection-metadata div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #e1e8e4;
+  border-radius: 6px;
+}
+
+.social-connection-metadata dt {
+  color: #66736d;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.social-connection-metadata dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  font-weight: 750;
+}
+
+.social-disconnect-confirmation {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e5b9b9;
+  border-radius: 6px;
+  background: #fff8f8;
+}
+
+.social-connection-status {
+  margin: 0;
+  color: #405049;
+  font-weight: 700;
+}
+
+.danger-button {
+  border-color: #c94b4b;
+  color: #9b2525;
+}
+
+.meta-callback-card {
+  display: grid;
+  gap: 12px;
+}
+
 .subscription-payment-panel,
 .team-setup-panel {
   grid-column: 1 / -1;

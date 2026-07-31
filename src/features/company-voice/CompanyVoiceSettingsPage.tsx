@@ -1,4 +1,5 @@
 import { CompanyVoiceSettingsPanel } from './CompanyVoiceSettingsPanel';
+import { SocialConnectionsPanel } from '../meta-connection/SocialConnectionsPanel';
 
 type CompanyVoiceSettingsPageProps = {
   companyId: string;
@@ -19,6 +20,7 @@ export function CompanyVoiceSettingsPage({
         logoUrl={logoUrl}
         readOnly={false}
       />
+      <SocialConnectionsPanel companyId={companyId} />
     </section>
   );
 }
