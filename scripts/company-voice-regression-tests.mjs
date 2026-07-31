@@ -286,8 +286,14 @@ const clientApiSource = await readFile(new URL('../src/features/company-voice/cl
 const assistantSource = await readFile(new URL('../src/components/portal/AiAssistantPage.tsx', import.meta.url), 'utf8');
 const edgeSource = await readFile(new URL('../supabase/functions/ai-content-generate/index.ts', import.meta.url), 'utf8');
 const migrationSource = await readFile(new URL('../supabase/migrations/20260731020000_company_ai_voice_settings.sql', import.meta.url), 'utf8');
+const correctiveMigrationSource = await readFile(new URL('../supabase/migrations/20260731164000_revoke_anon_company_ai_voice_validator_grants.sql', import.meta.url), 'utf8');
 const schemaSource = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
 const sqlChecksSource = await readFile(new URL('../supabase/sql/company-ai-voice-security-checks.sql', import.meta.url), 'utf8');
+const validatorSignatures = [
+  'company_ai_voice_text_valid(text, integer, boolean)',
+  'company_ai_voice_text_array_valid(text[], integer, integer)',
+  'company_ai_channel_defaults_valid(jsonb)',
+];
 
 check(() => assert.match(componentSource, /Save company voice/));
 check(() => assert.doesNotMatch(componentSource, /generateAiContent|analyzeSelectedMedia|OAuth Connect|Publish|Schedule/));
@@ -339,6 +345,37 @@ check(() => assert.equal(
   normalizeSqlFunction(extractSqlFunction(migrationSource, 'public.company_ai_voice_text_array_valid')),
   normalizeSqlFunction(extractSqlFunction(schemaSource, 'company_ai_voice_text_array_valid')),
 ));
+for (const signature of validatorSignatures) {
+  const escapedSignature = escapeRegExp(signature);
+  const compactSignature = escapeRegExp(signature.replace(/,\s*/g, ','));
+  const forbiddenGrant = new RegExp(`grant\\s+execute\\s+on\\s+function\\s+public\\.${escapedSignature}\\s+to\\s+[^;]*(?:\\banon\\b|\\bpublic\\b)`, 'i');
+  check(() => assert.match(
+    correctiveMigrationSource,
+    new RegExp(`revoke\\s+execute\\s+on\\s+function\\s+public\\.${escapedSignature}\\s+from\\s+public,\\s*anon\\s*;`, 'i'),
+  ));
+  check(() => assert.match(
+    correctiveMigrationSource,
+    new RegExp(`grant\\s+execute\\s+on\\s+function\\s+public\\.${escapedSignature}\\s+to\\s+authenticated,\\s*service_role\\s*;`, 'i'),
+  ));
+  check(() => assert.match(
+    schemaSource,
+    new RegExp(`revoke\\s+execute\\s+on\\s+function\\s+(?:public\\.)?${escapedSignature}\\s+from\\s+public,\\s*anon\\s*;`, 'i'),
+  ));
+  check(() => assert.match(
+    schemaSource,
+    new RegExp(`grant\\s+execute\\s+on\\s+function\\s+(?:public\\.)?${escapedSignature}\\s+to\\s+authenticated,\\s*service_role\\s*;`, 'i'),
+  ));
+  check(() => assert.match(sqlChecksSource, new RegExp(compactSignature, 'i')));
+  check(() => assert.doesNotMatch(correctiveMigrationSource, forbiddenGrant));
+}
+check(() => assert.doesNotMatch(correctiveMigrationSource, /all\s+functions/i));
+check(() => assert.doesNotMatch(correctiveMigrationSource, /create\s+(?:or\s+replace\s+)?function|drop\s+function/i));
+check(() => assert.doesNotMatch(correctiveMigrationSource, /company_profiles/i));
+check(() => assert.match(sqlChecksSource, /has_function_privilege\('anon',[\s\S]*'EXECUTE'\)/));
+check(() => assert.match(sqlChecksSource, /has_function_privilege\('authenticated',[\s\S]*'EXECUTE'\)/));
+check(() => assert.match(sqlChecksSource, /has_function_privilege\('service_role',[\s\S]*'EXECUTE'\)/));
+check(() => assert.match(sqlChecksSource, /pg_proc[\s\S]*pg_namespace[\s\S]*aclexplode[\s\S]*privilege\.grantee\s*=\s*0[\s\S]*rolname\s*=\s*'anon'/));
+check(() => assert.match(sqlChecksSource, /count\(distinct grantee_role\.rolname\)[\s\S]*'authenticated',\s*'service_role'/));
 
 assert.ok(checks >= 80, `Expected at least 80 checks, got ${checks}`);
 console.log(`company voice regression checks passed (${checks} checks)`);
@@ -369,6 +406,10 @@ function normalizeSqlFunction(source) {
     .replace(/\s+/g, ' ')
     .trim()
     .toLocaleLowerCase();
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function makeDependencies(overrides = {}) {

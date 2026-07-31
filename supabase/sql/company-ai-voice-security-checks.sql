@@ -1,6 +1,67 @@
--- Company AI voice RLS checks.
--- Run against a disposable/local database after migration 20260731020000.
 begin;
+
+-- Company AI voice validation, function privilege, and RLS checks.
+-- This suite is transactional and must leave no test artifacts.
+
+do $$
+declare
+  function_signature text;
+  function_oid oid;
+begin
+  foreach function_signature in array array[
+    'public.company_ai_voice_text_valid(text,integer,boolean)',
+    'public.company_ai_voice_text_array_valid(text[],integer,integer)',
+    'public.company_ai_channel_defaults_valid(jsonb)'
+  ]
+  loop
+    function_oid := to_regprocedure(function_signature);
+    if function_oid is null then
+      raise exception 'company voice validator function is missing: %', function_signature;
+    end if;
+
+    if has_function_privilege('anon', function_signature, 'EXECUTE') then
+      raise exception 'anonymous validator execute privilege was allowed: %', function_signature;
+    end if;
+    if not has_function_privilege('authenticated', function_signature, 'EXECUTE') then
+      raise exception 'authenticated validator execute privilege is missing: %', function_signature;
+    end if;
+    if not has_function_privilege('service_role', function_signature, 'EXECUTE') then
+      raise exception 'service-role validator execute privilege is missing: %', function_signature;
+    end if;
+
+    if exists (
+      select 1
+      from pg_proc procedure
+      join pg_namespace namespace on namespace.oid = procedure.pronamespace
+      cross join lateral aclexplode(coalesce(procedure.proacl, acldefault('f', procedure.proowner))) privilege
+      left join pg_roles grantee_role on grantee_role.oid = privilege.grantee
+      where procedure.oid = function_oid
+        and namespace.nspname = 'public'
+        and privilege.privilege_type = 'EXECUTE'
+        and (
+          privilege.grantee = 0
+          or grantee_role.rolname = 'anon'
+        )
+    ) then
+      raise exception 'PUBLIC or anon validator ACL entry exists: %', function_signature;
+    end if;
+
+    if (
+      select count(distinct grantee_role.rolname)
+      from pg_proc procedure
+      join pg_namespace namespace on namespace.oid = procedure.pronamespace
+      cross join lateral aclexplode(coalesce(procedure.proacl, acldefault('f', procedure.proowner))) privilege
+      join pg_roles grantee_role on grantee_role.oid = privilege.grantee
+      where procedure.oid = function_oid
+        and namespace.nspname = 'public'
+        and privilege.privilege_type = 'EXECUTE'
+        and grantee_role.rolname in ('authenticated', 'service_role')
+    ) <> 2 then
+      raise exception 'authenticated or service-role validator ACL entry is missing: %', function_signature;
+    end if;
+  end loop;
+end;
+$$;
 
 insert into auth.users (
   instance_id,
