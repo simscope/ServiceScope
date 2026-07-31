@@ -156,6 +156,121 @@ alter table audit_events
   add constraint audit_events_company_id_fkey
   foreign key (company_id) references companies(id) on delete set null;
 
+create or replace function company_ai_voice_text_valid(
+  value text,
+  max_length integer,
+  contact_free boolean
+)
+returns boolean
+language sql
+immutable
+set search_path = public
+as $$
+  select
+    char_length(value) <= max_length
+    and value !~ '[<>]'
+    and value !~* '(api[_ -]?key|authorization|bearer|oauth|password|refresh[_ -]?token|secret|session[_ -]?token)'
+    and value !~* '(provider|model|temperature|top[_ -]?p|max[_ -]?tokens?|response[_ -]?format|tool[_ -]?choice)[[:space:]]*[:=]'
+    and value !~* '(https?://|www\.)'
+    and (
+      not contact_free
+      or (
+        value !~* '[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}'
+        and value !~ '(\+?[0-9][0-9 .()\-]{7,}[0-9])'
+        and value !~* '[0-9]{1,6}[[:space:]]+[A-Z0-9.'' -]{2,}[[:space:]]+(street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr|court|ct|way)\y'
+      )
+    );
+$$;
+
+create or replace function company_ai_voice_text_array_valid(
+  value text[],
+  max_items integer,
+  max_item_length integer
+)
+returns boolean
+language sql
+immutable
+set search_path = public
+as $$
+  select
+    coalesce(cardinality(value), 0) <= max_items
+    and not exists (
+      select 1
+      from unnest(value) as item
+      where item is null
+        or item = ''
+        or item <> btrim(item)
+        or not coalesce(company_ai_voice_text_valid(item, max_item_length, true), false)
+    );
+$$;
+
+create or replace function company_ai_channel_defaults_valid(value jsonb)
+returns boolean
+language plpgsql
+immutable
+set search_path = public
+as $$
+declare
+  channel_key text;
+  settings jsonb;
+  hashtag_item jsonb;
+begin
+  if jsonb_typeof(value) <> 'object' then
+    return false;
+  end if;
+
+  for channel_key, settings in select key, val from jsonb_each(value) as entry(key, val)
+  loop
+    if channel_key not in ('Instagram', 'Facebook', 'LinkedIn', 'Google Business', 'Blog / Case Study', 'Short Video') then
+      return false;
+    end if;
+    if jsonb_typeof(settings) <> 'object' then
+      return false;
+    end if;
+    if settings - array['enabled', 'defaultTone', 'defaultLocale', 'callToActionGuidance', 'hashtagGuidance']::text[] <> '{}'::jsonb then
+      return false;
+    end if;
+    if settings ? 'enabled' and jsonb_typeof(settings->'enabled') <> 'boolean' then
+      return false;
+    end if;
+    if settings ? 'defaultTone' and (
+      jsonb_typeof(settings->'defaultTone') <> 'string'
+      or settings->>'defaultTone' not in ('Professional', 'Friendly', 'Technical', 'Educational', 'Marketing')
+    ) then
+      return false;
+    end if;
+    if settings ? 'defaultLocale' and (
+      jsonb_typeof(settings->'defaultLocale') <> 'string'
+      or char_length(settings->>'defaultLocale') > 35
+      or settings->>'defaultLocale' !~ '^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$'
+    ) then
+      return false;
+    end if;
+    if settings ? 'callToActionGuidance' and (
+      jsonb_typeof(settings->'callToActionGuidance') <> 'string'
+      or not company_ai_voice_text_valid(settings->>'callToActionGuidance', 160, true)
+    ) then
+      return false;
+    end if;
+    if settings ? 'hashtagGuidance' then
+      if jsonb_typeof(settings->'hashtagGuidance') <> 'array'
+        or jsonb_array_length(settings->'hashtagGuidance') > 20 then
+        return false;
+      end if;
+      for hashtag_item in select item from jsonb_array_elements(settings->'hashtagGuidance') as item
+      loop
+        if jsonb_typeof(hashtag_item) <> 'string'
+          or not company_ai_voice_text_valid(hashtag_item #>> '{}', 40, true) then
+          return false;
+        end if;
+      end loop;
+    end if;
+  end loop;
+
+  return true;
+end;
+$$;
+
 create table company_profiles (
   company_id uuid primary key references companies(id) on delete cascade,
   legal_name text not null default '',
@@ -174,6 +289,15 @@ create table company_profiles (
   lead_api_enabled boolean not null default false,
   lead_api_token text,
   access_rules jsonb not null default '{}'::jsonb,
+  ai_voice_enabled boolean not null default false,
+  ai_public_display_name text not null default '' check (company_ai_voice_text_valid(ai_public_display_name, 80, true)),
+  ai_default_tone text not null default 'Professional' check (ai_default_tone in ('Professional', 'Friendly', 'Technical', 'Educational', 'Marketing')),
+  ai_custom_voice_guidance text not null default '' check (company_ai_voice_text_valid(ai_custom_voice_guidance, 1000, true)),
+  ai_service_areas text[] not null default '{}'::text[] check (company_ai_voice_text_array_valid(ai_service_areas, 20, 80)),
+  ai_public_location_wording text not null default '' check (company_ai_voice_text_valid(ai_public_location_wording, 160, true)),
+  ai_cta_guidance text not null default '' check (company_ai_voice_text_valid(ai_cta_guidance, 160, true)),
+  ai_hashtag_guidance text[] not null default '{}'::text[] check (company_ai_voice_text_array_valid(ai_hashtag_guidance, 20, 40)),
+  ai_channel_defaults jsonb not null default '{}'::jsonb check (company_ai_channel_defaults_valid(ai_channel_defaults)),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -402,6 +526,12 @@ grant execute on function can_access_company(uuid) to service_role;
 grant execute on function can_manage_company(uuid) to authenticated;
 grant execute on function can_manage_company(uuid) to service_role;
 grant execute on function app_current_session() to authenticated;
+revoke execute on function company_ai_voice_text_valid(text, integer, boolean) from public, anon;
+revoke execute on function company_ai_voice_text_array_valid(text[], integer, integer) from public, anon;
+revoke execute on function company_ai_channel_defaults_valid(jsonb) from public, anon;
+grant execute on function company_ai_voice_text_valid(text, integer, boolean) to authenticated, service_role;
+grant execute on function company_ai_voice_text_array_valid(text[], integer, integer) to authenticated, service_role;
+grant execute on function company_ai_channel_defaults_valid(jsonb) to authenticated, service_role;
 revoke execute on function can_access_company(uuid) from anon;
 revoke execute on function can_manage_company(uuid) from anon;
 

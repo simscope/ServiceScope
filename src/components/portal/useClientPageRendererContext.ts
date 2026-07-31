@@ -106,6 +106,7 @@ export function useClientPageRendererContext(groups: ClientPageRendererContextGr
     groups.shell.activePageReadOnly,
     groups.shell.billingStatus,
     groups.shell.completedSteps,
+    groups.shell.companySettingsMode,
     groups.shell.currentPortalUser,
     groups.shell.openTickets,
     groups.shell.profile,

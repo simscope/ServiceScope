@@ -939,6 +939,124 @@
   grid-column: 1 / -1;
 }
 
+.company-voice-panel {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 16px;
+}
+
+.company-voice-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #526157;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.company-voice-logo img {
+  width: 48px;
+  height: 48px;
+  border: 1px solid #d7dee8;
+  border-radius: 6px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.company-voice-fieldset {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.company-voice-toggle,
+.company-voice-channel-heading label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.company-voice-fields,
+.company-voice-channel-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.company-voice-fields label,
+.company-voice-channel-fields label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: #526157;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.company-voice-fields input,
+.company-voice-fields select,
+.company-voice-fields textarea,
+.company-voice-channel-fields input,
+.company-voice-channel-fields select {
+  width: 100%;
+}
+
+.company-voice-fields textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.company-voice-wide {
+  grid-column: 1 / -1;
+}
+
+.company-voice-channels {
+  border-top: 1px solid #e3e9e4;
+}
+
+.company-voice-channel {
+  display: grid;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid #e3e9e4;
+}
+
+.company-voice-channel-heading,
+.company-voice-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.company-voice-actions {
+  justify-content: flex-start;
+}
+
+.company-voice-unsaved,
+.company-voice-status,
+.company-voice-error {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.company-voice-unsaved {
+  color: #8a5a12;
+}
+
+.company-voice-status {
+  color: #166534;
+}
+
+.company-voice-error {
+  color: #a52727;
+}
+
 .subscription-payment-panel,
 .team-setup-panel {
   grid-column: 1 / -1;

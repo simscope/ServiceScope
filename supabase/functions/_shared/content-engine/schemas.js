@@ -45,7 +45,7 @@ export function validateRequestBody(value) {
   };
 }
 
-export function parseProviderResult(rawJson, expectedChannel, provider, model, usage) {
+export function parseProviderResult(rawJson, expectedChannel, provider, model, usage, promptVersion = promptVersionByChannel[expectedChannel]) {
   const value = assertProviderPayload(rawJson);
   const diagnostics = validateProviderPayloadShape(value, expectedChannel);
   if (diagnostics.providerOutputSubreason) throw invalidProviderOutput(diagnostics);
@@ -59,7 +59,7 @@ export function parseProviderResult(rawJson, expectedChannel, provider, model, u
   return {
     schemaVersion: resultSchemaVersion,
     channel: expectedChannel,
-    promptVersion: promptVersionByChannel[expectedChannel],
+    promptVersion,
     provider,
     model,
     content: {

@@ -8,6 +8,8 @@ import { BusinessAnalyticsPage } from './BusinessAnalyticsPage';
 import { KnowledgePage } from './KnowledgePage';
 import { OnboardingPage } from './OnboardingPage';
 import { PortalAccountPage } from './PortalAccountPage';
+import { CompanyVoiceSettingsPage } from '../../features/company-voice/CompanyVoiceSettingsPage';
+import { resolveCompanySettingsRenderTarget } from '../../features/company-portal/companySettingsAccess';
 import type {
   ClientPageRendererBusinessContext,
   ClientPageRendererOperationsContext,
@@ -73,6 +75,7 @@ export function ClientBusinessPageRenderer({
   const {
     billingStatus,
     completedSteps,
+    companySettingsMode,
     currentPortalUser,
     openTickets,
     profile,
@@ -157,6 +160,7 @@ export function ClientBusinessPageRenderer({
   if (renderedClientPage === 'aiAssistant') {
     return (
       <AiAssistantPage
+        companyId={selectedCompanyId}
         selectedJob={allJobsRows.find((job) => job.id === aiAssistantJobId) ?? null}
         materials={materials}
       />
@@ -205,6 +209,18 @@ export function ClientBusinessPageRenderer({
   }
 
   if (renderedClientPage === 'onboarding') {
+    const settingsRenderTarget = resolveCompanySettingsRenderTarget(companySettingsMode);
+    if (settingsRenderTarget === 'companyVoiceOnly') {
+      return (
+        <CompanyVoiceSettingsPage
+          companyId={selectedCompanyId}
+          fallbackDisplayName={profile.displayName || selectedCompany.name}
+          logoUrl={profile.logoUrl}
+        />
+      );
+    }
+    if (settingsRenderTarget !== 'fullOnboarding') return null;
+
     return (
       <OnboardingPage
         completedSteps={completedSteps}
@@ -248,6 +264,7 @@ export function ClientBusinessPageRenderer({
         onStartMailboxConnection={emailActions.startMailboxConnector}
         billingStatus={billingStatus}
         onConnectSubscriptionBilling={onboardingProfileActions.connectSubscriptionBilling}
+        settingsReadOnly={shell.activePageAccessLevel !== 'full'}
       />
     );
   }

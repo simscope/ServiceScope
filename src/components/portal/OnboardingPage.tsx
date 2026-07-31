@@ -17,6 +17,7 @@ import type {
 import { MiniStat } from '../OwnerPages';
 import { SetupGuide } from './SetupGuide';
 import { companyUserPageAccessDefinitions, defaultCompanyUserPageAccess, normalizeCompanyUserPageAccess } from '../../features/access/companyUserAccess';
+import { CompanyVoiceSettingsPanel } from '../../features/company-voice/CompanyVoiceSettingsPanel';
 
 type ProfessionTemplate = NewCompanyJobTypeForm & { id: string };
 
@@ -62,6 +63,7 @@ export function OnboardingPage({
   onStartMailboxConnection,
   billingStatus,
   onConnectSubscriptionBilling,
+  settingsReadOnly,
 }: {
   completedSteps: number;
   profile: CompanyOnboardingProfile;
@@ -104,6 +106,7 @@ export function OnboardingPage({
   onStartMailboxConnection: () => void;
   billingStatus: string;
   onConnectSubscriptionBilling: () => void;
+  settingsReadOnly: boolean;
 }) {
   const selectedPlan = getPlan(selectedCompany.plan);
   const technicianLimit = selectedPlan.technicians;
@@ -551,6 +554,13 @@ export function OnboardingPage({
                   </div>
                 </div>
               </section>
+
+              <CompanyVoiceSettingsPanel
+                companyId={selectedCompany.id}
+                fallbackDisplayName={profile.displayName || selectedCompany.name}
+                logoUrl={profile.logoUrl}
+                readOnly={settingsReadOnly}
+              />
 
               <section className="panel website-intake-panel">
                 <div className="panel-heading">

@@ -672,6 +672,19 @@ button {
   font-size: 16px;
 }
 
+.ai-assistant-company-voice {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  border: 1px solid #b9dfca;
+  border-radius: 6px;
+  background: #edf9f2;
+  color: #17643b;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .ai-assistant-job-summary {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);
@@ -783,10 +796,12 @@ button {
 }
 
 .ai-assistant-generation-settings {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.ai-assistant-facts .ai-assistant-panel-heading {
+.ai-assistant-facts .ai-assistant-panel-heading,
+.ai-assistant-generation-settings .ai-assistant-panel-heading,
+.ai-assistant-generation-settings .ai-assistant-company-voice {
   grid-column: 1 / -1;
 }
 
@@ -1301,6 +1316,7 @@ button {
   .ai-assistant-grid,
   .ai-assistant-capabilities,
   .ai-assistant-facts,
+  .ai-assistant-generation-settings,
   .ai-assistant-media-browser,
   .ai-assistant-analysis-card,
   .ai-media-carousel-row,

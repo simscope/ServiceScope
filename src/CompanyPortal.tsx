@@ -31,6 +31,10 @@ import { useCalendarResizeEffect } from './features/calendar/useCalendarResizeEf
 import { makeCompanyPortalBusinessModel } from './features/company-portal/companyPortalBusinessModel';
 import { makeCompanyPortalModel } from './features/company-portal/companyPortalModel';
 import { makeCompanyPortalNavigationModel } from './features/company-portal/companyPortalNavigationModel';
+import {
+  canManageCompanyVoiceSettings,
+  resolveCompanySettingsMode,
+} from './features/company-portal/companySettingsAccess';
 import { makeCompanyPortalOperationsModel } from './features/company-portal/companyPortalOperationsModel';
 import { useEmailFeature } from './features/email/useEmailFeature';
 import { useMailboxAutoSync } from './features/email/useMailboxAutoSync';
@@ -135,7 +139,14 @@ import { googleRouteUrl, money, statusClassName } from './utils/format';
 type CompanyPortalProps = {
   selectedCompany?: Company;
   onboardingProfile?: CompanyOnboardingProfile;
-  signedInUser?: { name: string; email: string; role: 'Manager' | 'Admin' | 'Technician' };
+  signedInUser?: {
+    kind: 'owner' | 'company';
+    companyId?: string;
+    active: boolean;
+    name: string;
+    email: string;
+    role: 'Manager' | 'Admin' | 'Technician';
+  };
   tickets: SupportTicket[];
   onSignOut: () => void;
   onUpdateOnboardingProfile: (profile: CompanyOnboardingProfile) => void;
@@ -419,6 +430,19 @@ function CompanyPortalWithTenant({
     accessLevelLabels,
     setStatus: setJobsStatus,
   });
+  const canManageCompanyVoice = canManageCompanyVoiceSettings({
+    selectedCompanyId,
+    sessionKind: signedInUser?.kind,
+    sessionCompanyId: signedInUser?.companyId,
+    sessionActive: signedInUser?.active === true,
+    sessionRole: signedInUser?.role,
+    staffRole: signedInStaff?.role,
+    staffStatus: signedInStaff?.status,
+  });
+  const companySettingsMode = resolveCompanySettingsMode({
+    hasFullOnboardingAccess: canViewPage('onboarding'),
+    canManageCompanyVoice,
+  });
   const { companyEmailSignature, companyPaymentBlock, paymentMethodOptions } = companyCommunication;
 
   const mapModel = makeMapModel({
@@ -537,6 +561,7 @@ function CompanyPortalWithTenant({
     canViewPage,
     canWritePage,
     accessLevelForPage,
+    companySettingsMode,
   });
   const openJobInAiAssistant = (job: ServiceJob) => {
     setAiAssistantJobId(job.id);
@@ -559,6 +584,7 @@ function CompanyPortalWithTenant({
       activeClientNavItem,
       activePageAccessLevel,
       activePageReadOnly,
+      companySettingsMode,
       billingStatus,
       completedSteps,
       currentPortalUser,

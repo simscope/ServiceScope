@@ -40,6 +40,7 @@ import type { useLibraryFeature } from '../../features/library/useLibraryFeature
 import type { useOnboardingAdminFeature } from '../../features/onboarding/useOnboardingAdminFeature';
 import type { useTasksFeature } from '../../features/tasks/useTasksFeature';
 import type { PortalAccountPage } from './PortalAccountPage';
+import type { CompanySettingsMode } from '../../features/company-portal/companySettingsAccess';
 
 type SupportRequestDraft = Pick<NewSupportTicketForm, 'kind' | 'priority' | 'subject' | 'message'>;
 
@@ -80,6 +81,7 @@ export type ClientPageRendererContext = {
   closeMaterialEditor: ReturnType<typeof import('../../features/materials/useMaterialsFeature').useMaterialsFeature>['closeMaterialEditor'];
   companyEmailSignature: string;
   companyPaymentBlock: string;
+  companySettingsMode: CompanySettingsMode;
   completedSteps: number;
   configuredProfessionNames: Set<string>;
   currentPortalUser: { name: string; role: 'Admin' | 'Manager' | 'Technician' };
@@ -289,6 +291,7 @@ export type ClientPageRendererShellContext = Pick<ClientPageRendererContext,
   | 'activePageReadOnly'
   | 'billingStatus'
   | 'completedSteps'
+  | 'companySettingsMode'
   | 'currentPortalUser'
   | 'openTickets'
   | 'profile'

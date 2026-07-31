@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import {
   assertServerGate,
   assertQaCompany,
@@ -469,6 +470,38 @@ function testSafeAccessRules() {
   assert.equal(rules.allJobs, 'full');
   assert.equal(rules.finances, 'off');
   assert.equal(rules.aiBusiness, 'off');
+  assert.equal(rules.onboarding, 'off');
+}
+
+async function testQaManagerUsesRestrictedCompanyVoiceSettings() {
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'src/features/company-portal/companySettingsAccess.ts'),
+    'utf8',
+  );
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2020,
+      target: ts.ScriptTarget.ES2020,
+    },
+  }).outputText;
+  const access = await import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+  const capability = access.canManageCompanyVoiceSettings({
+    selectedCompanyId: qaCompanyId,
+    sessionKind: 'company',
+    sessionCompanyId: qaCompanyId,
+    sessionActive: true,
+    sessionRole: 'Manager',
+    staffRole: 'manager',
+    staffStatus: 'active',
+  });
+  const mode = access.resolveCompanySettingsMode({
+    hasFullOnboardingAccess: qaAccessRules().onboarding !== 'off',
+    canManageCompanyVoice: capability,
+  });
+  assert.equal(qaAccessRules().onboarding, 'off');
+  assert.equal(capability, true);
+  assert.equal(mode, 'companyVoiceOnly');
+  assert.equal(access.resolveCompanySettingsRenderTarget(mode), 'companyVoiceOnly');
 }
 
 function testSafeResultHasNoCredentialFields() {
@@ -544,6 +577,7 @@ await testCleanupReportsRemainingRows();
 await testRepeatedCleanupIsSafe();
 testDeleteGuardRejectsNonQaCompany();
 testSafeAccessRules();
+await testQaManagerUsesRestrictedCompanyVoiceSettings();
 testSafeResultHasNoCredentialFields();
 testSyntheticImagesAreUsefulPngs();
 testConfigAndFrontendSecretBoundary();

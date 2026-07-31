@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Image, Lock, Video } from 'lucide-react';
+import { AlertTriangle, Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Image, Lock, RotateCcw, Video } from 'lucide-react';
 import type { MaterialRow, ServiceJob } from '../../types';
 import {
   ASSISTANT_CHANNELS,
@@ -48,27 +48,64 @@ import {
   reconcileMediaPlanningState,
 } from '../../features/media-planning/planningState';
 import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
+import { loadCompanyVoiceSummary } from '../../features/company-voice/clientApi';
+import {
+  buildGenerationPreferencesByChannel,
+  resetChannelGenerationPreference,
+  updateChannelGenerationPreference,
+  type CompanyVoiceSummary,
+} from '../../features/company-voice/contracts';
 
 const mediaLabels: AssistantMediaLabel[] = ['Overview', 'Problem', 'Repair', 'Part', 'Result'];
 const assistantTones: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
+const disabledCompanyVoiceSummary: CompanyVoiceSummary = {
+  enabled: false,
+  defaultTone: 'Professional',
+  channelDefaults: {},
+};
 
 type AiAssistantPageProps = {
+  companyId: string;
   selectedJob: ServiceJob | null;
   materials: MaterialRow[];
 };
 
-export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps) {
+export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssistantPageProps) {
   const [selectedChannels, setSelectedChannels] = useState<AssistantChannel[]>(['Instagram']);
   const [localFacts, setLocalFacts] = useState<AssistantLocalFacts>({});
   const [mediaState, setMediaState] = useState<AssistantMediaState[]>([]);
   const [draftWorkspace, setDraftWorkspace] = useState<AssistantDraftWorkspaceState>({ drafts: {}, statuses: {} });
   const [copyStatus, setCopyStatus] = useState('');
-  const [tone, setTone] = useState<AssistantTone>('Professional');
-  const [locale, setLocale] = useState('en-US');
+  const [activeGenerationChannel, setActiveGenerationChannel] = useState<AssistantChannel>('Instagram');
+  const [generationPreferencesByChannel, setGenerationPreferencesByChannel] = useState(
+    () => buildGenerationPreferencesByChannel(disabledCompanyVoiceSummary),
+  );
+  const [companyVoiceSummary, setCompanyVoiceSummary] = useState<CompanyVoiceSummary>(disabledCompanyVoiceSummary);
   const [aiStatusByChannel, setAiStatusByChannel] = useState<Partial<Record<AssistantChannel, string>>>({});
   const [aiPendingChannel, setAiPendingChannel] = useState<AssistantChannel | null>(null);
   const [mediaAnalysisWorkspace, setMediaAnalysisWorkspace] = useState(() => createMediaAnalysisWorkspaceState(selectedJob?.id));
   const [mediaPlanningState, setMediaPlanningState] = useState(() => createMediaPlanningState(selectedJob?.id));
+
+  useEffect(() => {
+    let active = true;
+    setActiveGenerationChannel('Instagram');
+    setCompanyVoiceSummary(disabledCompanyVoiceSummary);
+    setGenerationPreferencesByChannel(buildGenerationPreferencesByChannel(disabledCompanyVoiceSummary));
+    loadCompanyVoiceSummary(companyId)
+      .then((summary) => {
+        if (!active) return;
+        setCompanyVoiceSummary(summary);
+        setGenerationPreferencesByChannel(buildGenerationPreferencesByChannel(summary));
+      })
+      .catch(() => {
+        if (!active) return;
+        setCompanyVoiceSummary(disabledCompanyVoiceSummary);
+        setGenerationPreferencesByChannel(buildGenerationPreferencesByChannel(disabledCompanyVoiceSummary));
+      });
+    return () => {
+      active = false;
+    };
+  }, [companyId]);
 
   useEffect(() => {
     setLocalFacts({});
@@ -137,6 +174,18 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
     ));
   }
 
+  function resetGenerationDefaults() {
+    setGenerationPreferencesByChannel((current) => (
+      resetChannelGenerationPreference(current, companyVoiceSummary, activeGenerationChannel)
+    ));
+  }
+
+  function updateActiveGenerationPreference(patch: { tone?: AssistantTone; locale?: string }) {
+    setGenerationPreferencesByChannel((current) => (
+      updateChannelGenerationPreference(current, activeGenerationChannel, patch)
+    ));
+  }
+
   function updateMediaItem(id: string, patch: Partial<AssistantMediaState>) {
     setMediaState((current) => {
       const existing = current.find((item) => item.id === id);
@@ -187,14 +236,15 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   async function generateChannelWithAi(channel: AssistantChannel) {
     if (!selectedJob || !assistantContext || aiPendingChannel) return;
     const requestJobId = selectedJob.id;
+    const preferences = generationPreferencesByChannel[channel];
     setAiPendingChannel(channel);
     setAiStatusByChannel((current) => ({ ...current, [channel]: 'Generating with AI...' }));
     try {
       const result = await generateAiContent({
         jobId: requestJobId,
         channel,
-        tone,
-        locale,
+        tone: preferences.tone,
+        locale: preferences.locale,
         localFacts,
         mediaState,
         idempotencyKey: `${requestJobId}:${channel}:${Date.now()}:${crypto.randomUUID()}`,
@@ -463,16 +513,36 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
               <h2>AI Generation</h2>
               <Bot size={18} aria-hidden="true" />
             </div>
+            {companyVoiceSummary.enabled ? <span className="ai-assistant-company-voice">Company voice enabled</span> : null}
+            <label>
+              Channel
+              <select
+                value={activeGenerationChannel}
+                onChange={(event) => setActiveGenerationChannel(event.target.value as AssistantChannel)}
+              >
+                {ASSISTANT_CHANNELS.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
+              </select>
+            </label>
             <label>
               Tone
-              <select value={tone} onChange={(event) => setTone(event.target.value as AssistantTone)}>
+              <select
+                value={generationPreferencesByChannel[activeGenerationChannel].tone}
+                onChange={(event) => updateActiveGenerationPreference({ tone: event.target.value as AssistantTone })}
+              >
                 {assistantTones.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
             <label>
               Locale
-              <input value={locale} onChange={(event) => setLocale(event.target.value)} />
+              <input
+                value={generationPreferencesByChannel[activeGenerationChannel].locale}
+                onChange={(event) => updateActiveGenerationPreference({ locale: event.target.value })}
+              />
             </label>
+            <button className="secondary-button compact" type="button" onClick={resetGenerationDefaults}>
+              <RotateCcw size={16} aria-hidden="true" />
+              Reset defaults
+            </button>
           </section>
 
           <section className="ai-assistant-draft-actions">

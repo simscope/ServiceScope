@@ -20,6 +20,10 @@ import {
 } from 'lucide-react';
 import type { ClientPage } from '../../appTypes';
 import type { CompanyPortalAccessPage } from '../../types';
+import {
+  resolveClientNavigationPages,
+  type CompanySettingsMode,
+} from '../company-portal/companySettingsAccess';
 
 export type ClientNavItem = {
   page: ClientPage;
@@ -51,14 +55,19 @@ export const clientNavItems: ClientNavItem[] = [
 export function resolveClientNavigation({
   clientPage,
   canViewPage,
+  companySettingsMode,
 }: {
   clientPage: ClientPage;
   canViewPage: (page: CompanyPortalAccessPage) => boolean;
+  companySettingsMode: CompanySettingsMode;
 }) {
-  const visibleClientNavItems = clientNavItems.filter((item) => canViewPage(item.page as CompanyPortalAccessPage));
-  const renderedClientPage = canViewPage(clientPage as CompanyPortalAccessPage)
-    ? clientPage
-    : visibleClientNavItems[0]?.page ?? 'portal';
+  const { renderedClientPage, visiblePages } = resolveClientNavigationPages({
+    clientPage,
+    navPages: clientNavItems.map((item) => item.page),
+    canViewPage,
+    companySettingsMode,
+  });
+  const visibleClientNavItems = clientNavItems.filter((item) => visiblePages.includes(item.page));
   const activeClientNavItem = visibleClientNavItems.find((item) => item.page === renderedClientPage);
 
   return {

@@ -3,13 +3,15 @@ import { buildAuthorizedContext } from './context.js';
 import { generateWithProvider } from './orchestrator.js';
 import { deterministicFallback } from './fallback.js';
 import { maxRequestBytes } from './contracts.js';
+import { applyCompanyVoiceToRequest } from './companyVoice.js';
 
 export async function handleContentGeneration({ rawBody, authorization, auth, repository, provider, guards, config, telemetry }) {
   if (!authorization?.startsWith('Bearer ')) throw new HttpError('AUTH_REQUIRED', 401);
   if (byteLength(rawBody) > maxRequestBytes) throw new HttpError('INVALID_REQUEST', 400);
-  const request = validateRequestBody(JSON.parse(rawBody || '{}'));
+  const browserRequest = validateRequestBody(JSON.parse(rawBody || '{}'));
   const session = await auth.resolveSession(authorization);
-  const context = await buildAuthorizedContext({ request, session, repository });
+  const context = await buildAuthorizedContext({ request: browserRequest, session, repository });
+  const request = applyCompanyVoiceToRequest(browserRequest, context.companyVoice);
   const cacheKey = [context.companyId, context.actorId, request.jobId, request.channel, request.promptVersion, request.idempotencyKey].join(':');
   const cached = guards.get(cacheKey);
   if (cached) return cached;
