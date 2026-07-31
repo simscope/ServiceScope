@@ -4,6 +4,7 @@ import { validateGrounding } from './grounding.js';
 import { assertNoPrivateValues, safeTelemetryPayload } from './privacy.js';
 import { parseProviderResult } from './schemas.js';
 import { isRetryableProviderCode, ProviderError } from './errors.js';
+import { promptVersionByChannel } from './contracts.js';
 
 export async function generateWithProvider({ request, context, provider, config, telemetry, clock = Date }) {
   const start = clock.now();
@@ -13,7 +14,7 @@ export async function generateWithProvider({ request, context, provider, config,
     const providerRequest = buildPrompt(request, context);
     assertNoPrivateValues(providerRequest, context.privateValues);
     const { response, attempts } = await callWithRetry(provider, providerRequest, config);
-    const result = parseProviderResult(response.rawJson, request.channel, response.provider, response.model, response.usage);
+    const result = parseProviderResult(response.rawJson, request.channel, response.provider, response.model, response.usage, request.promptVersion);
     validateGrounding(result, context.evidence);
     assertNoPrivateValues(result, context.privateValues);
     result.missingInformation = context.missingInformation;
@@ -74,7 +75,20 @@ async function callWithRetry(provider, providerRequest, config) {
 }
 
 function fallback(request, context, code, message) {
-  return deterministicFallback(request, context, { code, message });
+  const result = deterministicFallback(request, context, { code, message });
+  try {
+    assertNoPrivateValues(result, context.privateValues);
+    return result;
+  } catch {
+    const safeRequest = { ...request, promptVersion: promptVersionByChannel[request.channel] };
+    const safeContext = { ...context, companyVoice: { enabled: false } };
+    const safeResult = deterministicFallback(safeRequest, safeContext, {
+      code: 'PRIVACY_FAILED',
+      message: 'Unsafe private data was detected; fallback draft was generated.',
+    });
+    assertNoPrivateValues(safeResult, context.privateValues);
+    return safeResult;
+  }
 }
 
 function emitTelemetry(telemetry, event) {

@@ -157,6 +157,7 @@ export function ClientBusinessPageRenderer({
   if (renderedClientPage === 'aiAssistant') {
     return (
       <AiAssistantPage
+        companyId={selectedCompanyId}
         selectedJob={allJobsRows.find((job) => job.id === aiAssistantJobId) ?? null}
         materials={materials}
       />
@@ -248,6 +249,7 @@ export function ClientBusinessPageRenderer({
         onStartMailboxConnection={emailActions.startMailboxConnector}
         billingStatus={billingStatus}
         onConnectSubscriptionBilling={onboardingProfileActions.connectSubscriptionBilling}
+        settingsReadOnly={shell.activePageAccessLevel !== 'full'}
       />
     );
   }

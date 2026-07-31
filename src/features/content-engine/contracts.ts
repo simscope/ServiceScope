@@ -1,7 +1,19 @@
 import type { AssistantChannel } from '../ai-assistant/assistantModel';
 
 export type AssistantTone = 'Professional' | 'Friendly' | 'Technical' | 'Educational' | 'Marketing';
-export type PromptVersion = 'instagram-v1' | 'facebook-v1' | 'linkedin-v1' | 'google-business-v1' | 'blog-case-study-v1' | 'short-video-v1';
+export type PromptVersion =
+  | 'instagram-v1'
+  | 'facebook-v1'
+  | 'linkedin-v1'
+  | 'google-business-v1'
+  | 'blog-case-study-v1'
+  | 'short-video-v1'
+  | 'instagram-v2'
+  | 'facebook-v2'
+  | 'linkedin-v2'
+  | 'google-business-v2'
+  | 'blog-case-study-v2'
+  | 'short-video-v2';
 export type ContentProviderId = 'openai' | 'deterministic-fallback' | string;
 
 export type ContentWarning = {
@@ -54,7 +66,7 @@ export type ContentGenerationResult = {
 
 export const ASSISTANT_TONES: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
 
-export const PROMPT_VERSION_BY_CHANNEL: Record<AssistantChannel, PromptVersion> = {
+export const PROMPT_VERSION_BY_CHANNEL: Record<AssistantChannel, Extract<PromptVersion, `${string}-v1`>> = {
   Instagram: 'instagram-v1',
   Facebook: 'facebook-v1',
   LinkedIn: 'linkedin-v1',

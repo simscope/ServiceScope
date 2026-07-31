@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Image, Lock, Video } from 'lucide-react';
+import { AlertTriangle, Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Image, Lock, RotateCcw, Video } from 'lucide-react';
 import type { MaterialRow, ServiceJob } from '../../types';
 import {
   ASSISTANT_CHANNELS,
@@ -48,16 +48,19 @@ import {
   reconcileMediaPlanningState,
 } from '../../features/media-planning/planningState';
 import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
+import { loadCompanyVoiceSummary } from '../../features/company-voice/clientApi';
+import { companyVoiceDefaultsForChannel, type CompanyVoiceSummary } from '../../features/company-voice/contracts';
 
 const mediaLabels: AssistantMediaLabel[] = ['Overview', 'Problem', 'Repair', 'Part', 'Result'];
 const assistantTones: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
 
 type AiAssistantPageProps = {
+  companyId: string;
   selectedJob: ServiceJob | null;
   materials: MaterialRow[];
 };
 
-export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps) {
+export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssistantPageProps) {
   const [selectedChannels, setSelectedChannels] = useState<AssistantChannel[]>(['Instagram']);
   const [localFacts, setLocalFacts] = useState<AssistantLocalFacts>({});
   const [mediaState, setMediaState] = useState<AssistantMediaState[]>([]);
@@ -65,10 +68,37 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
   const [copyStatus, setCopyStatus] = useState('');
   const [tone, setTone] = useState<AssistantTone>('Professional');
   const [locale, setLocale] = useState('en-US');
+  const [companyVoiceSummary, setCompanyVoiceSummary] = useState<CompanyVoiceSummary>({
+    enabled: false,
+    defaultTone: 'Professional',
+    channelDefaults: {},
+  });
   const [aiStatusByChannel, setAiStatusByChannel] = useState<Partial<Record<AssistantChannel, string>>>({});
   const [aiPendingChannel, setAiPendingChannel] = useState<AssistantChannel | null>(null);
   const [mediaAnalysisWorkspace, setMediaAnalysisWorkspace] = useState(() => createMediaAnalysisWorkspaceState(selectedJob?.id));
   const [mediaPlanningState, setMediaPlanningState] = useState(() => createMediaPlanningState(selectedJob?.id));
+
+  useEffect(() => {
+    let active = true;
+    setCompanyVoiceSummary({ enabled: false, defaultTone: 'Professional', channelDefaults: {} });
+    loadCompanyVoiceSummary(companyId)
+      .then((summary) => {
+        if (!active) return;
+        setCompanyVoiceSummary(summary);
+        const defaults = companyVoiceDefaultsForChannel(summary, 'Instagram');
+        setTone(defaults.tone);
+        setLocale(defaults.locale);
+      })
+      .catch(() => {
+        if (!active) return;
+        setCompanyVoiceSummary({ enabled: false, defaultTone: 'Professional', channelDefaults: {} });
+        setTone('Professional');
+        setLocale('en-US');
+      });
+    return () => {
+      active = false;
+    };
+  }, [companyId]);
 
   useEffect(() => {
     setLocalFacts({});
@@ -135,6 +165,13 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
         ? current.filter((item) => item !== channel)
         : [...current, channel]
     ));
+  }
+
+  function resetGenerationDefaults() {
+    const channel = selectedChannels[0] ?? 'Instagram';
+    const defaults = companyVoiceDefaultsForChannel(companyVoiceSummary, channel);
+    setTone(defaults.tone);
+    setLocale(defaults.locale);
   }
 
   function updateMediaItem(id: string, patch: Partial<AssistantMediaState>) {
@@ -463,6 +500,7 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
               <h2>AI Generation</h2>
               <Bot size={18} aria-hidden="true" />
             </div>
+            {companyVoiceSummary.enabled ? <span className="ai-assistant-company-voice">Company voice enabled</span> : null}
             <label>
               Tone
               <select value={tone} onChange={(event) => setTone(event.target.value as AssistantTone)}>
@@ -473,6 +511,10 @@ export function AiAssistantPage({ selectedJob, materials }: AiAssistantPageProps
               Locale
               <input value={locale} onChange={(event) => setLocale(event.target.value)} />
             </label>
+            <button className="secondary-button compact" type="button" onClick={resetGenerationDefaults}>
+              <RotateCcw size={16} aria-hidden="true" />
+              Reset defaults
+            </button>
           </section>
 
           <section className="ai-assistant-draft-actions">

@@ -9,6 +9,14 @@ export const promptVersionByChannel = {
   'Blog / Case Study': 'blog-case-study-v1',
   'Short Video': 'short-video-v1',
 };
+export const brandPromptVersionByChannel = {
+  Instagram: 'instagram-v2',
+  Facebook: 'facebook-v2',
+  LinkedIn: 'linkedin-v2',
+  'Google Business': 'google-business-v2',
+  'Blog / Case Study': 'blog-case-study-v2',
+  'Short Video': 'short-video-v2',
+};
 
 export const resultSchemaVersion = 'content-generation-result-v1';
 export const requestSchemaVersion = 'content-generation-request-v1';

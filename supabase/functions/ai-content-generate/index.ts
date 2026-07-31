@@ -141,6 +141,15 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
       const { data } = await query.maybeSingle();
       return data;
     },
+    async getCompanyVoiceSettings(companyId: string) {
+      const { data, error } = await adminClient
+        .from('company_profiles')
+        .select('ai_voice_enabled,ai_public_display_name,ai_default_tone,ai_custom_voice_guidance,ai_service_areas,ai_public_location_wording,ai_cta_guidance,ai_hashtag_guidance,ai_channel_defaults')
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (error) throw new Error('COMPANY_VOICE_UNAVAILABLE');
+      return data;
+    },
     async getCustomer(customerId: string | null) {
       if (!customerId) return null;
       const { data } = await adminClient

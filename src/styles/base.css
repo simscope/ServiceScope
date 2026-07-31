@@ -672,6 +672,19 @@ button {
   font-size: 16px;
 }
 
+.ai-assistant-company-voice {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  border: 1px solid #b9dfca;
+  border-radius: 6px;
+  background: #edf9f2;
+  color: #17643b;
+  padding: 6px 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .ai-assistant-job-summary {
   display: grid;
   grid-template-columns: 72px minmax(0, 1fr);

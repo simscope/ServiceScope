@@ -1,6 +1,7 @@
 import { scrubText } from './privacy.js';
 import { cleanText } from './schemas.js';
 import { assertAiAssistantAccess } from './access.js';
+import { resolveCompanyVoiceContext } from './companyVoice.js';
 
 export async function buildAuthorizedContext({ request, session, repository }) {
   const job = await repository.getJob(request.jobId);
@@ -11,7 +12,8 @@ export async function buildAuthorizedContext({ request, session, repository }) {
   const companyUser = await repository.getCompanyUser(session, company.id);
   assertAiAssistantAccess({ session, company, companyUser });
   if (String(job.company_id) !== String(company.id)) throw new Error('FORBIDDEN');
-  const [customer, location, materials, attachments, invoices, comments] = await Promise.all([
+  const [companyVoiceSettings, customer, location, materials, attachments, invoices, comments] = await Promise.all([
+    repository.getCompanyVoiceSettings ? repository.getCompanyVoiceSettings(company.id) : null,
     repository.getCustomer(job.customer_id),
     repository.getLocation(job.customer_location_id),
     repository.listMaterials(company.id, job.id),
@@ -65,6 +67,7 @@ export async function buildAuthorizedContext({ request, session, repository }) {
     ].filter(Boolean),
     evidence,
     privateValues,
+    companyVoice: resolveCompanyVoiceContext(companyVoiceSettings, request.channel),
   };
 }
 
