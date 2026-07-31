@@ -77,6 +77,8 @@ const contextBase = {
 
 const clientContractsSource = await readFile(new URL('../src/features/company-voice/contracts.ts', import.meta.url), 'utf8');
 const clientContracts = await loadClientContracts(clientContractsSource);
+const companySettingsAccessSource = await readFile(new URL('../src/features/company-portal/companySettingsAccess.ts', import.meta.url), 'utf8');
+const companySettingsAccess = await loadClientModule(companySettingsAccessSource);
 const clientSettings = {
   ...clientContracts.createDefaultCompanyVoiceSettings('North Service 24/7'),
   enabled: true,
@@ -97,6 +99,103 @@ check(() => assert.equal(
   clientContracts.validateCompanyVoiceSettings(clientSettings).publicDisplayName,
   'North Service 24/7',
 ));
+
+const activeManagerCapability = companySettingsAccess.canManageCompanyVoiceSettings({
+  selectedCompanyId: 'company-a',
+  sessionKind: 'company',
+  sessionCompanyId: 'company-a',
+  sessionActive: true,
+  sessionRole: 'Manager',
+  staffRole: 'manager',
+  staffStatus: 'active',
+});
+const managerSettingsMode = companySettingsAccess.resolveCompanySettingsMode({
+  hasFullOnboardingAccess: false,
+  canManageCompanyVoice: activeManagerCapability,
+});
+check(() => assert.equal(activeManagerCapability, true));
+check(() => assert.equal(managerSettingsMode, 'companyVoiceOnly'));
+check(() => assert.equal(companySettingsAccess.resolveCompanySettingsRenderTarget(managerSettingsMode), 'companyVoiceOnly'));
+check(() => assert.equal(companySettingsAccess.resolveActivePageReadOnly({
+  renderedClientPage: 'onboarding',
+  companySettingsMode: managerSettingsMode,
+  hasPageWriteAccess: false,
+}), false));
+
+const managerNavigation = companySettingsAccess.resolveClientNavigationPages({
+  clientPage: 'onboarding',
+  navPages: ['jobs', 'portal', 'onboarding'],
+  canViewPage: (page) => page !== 'onboarding',
+  companySettingsMode: managerSettingsMode,
+});
+check(() => assert.deepEqual(managerNavigation.visiblePages, ['jobs', 'portal', 'onboarding']));
+check(() => assert.equal(managerNavigation.renderedClientPage, 'onboarding'));
+
+const adminCapability = companySettingsAccess.canManageCompanyVoiceSettings({
+  selectedCompanyId: 'company-a',
+  sessionKind: 'company',
+  sessionCompanyId: 'company-a',
+  sessionActive: true,
+  sessionRole: 'Admin',
+});
+check(() => assert.equal(adminCapability, true));
+check(() => assert.equal(companySettingsAccess.resolveCompanySettingsMode({
+  hasFullOnboardingAccess: false,
+  canManageCompanyVoice: adminCapability,
+}), 'companyVoiceOnly'));
+
+for (const blockedIdentity of [
+  { sessionRole: 'Technician', staffRole: 'technician', staffStatus: 'active' },
+  { sessionRole: 'Manager', staffRole: 'dispatcher', staffStatus: 'active' },
+  { sessionRole: 'Manager', staffRole: 'manager', staffStatus: 'disabled' },
+  { sessionRole: 'Manager', staffRole: 'manager', staffStatus: 'invited' },
+]) {
+  check(() => assert.equal(companySettingsAccess.canManageCompanyVoiceSettings({
+    selectedCompanyId: 'company-a',
+    sessionKind: 'company',
+    sessionCompanyId: 'company-a',
+    sessionActive: true,
+    ...blockedIdentity,
+  }), false));
+}
+check(() => assert.equal(companySettingsAccess.canManageCompanyVoiceSettings({
+  selectedCompanyId: 'company-b',
+  sessionKind: 'company',
+  sessionCompanyId: 'company-a',
+  sessionActive: true,
+  sessionRole: 'Manager',
+  staffRole: 'manager',
+  staffStatus: 'active',
+}), false));
+check(() => assert.equal(companySettingsAccess.canManageCompanyVoiceSettings({
+  selectedCompanyId: 'company-a',
+  sessionKind: 'owner',
+  sessionActive: true,
+  platformRole: 'owner',
+}), true));
+for (const platformRole of ['admin', 'support', 'viewer']) {
+  check(() => assert.equal(companySettingsAccess.canManageCompanyVoiceSettings({
+    selectedCompanyId: 'company-a',
+    sessionKind: 'owner',
+    sessionActive: true,
+    platformRole,
+  }), false));
+}
+
+const hiddenNavigation = companySettingsAccess.resolveClientNavigationPages({
+  clientPage: 'onboarding',
+  navPages: ['jobs', 'portal', 'onboarding'],
+  canViewPage: (page) => page !== 'onboarding',
+  companySettingsMode: 'hidden',
+});
+check(() => assert.deepEqual(hiddenNavigation.visiblePages, ['jobs', 'portal']));
+check(() => assert.equal(hiddenNavigation.renderedClientPage, 'jobs'));
+check(() => assert.equal(companySettingsAccess.resolveCompanySettingsRenderTarget('hidden'), null));
+check(() => assert.equal(companySettingsAccess.resolveCompanySettingsMode({
+  hasFullOnboardingAccess: true,
+  canManageCompanyVoice: true,
+}), 'full'));
+check(() => assert.equal(companySettingsAccess.resolveCompanySettingsRenderTarget('full'), 'fullOnboarding'));
 
 const channelSummary = {
   enabled: true,
@@ -282,6 +381,8 @@ await checkAsync(async () => {
 });
 
 const componentSource = await readFile(new URL('../src/features/company-voice/CompanyVoiceSettingsPanel.tsx', import.meta.url), 'utf8');
+const restrictedSettingsPageSource = await readFile(new URL('../src/features/company-voice/CompanyVoiceSettingsPage.tsx', import.meta.url), 'utf8');
+const clientBusinessRendererSource = await readFile(new URL('../src/components/portal/ClientBusinessPageRenderer.tsx', import.meta.url), 'utf8');
 const clientApiSource = await readFile(new URL('../src/features/company-voice/clientApi.ts', import.meta.url), 'utf8');
 const assistantSource = await readFile(new URL('../src/components/portal/AiAssistantPage.tsx', import.meta.url), 'utf8');
 const edgeSource = await readFile(new URL('../supabase/functions/ai-content-generate/index.ts', import.meta.url), 'utf8');
@@ -297,6 +398,12 @@ const validatorSignatures = [
 
 check(() => assert.match(componentSource, /Save company voice/));
 check(() => assert.doesNotMatch(componentSource, /generateAiContent|analyzeSelectedMedia|OAuth Connect|Publish|Schedule/));
+check(() => assert.match(restrictedSettingsPageSource, /<CompanyVoiceSettingsPanel/));
+check(() => assert.match(restrictedSettingsPageSource, /readOnly=\{false\}/));
+check(() => assert.doesNotMatch(restrictedSettingsPageSource, /OnboardingPage|onboardingAdminFeature|ownerAccess|mailbox|billing|payment|technician|website|lead/i));
+check(() => assert.match(clientBusinessRendererSource, /settingsRenderTarget === 'companyVoiceOnly'[\s\S]*<CompanyVoiceSettingsPage/));
+check(() => assert.match(clientBusinessRendererSource, /settingsRenderTarget !== 'fullOnboarding'[\s\S]*return null/));
+check(() => assert.match(clientBusinessRendererSource, /settingsRenderTarget !== 'fullOnboarding'[\s\S]*<OnboardingPage/));
 check(() => assert.doesNotMatch(clientApiSource, /ai-content-generate|ai-media-analyze|provider|OPENAI/));
 check(() => assert.match(assistantSource, /loadCompanyVoiceSummary/));
 check(() => assert.doesNotMatch(clientApiSource.match(/loadCompanyVoiceSummary[\s\S]*?function mapCompanyVoiceRow/)?.[0] ?? '', /ai_custom_voice_guidance|ai_cta_guidance/));
@@ -390,6 +497,16 @@ async function loadClientContracts(source) {
     /import\s*\{\s*ASSISTANT_TONES\s*\}\s*from\s*['"][^'"]+['"];\s*/,
     "const ASSISTANT_TONES = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];\n",
   );
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+}
+
+async function loadClientModule(source) {
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2020,
+      target: ts.ScriptTarget.ES2020,
+    },
+  }).outputText;
   return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
 }
 

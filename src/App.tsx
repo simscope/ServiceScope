@@ -909,7 +909,14 @@ export function App() {
         <CompanyPortal
           selectedCompany={selectedCompany}
           onboardingProfile={selectedOnboardingProfile}
-          signedInUser={{ name: authSession.name, email: authSession.email, role: authSession.role }}
+          signedInUser={{
+            kind: authSession.kind,
+            companyId: authSession.companyId,
+            active: true,
+            name: authSession.name,
+            email: authSession.email,
+            role: authSession.role,
+          }}
           tickets={supportTickets.filter((ticket) => ticket.companyId === selectedCompany?.id)}
           onSignOut={handleSignOut}
           onUpdateOnboardingProfile={(nextProfile) => {
