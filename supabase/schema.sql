@@ -194,14 +194,14 @@ set search_path = public
 as $$
   select
     coalesce(cardinality(value), 0) <= max_items
-    and coalesce((
-      select bool_and(
-        item = btrim(item)
-        and item <> ''
-        and company_ai_voice_text_valid(item, max_item_length, true)
-      )
+    and not exists (
+      select 1
       from unnest(value) as item
-    ), true);
+      where item is null
+        or item = ''
+        or item <> btrim(item)
+        or not coalesce(company_ai_voice_text_valid(item, max_item_length, true), false)
+    );
 $$;
 
 create or replace function company_ai_channel_defaults_valid(value jsonb)
@@ -290,7 +290,7 @@ create table company_profiles (
   lead_api_token text,
   access_rules jsonb not null default '{}'::jsonb,
   ai_voice_enabled boolean not null default false,
-  ai_public_display_name text not null default '' check (company_ai_voice_text_valid(ai_public_display_name, 80, false)),
+  ai_public_display_name text not null default '' check (company_ai_voice_text_valid(ai_public_display_name, 80, true)),
   ai_default_tone text not null default 'Professional' check (ai_default_tone in ('Professional', 'Friendly', 'Technical', 'Educational', 'Marketing')),
   ai_custom_voice_guidance text not null default '' check (company_ai_voice_text_valid(ai_custom_voice_guidance, 1000, true)),
   ai_service_areas text[] not null default '{}'::text[] check (company_ai_voice_text_array_valid(ai_service_areas, 20, 80)),

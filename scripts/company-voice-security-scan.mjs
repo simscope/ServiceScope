@@ -27,6 +27,13 @@ for (const pattern of actualSecretPatterns) {
   assert.doesNotMatch(builtBundle, pattern);
 }
 
+const syntheticContactFixtures = [
+  /contact@example\.test/i,
+  /\+1 202 555 0199/,
+  /123 Example Street/i,
+];
+for (const pattern of syntheticContactFixtures) assert.doesNotMatch(builtBundle, pattern);
+
 assert.doesNotMatch(browserSource, /api\.openai\.com|OPENAI_API_KEY|SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY/);
 assert.doesNotMatch(builtBundle, /api\.openai\.com|SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY/);
 assert.doesNotMatch(browserSource, /publish(?:Post|Content)|schedule(?:Post|Content)|oauth\/callback|Meta SDK|Facebook Login/);

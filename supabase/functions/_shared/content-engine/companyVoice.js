@@ -17,6 +17,15 @@ const urlPattern = /\b(?:https?:\/\/|www\.)\S+/i;
 const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
 const phonePattern = /(?:\+?\d[\d\s().-]{7,}\d)/;
 const streetAddressPattern = /\b\d{1,6}\s+[A-Za-z0-9.' -]{2,}\s(?:street|st|road|rd|avenue|ave|boulevard|blvd|lane|ln|drive|dr|court|ct|way)\b/i;
+const contactFreeFields = new Set([
+  'publicDisplayName',
+  'voiceGuidance',
+  'serviceAreas',
+  'publicLocationLanguage',
+  'callToActionGuidance',
+  'hashtagGuidance',
+  'channelCta',
+]);
 
 export function emptyCompanyVoiceContext(channel) {
   return {
@@ -96,7 +105,6 @@ export function normalizeHashtagGuidance(value, maxItems = 20) {
   if (!Array.isArray(value)) throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
   const normalized = value.map((item) => {
     const text = safeText(item, 40, 'hashtagGuidance');
-    if (hasContactDetails(text)) throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
     return text.replace(/^#+/, '').replace(/[^\p{L}\p{N}_-]/gu, '');
   }).filter(Boolean);
   return Array.from(new Set(normalized.map((item) => item.toLocaleLowerCase())))
@@ -135,7 +143,10 @@ function safeTone(value) {
 
 function safeTextArray(value, maxItems, maxLength, field) {
   if (!Array.isArray(value) || value.length > maxItems) throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
-  const clean = value.map((item) => safeText(item, maxLength, field)).filter(Boolean);
+  const clean = value.map((item) => {
+    if (typeof item !== 'string' || item === '' || item !== item.trim()) throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
+    return safeText(item, maxLength, field);
+  });
   return Array.from(new Set(clean.map((item) => item.toLocaleLowerCase())))
     .map((key) => clean.find((item) => item.toLocaleLowerCase() === key))
     .filter(Boolean);
@@ -148,16 +159,14 @@ function safeText(value, maxLength, field) {
   if (clean.length > maxLength || unsafeMarkupPattern.test(clean) || secretPattern.test(clean) || providerConfigurationPattern.test(clean) || urlPattern.test(clean)) {
     throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
   }
-  if ((field === 'publicLocationLanguage' || field === 'voiceGuidance') && hasContactDetails(clean)) {
+  if (contactFreeFields.has(field) && hasContactDetails(clean)) {
     throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
   }
   return clean;
 }
 
 function safeCta(value, field) {
-  const clean = safeText(value, 160, field);
-  if (hasContactDetails(clean)) throw new Error('INVALID_COMPANY_VOICE_SETTINGS');
-  return clean;
+  return safeText(value, 160, field);
 }
 
 function hasContactDetails(value) {

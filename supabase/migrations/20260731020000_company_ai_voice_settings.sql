@@ -36,14 +36,14 @@ set search_path = public
 as $$
   select
     coalesce(cardinality(value), 0) <= max_items
-    and coalesce((
-      select bool_and(
-        item = btrim(item)
-        and item <> ''
-        and public.company_ai_voice_text_valid(item, max_item_length, true)
-      )
+    and not exists (
+      select 1
       from unnest(value) as item
-    ), true);
+      where item is null
+        or item = ''
+        or item <> btrim(item)
+        or not coalesce(public.company_ai_voice_text_valid(item, max_item_length, true), false)
+    );
 $$;
 
 create or replace function public.company_ai_channel_defaults_valid(value jsonb)
@@ -128,7 +128,7 @@ do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'company_profiles_ai_public_display_name_length') then
     alter table public.company_profiles add constraint company_profiles_ai_public_display_name_length
-      check (public.company_ai_voice_text_valid(ai_public_display_name, 80, false));
+      check (public.company_ai_voice_text_valid(ai_public_display_name, 80, true));
   end if;
   if not exists (select 1 from pg_constraint where conname = 'company_profiles_ai_default_tone_valid') then
     alter table public.company_profiles add constraint company_profiles_ai_default_tone_valid

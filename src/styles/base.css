@@ -796,10 +796,12 @@ button {
 }
 
 .ai-assistant-generation-settings {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
-.ai-assistant-facts .ai-assistant-panel-heading {
+.ai-assistant-facts .ai-assistant-panel-heading,
+.ai-assistant-generation-settings .ai-assistant-panel-heading,
+.ai-assistant-generation-settings .ai-assistant-company-voice {
   grid-column: 1 / -1;
 }
 
@@ -1314,6 +1316,7 @@ button {
   .ai-assistant-grid,
   .ai-assistant-capabilities,
   .ai-assistant-facts,
+  .ai-assistant-generation-settings,
   .ai-assistant-media-browser,
   .ai-assistant-analysis-card,
   .ai-media-carousel-row,

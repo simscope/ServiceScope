@@ -29,8 +29,22 @@ set auth_user_id = excluded.auth_user_id, role = excluded.role, status = exclude
 insert into public.companies (id, name, owner_name, owner_email)
 values
   ('00000000-0000-0000-0000-000000005101', 'Voice Tenant A', 'Voice Admin', 'voice-admin@example.test'),
-  ('00000000-0000-0000-0000-000000005102', 'Voice Tenant B', 'Other Owner', 'other-owner@example.test')
+  ('00000000-0000-0000-0000-000000005102', 'Voice Tenant B', 'Other Owner', 'other-owner@example.test'),
+  ('00000000-0000-0000-0000-000000005103', 'Voice Validation Tenant', 'Validation Owner', 'validation-owner@example.test')
 on conflict (id) do nothing;
+
+-- Contact-bearing public display names fail closed on both insert and update.
+do $$
+begin
+  begin
+    insert into public.company_profiles (company_id, ai_public_display_name)
+    values ('00000000-0000-0000-0000-000000005103', 'contact@example.test');
+    raise exception 'contact-bearing public display name insert was allowed';
+  exception when check_violation then
+    null;
+  end;
+end;
+$$;
 
 insert into public.company_users (company_id, auth_user_id, name, email, role, status)
 values
@@ -46,6 +60,63 @@ values
 on conflict (company_id) do update
 set ai_voice_enabled = excluded.ai_voice_enabled,
     ai_public_display_name = excluded.ai_public_display_name;
+
+do $$
+declare
+  invalid_display_name text;
+  column_name text;
+  invalid_array text[];
+begin
+  foreach invalid_display_name in array array[
+    'contact@example.test',
+    '+1 202 555 0199',
+    '123 Example Street'
+  ]
+  loop
+    begin
+      update public.company_profiles
+      set ai_public_display_name = invalid_display_name
+      where company_id = '00000000-0000-0000-0000-000000005101';
+      raise exception 'contact-bearing public display name update was allowed';
+    exception when check_violation then
+      null;
+    end;
+  end loop;
+
+  foreach column_name in array array['ai_service_areas', 'ai_hashtag_guidance']
+  loop
+    for invalid_array in
+      select candidate
+      from (values
+        (array[null]::text[]),
+        (array['North County', null]::text[]),
+        (array['']::text[]),
+        (array['   ']::text[]),
+        (array[' North County']::text[])
+      ) as invalid_cases(candidate)
+    loop
+      begin
+        execute format(
+          'update public.company_profiles set %I = $1 where company_id = $2',
+          column_name
+        ) using invalid_array, '00000000-0000-0000-0000-000000005101'::uuid;
+        raise exception 'invalid text array was allowed for %', column_name;
+      exception when check_violation then
+        null;
+      end;
+    end loop;
+
+    execute format(
+      'update public.company_profiles set %I = $1 where company_id = $2',
+      column_name
+    ) using array['North County']::text[], '00000000-0000-0000-0000-000000005101'::uuid;
+    execute format(
+      'update public.company_profiles set %I = $1 where company_id = $2',
+      column_name
+    ) using array[]::text[], '00000000-0000-0000-0000-000000005101'::uuid;
+  end loop;
+end;
+$$;
 
 set local role authenticated;
 

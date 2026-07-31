@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import ts from 'typescript';
 import { handleContentGeneration } from '../supabase/functions/_shared/content-engine/applicationService.js';
 import {
   applyCompanyVoiceToRequest,
@@ -74,6 +75,76 @@ const contextBase = {
   ],
 };
 
+const clientContractsSource = await readFile(new URL('../src/features/company-voice/contracts.ts', import.meta.url), 'utf8');
+const clientContracts = await loadClientContracts(clientContractsSource);
+const clientSettings = {
+  ...clientContracts.createDefaultCompanyVoiceSettings('North Service 24/7'),
+  enabled: true,
+  customVoiceGuidance: 'Use clear, concise service language.',
+};
+
+for (const contactValue of ['contact@example.test', '+1 202 555 0199', '123 Example Street']) {
+  check(() => assert.throws(
+    () => clientContracts.validateCompanyVoiceSettings({ ...clientSettings, publicDisplayName: contactValue }),
+    /cannot contain contact details/,
+  ));
+  check(() => assert.throws(
+    () => clientContracts.validateCompanyVoiceSettings({ ...clientSettings, customVoiceGuidance: contactValue }),
+    /cannot contain contact details/,
+  ));
+}
+check(() => assert.equal(
+  clientContracts.validateCompanyVoiceSettings(clientSettings).publicDisplayName,
+  'North Service 24/7',
+));
+
+const channelSummary = {
+  enabled: true,
+  defaultTone: 'Professional',
+  channelDefaults: {
+    Instagram: { enabled: true, defaultTone: 'Marketing', defaultLocale: 'en-US' },
+    Facebook: { enabled: true, defaultTone: 'Friendly', defaultLocale: 'en-CA' },
+    LinkedIn: { enabled: true, defaultTone: 'Technical', defaultLocale: 'en-GB' },
+    'Short Video': { enabled: true, defaultTone: 'Educational', defaultLocale: 'fr-CA' },
+  },
+};
+const channelPreferences = clientContracts.buildGenerationPreferencesByChannel(channelSummary);
+check(() => assert.notDeepEqual(channelPreferences.Instagram, channelPreferences.Facebook));
+check(() => assert.notDeepEqual(channelPreferences.Facebook, channelPreferences.LinkedIn));
+check(() => assert.deepEqual(
+  {
+    Instagram: channelPreferences.Instagram.locale,
+    Facebook: channelPreferences.Facebook.locale,
+    LinkedIn: channelPreferences.LinkedIn.locale,
+    'Short Video': channelPreferences['Short Video'].locale,
+  },
+  { Instagram: 'en-US', Facebook: 'en-CA', LinkedIn: 'en-GB', 'Short Video': 'fr-CA' },
+));
+const editedPreferences = clientContracts.updateChannelGenerationPreference(
+  channelPreferences,
+  'Facebook',
+  { tone: 'Educational', locale: 'fr-CA' },
+);
+check(() => assert.deepEqual(editedPreferences.Instagram, channelPreferences.Instagram));
+check(() => assert.deepEqual(editedPreferences.Facebook, { tone: 'Educational', locale: 'fr-CA' }));
+const resetPreferences = clientContracts.resetChannelGenerationPreference(
+  editedPreferences,
+  channelSummary,
+  'Facebook',
+);
+check(() => assert.deepEqual(resetPreferences.Facebook, { tone: 'Friendly', locale: 'en-CA' }));
+check(() => assert.deepEqual(resetPreferences.Instagram, editedPreferences.Instagram));
+const switchedCompanyPreferences = clientContracts.buildGenerationPreferencesByChannel({
+  enabled: true,
+  defaultTone: 'Educational',
+  channelDefaults: {
+    Instagram: { enabled: true, defaultTone: 'Professional', defaultLocale: 'de-DE' },
+    Facebook: { enabled: false, defaultTone: 'Marketing', defaultLocale: 'fr-FR' },
+  },
+});
+check(() => assert.deepEqual(switchedCompanyPreferences.Instagram, { tone: 'Professional', locale: 'de-DE' }));
+check(() => assert.deepEqual(switchedCompanyPreferences.Facebook, { tone: 'Professional', locale: 'en-US' }));
+
 check(() => assert.equal(resolveCompanyVoiceContext(null, 'Instagram').enabled, false));
 check(() => assert.equal(resolveCompanyVoiceContext({ ...baseSettings, ai_voice_enabled: false }, 'Instagram').enabled, false));
 const instagramVoice = resolveCompanyVoiceContext(baseSettings, 'Instagram');
@@ -85,6 +156,20 @@ check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai
 check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai_custom_voice_guidance: 'x'.repeat(1001) }, 'Instagram'), /INVALID_COMPANY_VOICE_SETTINGS/));
 check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai_custom_voice_guidance: '<script>alert(1)</script>' }, 'Instagram'), /INVALID_COMPANY_VOICE_SETTINGS/));
 check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai_custom_voice_guidance: 'model: unsafe-model' }, 'Instagram'), /INVALID_COMPANY_VOICE_SETTINGS/));
+for (const contactValue of ['contact@example.test', '+1 202 555 0199', '123 Example Street']) {
+  check(() => assert.throws(
+    () => resolveCompanyVoiceContext({ ...baseSettings, ai_public_display_name: contactValue }, 'Instagram'),
+    /INVALID_COMPANY_VOICE_SETTINGS/,
+  ));
+  check(() => assert.throws(
+    () => resolveCompanyVoiceContext({ ...baseSettings, ai_custom_voice_guidance: contactValue }, 'Instagram'),
+    /INVALID_COMPANY_VOICE_SETTINGS/,
+  ));
+}
+check(() => assert.equal(
+  resolveCompanyVoiceContext({ ...baseSettings, ai_public_display_name: 'North Service 24/7' }, 'Instagram').publicDisplayName,
+  'North Service 24/7',
+));
 check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai_cta_guidance: 'Email office@example.test today' }, 'Instagram'), /INVALID_COMPANY_VOICE_SETTINGS/));
 check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai_cta_guidance: 'Visit 123 Main Street today' }, 'Instagram'), /INVALID_COMPANY_VOICE_SETTINGS/));
 check(() => assert.throws(() => resolveCompanyVoiceContext({ ...baseSettings, ai_hashtag_guidance: ['office@example.test'] }, 'Instagram'), /INVALID_COMPANY_VOICE_SETTINGS/));
@@ -115,6 +200,49 @@ check(() => assert.match(brandFallback.content.body, /^North Service:/));
 check(() => assert.match(brandFallback.content.body, /General service coverage: Serving the North County area/));
 check(() => assert.equal(brandFallback.content.callToAction, 'Invite readers to schedule a service visit'));
 check(() => assert.deepEqual(brandFallback.content.hashtags, ['#LocalService', '#Maintenance']));
+
+check(() => {
+  let promptBuilt = false;
+  assert.throws(() => {
+    const rejectedVoice = resolveCompanyVoiceContext(
+      { ...baseSettings, ai_public_display_name: 'contact@example.test' },
+      'Instagram',
+    );
+    promptBuilt = true;
+    buildPrompt(browserRequest, { ...contextBase, companyVoice: rejectedVoice });
+  }, /INVALID_COMPANY_VOICE_SETTINGS/);
+  assert.equal(promptBuilt, false);
+});
+check(() => {
+  let fallbackBuilt = false;
+  assert.throws(() => {
+    const rejectedVoice = resolveCompanyVoiceContext(
+      { ...baseSettings, ai_custom_voice_guidance: '123 Example Street' },
+      'Instagram',
+    );
+    fallbackBuilt = true;
+    deterministicFallback(
+      browserRequest,
+      { ...contextBase, companyVoice: rejectedVoice },
+      { code: 'TEST', message: 'test' },
+    );
+  }, /INVALID_COMPANY_VOICE_SETTINGS/);
+  assert.equal(fallbackBuilt, false);
+});
+await checkAsync(async () => {
+  let providerCalls = 0;
+  await assert.rejects(() => handleContentGeneration(makeDependencies({
+    settings: { ...baseSettings, ai_public_display_name: '+1 202 555 0199' },
+    provider: {
+      id: 'mock-provider',
+      async generate() {
+        providerCalls += 1;
+        return strictProviderResult('Instagram');
+      },
+    },
+  })), /INVALID_COMPANY_VOICE_SETTINGS/);
+  assert.equal(providerCalls, 0);
+});
 
 await checkAsync(async () => {
   let providerCalls = 0;
@@ -159,6 +287,7 @@ const assistantSource = await readFile(new URL('../src/components/portal/AiAssis
 const edgeSource = await readFile(new URL('../supabase/functions/ai-content-generate/index.ts', import.meta.url), 'utf8');
 const migrationSource = await readFile(new URL('../supabase/migrations/20260731020000_company_ai_voice_settings.sql', import.meta.url), 'utf8');
 const schemaSource = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+const sqlChecksSource = await readFile(new URL('../supabase/sql/company-ai-voice-security-checks.sql', import.meta.url), 'utf8');
 
 check(() => assert.match(componentSource, /Save company voice/));
 check(() => assert.doesNotMatch(componentSource, /generateAiContent|analyzeSelectedMedia|OAuth Connect|Publish|Schedule/));
@@ -173,9 +302,74 @@ check(() => assert.match(schemaSource, /company profiles readable by company or 
 check(() => assert.match(schemaSource, /company profiles manageable by company managers or platform[\s\S]*can_manage_company\(company_id\)/));
 check(() => assert.match(componentSource, /Existing company logo/));
 check(() => assert.doesNotMatch(componentSource, /type="file"|uploadCompanyLogo/));
+check(() => assert.match(clientContractsSource, /publicDisplayName:\s*validateContactFreeText/));
+check(() => assert.match(clientContractsSource, /customVoiceGuidance:\s*validateContactFreeText/));
+check(() => assert.match(assistantSource, /activeGenerationChannel/));
+check(() => assert.match(assistantSource, /generationPreferencesByChannel\[channel\]/));
+check(() => assert.match(assistantSource, /tone:\s*preferences\.tone[\s\S]*locale:\s*preferences\.locale/));
+check(() => assert.doesNotMatch(assistantSource, /selectedChannels\[0\]/));
+check(() => assert.doesNotMatch(assistantSource, /const \[tone,\s*setTone\]|const \[locale,\s*setLocale\]/));
+check(() => assert.doesNotMatch(
+  clientContractsSource.match(/export function updateChannelGenerationPreference[\s\S]*?^}/m)?.[0] ?? '',
+  /fetch|generateAiContent|draftWorkspace|mediaState|mediaPlanningState/,
+));
+check(() => assert.doesNotMatch(
+  assistantSource.match(/<section className="ai-assistant-panel ai-assistant-generation-settings">[\s\S]*?<\/section>/)?.[0] ?? '',
+  /generateAiContent|analyzeSelectedMedia|setDraftWorkspace|setMediaState|setMediaPlanningState/,
+));
+check(() => assert.match(migrationSource, /company_ai_voice_text_valid\(ai_public_display_name,\s*80,\s*true\)/));
+check(() => assert.match(schemaSource, /company_ai_voice_text_valid\(ai_public_display_name,\s*80,\s*true\)/));
+check(() => assert.match(migrationSource, /not exists[\s\S]*item is null[\s\S]*item = ''[\s\S]*item <> btrim\(item\)/));
+check(() => assert.doesNotMatch(
+  migrationSource.match(/create or replace function public\.company_ai_voice_text_array_valid[\s\S]*?\$\$;/)?.[0] ?? '',
+  /bool_and/,
+));
+check(() => assert.match(sqlChecksSource, /contact-bearing public display name insert was allowed/));
+check(() => assert.match(sqlChecksSource, /contact-bearing public display name update was allowed/));
+check(() => assert.match(sqlChecksSource, /array\[null\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /array\['North County', null\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /array\[''\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /array\['   '\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /array\[' North County'\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /array\['North County'\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /array\[\]::text\[\]/));
+check(() => assert.match(sqlChecksSource, /foreach column_name in array array\['ai_service_areas', 'ai_hashtag_guidance'\]/));
+check(() => assert.match(sqlChecksSource, /begin;[\s\S]*rollback;\s*$/));
+check(() => assert.equal(
+  normalizeSqlFunction(extractSqlFunction(migrationSource, 'public.company_ai_voice_text_array_valid')),
+  normalizeSqlFunction(extractSqlFunction(schemaSource, 'company_ai_voice_text_array_valid')),
+));
 
-assert.ok(checks >= 32, `Expected at least 32 checks, got ${checks}`);
+assert.ok(checks >= 80, `Expected at least 80 checks, got ${checks}`);
 console.log(`company voice regression checks passed (${checks} checks)`);
+
+async function loadClientContracts(source) {
+  const output = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2020,
+      target: ts.ScriptTarget.ES2020,
+    },
+  }).outputText.replace(
+    /import\s*\{\s*ASSISTANT_TONES\s*\}\s*from\s*['"][^'"]+['"];\s*/,
+    "const ASSISTANT_TONES = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];\n",
+  );
+  return import(`data:text/javascript;base64,${Buffer.from(output).toString('base64')}`);
+}
+
+function extractSqlFunction(source, name) {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = source.match(new RegExp(`create or replace function ${escapedName}[\\s\\S]*?\\$\\$;`, 'i'));
+  assert.ok(match, `Missing SQL function ${name}`);
+  return match[0];
+}
+
+function normalizeSqlFunction(source) {
+  return source
+    .replace(/public\./gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase();
+}
 
 function makeDependencies(overrides = {}) {
   const session = overrides.session ?? { kind: 'company', company_id: 'company-1', user_id: 'user-1', email: 'staff@example.test' };

@@ -36,6 +36,13 @@ export type CompanyVoiceSummary = {
   channelDefaults: Partial<Record<AssistantChannel, Pick<CompanyVoiceChannelDefaults, 'enabled' | 'defaultTone' | 'defaultLocale'>>>;
 };
 
+export type ChannelGenerationPreference = {
+  tone: AssistantTone;
+  locale: string;
+};
+
+export type GenerationPreferencesByChannel = Record<AssistantChannel, ChannelGenerationPreference>;
+
 export function createDefaultCompanyVoiceSettings(publicDisplayName = ''): CompanyVoiceSettings {
   return {
     enabled: false,
@@ -72,9 +79,9 @@ export function validateCompanyVoiceSettings(value: CompanyVoiceSettings): Compa
 
   return {
     enabled: Boolean(value.enabled),
-    publicDisplayName: validateText(value.publicDisplayName, 80, 'Public display name'),
+    publicDisplayName: validateContactFreeText(value.publicDisplayName, 80, 'Public display name'),
     defaultTone,
-    customVoiceGuidance: validateText(value.customVoiceGuidance, 1000, 'Custom voice guidance'),
+    customVoiceGuidance: validateContactFreeText(value.customVoiceGuidance, 1000, 'Custom voice guidance'),
     serviceAreas: normalizeGuidanceList(value.serviceAreas, 20, 80, 'Service areas'),
     publicLocationWording: validateContactFreeText(value.publicLocationWording, 160, 'Public location wording'),
     callToActionGuidance: validateCta(value.callToActionGuidance, 'Standard CTA guidance'),
@@ -96,6 +103,36 @@ export function companyVoiceDefaultsForChannel(summary: CompanyVoiceSummary, cha
     enabled: true,
     tone: channelDefaults?.defaultTone ?? summary.defaultTone,
     locale: channelDefaults?.defaultLocale ?? 'en-US',
+  };
+}
+
+export function buildGenerationPreferencesByChannel(summary: CompanyVoiceSummary): GenerationPreferencesByChannel {
+  return Object.fromEntries(COMPANY_VOICE_CHANNELS.map((channel) => {
+    const defaults = companyVoiceDefaultsForChannel(summary, channel);
+    return [channel, { tone: defaults.tone, locale: defaults.locale }];
+  })) as GenerationPreferencesByChannel;
+}
+
+export function updateChannelGenerationPreference(
+  current: GenerationPreferencesByChannel,
+  channel: AssistantChannel,
+  patch: Partial<ChannelGenerationPreference>,
+): GenerationPreferencesByChannel {
+  return {
+    ...current,
+    [channel]: { ...current[channel], ...patch },
+  };
+}
+
+export function resetChannelGenerationPreference(
+  current: GenerationPreferencesByChannel,
+  summary: CompanyVoiceSummary,
+  channel: AssistantChannel,
+): GenerationPreferencesByChannel {
+  const defaults = companyVoiceDefaultsForChannel(summary, channel);
+  return {
+    ...current,
+    [channel]: { tone: defaults.tone, locale: defaults.locale },
   };
 }
 
