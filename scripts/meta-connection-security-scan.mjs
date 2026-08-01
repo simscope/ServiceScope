@@ -26,6 +26,8 @@ const serverSource = (await Promise.all(serverFiles.map(read))).join('\n');
 const featureSource = `${clientSource}\n${serverSource}`;
 const migration = await read('supabase/migrations/20260731220000_meta_social_connection_foundation.sql');
 const canonicalSchema = await read('supabase/schema.sql');
+const sqlRunner = await read('scripts/meta-connection-sql-tests.mjs');
+const sqlSuite = await read('supabase/sql/meta-social-connection-security-checks.sql');
 const config = await read('supabase/config.toml');
 const appSource = await read('src/App.tsx');
 const onboardingSource = await read('src/components/portal/OnboardingPage.tsx');
@@ -122,6 +124,37 @@ check(() => assert.match(migration, /token_envelope_shape_check/));
 check(() => assert.match(migration, /pending_envelope_shape_check/));
 check(() => assert.equal(normalizeSql(extractSchemaBlock(canonicalSchema)), normalizeSql(extractSchemaBlock(migration))));
 
+const canonicalAuditTable = extractCreateTable(canonicalSchema, 'audit_events');
+const runnerAuditTable = extractCreateTable(sqlRunner, 'audit_events');
+const runnerCompaniesTable = extractCreateTable(sqlRunner, 'companies');
+const replaceFunction = extractFunction(migration, 'replace_company_social_connection');
+const disconnectFunction = extractFunction(migration, 'disconnect_company_social_connection');
+const replaceAudit = extractAuditInsert(replaceFunction);
+const disconnectAudit = extractAuditInsert(disconnectFunction);
+const requiredAuditColumns = [
+  'company_id', 'actor_user_id', 'actor_name', 'actor_role', 'category', 'action',
+  'resource_type', 'resource', 'resource_id', 'resource_label', 'details',
+];
+check(() => assertRequiredWithoutDefault(canonicalAuditTable, 'resource_label', /text\s+not\s+null/i));
+check(() => assertRequiredWithoutDefault(runnerAuditTable, 'resource_label', /text\s+not\s+null/i));
+check(() => assertRequiredWithoutDefault(runnerCompaniesTable, 'owner_email', /text\s+not\s+null/i));
+check(() => assert.deepEqual(replaceAudit.columns, requiredAuditColumns));
+check(() => assert.deepEqual(disconnectAudit.columns, requiredAuditColumns));
+check(() => assert.match(replaceAudit.statement, /p_facebook_page_name/));
+check(() => assert.match(disconnectAudit.statement, /disconnected\.facebook_page_name/));
+check(() => assert.match(replaceAudit.statement, /'meta_social_connection'/));
+check(() => assert.match(disconnectAudit.statement, /'meta_social_connection'/));
+for (const audit of [replaceAudit, disconnectAudit]) {
+  check(() => assert.doesNotMatch(audit.statement, /token_envelope|encrypted_pending|state_hash|access_token|ciphertext/i));
+}
+check(() => assert.match(sqlSuite, /insert into public\.companies\s*\(id, name, owner_name, owner_email\)/i));
+const fixtureEmails = [...sqlSuite.matchAll(/'([^']+@[^']+)'/g)].map((match) => match[1]);
+check(() => assert.ok(fixtureEmails.length > 0 && fixtureEmails.every((email) => email.endsWith('@example.test'))));
+check(() => assert.match(sqlSuite, /exception when not_null_violation then null/));
+check(() => assert.match(sqlSuite, /meta_sql_reject_disconnect_audit/));
+check(() => assert.match(sqlSuite, /audit failure did not roll back connection mutation/));
+check(() => assert.match(sqlSuite, /audit failure did not roll back pending-state cleanup/));
+
 check(() => assert.match(providerSource, /config_id: config\.loginConfigurationId/));
 check(() => assert.match(providerSource, /override_default_response_type: 'true'/));
 check(() => assert.doesNotMatch(providerSource, /scope:/));
@@ -166,6 +199,34 @@ function extractSchemaBlock(source) {
   const match = source.match(/-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_CONNECTION_SCHEMA_END/);
   assert.ok(match, 'Meta schema parity block is missing');
   return match[0];
+}
+
+function extractCreateTable(source, tableName) {
+  const match = source.match(new RegExp(`create table (?:public\\.)?${tableName}\\s*\\([\\s\\S]*?\\n\\s*\\);`, 'i'));
+  assert.ok(match, `${tableName} table definition is missing`);
+  return match[0];
+}
+
+function extractFunction(source, functionName) {
+  const match = source.match(new RegExp(`create or replace function public\\.${functionName}\\([\\s\\S]*?\\n\\$\\$;`, 'i'));
+  assert.ok(match, `${functionName} function definition is missing`);
+  return match[0];
+}
+
+function extractAuditInsert(functionSource) {
+  const match = functionSource.match(/insert into public\.audit_events\s*\(([\s\S]*?)\)\s*values\s*\(([\s\S]*?)\);/i);
+  assert.ok(match, 'RPC audit insert is missing');
+  return {
+    statement: match[0],
+    columns: match[1].split(',').map((column) => column.trim()),
+  };
+}
+
+function assertRequiredWithoutDefault(tableSource, columnName, contract) {
+  const line = tableSource.split('\n').find((candidate) => new RegExp(`^\\s*${columnName}\\s+`, 'i').test(candidate));
+  assert.ok(line, `${columnName} is missing`);
+  assert.match(line, contract);
+  assert.doesNotMatch(line, /\bdefault\b/i);
 }
 
 function normalizeSql(value) {

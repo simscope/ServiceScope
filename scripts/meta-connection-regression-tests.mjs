@@ -366,7 +366,7 @@ async function authorizationChecks(provider) {
 
 async function sourceAndSchemaChecks() {
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-  const [accessSource, appSource, callbackSource, serviceSource, providerSource, edgeSource, migrationSource, schemaSource] = await Promise.all([
+  const [accessSource, appSource, callbackSource, serviceSource, providerSource, edgeSource, migrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
     read('src/features/company-portal/companySettingsAccess.ts'),
     read('src/App.tsx'),
     read('src/features/meta-connection/callback.ts'),
@@ -375,6 +375,7 @@ async function sourceAndSchemaChecks() {
     read('supabase/functions/meta-social-connection/index.ts'),
     read('supabase/migrations/20260731220000_meta_social_connection_foundation.sql'),
     read('supabase/schema.sql'),
+    read('scripts/meta-connection-sql-tests.mjs'),
   ]);
   check(() => assert.match(accessSource, /export function canManageCompanySettings/));
   check(() => assert.match(accessSource, /sessionKind === 'owner'.*platformRole === 'owner'/s));
@@ -403,6 +404,19 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(migrationBlock, /security definer[\s\S]*set search_path = ''/));
   check(() => assert.match(migrationBlock, /revoke all on function public\.replace_company_social_connection[\s\S]*authenticated/));
   check(() => assert.match(migrationBlock, /grant execute on function public\.replace_company_social_connection[\s\S]*service_role/));
+  const canonicalAuditTable = extractCreateTable(schemaSource, 'audit_events');
+  const runnerAuditTable = extractCreateTable(sqlRunnerSource, 'audit_events');
+  const runnerCompaniesTable = extractCreateTable(sqlRunnerSource, 'companies');
+  const replaceAudit = extractAuditInsert(extractFunction(migrationSource, 'replace_company_social_connection'));
+  const disconnectAudit = extractAuditInsert(extractFunction(migrationSource, 'disconnect_company_social_connection'));
+  check(() => assertRequiredWithoutDefault(canonicalAuditTable, 'resource_label', /text\s+not\s+null/i));
+  check(() => assertRequiredWithoutDefault(runnerAuditTable, 'resource_label', /text\s+not\s+null/i));
+  check(() => assertRequiredWithoutDefault(runnerCompaniesTable, 'owner_email', /text\s+not\s+null/i));
+  check(() => assert.ok(replaceAudit.columns.includes('resource_type') && replaceAudit.columns.includes('resource_label')));
+  check(() => assert.ok(disconnectAudit.columns.includes('resource_type') && disconnectAudit.columns.includes('resource_label')));
+  check(() => assert.match(replaceAudit.statement, /p_facebook_page_name/));
+  check(() => assert.match(disconnectAudit.statement, /disconnected\.facebook_page_name/));
+  check(() => assert.doesNotMatch(`${replaceAudit.statement}\n${disconnectAudit.statement}`, /token_envelope|encrypted_pending|state_hash|access_token|ciphertext/i));
 }
 
 function makeProvider(pageBatches, options = {}) {
@@ -684,6 +698,34 @@ function extractSchemaBlock(source) {
   const match = source.match(/-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_CONNECTION_SCHEMA_END/);
   assert.ok(match, 'Meta schema parity block is missing');
   return match[0];
+}
+
+function extractCreateTable(source, tableName) {
+  const match = source.match(new RegExp(`create table (?:public\\.)?${tableName}\\s*\\([\\s\\S]*?\\n\\s*\\);`, 'i'));
+  assert.ok(match, `${tableName} table definition is missing`);
+  return match[0];
+}
+
+function extractFunction(source, functionName) {
+  const match = source.match(new RegExp(`create or replace function public\\.${functionName}\\([\\s\\S]*?\\n\\$\\$;`, 'i'));
+  assert.ok(match, `${functionName} function definition is missing`);
+  return match[0];
+}
+
+function extractAuditInsert(functionSource) {
+  const match = functionSource.match(/insert into public\.audit_events\s*\(([\s\S]*?)\)\s*values\s*\(([\s\S]*?)\);/i);
+  assert.ok(match, 'RPC audit insert is missing');
+  return {
+    statement: match[0],
+    columns: match[1].split(',').map((column) => column.trim()),
+  };
+}
+
+function assertRequiredWithoutDefault(tableSource, columnName, contract) {
+  const line = tableSource.split('\n').find((candidate) => new RegExp(`^\\s*${columnName}\\s+`, 'i').test(candidate));
+  assert.ok(line, `${columnName} is missing`);
+  assert.match(line, contract);
+  assert.doesNotMatch(line, /\bdefault\b/i);
 }
 
 function normalizeSql(value) {

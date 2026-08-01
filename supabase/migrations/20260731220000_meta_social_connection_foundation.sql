@@ -258,10 +258,12 @@ begin
   where company_id = p_company_id and provider = p_provider;
 
   insert into public.audit_events (
-    company_id, actor_user_id, actor_name, actor_role, category, action, resource, resource_id, details
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details
   ) values (
     p_company_id, p_actor_id, p_actor_name, p_actor_role, 'access', 'meta_asset_selected',
-    'Meta social connection', p_connection_id::text, 'Meta connection lifecycle action completed.'
+    'meta_social_connection', 'Meta social connection', p_connection_id::text,
+    p_facebook_page_name, 'Meta connection lifecycle action completed.'
   );
 
   return query select * from public.company_social_connections where id = p_connection_id;
@@ -300,10 +302,12 @@ begin
   where company_id = p_company_id and provider = p_provider;
 
   insert into public.audit_events (
-    company_id, actor_user_id, actor_name, actor_role, category, action, resource, resource_id, details
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details
   ) values (
     p_company_id, p_actor_id, p_actor_name, p_actor_role, 'access', 'meta_connection_disconnected',
-    'Meta social connection', p_connection_id::text, 'Meta connection lifecycle action completed.'
+    'meta_social_connection', 'Meta social connection', p_connection_id::text,
+    disconnected.facebook_page_name, 'Meta connection lifecycle action completed.'
   );
 
   return next disconnected;

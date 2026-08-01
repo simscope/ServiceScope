@@ -12,25 +12,41 @@ await db.exec(`
   create role service_role nologin;
   create schema auth;
   create table auth.users (id uuid primary key, email text unique);
-  create table public.companies (id uuid primary key, name text not null);
+  create table public.companies (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    owner_name text not null default '',
+    owner_email text not null
+  );
   create table public.company_users (
+    id uuid primary key default gen_random_uuid(),
     company_id uuid not null references public.companies(id) on delete cascade,
-    auth_user_id uuid not null references auth.users(id) on delete cascade,
-    role text not null,
-    status text not null,
-    primary key (company_id, auth_user_id)
+    auth_user_id uuid references auth.users(id) on delete set null,
+    name text not null,
+    email text not null,
+    role text not null default 'technician',
+    status text not null default 'invited',
+    portal_access_rules jsonb not null default '{}'::jsonb,
+    last_active_at timestamptz,
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    unique (company_id, email)
   );
   create table public.audit_events (
     id uuid primary key default gen_random_uuid(),
     company_id uuid references public.companies(id) on delete set null,
+    category text not null,
+    action text not null,
     actor_user_id uuid references auth.users(id) on delete set null,
     actor_name text not null,
     actor_role text,
-    category text not null,
-    action text not null,
-    resource text not null,
+    resource_type text,
     resource_id text,
+    resource text not null default 'Unknown resource',
+    resource_label text not null,
     details text not null default '',
+    metadata jsonb not null default '{}'::jsonb,
+    user_agent text,
     created_at timestamptz not null default now()
   );
   create or replace function public.can_manage_company(target_company_id uuid)

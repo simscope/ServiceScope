@@ -73,18 +73,33 @@ insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-000000005204', 'meta-outsider@example.test'),
   ('00000000-0000-0000-0000-000000005205', 'meta-admin-b@example.test');
 
-insert into public.companies (id, name) values
-  ('00000000-0000-0000-0000-000000005301', 'Meta Tenant A'),
-  ('00000000-0000-0000-0000-000000005302', 'Meta Tenant B'),
-  ('00000000-0000-0000-0000-000000005303', 'Meta Constraint Fixture');
+insert into public.companies (id, name, owner_name, owner_email) values
+  ('00000000-0000-0000-0000-000000005301', 'Meta Tenant A', 'Meta Owner A', 'meta-owner-a@example.test'),
+  ('00000000-0000-0000-0000-000000005302', 'Meta Tenant B', 'Meta Owner B', 'meta-owner-b@example.test'),
+  ('00000000-0000-0000-0000-000000005303', 'Meta Constraint Fixture', 'Meta Constraint Owner', 'meta-constraint@example.test');
 
-insert into public.company_users (company_id, auth_user_id, role, status) values
-  ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005201', 'admin', 'active'),
-  ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005202', 'manager', 'active'),
-  ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005203', 'technician', 'active'),
-  ('00000000-0000-0000-0000-000000005302', '00000000-0000-0000-0000-000000005205', 'admin', 'active');
+insert into public.company_users (company_id, auth_user_id, name, email, role, status) values
+  ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005201', 'Meta Admin A', 'meta-admin-a@example.test', 'admin', 'active'),
+  ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005202', 'Meta Manager A', 'meta-manager-a@example.test', 'manager', 'active'),
+  ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005203', 'Meta Technician A', 'meta-tech-a@example.test', 'technician', 'active'),
+  ('00000000-0000-0000-0000-000000005302', '00000000-0000-0000-0000-000000005205', 'Meta Admin B', 'meta-admin-b@example.test', 'admin', 'active');
 
 insert into meta_sql_assertions(label) values ('isolated fixtures created');
+
+do $$
+begin
+  begin
+    insert into public.audit_events (company_id, category, action, actor_name, resource)
+    values (
+      '00000000-0000-0000-0000-000000005303', 'access', 'meta_fixture_missing_label',
+      'Meta SQL Fixture', 'Meta social connection'
+    );
+    raise exception 'audit insert without resource_label succeeded';
+  exception when not_null_violation then null;
+  end;
+end;
+$$;
+insert into meta_sql_assertions(label) values ('audit resource_label not-null contract enforced');
 
 insert into public.company_social_oauth_states (
   id, company_id, actor_auth_user_id, provider, state_hash, redirect_uri, return_path, expires_at, created_at
@@ -282,8 +297,25 @@ begin
   if not exists (select 1 from public.company_social_oauth_states where id = '00000000-0000-0000-0000-000000005417') then
     raise exception 'replacement removed other tenant state';
   end if;
-  if not exists (select 1 from public.audit_events where action = 'meta_asset_selected' and resource_id = '00000000-0000-0000-0000-000000005502') then
+  if not exists (
+    select 1 from public.audit_events
+    where action = 'meta_asset_selected'
+      and resource_type = 'meta_social_connection'
+      and resource = 'Meta social connection'
+      and resource_id = '00000000-0000-0000-0000-000000005502'
+      and resource_label = 'Tenant A Page'
+      and details = 'Meta connection lifecycle action completed.'
+  ) then
     raise exception 'replacement audit missing';
+  end if;
+  if exists (
+    select 1 from public.audit_events
+    where concat_ws(
+      ' ', action, coalesce(resource_type, ''), resource, coalesce(resource_id, ''),
+      resource_label, details, metadata::text
+    ) ~* '(encrypted-social-token-v1|meta-pending|aaaaaaaaaaaaaaaa)'
+  ) then
+    raise exception 'replacement audit contains secret-bearing material';
   end if;
 end;
 $$;
@@ -293,7 +325,9 @@ insert into meta_sql_assertions(label) values
   ('replacement clears multi-actor pending states'),
   ('replacement connection tenant isolation'),
   ('replacement pending-state tenant isolation'),
-  ('replacement audit atomic');
+  ('replacement audit atomic'),
+  ('replacement audit resource contract'),
+  ('replacement audit secret exclusion');
 
 insert into public.company_social_oauth_states (
   id, company_id, actor_auth_user_id, provider, state_hash, redirect_uri, return_path, expires_at
@@ -366,6 +400,66 @@ insert into public.company_social_oauth_states (
   ('00000000-0000-0000-0000-000000005415', '00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005201', 'meta-facebook-login', decode(repeat('b5', 32), 'hex'), 'https://preview.example.test/auth/meta/callback', '/settings/social-connections', now() + interval '9 minutes'),
   ('00000000-0000-0000-0000-000000005416', '00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005202', 'meta-facebook-login', decode(repeat('b6', 32), 'hex'), 'https://preview.example.test/auth/meta/callback', '/settings/social-connections', now() + interval '9 minutes');
 
+create or replace function public.meta_sql_reject_disconnect_audit()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.action = 'meta_connection_disconnected' then
+    raise exception 'synthetic audit failure';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger meta_sql_reject_disconnect_audit
+before insert on public.audit_events
+for each row execute function public.meta_sql_reject_disconnect_audit();
+
+do $$
+begin
+  begin
+    perform * from public.disconnect_company_social_connection(
+      '00000000-0000-0000-0000-000000005504', '00000000-0000-0000-0000-000000005301',
+      'meta-facebook-login', '00000000-0000-0000-0000-000000005201', 'Meta Admin A', 'admin', now()
+    );
+    raise exception 'disconnect unexpectedly succeeded';
+  exception when raise_exception then
+    if sqlerrm = 'disconnect unexpectedly succeeded' then raise; end if;
+    if sqlerrm <> 'synthetic audit failure' then raise; end if;
+  end;
+
+  if not exists (
+    select 1 from public.company_social_connections
+    where id = '00000000-0000-0000-0000-000000005504'
+      and status = 'connected'
+      and token_envelope is not null
+  ) then
+    raise exception 'audit failure did not roll back connection mutation';
+  end if;
+  if (select count(*) from public.company_social_oauth_states where company_id = '00000000-0000-0000-0000-000000005301') <> 2 then
+    raise exception 'audit failure did not roll back pending-state cleanup';
+  end if;
+  if exists (
+    select 1 from public.audit_events
+    where action = 'meta_connection_disconnected'
+      and resource_id = '00000000-0000-0000-0000-000000005504'
+  ) then
+    raise exception 'failed disconnect retained audit row';
+  end if;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('disconnect audit failure surfaced'),
+  ('disconnect audit failure rolls back status'),
+  ('disconnect audit failure rolls back token cleanup'),
+  ('disconnect audit failure rolls back pending-state cleanup'),
+  ('failed disconnect leaves no audit row');
+
+drop trigger meta_sql_reject_disconnect_audit on public.audit_events;
+drop function public.meta_sql_reject_disconnect_audit();
+
 select * from public.disconnect_company_social_connection(
   '00000000-0000-0000-0000-000000005504', '00000000-0000-0000-0000-000000005301',
   'meta-facebook-login', '00000000-0000-0000-0000-000000005201', 'Meta Admin A', 'admin', now()
@@ -382,8 +476,25 @@ begin
   if exists (select 1 from public.company_social_oauth_states where company_id = '00000000-0000-0000-0000-000000005301') then
     raise exception 'disconnect did not clear multi-actor pending states';
   end if;
-  if not exists (select 1 from public.audit_events where action = 'meta_connection_disconnected' and resource_id = '00000000-0000-0000-0000-000000005504') then
+  if not exists (
+    select 1 from public.audit_events
+    where action = 'meta_connection_disconnected'
+      and resource_type = 'meta_social_connection'
+      and resource = 'Meta social connection'
+      and resource_id = '00000000-0000-0000-0000-000000005504'
+      and resource_label = 'Tenant A Different Page'
+      and details = 'Meta connection lifecycle action completed.'
+  ) then
     raise exception 'disconnect audit missing';
+  end if;
+  if exists (
+    select 1 from public.audit_events
+    where concat_ws(
+      ' ', action, coalesce(resource_type, ''), resource, coalesce(resource_id, ''),
+      resource_label, details, metadata::text
+    ) ~* '(encrypted-social-token-v1|meta-pending|aaaaaaaaaaaaaaaa|bbbbbbbbbbbbbbbb|cccccccccccccccc)'
+  ) then
+    raise exception 'disconnect audit contains secret-bearing material';
   end if;
   if not exists (select 1 from public.company_social_connections where id = '00000000-0000-0000-0000-000000005501' and status = 'connected') then
     raise exception 'disconnect crossed tenant boundary';
@@ -396,6 +507,8 @@ insert into meta_sql_assertions(label) values
   ('local disconnect clears token'),
   ('local disconnect clears multi-actor pending states'),
   ('local disconnect audit atomic'),
+  ('local disconnect audit resource contract'),
+  ('local disconnect audit secret exclusion'),
   ('local disconnect tenant isolation');
 
 select set_config('request.jwt.claim.sub', '00000000-0000-0000-0000-000000005201', true);
