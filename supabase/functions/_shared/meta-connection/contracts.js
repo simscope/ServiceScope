@@ -31,6 +31,11 @@ const NORMALIZED_CODES = new Set([
   'META_ASSET_NOT_FOUND',
   'META_TOKEN_INVALID',
   'META_RATE_LIMITED',
+  'META_PROVIDER_TIMEOUT',
+  'META_PROVIDER_UNAVAILABLE',
+  'META_PAGE_DISCOVERY_LIMIT',
+  'META_PAGE_UNAVAILABLE',
+  'META_INSTAGRAM_ACCOUNT_MISMATCH',
   'CONNECTION_NOT_FOUND',
   'CONNECTION_NEEDS_REAUTHORIZATION',
   'INTERNAL_ERROR',
@@ -108,6 +113,10 @@ export function normalizeReturnPath(value) {
   return clean;
 }
 
+export function returnDestinationForPath(value) {
+  return normalizeReturnPath(value) === '/settings/social-connections' ? 'social_connections' : null;
+}
+
 export function normalizeProviderErrorFields(body) {
   const error = typeof body.providerError === 'string' ? body.providerError.trim().slice(0, 80) : '';
   const reason = typeof body.providerErrorReason === 'string' ? body.providerErrorReason.trim().slice(0, 80) : '';
@@ -119,9 +128,15 @@ export function runtimeConfigFromEnv(getEnv) {
   const redirectUri = cleanEnv(getEnv('META_OAUTH_REDIRECT_URI'));
   const appId = cleanEnv(getEnv('META_APP_ID'));
   const appSecret = cleanEnv(getEnv('META_APP_SECRET'));
+  const loginConfigurationId = cleanEnv(getEnv('META_LOGIN_CONFIGURATION_ID'));
   const encryptionKey = cleanEnv(getEnv('META_TOKEN_ENCRYPTION_KEY_V1'));
   const configured = Boolean(
-    appId && appSecret && encryptionKey && validRedirectUri(redirectUri) && graphApiVersion === PINNED_GRAPH_API_VERSION
+    validNumericId(appId)
+      && appSecret
+      && validNumericId(loginConfigurationId)
+      && validEncryptionKey(encryptionKey)
+      && validRedirectUri(redirectUri)
+      && graphApiVersion === PINNED_GRAPH_API_VERSION
   );
   return {
     configured,
@@ -130,6 +145,7 @@ export function runtimeConfigFromEnv(getEnv) {
     redirectUri,
     appId,
     appSecret,
+    loginConfigurationId,
     encryptionKey,
     timeoutMs: boundedNumber(getEnv('META_REQUEST_TIMEOUT_MS'), 3000, 15_000, 8000),
   };
@@ -213,7 +229,7 @@ export function safeTelemetry(event) {
     code: NORMALIZED_CODES.has(event?.code) ? event.code : 'INTERNAL_ERROR',
     provider: META_PROVIDER,
     stage: safeLabel(event?.stage, 60) || 'unknown',
-    attempts: Number.isInteger(event?.attempts) ? Math.max(0, Math.min(2, event.attempts)) : 0,
+    attempts: Number.isInteger(event?.attempts) ? Math.max(0, Math.min(12, event.attempts)) : 0,
     latencyMs: Number.isFinite(event?.latencyMs) ? Math.max(0, Math.round(event.latencyMs)) : 0,
   };
 }
@@ -240,9 +256,34 @@ function validRedirectUri(value) {
   }
 }
 
+export function decodeEncryptionKey(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  if (!clean || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(clean)) throw new MetaConnectionError('META_NOT_CONFIGURED');
+  try {
+    const normalized = clean.replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+    const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+    const binary = atob(padded);
+    return Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  } catch {
+    throw new MetaConnectionError('META_NOT_CONFIGURED');
+  }
+}
+
+export function validEncryptionKey(value) {
+  try {
+    return decodeEncryptionKey(value).byteLength === 32;
+  } catch {
+    return false;
+  }
+}
+
 function safeProviderId(value) {
   const clean = typeof value === 'string' ? value.trim() : '';
   return /^[0-9]{1,40}$/.test(clean) ? clean : '';
+}
+
+function validNumericId(value) {
+  return /^[0-9]{5,40}$/.test(value);
 }
 
 function safeUsername(value) {

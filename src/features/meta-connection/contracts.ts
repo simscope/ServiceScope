@@ -55,3 +55,5 @@ export type MetaOAuthCallbackPayload = {
   providerError: string;
   providerErrorReason: string;
 };
+
+export type MetaReturnDestination = 'social_connections';

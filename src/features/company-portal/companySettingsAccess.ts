@@ -9,7 +9,7 @@ import type {
 export type CompanySettingsMode = 'full' | 'companyVoiceOnly' | 'hidden';
 export type CompanySettingsRenderTarget = 'fullOnboarding' | 'companyVoiceOnly' | null;
 
-type CompanyVoiceManagementCapabilityInput = {
+type CompanySettingsManagementCapabilityInput = {
   selectedCompanyId: string;
   sessionKind?: 'owner' | 'company';
   platformRole?: PlatformUserRole;
@@ -20,7 +20,7 @@ type CompanyVoiceManagementCapabilityInput = {
   staffStatus?: CompanyTechnicianStatus;
 };
 
-export function canManageCompanyVoiceSettings({
+export function canManageCompanySettings({
   selectedCompanyId,
   sessionKind,
   platformRole,
@@ -29,13 +29,16 @@ export function canManageCompanyVoiceSettings({
   sessionRole,
   staffRole,
   staffStatus,
-}: CompanyVoiceManagementCapabilityInput) {
-  if (!selectedCompanyId || !sessionActive) return false;
+}: CompanySettingsManagementCapabilityInput) {
+  if (!sessionActive) return false;
   if (sessionKind === 'owner') return platformRole === 'owner';
+  if (!selectedCompanyId) return false;
   if (sessionKind !== 'company' || sessionCompanyId !== selectedCompanyId) return false;
   if (sessionRole === 'Admin') return true;
   return sessionRole === 'Manager' && staffRole === 'manager' && staffStatus === 'active';
 }
+
+export const canManageCompanyVoiceSettings = canManageCompanySettings;
 
 export function resolveCompanySettingsMode({
   hasFullOnboardingAccess,

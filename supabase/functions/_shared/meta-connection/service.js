@@ -10,17 +10,34 @@ import {
   parseActionRequest,
   requireShortString,
   requireUuid,
+  returnDestinationForPath,
   safeAsset,
   safeConnection,
   safePending,
   safeTelemetry,
 } from './contracts.js';
 import {
+  connectionEnvelopeContext,
   decryptTokenBundle,
   encryptTokenBundle,
   generateOAuthState,
   hashOAuthState,
+  pendingEnvelopeContext,
 } from './crypto.js';
+
+const REAUTHORIZATION_CODES = new Set([
+  'META_TOKEN_INVALID',
+  'META_PERMISSION_MISSING',
+  'META_PAGE_UNAVAILABLE',
+  'META_INSTAGRAM_ACCOUNT_MISMATCH',
+  'CONNECTION_NEEDS_REAUTHORIZATION',
+]);
+const TRANSIENT_PROVIDER_CODES = new Set([
+  'META_RATE_LIMITED',
+  'META_PROVIDER_TIMEOUT',
+  'META_PROVIDER_UNAVAILABLE',
+  'OAUTH_PROVIDER_ERROR',
+]);
 
 export async function handleMetaConnection({ rawBody, authorization, deps }) {
   const startedAt = deps.now();
@@ -47,21 +64,25 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
     const access = await deps.auth.assertCompanyAccess(session, requestedCompanyId, authorization);
     deps.rateLimiter.assert({ actorId: access.actorId, companyId: access.companyId, action });
 
+    if (action === 'status' || action === 'start') {
+      stage = 'retention_cleanup';
+      await deps.repository.cleanupOAuthStates({
+        companyId: access.companyId,
+        provider: META_PROVIDER,
+        now: new Date(deps.now()).toISOString(),
+        limit: deps.retentionCleanupLimit,
+      });
+    }
+
     const context = { body, access, stateHash };
     let result;
     if (action === 'status') result = await status(context);
     else if (action === 'start') result = await start(context);
-    else if (action === 'complete') {
-      attempts = 1;
-      result = await complete(context);
-    } else if (action === 'select_asset') result = await selectAsset(context);
-    else if (action === 'check_health') {
-      attempts = 1;
-      result = await checkHealth(context);
-    } else if (action === 'disconnect') {
-      attempts = 1;
-      result = await disconnect(context);
-    } else throw new MetaConnectionError('INVALID_REQUEST');
+    else if (action === 'complete') result = await complete(context);
+    else if (action === 'select_asset') result = await selectAsset(context);
+    else if (action === 'check_health') result = await checkHealth(context);
+    else if (action === 'disconnect') result = await disconnect(context);
+    else throw new MetaConnectionError('INVALID_REQUEST');
 
     deps.telemetry.record(safeTelemetry({ action, success: true, code: 'OK', stage: 'complete', attempts, latencyMs: deps.now() - startedAt }));
     return result;
@@ -113,36 +134,54 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         const reason = await deps.repository.classifyOAuthState(hash, currentAccess.companyId, currentAccess.actorId);
         throw new MetaConnectionError(reason);
       }
-      if (normalizeProviderErrorFields(requestBody)) throw new MetaConnectionError('OAUTH_PROVIDER_ERROR');
-      const code = requireShortString(requestBody.code, 4096);
-      stage = 'code_exchange';
-      const controller = deps.timeoutController(config.timeoutMs);
       try {
-        const token = await deps.provider.exchangeCode({ code, signal: controller.signal });
-        stage = 'asset_discovery';
-        const discovery = await deps.provider.discover({ userAccessToken: token.accessToken, signal: controller.signal });
-        const grantedScopes = assertRequiredScopes(discovery.grantedScopes);
-        if (!Array.isArray(discovery.pages) || discovery.pages.length === 0) throw new MetaConnectionError('META_NO_PAGES');
-        const assets = discovery.pages.map((page) => safeAsset(page));
-        const pendingBundle = {
-          schemaVersion: 'meta-pending-token-bundle-v1',
-          userAccessToken: token.accessToken,
-          userTokenExpiresAt: token.expiresAt,
-          grantedScopes,
-          pages: discovery.pages.map((page) => ({ pageId: page.pageId, pageAccessToken: page.accessToken })),
-        };
-        const envelope = await encryptTokenBundle(pendingBundle, config.encryptionKey, deps.cryptoApi);
-        await deps.repository.saveOAuthDiscovery(consumed.id, envelope, assets);
-        await recordAudit('meta_oauth_completed', currentAccess, null);
-        return {
-          ok: true,
-          provider: META_PROVIDER,
-          status: 'pending_asset_selection',
-          oauthSessionId: consumed.id,
-          assets,
-        };
-      } finally {
-        controller.clear();
+        if (normalizeProviderErrorFields(requestBody)) throw new MetaConnectionError('OAUTH_PROVIDER_ERROR');
+        const code = requireShortString(requestBody.code, 4096);
+        stage = 'code_exchange';
+        const controller = deps.timeoutController(config.timeoutMs);
+        try {
+          const token = await deps.provider.exchangeCode({ code, signal: controller.signal });
+          stage = 'asset_discovery';
+          const discovery = await deps.provider.discover({ userAccessToken: token.accessToken, signal: controller.signal });
+          attempts = providerAttempts(discovery, attempts);
+          const grantedScopes = assertRequiredScopes(discovery.grantedScopes);
+          if (!Array.isArray(discovery.pages) || discovery.pages.length === 0) throw new MetaConnectionError('META_NO_PAGES');
+          const assets = discovery.pages.map((page) => safeAsset(page));
+          const pendingBundle = {
+            schemaVersion: 'meta-pending-token-bundle-v1',
+            userAccessToken: token.accessToken,
+            userTokenExpiresAt: token.expiresAt,
+            grantedScopes,
+            pages: discovery.pages.map((page) => ({ pageId: page.pageId, pageAccessToken: page.accessToken })),
+          };
+          const envelope = await encryptTokenBundle(
+            pendingBundle,
+            config.encryptionKey,
+            pendingEnvelopeContext({
+              companyId: currentAccess.companyId,
+              actorId: currentAccess.actorId,
+              oauthStateId: consumed.id,
+              redirectUri: consumed.redirect_uri,
+            }),
+            deps.cryptoApi,
+          );
+          await deps.repository.saveOAuthDiscovery(consumed.id, currentAccess.companyId, currentAccess.actorId, envelope, assets);
+          await recordAudit('meta_oauth_completed', currentAccess, null);
+          return {
+            ok: true,
+            provider: META_PROVIDER,
+            status: 'pending_asset_selection',
+            destination: returnDestinationForPath(consumed.return_path),
+            oauthSessionId: consumed.id,
+            assets,
+          };
+        } finally {
+          controller.clear();
+        }
+      } catch (error) {
+        attempts = providerAttempts(error, attempts);
+        await deps.repository.deleteOAuthSession(consumed.id, currentAccess.companyId, currentAccess.actorId);
+        throw error;
       }
     }
 
@@ -156,28 +195,46 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const assets = Array.isArray(pending.discovered_assets) ? pending.discovered_assets.map(safeAsset) : [];
       const selected = assets.find((asset) => asset.pageId === pageId);
       if (!selected) throw new MetaConnectionError('META_ASSET_NOT_FOUND');
-      const pendingBundle = await decryptTokenBundle(pending.encrypted_pending_token_bundle, config.encryptionKey, deps.cryptoApi);
+      const pendingBundle = await decryptTokenBundle(
+        pending.encrypted_pending_token_bundle,
+        config.encryptionKey,
+        pendingEnvelopeContext({
+          companyId: currentAccess.companyId,
+          actorId: currentAccess.actorId,
+          oauthStateId: pending.id,
+          redirectUri: pending.redirect_uri,
+        }),
+        deps.cryptoApi,
+      );
       const pageToken = Array.isArray(pendingBundle.pages)
         ? pendingBundle.pages.find((page) => page?.pageId === pageId)?.pageAccessToken
         : null;
       if (typeof pendingBundle.userAccessToken !== 'string' || typeof pageToken !== 'string') {
         throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
       }
+      const connectionId = deps.newUuid();
       const tokenEnvelope = await encryptTokenBundle({
         schemaVersion: 'meta-connection-token-bundle-v1',
         userAccessToken: pendingBundle.userAccessToken,
         pageAccessToken: pageToken,
-      }, config.encryptionKey, deps.cryptoApi);
-      const connection = await deps.repository.saveConnection({
+      }, config.encryptionKey, connectionEnvelopeContext({
+        companyId: currentAccess.companyId,
+        connectionId,
+        pageId,
+      }), deps.cryptoApi);
+      const connection = await deps.repository.replaceConnection({
+        connectionId,
         companyId: currentAccess.companyId,
         actorId: currentAccess.actorId,
+        actorName: currentAccess.actorName,
+        actorRole: currentAccess.actorRole,
+        provider: META_PROVIDER,
         asset: selected,
         grantedScopes: assertRequiredScopes(pendingBundle.grantedScopes),
         tokenEnvelope,
         tokenExpiresAt: pendingBundle.userTokenExpiresAt ?? null,
+        timestamp: new Date(deps.now()).toISOString(),
       });
-      await deps.repository.deleteOAuthSession(oauthSessionId, currentAccess.companyId, currentAccess.actorId);
-      await recordAudit('meta_asset_selected', currentAccess, connection.id);
       return { ok: true, connection: safeConnection(connection) };
     }
 
@@ -188,71 +245,76 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const connection = await deps.repository.getConnection(connectionId, currentAccess.companyId);
       if (!connection) throw new MetaConnectionError('CONNECTION_NOT_FOUND');
       if (!connection.token_envelope || connection.status === 'revoked') throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
+
+      let health;
       try {
-        const tokenBundle = await decryptTokenBundle(connection.token_envelope, config.encryptionKey, deps.cryptoApi);
+        if (connection.token_expires_at && Date.parse(connection.token_expires_at) <= deps.now()) {
+          throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
+        }
+        const tokenBundle = await decryptTokenBundle(
+          connection.token_envelope,
+          config.encryptionKey,
+          connectionEnvelopeContext({
+            companyId: currentAccess.companyId,
+            connectionId: connection.id,
+            pageId: connection.facebook_page_id,
+          }),
+          deps.cryptoApi,
+        );
         const controller = deps.timeoutController(config.timeoutMs);
         try {
-          const health = await deps.provider.checkHealth({
+          health = await deps.provider.checkHealth({
             userAccessToken: requireToken(tokenBundle.userAccessToken),
             pageAccessToken: requireToken(tokenBundle.pageAccessToken),
             pageId: connection.facebook_page_id,
             instagramAccountId: connection.instagram_account_id,
             signal: controller.signal,
           });
-          const grantedScopes = assertRequiredScopes(health.grantedScopes);
-          if (!health.pageAvailable) throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
-          const updated = await deps.repository.updateHealth(connection.id, {
-            status: 'connected',
-            lastErrorCode: null,
-            grantedScopes,
-            checkedAt: new Date(deps.now()).toISOString(),
-          });
-          await recordAudit('meta_health_checked', currentAccess, connection.id);
-          return { ok: true, connection: safeConnection(updated) };
+          attempts = providerAttempts(health, attempts);
         } finally {
           controller.clear();
         }
-      } catch (error) {
-        const normalized = normalizeError(error);
+        const grantedScopes = assertRequiredScopes(health.grantedScopes);
+        if (!health.pageAvailable) throw new MetaConnectionError('META_PAGE_UNAVAILABLE');
         const updated = await deps.repository.updateHealth(connection.id, {
-          status: 'needs_reauthorization',
+          status: 'connected',
+          lastErrorCode: null,
+          grantedScopes,
+          checkedAt: new Date(deps.now()).toISOString(),
+        });
+        await recordAudit('meta_health_checked', currentAccess, connection.id);
+        return { ok: true, connection: safeConnection(updated) };
+      } catch (error) {
+        attempts = providerAttempts(error, attempts);
+        const normalized = normalizeError(error);
+        if (normalized.code === 'INTERNAL_ERROR') throw normalized;
+        const reauthorize = REAUTHORIZATION_CODES.has(normalized.code);
+        if (!reauthorize && !TRANSIENT_PROVIDER_CODES.has(normalized.code)) throw normalized;
+        const updated = await deps.repository.updateHealth(connection.id, {
+          status: reauthorize ? 'needs_reauthorization' : connection.status,
           lastErrorCode: normalized.code,
           grantedScopes: connection.granted_scopes,
           checkedAt: new Date(deps.now()).toISOString(),
         });
-        await recordAudit('meta_connection_needs_reauthorization', currentAccess, connection.id);
+        await recordAudit(reauthorize ? 'meta_connection_needs_reauthorization' : 'meta_health_checked', currentAccess, connection.id);
         return { ok: false, code: normalized.code, connection: safeConnection(updated) };
       }
     }
 
     async function disconnect({ body: requestBody, access: currentAccess }) {
       stage = 'disconnect';
-      const config = assertRuntimeConfigured(deps.config);
       const connectionId = requireUuid(requestBody.connectionId);
-      const connection = await deps.repository.getConnection(connectionId, currentAccess.companyId);
+      const connection = await deps.repository.disconnectConnection({
+        connectionId,
+        companyId: currentAccess.companyId,
+        actorId: currentAccess.actorId,
+        actorName: currentAccess.actorName,
+        actorRole: currentAccess.actorRole,
+        provider: META_PROVIDER,
+        timestamp: new Date(deps.now()).toISOString(),
+      });
       if (!connection) throw new MetaConnectionError('CONNECTION_NOT_FOUND');
-      let providerRevokeSucceeded = false;
-      try {
-        if (connection.token_envelope) {
-          const tokenBundle = await decryptTokenBundle(connection.token_envelope, config.encryptionKey, deps.cryptoApi);
-          const controller = deps.timeoutController(config.timeoutMs);
-          try {
-            providerRevokeSucceeded = await deps.provider.revoke({
-              userAccessToken: requireToken(tokenBundle.userAccessToken),
-              signal: controller.signal,
-            });
-          } finally {
-            controller.clear();
-          }
-        }
-      } catch {
-        providerRevokeSucceeded = false;
-      } finally {
-        await deps.repository.revokeConnection(connection.id, new Date(deps.now()).toISOString());
-        await deps.repository.deletePendingOAuthSessions(currentAccess.companyId, currentAccess.actorId);
-      }
-      await recordAudit('meta_connection_disconnected', currentAccess, connection.id);
-      return { ok: true, status: 'revoked', providerRevokeSucceeded };
+      return { ok: true, status: 'revoked' };
     }
 
     async function recordAudit(event, currentAccess, connectionId) {
@@ -266,6 +328,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       });
     }
   } catch (error) {
+    attempts = providerAttempts(error, attempts);
     const normalized = normalizeError(error);
     deps.telemetry.record(safeTelemetry({ action, success: false, code: normalized.code, stage, attempts, latencyMs: deps.now() - startedAt }));
     throw normalized;
@@ -283,6 +346,11 @@ export function createTimeoutController(timeoutMs) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   return { signal: controller.signal, clear: () => clearTimeout(timeout) };
+}
+
+function providerAttempts(value, fallback) {
+  const count = Number(value?.attempts ?? value?.providerAttempts);
+  return Number.isInteger(count) ? Math.max(fallback, count) : fallback;
 }
 
 function requireToken(value) {

@@ -2,6 +2,7 @@ import { supabaseFunction } from '../../services/supabaseRest';
 import type {
   MetaConnectionSnapshot,
   MetaOAuthCallbackPayload,
+  MetaReturnDestination,
   MetaSafeConnection,
   MetaSafeAsset,
 } from './contracts';
@@ -26,6 +27,7 @@ export function completeMetaConnection(callback: MetaOAuthCallbackPayload) {
     status: 'pending_asset_selection';
     oauthSessionId: string;
     assets: MetaSafeAsset[];
+    destination: MetaReturnDestination;
   }>(functionName, {
     action: 'complete',
     code: callback.code,
@@ -53,7 +55,7 @@ export function checkMetaConnection(companyId: string, connectionId: string) {
 }
 
 export function disconnectMetaConnection(companyId: string, connectionId: string) {
-  return supabaseFunction<{ ok: true; status: 'revoked'; providerRevokeSucceeded: boolean }>(functionName, {
+  return supabaseFunction<{ ok: true; status: 'revoked' }>(functionName, {
     action: 'disconnect',
     companyId,
     connectionId,

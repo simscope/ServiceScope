@@ -1,9 +1,12 @@
 import {
   META_PROVIDER,
-  META_REQUESTED_SCOPES,
   MetaConnectionError,
   safeAsset,
 } from './contracts.js';
+
+const PAGE_FIELDS = 'id,name,tasks,access_token,instagram_business_account{id,username,account_type}';
+const MAX_PAGE_REQUESTS = 5;
+const MAX_DISCOVERED_PAGES = 100;
 
 export function createMetaProvider({ config, fetchImpl = globalThis.fetch, cryptoApi = globalThis.crypto }) {
   const graphBase = `https://graph.facebook.com/${config.graphApiVersion}`;
@@ -16,8 +19,9 @@ export function createMetaProvider({ config, fetchImpl = globalThis.fetch, crypt
       url.search = new URLSearchParams({
         client_id: config.appId,
         redirect_uri: config.redirectUri,
+        config_id: config.loginConfigurationId,
         response_type: 'code',
-        scope: META_REQUESTED_SCOPES.join(','),
+        override_default_response_type: 'true',
         state,
       }).toString();
       return url.toString();
@@ -42,91 +46,122 @@ export function createMetaProvider({ config, fetchImpl = globalThis.fetch, crypt
     },
 
     async discover({ userAccessToken, signal }) {
-      const [permissionsResult, pagesResult] = await Promise.all([
-        graphGet('/me/permissions', userAccessToken, signal, true),
-        graphGet(
+      const permissions = await graphGet('/me/permissions', userAccessToken, signal, true, {}, 'META_TOKEN_INVALID');
+      const grantedScopes = Array.isArray(permissions.payload.data)
+        ? permissions.payload.data.filter((item) => item?.status === 'granted').map((item) => item.permission)
+        : [];
+      const pagesById = new Map();
+      let cursor = null;
+      let maxAttempts = permissions.attempts;
+      let pageRequestAttempts = 0;
+
+      while (pageRequestAttempts < MAX_PAGE_REQUESTS) {
+        const query = { fields: PAGE_FIELDS, limit: '25' };
+        if (cursor) query.after = cursor;
+        const remainingAttempts = MAX_PAGE_REQUESTS - pageRequestAttempts;
+        const pageResult = await graphGet(
           '/me/accounts',
           userAccessToken,
           signal,
           true,
-          { fields: 'id,name,tasks,access_token,instagram_business_account{id,username,account_type}' },
-        ),
-      ]);
-      const grantedScopes = Array.isArray(permissionsResult.data)
-        ? permissionsResult.data.filter((item) => item?.status === 'granted').map((item) => item.permission)
-        : [];
-      const pages = Array.isArray(pagesResult.data) ? pagesResult.data.map(normalizeDiscoveredPage) : [];
-      return { grantedScopes, pages };
+          query,
+          'OAUTH_PROVIDER_ERROR',
+          Math.min(2, remainingAttempts),
+        );
+        pageRequestAttempts += pageResult.attempts;
+        maxAttempts = Math.max(maxAttempts, pageResult.attempts);
+        const values = Array.isArray(pageResult.payload.data) ? pageResult.payload.data : [];
+        for (const value of values) {
+          const page = normalizeDiscoveredPage(value);
+          if (!pagesById.has(page.pageId)) pagesById.set(page.pageId, page);
+          if (pagesById.size > MAX_DISCOVERED_PAGES) throw withAttempts(new MetaConnectionError('META_PAGE_DISCOVERY_LIMIT'), maxAttempts);
+        }
+
+        cursor = nextCursor(pageResult.payload.paging);
+        if (!cursor) break;
+        if (pageRequestAttempts >= MAX_PAGE_REQUESTS) {
+          throw withAttempts(new MetaConnectionError('META_PAGE_DISCOVERY_LIMIT'), maxAttempts);
+        }
+      }
+
+      return { grantedScopes, pages: [...pagesById.values()], attempts: maxAttempts };
     },
 
     async checkHealth({ userAccessToken, pageAccessToken, pageId, instagramAccountId, signal }) {
-      const [permissionsResult, pageResult] = await Promise.all([
-        graphGet('/me/permissions', userAccessToken, signal, true),
+      const [permissions, page] = await Promise.all([
+        graphGet('/me/permissions', userAccessToken, signal, true, {}, 'META_TOKEN_INVALID'),
         graphGet(`/${encodeURIComponent(pageId)}`, pageAccessToken, signal, true, {
           fields: 'id,name,instagram_business_account{id,username,account_type}',
-        }),
+        }, 'META_PAGE_UNAVAILABLE'),
       ]);
-      const grantedScopes = Array.isArray(permissionsResult.data)
-        ? permissionsResult.data.filter((item) => item?.status === 'granted').map((item) => item.permission)
+      const attempts = Math.max(permissions.attempts, page.attempts);
+      const grantedScopes = Array.isArray(permissions.payload.data)
+        ? permissions.payload.data.filter((item) => item?.status === 'granted').map((item) => item.permission)
         : [];
-      const currentInstagramId = pageResult.instagram_business_account?.id ?? null;
-      if (instagramAccountId && currentInstagramId !== instagramAccountId) {
-        throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
+      if (String(page.payload.id ?? '') !== pageId) {
+        throw withAttempts(new MetaConnectionError('META_PAGE_UNAVAILABLE'), attempts);
       }
-      return { grantedScopes, pageAvailable: pageResult.id === pageId };
-    },
-
-    async revoke({ userAccessToken, signal }) {
-      const proof = await appSecretProof(userAccessToken, config.appSecret, cryptoApi);
-      const response = await fetchWithTimeout(`${graphBase}/me/permissions?appsecret_proof=${encodeURIComponent(proof)}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${userAccessToken}`, Accept: 'application/json' },
-        signal,
-      });
-      if (!response.ok) throw providerFailure(await readJson(response), response.status, 'META_TOKEN_INVALID');
-      const payload = await readJson(response);
-      return payload.success === true;
+      const currentInstagramId = page.payload.instagram_business_account?.id
+        ? String(page.payload.instagram_business_account.id)
+        : null;
+      if (instagramAccountId && currentInstagramId !== instagramAccountId) {
+        throw withAttempts(new MetaConnectionError('META_INSTAGRAM_ACCOUNT_MISMATCH'), attempts);
+      }
+      return { grantedScopes, pageAvailable: true, attempts };
     },
   };
 
-  async function graphGet(path, accessToken, signal, allowRetry, query = {}) {
+  async function graphGet(
+    path,
+    accessToken,
+    signal,
+    allowRetry,
+    query = {},
+    fallbackCode = 'OAUTH_PROVIDER_ERROR',
+    attemptLimit = allowRetry ? 2 : 1,
+  ) {
     const proof = await appSecretProof(accessToken, config.appSecret, cryptoApi);
     const url = new URL(`${graphBase}${path}`);
     for (const [key, value] of Object.entries({ ...query, appsecret_proof: proof })) url.searchParams.set(key, value);
-    const request = () => fetchWithTimeout(url.toString(), {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-      signal,
-    });
-    let response;
-    for (let attempt = 0; attempt < (allowRetry ? 2 : 1); attempt += 1) {
+    let attempts = 0;
+    const boundedAttemptLimit = Math.max(1, Math.min(allowRetry ? 2 : 1, attemptLimit));
+    for (let attempt = 0; attempt < boundedAttemptLimit; attempt += 1) {
+      attempts += 1;
+      let response;
       try {
-        response = await request();
-        if (response.ok || response.status < 500 || attempt === 1) break;
+        response = await fetchImpl(url.toString(), {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+          signal,
+        });
       } catch {
-        if (signal?.aborted || attempt === 1 || !allowRetry) throw new MetaConnectionError('OAUTH_PROVIDER_ERROR');
+        if (signal?.aborted) throw withAttempts(new MetaConnectionError('META_PROVIDER_TIMEOUT'), attempts);
+        if (attempt + 1 < boundedAttemptLimit) continue;
+        throw withAttempts(new MetaConnectionError('META_PROVIDER_UNAVAILABLE'), attempts);
       }
+      const payload = await readJson(response);
+      if (response.ok) return { payload, attempts };
+      if (response.status >= 500 && attempt + 1 < boundedAttemptLimit) continue;
+      throw withAttempts(providerFailure(payload, response.status, fallbackCode), attempts);
     }
-    if (!response) throw new MetaConnectionError('OAUTH_PROVIDER_ERROR');
-    const payload = await readJson(response);
-    if (!response.ok) throw providerFailure(payload, response.status, 'META_TOKEN_INVALID');
-    return payload;
+    throw withAttempts(new MetaConnectionError('META_PROVIDER_UNAVAILABLE'), attempts);
   }
 
   async function formRequest(url, values, signal, fallbackCode) {
-    const response = await fetchWithTimeout(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-      body: new URLSearchParams(values),
-      signal,
-    });
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+        body: new URLSearchParams(values),
+        signal,
+      });
+    } catch {
+      throw new MetaConnectionError(signal?.aborted ? 'META_PROVIDER_TIMEOUT' : 'META_PROVIDER_UNAVAILABLE');
+    }
     const payload = await readJson(response);
     if (!response.ok) throw providerFailure(payload, response.status, fallbackCode);
     return payload;
-  }
-
-  async function fetchWithTimeout(url, init) {
-    return fetchImpl(url, init);
   }
 }
 
@@ -140,6 +175,16 @@ export async function appSecretProof(accessToken, appSecret, cryptoApi = globalT
   );
   const signature = await cryptoApi.subtle.sign('HMAC', key, new TextEncoder().encode(accessToken));
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function nextCursor(paging) {
+  if (!paging || typeof paging !== 'object') return null;
+  const value = paging.cursors?.after;
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9._~=-]{1,512}$/.test(value)) {
+    throw new MetaConnectionError('OAUTH_PROVIDER_ERROR');
+  }
+  return value;
 }
 
 function normalizeDiscoveredPage(value) {
@@ -178,7 +223,13 @@ function providerFailure(payload, status, fallbackCode) {
   const providerCode = Number(payload?.error?.code);
   if (status === 429 || [4, 17, 32, 613].includes(providerCode)) return new MetaConnectionError('META_RATE_LIMITED');
   if (providerCode === 190 || status === 401) return new MetaConnectionError('META_TOKEN_INVALID');
+  if (status >= 500) return new MetaConnectionError('META_PROVIDER_UNAVAILABLE');
   return new MetaConnectionError(fallbackCode);
+}
+
+function withAttempts(error, attempts) {
+  error.providerAttempts = attempts;
+  return error;
 }
 
 async function readJson(response) {

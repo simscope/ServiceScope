@@ -184,6 +184,8 @@ import { addDays, addMonths, formatCalendarDay, parseLocalDate, startOfWeek, toL
 import { googleRouteUrl, money, statusClassName } from './utils/format';
 import { consumeMetaOAuthCallbackLocation } from './features/meta-connection/callback';
 import { MetaOAuthCallbackPage } from './features/meta-connection/MetaOAuthCallbackPage';
+import { canManageCompanySettings } from './features/company-portal/companySettingsAccess';
+import type { MetaReturnDestination } from './features/meta-connection/contracts';
 
 const previewQaToolsBuildEnabled = (import.meta as unknown as {
   env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string };
@@ -897,14 +899,26 @@ export function App() {
   }
 
   if (initialMetaOAuthCallback) {
-    const allowedRole = authSession?.kind === 'company'
-      && (authSession.role === 'Admin' || authSession.role === 'Manager');
+    const callbackCompanyId = authSession?.kind === 'company' ? authSession.companyId : '';
+    const allowedRole = canManageCompanySettings({
+      selectedCompanyId: callbackCompanyId,
+      sessionKind: authSession?.kind,
+      platformRole: currentOwnerRole,
+      sessionCompanyId: callbackCompanyId,
+      sessionActive: Boolean(authSession),
+      sessionRole: authSession?.kind === 'company' ? authSession.role : undefined,
+      staffRole: authSession?.kind === 'company' && authSession.role === 'Manager' ? 'manager' : undefined,
+      staffStatus: authSession?.kind === 'company' && authSession.role === 'Manager' ? 'active' : undefined,
+    });
+    const returnToDestination = (destination: MetaReturnDestination) => {
+      if (destination === 'social_connections') window.location.assign('/?view=onboarding#portal');
+    };
     return (
       <MetaOAuthCallbackPage
         callback={initialMetaOAuthCallback}
         authenticated={Boolean(authSession)}
         allowedRole={allowedRole}
-        onReturn={() => window.location.assign('/#portal')}
+        onReturn={returnToDestination}
       />
     );
   }

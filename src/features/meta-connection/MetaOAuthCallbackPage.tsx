@@ -1,7 +1,7 @@
 import { CheckCircle2, ShieldAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { completeMetaConnection } from './clientApi';
-import type { MetaOAuthCallbackPayload } from './contracts';
+import type { MetaOAuthCallbackPayload, MetaReturnDestination } from './contracts';
 
 type CallbackState = 'idle' | 'completing' | 'complete' | 'error' | 'authentication_required';
 
@@ -14,9 +14,10 @@ export function MetaOAuthCallbackPage({
   callback: MetaOAuthCallbackPayload;
   authenticated: boolean;
   allowedRole: boolean;
-  onReturn: () => void;
+  onReturn: (destination: MetaReturnDestination) => void;
 }) {
   const [state, setState] = useState<CallbackState>('idle');
+  const [destination, setDestination] = useState<MetaReturnDestination>('social_connections');
 
   useEffect(() => {
     let active = true;
@@ -30,7 +31,11 @@ export function MetaOAuthCallbackPage({
     }
     setState('completing');
     completeMetaConnection(callback)
-      .then(() => { if (active) setState('complete'); })
+      .then((result) => {
+        if (!active) return;
+        setDestination(result.destination);
+        setState('complete');
+      })
       .catch(() => { if (active) setState('error'); });
     return () => { active = false; };
   }, [allowedRole, authenticated, callback]);
@@ -51,7 +56,7 @@ export function MetaOAuthCallbackPage({
                 ? 'ServiceScope is validating the one-time authorization response.'
                 : 'No connection was saved. Return to Settings and start a new authorization.'}
         </p>
-        {state !== 'completing' ? <button className="primary-button" type="button" onClick={onReturn}>Return to ServiceScope</button> : null}
+        {state !== 'completing' ? <button className="primary-button" type="button" onClick={() => onReturn(destination)}>Return to ServiceScope</button> : null}
       </section>
     </main>
   );

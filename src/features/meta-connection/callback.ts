@@ -16,7 +16,7 @@ export function consumeMetaOAuthCallbackLocation(location = window.location, his
     providerError: clean(params.get('error'), 80),
     providerErrorReason: clean(params.get('error_reason') ?? params.get('error_description'), 80),
   };
-  history.replaceState(null, '', '/#portal');
+  history.replaceState(null, '', META_CALLBACK_PATH);
   return consumedCallback;
 }
 

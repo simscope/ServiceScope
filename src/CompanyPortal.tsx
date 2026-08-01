@@ -32,7 +32,7 @@ import { makeCompanyPortalBusinessModel } from './features/company-portal/compan
 import { makeCompanyPortalModel } from './features/company-portal/companyPortalModel';
 import { makeCompanyPortalNavigationModel } from './features/company-portal/companyPortalNavigationModel';
 import {
-  canManageCompanyVoiceSettings,
+  canManageCompanySettings,
   resolveCompanySettingsMode,
 } from './features/company-portal/companySettingsAccess';
 import { makeCompanyPortalOperationsModel } from './features/company-portal/companyPortalOperationsModel';
@@ -430,7 +430,7 @@ function CompanyPortalWithTenant({
     accessLevelLabels,
     setStatus: setJobsStatus,
   });
-  const canManageCompanyVoice = canManageCompanyVoiceSettings({
+  const canManageCompanyVoice = canManageCompanySettings({
     selectedCompanyId,
     sessionKind: signedInUser?.kind,
     sessionCompanyId: signedInUser?.companyId,

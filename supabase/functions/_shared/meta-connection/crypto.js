@@ -1,7 +1,9 @@
-import { MetaConnectionError } from './contracts.js';
+import { META_PROVIDER, MetaConnectionError, decodeEncryptionKey } from './contracts.js';
 
-const ENVELOPE_SCHEMA = 'encrypted-social-token-v1';
+export const ENVELOPE_SCHEMA = 'encrypted-social-token-v1';
 const ALGORITHM = 'AES-GCM';
+const PURPOSES = new Set(['meta-pending', 'meta-connection']);
+const ENVELOPE_KEYS = ['algorithm', 'ciphertext', 'iv', 'keyVersion', 'purpose', 'schemaVersion'];
 
 export function generateOAuthState(byteLength = 32, cryptoApi = globalThis.crypto) {
   if (!cryptoApi || byteLength < 32) throw new MetaConnectionError('INTERNAL_ERROR');
@@ -18,27 +20,51 @@ export async function hashOAuthState(rawState, cryptoApi = globalThis.crypto) {
   return `\\x${toHex(new Uint8Array(digest))}`;
 }
 
-export async function encryptTokenBundle(value, encodedKey, cryptoApi = globalThis.crypto) {
+export function pendingEnvelopeContext({ companyId, actorId, oauthStateId, redirectUri }) {
+  return canonicalContext({
+    purpose: 'meta-pending',
+    provider: META_PROVIDER,
+    companyId,
+    actorId,
+    oauthStateId,
+    redirectUri,
+  });
+}
+
+export function connectionEnvelopeContext({ companyId, connectionId, pageId }) {
+  return canonicalContext({
+    purpose: 'meta-connection',
+    provider: META_PROVIDER,
+    companyId,
+    connectionId,
+    pageId,
+  });
+}
+
+export async function encryptTokenBundle(value, encodedKey, context, cryptoApi = globalThis.crypto) {
+  const aad = encodeContext(context);
   const key = await importKey(encodedKey, ['encrypt'], cryptoApi);
   const iv = new Uint8Array(12);
   cryptoApi.getRandomValues(iv);
   const plaintext = new TextEncoder().encode(JSON.stringify(value));
-  const ciphertext = await cryptoApi.subtle.encrypt({ name: ALGORITHM, iv }, key, plaintext);
+  const ciphertext = await cryptoApi.subtle.encrypt({ name: ALGORITHM, iv, additionalData: aad }, key, plaintext);
   return {
     schemaVersion: ENVELOPE_SCHEMA,
     algorithm: ALGORITHM,
     keyVersion: 1,
+    purpose: context.purpose,
     iv: base64UrlEncode(iv),
     ciphertext: base64UrlEncode(new Uint8Array(ciphertext)),
   };
 }
 
-export async function decryptTokenBundle(envelope, encodedKey, cryptoApi = globalThis.crypto) {
+export async function decryptTokenBundle(envelope, encodedKey, context, cryptoApi = globalThis.crypto) {
   try {
-    assertEnvelope(envelope);
+    assertEnvelope(envelope, context?.purpose);
+    const aad = encodeContext(context);
     const key = await importKey(encodedKey, ['decrypt'], cryptoApi);
     const plaintext = await cryptoApi.subtle.decrypt(
-      { name: ALGORITHM, iv: base64UrlDecode(envelope.iv) },
+      { name: ALGORITHM, iv: base64UrlDecode(envelope.iv), additionalData: aad },
       key,
       base64UrlDecode(envelope.ciphertext),
     );
@@ -50,12 +76,16 @@ export async function decryptTokenBundle(envelope, encodedKey, cryptoApi = globa
   }
 }
 
-export function assertEnvelope(envelope) {
+export function assertEnvelope(envelope, expectedPurpose) {
+  const keys = envelope && typeof envelope === 'object' ? Object.keys(envelope).sort() : [];
   if (
-    !envelope || typeof envelope !== 'object' ||
+    !envelope || typeof envelope !== 'object' || Array.isArray(envelope) ||
+    keys.length !== ENVELOPE_KEYS.length || keys.some((key, index) => key !== ENVELOPE_KEYS[index]) ||
     envelope.schemaVersion !== ENVELOPE_SCHEMA ||
     envelope.algorithm !== ALGORITHM ||
     envelope.keyVersion !== 1 ||
+    !PURPOSES.has(envelope.purpose) ||
+    (expectedPurpose && envelope.purpose !== expectedPurpose) ||
     typeof envelope.iv !== 'string' || base64UrlDecode(envelope.iv).byteLength !== 12 ||
     typeof envelope.ciphertext !== 'string' || base64UrlDecode(envelope.ciphertext).byteLength < 17
   ) {
@@ -63,19 +93,49 @@ export function assertEnvelope(envelope) {
   }
 }
 
+function canonicalContext(value) {
+  const common = {
+    aadVersion: 1,
+    envelopeSchemaVersion: ENVELOPE_SCHEMA,
+    purpose: requireContextValue(value.purpose),
+    provider: requireContextValue(value.provider),
+    companyId: requireContextValue(value.companyId),
+  };
+  if (!PURPOSES.has(common.purpose) || common.provider !== META_PROVIDER) {
+    throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
+  }
+  if (common.purpose === 'meta-pending') {
+    return Object.freeze({
+      ...common,
+      actorId: requireContextValue(value.actorId),
+      oauthStateId: requireContextValue(value.oauthStateId),
+      redirectUri: requireContextValue(value.redirectUri),
+    });
+  }
+  return Object.freeze({
+    ...common,
+    connectionId: requireContextValue(value.connectionId),
+    pageId: requireContextValue(value.pageId),
+  });
+}
+
+function encodeContext(context) {
+  const canonical = canonicalContext(context ?? {});
+  return new TextEncoder().encode(JSON.stringify(canonical));
+}
+
 async function importKey(encodedKey, usages, cryptoApi) {
-  const bytes = decodeKey(encodedKey);
+  const bytes = decodeEncryptionKey(encodedKey);
   if (bytes.byteLength !== 32) throw new MetaConnectionError('META_NOT_CONFIGURED');
   return cryptoApi.subtle.importKey('raw', bytes, ALGORITHM, false, usages);
 }
 
-function decodeKey(value) {
+function requireContextValue(value) {
   const clean = typeof value === 'string' ? value.trim() : '';
-  try {
-    return base64UrlDecode(clean.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''));
-  } catch {
-    throw new MetaConnectionError('META_NOT_CONFIGURED');
+  if (!clean || clean.length > 2048 || /[\u0000-\u001f]/.test(clean)) {
+    throw new MetaConnectionError('CONNECTION_NEEDS_REAUTHORIZATION');
   }
+  return clean;
 }
 
 function base64UrlEncode(bytes) {
