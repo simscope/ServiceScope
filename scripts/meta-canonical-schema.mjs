@@ -10,11 +10,19 @@ export const META_LIFECYCLE_MARKERS = Object.freeze({
   label: 'Meta lifecycle audit',
 });
 
+export const META_OAUTH_STATE_TTL_MARKERS = Object.freeze({
+  begin: '-- META_SOCIAL_OAUTH_STATE_TTL_SCHEMA_BEGIN',
+  end: '-- META_SOCIAL_OAUTH_STATE_TTL_SCHEMA_END',
+  label: 'Meta OAuth state TTL corrective',
+});
+
 const ALL_MARKERS = [
   META_FOUNDATION_MARKERS.begin,
   META_FOUNDATION_MARKERS.end,
   META_LIFECYCLE_MARKERS.begin,
   META_LIFECYCLE_MARKERS.end,
+  META_OAUTH_STATE_TTL_MARKERS.begin,
+  META_OAUTH_STATE_TTL_MARKERS.end,
 ];
 
 const PATCH_ARTIFACT_PATTERNS = [
@@ -56,19 +64,29 @@ export function extractMetaCanonicalBlocks(source) {
   const foundationEnd = uniqueMarkerIndex(lines, META_FOUNDATION_MARKERS.end, 'Meta foundation END');
   const lifecycleBegin = uniqueMarkerIndex(lines, META_LIFECYCLE_MARKERS.begin, 'Meta lifecycle audit BEGIN');
   const lifecycleEnd = uniqueMarkerIndex(lines, META_LIFECYCLE_MARKERS.end, 'Meta lifecycle audit END');
+  const ttlBegin = uniqueMarkerIndex(lines, META_OAUTH_STATE_TTL_MARKERS.begin, 'Meta OAuth state TTL corrective BEGIN');
+  const ttlEnd = uniqueMarkerIndex(lines, META_OAUTH_STATE_TTL_MARKERS.end, 'Meta OAuth state TTL corrective END');
 
-  if (!(foundationBegin < foundationEnd && foundationEnd < lifecycleBegin && lifecycleBegin < lifecycleEnd)) {
+  if (!(
+    foundationBegin < foundationEnd
+    && foundationEnd < lifecycleBegin
+    && lifecycleBegin < lifecycleEnd
+    && lifecycleEnd < ttlBegin
+    && ttlBegin < ttlEnd
+  )) {
     fail('canonical Meta blocks must be ordered and non-overlapping');
   }
 
-  const betweenBlocks = lines.slice(foundationEnd + 1, lifecycleBegin).join('\n');
-  if (!containsOnlyWhitespaceAndComments(betweenBlocks)) {
+  const betweenFoundationAndLifecycle = lines.slice(foundationEnd + 1, lifecycleBegin).join('\n');
+  const betweenLifecycleAndTtl = lines.slice(lifecycleEnd + 1, ttlBegin).join('\n');
+  if (!containsOnlyWhitespaceAndComments(betweenFoundationAndLifecycle) || !containsOnlyWhitespaceAndComments(betweenLifecycleAndTtl)) {
     fail('only whitespace or comments may appear between canonical Meta blocks');
   }
 
   return {
     foundation: lines.slice(foundationBegin, foundationEnd + 1).join('\n'),
     lifecycle: lines.slice(lifecycleBegin, lifecycleEnd + 1).join('\n'),
+    ttl: lines.slice(ttlBegin, ttlEnd + 1).join('\n'),
   };
 }
 

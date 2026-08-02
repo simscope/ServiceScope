@@ -5,6 +5,7 @@ import { extractMetaCanonicalBlocks } from './meta-canonical-schema.mjs';
 
 const foundationMigration = await readFile(new URL('../supabase/migrations/20260731220000_meta_social_connection_foundation.sql', import.meta.url), 'utf8');
 const lifecycleAuditMigration = await readFile(new URL('../supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql', import.meta.url), 'utf8');
+const ttlCorrectiveMigration = await readFile(new URL('../supabase/migrations/20260802203000_meta_social_oauth_state_ttl_30_minutes.sql', import.meta.url), 'utf8');
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
 const suite = await readFile(new URL('../supabase/sql/meta-social-connection-security-checks.sql', import.meta.url), 'utf8');
 const canonicalBlocks = extractMetaCanonicalBlocks(canonicalSchema);
@@ -74,6 +75,7 @@ await db.exec(prerequisiteSchema);
 
 await db.exec(foundationMigration);
 await db.exec(lifecycleAuditMigration);
+await db.exec(ttlCorrectiveMigration);
 await db.exec('create temp table meta_sql_assertions (label text primary key);');
 
 let assertionCount = 0;
@@ -105,6 +107,7 @@ const canonicalDb = new PGlite();
 await canonicalDb.exec(prerequisiteSchema);
 await canonicalDb.exec(canonicalBlocks.foundation);
 await canonicalDb.exec(canonicalBlocks.lifecycle);
+await canonicalDb.exec(canonicalBlocks.ttl);
 
 let canonicalAssertionCount = 0;
 const canonicalCheck = (fn) => {
@@ -138,6 +141,27 @@ const canonicalRpcs = await canonicalDb.query(`
 canonicalCheck(() => assert.equal(canonicalRpcs.rows[0].distinct_total, canonicalRpcNames.length));
 canonicalCheck(() => assert.equal(canonicalRpcs.rows[0].service_allowed, canonicalRpcNames.length));
 canonicalCheck(() => assert.equal(canonicalRpcs.rows[0].browser_denied, canonicalRpcNames.length));
+
+const finalStartFunction = await canonicalDb.query(`
+  select pg_get_functiondef(p.oid) as definition
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.proname = 'create_company_social_oauth_state_with_audit'
+`);
+canonicalCheck(() => assert.equal(finalStartFunction.rows.length, 1));
+canonicalCheck(() => assert.match(finalStartFunction.rows[0].definition, /interval '30 minutes'/));
+canonicalCheck(() => assert.doesNotMatch(finalStartFunction.rows[0].definition, /interval '10 minutes'/));
+
+const finalExpiryConstraint = await canonicalDb.query(`
+  select count(*)::integer as count, max(pg_get_constraintdef(oid)) as definition
+  from pg_constraint
+  where conrelid = 'public.company_social_oauth_states'::regclass
+    and conname = 'company_social_oauth_states_expiry_check'
+`);
+canonicalCheck(() => assert.equal(finalExpiryConstraint.rows[0].count, 1));
+canonicalCheck(() => assert.match(finalExpiryConstraint.rows[0].definition, /(00:30:00|30 minutes)/));
+canonicalCheck(() => assert.doesNotMatch(finalExpiryConstraint.rows[0].definition, /(00:10:00|10 minutes)/));
 
 const canonicalTables = await canonicalDb.query(`
   select
@@ -181,5 +205,5 @@ canonicalCheck(() => assert.deepEqual(canonicalArtifacts.rows[0], {
 
 await canonicalDb.close();
 console.log(
-  `Meta SQL security checks passed: ${assertionCount + canonicalAssertionCount}; canonical foundation/lifecycle execution passed; rollback artifacts: 0`,
+  `Meta SQL security checks passed: ${assertionCount + canonicalAssertionCount}; canonical foundation/lifecycle/TTL execution passed; rollback artifacts: 0`,
 );

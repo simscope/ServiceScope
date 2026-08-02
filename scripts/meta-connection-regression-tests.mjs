@@ -4,6 +4,7 @@ import { webcrypto } from 'node:crypto';
 import {
   META_FOUNDATION_MARKERS,
   META_LIFECYCLE_MARKERS,
+  META_OAUTH_STATE_TTL_MARKERS,
   assertNoCanonicalPatchArtifacts,
   extractExactMarkedBlock,
   extractMetaCanonicalBlocks,
@@ -11,6 +12,7 @@ import {
 } from './meta-canonical-schema.mjs';
 import {
   META_PROVIDER,
+  META_OAUTH_STATE_TTL_MS,
   META_REQUESTED_SCOPES,
   MetaConnectionError,
   assertMetaAccessRole,
@@ -71,6 +73,7 @@ function configurationChecks() {
   check(() => assert.equal(config.graphApiVersion, 'v25.0'));
   check(() => assert.equal(config.loginConfigurationId, '9876543210'));
   check(() => assert.equal(META_PROVIDER, 'meta-facebook-login'));
+  check(() => assert.equal(META_OAUTH_STATE_TTL_MS, 1_800_000));
   check(() => assert.deepEqual(META_REQUESTED_SCOPES, ['pages_show_list', 'pages_read_engagement', 'instagram_basic']));
   check(() => assert.equal(normalizeReturnPath('/settings/social-connections'), '/settings/social-connections'));
   check(() => assert.throws(() => normalizeReturnPath('https://attacker.example/return'), /INVALID_REQUEST/));
@@ -406,12 +409,91 @@ async function serviceChecks() {
   check(() => assert.equal(invalidConfigMemory.states.size, 0));
   check(() => assert.deepEqual(providerCalls, callsBeforeInvalidStart));
 
+  await runtimeTtlChecks(serviceProvider);
   await lifecycleAuditRollbackChecks(serviceProvider);
 
   await retentionChecks(serviceProvider);
   await healthChecks(serviceProvider);
   await authorizationChecks(serviceProvider);
   await identityLifecycleChecks(serviceProvider);
+}
+
+async function runtimeTtlChecks(provider) {
+  const startAt = Date.parse('2026-07-31T22:00:00.000Z');
+  for (const [label, injectedTtlMs, expectedTtlMs] of [
+    ['production', META_OAUTH_STATE_TTL_MS, META_OAUTH_STATE_TTL_MS],
+    ['short injected', 5 * 60_000, 5 * 60_000],
+    ['capped injected', 60 * 60_000, META_OAUTH_STATE_TTL_MS],
+  ]) {
+    const memory = makeMemoryRepository();
+    const deps = makeServiceDeps(memory, provider, { stateTtlMs: injectedTtlMs });
+    await callService(deps, { action: 'start', companyId, returnPath: '/settings/social-connections' });
+    const row = [...memory.states.values()][0];
+    check(() => assert.equal(Date.parse(row.expiresAt) - startAt, expectedTtlMs, `${label} TTL mismatch`));
+  }
+
+  for (const invalidTtl of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, '300000']) {
+    const memory = makeMemoryRepository();
+    const deps = makeServiceDeps(memory, provider, { stateTtlMs: invalidTtl });
+    await checkAsync(() => assert.rejects(
+      callService(deps, { action: 'start', companyId, returnPath: '/settings/social-connections' }),
+      (error) => error.code === 'INTERNAL_ERROR',
+    ));
+    check(() => assert.equal(memory.states.size, 0));
+  }
+
+  const payloadMemory = makeMemoryRepository();
+  await checkAsync(() => assert.rejects(
+    callService(makeServiceDeps(payloadMemory, provider), {
+      action: 'start', companyId, returnPath: '/settings/social-connections', stateTtlMs: 60_000,
+    }),
+    (error) => error.code === 'INVALID_REQUEST',
+  ));
+  check(() => assert.equal(payloadMemory.states.size, 0));
+
+  for (const elapsedMs of [17 * 60_000 + 36_000, 29 * 60_000 + 59_000]) {
+    const memory = makeMemoryRepository();
+    const timingCalls = { exchange: 0, discover: 0 };
+    const timingProvider = {
+      ...provider,
+      exchangeCode: async () => {
+        check(() => assert.ok([...memory.states.values()].every((row) => row.consumedAt)));
+        timingCalls.exchange += 1;
+        return { accessToken: 'timing-secret', expiresAt: '2026-08-30T00:00:00.000Z' };
+      },
+      discover: async () => {
+        timingCalls.discover += 1;
+        return { grantedScopes: [...META_REQUESTED_SCOPES], pages: [safePage('10001')], attempts: 1 };
+      },
+    };
+    const deps = makeServiceDeps(memory, timingProvider);
+    const started = await callService(deps, { action: 'start', companyId, returnPath: '/settings/social-connections' });
+    memory.nowMs += elapsedMs;
+    await callService(deps, {
+      action: 'complete', code: 'provider-code', state: new URL(started.authorizationUrl).searchParams.get('state'),
+    });
+    check(() => assert.deepEqual(timingCalls, { exchange: 1, discover: 1 }));
+  }
+
+  const expiredMemory = makeMemoryRepository();
+  const expiredCalls = { exchange: 0, discover: 0 };
+  const expiredProvider = {
+    ...provider,
+    exchangeCode: async () => { expiredCalls.exchange += 1; throw new Error('expired callback reached code exchange'); },
+    discover: async () => { expiredCalls.discover += 1; throw new Error('expired callback reached Graph discovery'); },
+  };
+  const expiredDeps = makeServiceDeps(expiredMemory, expiredProvider);
+  const expiredStart = await callService(expiredDeps, { action: 'start', companyId, returnPath: '/settings/social-connections' });
+  expiredMemory.nowMs += META_OAUTH_STATE_TTL_MS + 1;
+  await checkAsync(() => assert.rejects(
+    callService(expiredDeps, {
+      action: 'complete', code: 'provider-code', state: new URL(expiredStart.authorizationUrl).searchParams.get('state'),
+    }),
+    (error) => error.code === 'OAUTH_STATE_EXPIRED',
+  ));
+  check(() => assert.deepEqual(expiredCalls, { exchange: 0, discover: 0 }));
+  check(() => assert.equal([...expiredMemory.states.values()][0].consumedAt, null));
+  check(() => assert.equal(expiredMemory.telemetry.at(-1).attempts, 0));
 }
 
 async function lifecycleAuditRollbackChecks(provider) {
@@ -619,15 +701,18 @@ async function identityLifecycleChecks(provider) {
 
 async function sourceAndSchemaChecks() {
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-  const [accessSource, appSource, callbackSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
+  const [accessSource, appSource, callbackSource, callbackPageSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
     read('src/features/company-portal/companySettingsAccess.ts'),
     read('src/App.tsx'),
     read('src/features/meta-connection/callback.ts'),
+    read('src/features/meta-connection/MetaOAuthCallbackPage.tsx'),
+    read('supabase/functions/_shared/meta-connection/contracts.js'),
     read('supabase/functions/_shared/meta-connection/service.js'),
     read('supabase/functions/_shared/meta-connection/provider.js'),
     read('supabase/functions/meta-social-connection/index.ts'),
     read('supabase/migrations/20260731220000_meta_social_connection_foundation.sql'),
     read('supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql'),
+    read('supabase/migrations/20260802203000_meta_social_oauth_state_ttl_30_minutes.sql'),
     read('supabase/schema.sql'),
     read('scripts/meta-connection-sql-tests.mjs'),
   ]);
@@ -637,6 +722,18 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(appSource, /destination === 'social_connections'.*view=onboarding#portal/s));
   check(() => assert.match(callbackSource, /replaceState\(null, '', META_CALLBACK_PATH\)/));
   check(() => assert.doesNotMatch(callbackSource, /localStorage|sessionStorage/));
+  check(() => assert.match(callbackPageSource, /type CallbackState = [^;]*'expired'/));
+  check(() => assert.match(callbackPageSource, /error\.message\.includes\('OAUTH_STATE_EXPIRED'\) \? 'expired' : 'error'/));
+  check(() => assert.match(callbackPageSource, /Authorization expired/));
+  check(() => assert.match(callbackPageSource, /This Meta authorization took too long to complete\. Return to Social connections and start a new authorization\./));
+  check(() => assert.doesNotMatch(callbackPageSource, /startMetaConnection|window\.location\.reload|completeMetaConnection\(callback\)[\s\S]*completeMetaConnection\(callback\)/));
+  check(() => assert.match(callbackPageSource, /Connection could not be completed/));
+  check(() => assert.match(callbackPageSource, /onClick=\{\(\) => onReturn\(destination\)\}/));
+  check(() => assert.equal((callbackPageSource.match(/completeMetaConnection\(callback\)/g) ?? []).length, 1));
+  check(() => assert.match(contractsSource, /export const META_OAUTH_STATE_TTL_MS = 30 \* 60_000/));
+  check(() => assert.match(edgeSource, /stateTtlMs: META_OAUTH_STATE_TTL_MS/));
+  check(() => assert.doesNotMatch(edgeSource, /stateTtlMs: 10 \* 60_000/));
+  check(() => assert.match(serviceSource, /Math\.min\(META_OAUTH_STATE_TTL_MS, deps\.stateTtlMs\)/));
   check(() => assert.match(serviceSource, /returnDestinationForPath\(consumed\.return_path\)/));
   check(() => assert.match(serviceSource, /disconnectConnection/));
   check(() => assert.doesNotMatch(serviceSource, /provider\.revoke|providerRevokeSucceeded/));
@@ -673,8 +770,10 @@ async function sourceAndSchemaChecks() {
   const canonicalBlocks = extractMetaCanonicalBlocks(schemaSource);
   const migrationBlock = extractExactMarkedBlock(migrationSource, META_FOUNDATION_MARKERS);
   const lifecycleAuditMigrationBlock = extractExactMarkedBlock(lifecycleAuditMigrationSource, META_LIFECYCLE_MARKERS);
+  const ttlMigrationBlock = extractExactMarkedBlock(ttlMigrationSource, META_OAUTH_STATE_TTL_MARKERS);
   check(() => assert.equal(normalizeSqlForParity(canonicalBlocks.foundation), normalizeSqlForParity(migrationBlock)));
   check(() => assert.equal(normalizeSqlForParity(canonicalBlocks.lifecycle), normalizeSqlForParity(lifecycleAuditMigrationBlock)));
+  check(() => assert.equal(normalizeSqlForParity(canonicalBlocks.ttl), normalizeSqlForParity(ttlMigrationBlock)));
 
   const validCanonicalFixture = [
     META_FOUNDATION_MARKERS.begin,
@@ -685,6 +784,10 @@ async function sourceAndSchemaChecks() {
     META_LIFECYCLE_MARKERS.begin,
     'select 2;',
     META_LIFECYCLE_MARKERS.end,
+    '',
+    META_OAUTH_STATE_TTL_MARKERS.begin,
+    'select 3;',
+    META_OAUTH_STATE_TTL_MARKERS.end,
   ].join('\n');
   const invalidCanonicalFixtures = [
     validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, `+${META_FOUNDATION_MARKERS.begin}`),
@@ -692,11 +795,16 @@ async function sourceAndSchemaChecks() {
     validCanonicalFixture.replace(`${META_FOUNDATION_MARKERS.end}\n`, ''),
     validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, ` ${META_FOUNDATION_MARKERS.begin}`),
     validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, `${META_FOUNDATION_MARKERS.begin} trailing`),
+    validCanonicalFixture.replace(META_OAUTH_STATE_TTL_MARKERS.begin, `+${META_OAUTH_STATE_TTL_MARKERS.begin}`),
+    validCanonicalFixture.replace(META_OAUTH_STATE_TTL_MARKERS.begin, `${META_OAUTH_STATE_TTL_MARKERS.begin}\n${META_OAUTH_STATE_TTL_MARKERS.begin}`),
+    validCanonicalFixture.replace(`${META_OAUTH_STATE_TTL_MARKERS.end}`, ''),
     [
       META_FOUNDATION_MARKERS.begin,
       META_LIFECYCLE_MARKERS.begin,
       META_FOUNDATION_MARKERS.end,
       META_LIFECYCLE_MARKERS.end,
+      META_OAUTH_STATE_TTL_MARKERS.begin,
+      META_OAUTH_STATE_TTL_MARKERS.end,
     ].join('\n'),
   ];
   check(() => assert.doesNotThrow(() => extractMetaCanonicalBlocks(validCanonicalFixture)));
@@ -717,6 +825,13 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(lifecycleAuditMigrationBlock, /'Meta authorization'/g));
   check(() => assert.match(lifecycleAuditMigrationBlock, /locked_connection\.facebook_page_name/));
   check(() => assert.doesNotMatch(lifecycleAuditMigrationBlock, /execute\s+(format|p_actor|p_resource)/i));
+  check(() => assert.match(ttlMigrationBlock, /drop constraint company_social_oauth_states_expiry_check/));
+  check(() => assert.match(ttlMigrationBlock, /add constraint company_social_oauth_states_expiry_check/));
+  check(() => assert.doesNotMatch(ttlMigrationBlock, /if exists/i));
+  check(() => assert.match(ttlMigrationBlock, /interval '30 minutes'/g));
+  check(() => assert.doesNotMatch(ttlMigrationBlock, /interval '10 minutes'/));
+  check(() => assert.match(ttlMigrationBlock, /revoke all on function public\.create_company_social_oauth_state_with_audit[\s\S]*from public/));
+  check(() => assert.match(ttlMigrationBlock, /grant execute on function public\.create_company_social_oauth_state_with_audit[\s\S]*to service_role/));
   check(() => assert.match(migrationBlock, /company_social_connections_active_provider_unique/));
   check(() => assert.match(migrationBlock, /where status <> 'revoked'/));
   check(() => assert.match(migrationBlock, /token_envelope_shape_check/));
@@ -808,13 +923,13 @@ function makeServiceDeps(repository, provider, overrides = {}) {
     repository,
     provider: { ...provider },
     config: overrides.config ?? config,
-    rateLimiter: createMetaRateLimiter({ now: () => Date.parse('2026-07-31T22:00:00.000Z') }),
+    rateLimiter: createMetaRateLimiter({ now: () => repository.nowMs }),
     cryptoApi,
     maxBodyBytes: 32_768,
-    stateTtlMs: 10 * 60_000,
+    stateTtlMs: overrides.stateTtlMs ?? META_OAUTH_STATE_TTL_MS,
     retentionCleanupLimit: 50,
     timeoutController: () => ({ signal: undefined, clear() {} }),
-    now: () => Date.parse('2026-07-31T22:00:00.000Z'),
+    now: () => repository.nowMs,
     newUuid: () => repository.nextUuid(),
     telemetry: { record: (event) => repository.telemetry.push(event) },
   };
@@ -823,6 +938,7 @@ function makeServiceDeps(repository, provider, overrides = {}) {
 function makeMemoryRepository() {
   let sequence = 600;
   const memory = {
+    nowMs: Date.parse('2026-07-31T22:00:00.000Z'),
     states: new Map(),
     connections: new Map(),
     audits: [],
@@ -853,15 +969,15 @@ function makeMemoryRepository() {
     },
     async consumeOAuthState(input) {
       const row = [...this.states.values()].find((value) => value.stateHash === input.stateHash);
-      if (!row || row.consumedAt || row.companyId !== input.companyId || row.actorAuthUserId !== input.actorAuthUserId || row.provider !== input.provider || row.redirectUri !== input.redirectUri || Date.parse(row.expiresAt) <= Date.parse('2026-07-31T22:00:00.000Z')) return null;
-      row.consumedAt = '2026-07-31T22:00:00.000Z';
+      if (!row || row.consumedAt || row.companyId !== input.companyId || row.actorAuthUserId !== input.actorAuthUserId || row.provider !== input.provider || row.redirectUri !== input.redirectUri || Date.parse(row.expiresAt) <= this.nowMs) return null;
+      row.consumedAt = new Date(this.nowMs).toISOString();
       return dbState(row);
     },
     async classifyOAuthState(stateHash, requestedCompanyId, requestedActorAuthUserId) {
       const row = [...this.states.values()].find((value) => value.stateHash === stateHash);
       if (!row || row.companyId !== requestedCompanyId || row.actorAuthUserId !== requestedActorAuthUserId || row.provider !== META_PROVIDER) return 'OAUTH_STATE_INVALID';
       if (row.consumedAt) return 'OAUTH_STATE_REPLAYED';
-      if (Date.parse(row.expiresAt) <= Date.parse('2026-07-31T22:00:00.000Z')) return 'OAUTH_STATE_EXPIRED';
+      if (Date.parse(row.expiresAt) <= this.nowMs) return 'OAUTH_STATE_EXPIRED';
       return 'OAUTH_STATE_INVALID';
     },
     async saveOAuthDiscovery(input) {
@@ -894,7 +1010,7 @@ function makeMemoryRepository() {
     },
     async getStatus(requestedCompanyId, requestedActorAuthUserId) {
       const connection = activeConnections(this, requestedCompanyId).at(-1) ?? null;
-      const pending = [...this.states.values()].filter((row) => row.companyId === requestedCompanyId && row.actorAuthUserId === requestedActorAuthUserId && row.consumedAt && row.envelope && Date.parse(row.expiresAt) > Date.parse('2026-07-31T22:00:00.000Z')).at(-1);
+      const pending = [...this.states.values()].filter((row) => row.companyId === requestedCompanyId && row.actorAuthUserId === requestedActorAuthUserId && row.consumedAt && row.envelope && Date.parse(row.expiresAt) > this.nowMs).at(-1);
       return { connection, pending: pending ? dbState(pending) : null };
     },
     async getPendingOAuthSession(id, requestedCompanyId, requestedActorAuthUserId) {

@@ -14,6 +14,7 @@ export const META_ACTIONS = Object.freeze([
   'disconnect',
 ]);
 export const META_RETURN_PATHS = Object.freeze(['/settings/social-connections']);
+export const META_OAUTH_STATE_TTL_MS = 30 * 60_000;
 
 const AUTH_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BEARER_JWT_PATTERN = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/;

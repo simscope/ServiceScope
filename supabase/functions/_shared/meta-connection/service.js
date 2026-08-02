@@ -1,4 +1,5 @@
 import {
+  META_OAUTH_STATE_TTL_MS,
   META_PROVIDER,
   META_REQUESTED_SCOPES,
   MetaConnectionError,
@@ -105,6 +106,11 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       stage = 'oauth_state';
       const config = assertRuntimeConfigured(deps.config);
       const returnPath = normalizeReturnPath(requestBody.returnPath);
+      if (!Number.isFinite(deps.stateTtlMs) || deps.stateTtlMs <= 0) {
+        throw new MetaConnectionError('INTERNAL_ERROR');
+      }
+      const boundedStateTtlMs = Math.min(META_OAUTH_STATE_TTL_MS, deps.stateTtlMs);
+      const timestamp = deps.now();
       const state = generateOAuthState(32, deps.cryptoApi);
       const hash = await hashOAuthState(state, deps.cryptoApi);
       await deps.repository.createOAuthState({
@@ -116,8 +122,8 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         stateHash: hash,
         redirectUri: config.redirectUri,
         returnPath,
-        expiresAt: new Date(deps.now() + Math.min(10 * 60_000, deps.stateTtlMs)).toISOString(),
-        timestamp: new Date(deps.now()).toISOString(),
+        expiresAt: new Date(timestamp + boundedStateTtlMs).toISOString(),
+        timestamp: new Date(timestamp).toISOString(),
       });
       return { ok: true, provider: META_PROVIDER, authorizationUrl: deps.provider.buildAuthorizationUrl({ state }) };
     }
