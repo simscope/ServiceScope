@@ -2,6 +2,7 @@ import {
   META_OAUTH_STATE_TTL_MS,
   META_PROVIDER,
   META_REQUESTED_SCOPES,
+  META_TOKEN_EXCHANGE_PHASES,
   MetaConnectionError,
   assertRequiredScopes,
   assertRuntimeConfigured,
@@ -197,6 +198,9 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         }
       } catch (error) {
         attempts = providerAttempts(error, attempts);
+        if (stage === 'code_exchange' && META_TOKEN_EXCHANGE_PHASES.includes(error?.providerPhase)) {
+          stage = error.providerPhase;
+        }
         await deps.repository.deleteOAuthSession(consumed.id, currentAccess.companyId, currentAccess.actorAuthUserId);
         throw error;
       }
@@ -350,7 +354,20 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
   } catch (error) {
     attempts = providerAttempts(error, attempts);
     const normalized = normalizeError(error);
-    deps.telemetry.record(safeTelemetry({ action, success: false, code: normalized.code, stage, attempts, latencyMs: deps.now() - startedAt }));
+    deps.telemetry.record(safeTelemetry({
+      action,
+      success: false,
+      code: normalized.code,
+      stage,
+      attempts,
+      latencyMs: deps.now() - startedAt,
+      providerPhase: normalized.providerPhase,
+      providerHttpStatus: normalized.providerHttpStatus,
+      providerCode: normalized.providerCode,
+      providerSubcode: normalized.providerSubcode,
+      providerCategory: normalized.providerCategory,
+      providerIsTransient: normalized.providerIsTransient,
+    }));
     throw normalized;
   }
 }

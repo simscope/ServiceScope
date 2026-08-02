@@ -47,10 +47,12 @@ const restrictedSource = await read('src/features/company-voice/CompanyVoiceSett
 const callbackSource = await read('src/features/meta-connection/callback.ts');
 const callbackPageSource = await read('src/features/meta-connection/MetaOAuthCallbackPage.tsx');
 const accessSource = await read('src/features/company-portal/companySettingsAccess.ts');
+const contractsSource = await read('supabase/functions/_shared/meta-connection/contracts.js');
 const providerSource = await read('supabase/functions/_shared/meta-connection/provider.js');
 const serviceSource = await read('supabase/functions/_shared/meta-connection/service.js');
 const edgeSource = await read('supabase/functions/meta-social-connection/index.ts');
 const cryptoSource = await read('supabase/functions/_shared/meta-connection/crypto.js');
+const regressionSource = await read('scripts/meta-connection-regression-tests.mjs');
 const vercelConfig = await read('vercel.json');
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
@@ -226,6 +228,57 @@ check(() => assert.match(sqlSuite, /audit failure did not roll back pending-stat
 check(() => assert.match(providerSource, /config_id: config\.loginConfigurationId/));
 check(() => assert.match(providerSource, /override_default_response_type: 'true'/));
 check(() => assert.doesNotMatch(providerSource, /scope:/));
+check(() => assert.deepEqual(extractStringArray(contractsSource, 'META_TOKEN_EXCHANGE_PHASES'), [
+  'short_token_exchange',
+  'long_token_exchange',
+]));
+check(() => assert.deepEqual(extractStringArray(contractsSource, 'META_PROVIDER_ERROR_CATEGORIES'), [
+  'INVALID_CLIENT_CREDENTIALS',
+  'REDIRECT_URI_MISMATCH',
+  'INVALID_OR_EXPIRED_CODE',
+  'CODE_ALREADY_USED',
+  'UNSUPPORTED_GRANT_OR_PARAMETER',
+  'APP_CONFIGURATION_ERROR',
+  'PROVIDER_RATE_LIMIT',
+  'PROVIDER_TEMPORARY_ERROR',
+  'SUCCESS_RESPONSE_MISSING_TOKEN',
+  'UNKNOWN_PROVIDER_REJECTION',
+]));
+const normalizedCodes = contractsSource.match(/const NORMALIZED_CODES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
+for (const category of extractStringArray(contractsSource, 'META_PROVIDER_ERROR_CATEGORIES')) {
+  check(() => assert.doesNotMatch(normalizedCodes, new RegExp(`['"]${category}['"]`)));
+}
+check(() => assert.match(contractsSource, /Object\.assign\(this, sanitizeMetaProviderDiagnostic\(providerDiagnostic\)\)/));
+check(() => assert.match(contractsSource, /providerHttpStatus: safeInteger\(value\?\.providerHttpStatus, 100, 599\)/));
+check(() => assert.match(contractsSource, /providerCode: safeInteger\(value\?\.providerCode, -2_147_483_648, 2_147_483_647\)/));
+check(() => assert.match(contractsSource, /providerSubcode: safeInteger\(value\?\.providerSubcode, -2_147_483_648, 2_147_483_647\)/));
+check(() => assert.match(contractsSource, /providerCategory: META_PROVIDER_ERROR_CATEGORIES\.includes/));
+check(() => assert.match(contractsSource, /providerIsTransient: typeof value\?\.providerIsTransient === 'boolean'/));
+check(() => assert.match(providerSource, /signal, 'short_token_exchange'/));
+check(() => assert.match(providerSource, /signal, 'long_token_exchange'/));
+check(() => assert.match(providerSource, /normalizeMetaProviderDiagnostic\(payload, response\.status, phase\)/));
+check(() => assert.match(providerSource, /providerCategory: 'SUCCESS_RESPONSE_MISSING_TOKEN'/));
+check(() => assert.match(providerSource, /providerCategory: 'PROVIDER_TEMPORARY_ERROR'/));
+check(() => assert.doesNotMatch(providerSource, /console\.(?:log|error|warn|info)/));
+check(() => assert.doesNotMatch(providerSource, /\b(?:rawMessage|fbtrace_id|x-fb-debug)\b/i));
+check(() => assert.doesNotMatch(providerSource, /return\s*\{[^}]*\b(?:message|payload|response|request|body|url)\s*:/s));
+check(() => assert.match(serviceSource, /META_TOKEN_EXCHANGE_PHASES\.includes\(error\?\.providerPhase\)/));
+check(() => assert.match(serviceSource, /deps\.telemetry\.record\(safeTelemetry\(/));
+check(() => assert.match(edgeSource, /\{ error: 'Meta connection request was rejected\.', code: normalized\.code \}/));
+check(() => assert.doesNotMatch(edgeSource, /providerPhase|providerHttpStatus|providerCode|providerSubcode|providerCategory|providerIsTransient/));
+check(() => assert.doesNotMatch(`${migration}\n${lifecycleAuditMigration}\n${ttlCorrectiveMigration}\n${canonicalSchema}`, /provider_(?:phase|http_status|subcode|category|is_transient)|meta_provider_telemetry/i));
+check(() => assert.match(regressionSource, /fake-access-token-sensitive/));
+check(() => assert.match(regressionSource, /fake-oauth-code-sensitive/));
+check(() => assert.match(regressionSource, /fake-app-secret-sensitive/));
+check(() => assert.match(regressionSource, /SUCCESS_RESPONSE_MISSING_TOKEN/));
+const telemetryObjects = [...serviceSource.matchAll(/safeTelemetry\(\{([\s\S]*?)\}\)/g)].map((match) => match[1]);
+check(() => assert.ok(telemetryObjects.length >= 2));
+for (const forbiddenField of [
+  'message', 'rawMessage', 'payload', 'response', 'request', 'body', 'url', 'token', 'accessToken',
+  'codeValue', 'clientId', 'appSecret', 'redirectUri',
+]) {
+  check(() => assert.ok(telemetryObjects.every((source) => !new RegExp(`\\b${forbiddenField}\\s*:`).test(source))));
+}
 check(() => assert.match(providerSource, /MAX_PAGE_REQUESTS = 5/));
 check(() => assert.match(providerSource, /MAX_DISCOVERED_PAGES = 100/));
 check(() => assert.doesNotMatch(providerSource, /paging\.next/));
@@ -301,6 +354,12 @@ function extractAuditInsert(functionSource) {
     statement: match[0],
     columns: match[1].split(',').map((column) => column.trim()),
   };
+}
+
+function extractStringArray(source, exportName) {
+  const match = source.match(new RegExp(`export const ${exportName} = Object\\.freeze\\(\\[([\\s\\S]*?)\\]\\);`));
+  assert.ok(match, `${exportName} allowlist is missing`);
+  return [...match[1].matchAll(/['"]([^'"]+)['"]/g)].map((entry) => entry[1]);
 }
 
 function assertRequiredWithoutDefault(tableSource, columnName, contract) {

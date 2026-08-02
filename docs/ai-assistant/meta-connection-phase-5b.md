@@ -132,6 +132,14 @@ Global Meta deauthorization is intentionally deferred. It cannot be implemented 
 
 Events contain company/actor linkage, a safe connection identifier where applicable, and normalized lifecycle text only. Provider payloads, request IDs, authorization values, state, secrets, and encryption data are excluded. Audit persistence failures fail the lifecycle action instead of being silently ignored.
 
+## Safe token-exchange diagnostics
+
+The server distinguishes the short user-token exchange from the long-lived user-token exchange with the allowlisted phases `short_token_exchange` and `long_token_exchange`. A failed exchange may add only a sanitized HTTP status, signed 32-bit provider code and subcode, an allowlisted category, a boolean transient flag, and the cumulative token-endpoint attempt count. These fields are intended only for controlled Production diagnosis.
+
+Provider messages and raw responses are classified in memory and are never retained. Request bodies, authorization codes, tokens, App credentials, identifiers, endpoint URLs, redirect queries, debug headers, and provider trace values are excluded from errors and telemetry. Missing-token success responses receive a dedicated safe category without recording response keys or payloads.
+
+The browser response remains the existing normalized public error code and never includes the provider category or diagnostic fields. A new OAuth flow requires separate authorization after this observability code has been reviewed and deployed; the diagnostics do not themselves authorize a retry.
+
 ## Environment and redirects
 
 Server-only variables:

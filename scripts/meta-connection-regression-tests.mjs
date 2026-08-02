@@ -12,8 +12,10 @@ import {
 } from './meta-canonical-schema.mjs';
 import {
   META_PROVIDER,
+  META_PROVIDER_ERROR_CATEGORIES,
   META_OAUTH_STATE_TTL_MS,
   META_REQUESTED_SCOPES,
+  META_TOKEN_EXCHANGE_PHASES,
   MetaConnectionError,
   assertMetaAccessRole,
   normalizeReturnPath,
@@ -21,6 +23,8 @@ import {
   requireBearerJwt,
   requireVerifiedAuthUserId,
   runtimeConfigFromEnv,
+  safeTelemetry,
+  sanitizeMetaProviderDiagnostic,
 } from '../supabase/functions/_shared/meta-connection/contracts.js';
 import {
   assertEnvelope,
@@ -31,7 +35,7 @@ import {
   hashOAuthState,
   pendingEnvelopeContext,
 } from '../supabase/functions/_shared/meta-connection/crypto.js';
-import { createMetaProvider } from '../supabase/functions/_shared/meta-connection/provider.js';
+import { createMetaProvider, normalizeMetaProviderDiagnostic } from '../supabase/functions/_shared/meta-connection/provider.js';
 import { createMetaRateLimiter } from '../supabase/functions/_shared/meta-connection/rateLimit.js';
 import { handleMetaConnection } from '../supabase/functions/_shared/meta-connection/service.js';
 
@@ -60,6 +64,7 @@ const check = (fn) => { fn(); checks += 1; };
 const checkAsync = async (fn) => { await fn(); checks += 1; };
 
 configurationChecks();
+diagnosticContractChecks();
 identityBoundaryChecks();
 await encryptionChecks();
 await providerChecks();
@@ -91,6 +96,73 @@ function configurationChecks() {
   check(() => assert.equal(invalid({ META_TOKEN_ENCRYPTION_KEY_V1: Buffer.alloc(33).toString('base64') }).configured, false));
   check(() => assert.equal(invalid({ META_TOKEN_ENCRYPTION_KEY_V1: Buffer.alloc(32).toString('base64url') }).configured, true));
   check(() => assert.equal(invalid({ META_OAUTH_REDIRECT_URI: 'https://preview.example.test/auth/meta/callback?next=https://attacker.test' }).configured, false));
+}
+
+function diagnosticContractChecks() {
+  check(() => assert.deepEqual(META_TOKEN_EXCHANGE_PHASES, ['short_token_exchange', 'long_token_exchange']));
+  check(() => assert.deepEqual(META_PROVIDER_ERROR_CATEGORIES, [
+    'INVALID_CLIENT_CREDENTIALS',
+    'REDIRECT_URI_MISMATCH',
+    'INVALID_OR_EXPIRED_CODE',
+    'CODE_ALREADY_USED',
+    'UNSUPPORTED_GRANT_OR_PARAMETER',
+    'APP_CONFIGURATION_ERROR',
+    'PROVIDER_RATE_LIMIT',
+    'PROVIDER_TEMPORARY_ERROR',
+    'SUCCESS_RESPONSE_MISSING_TOKEN',
+    'UNKNOWN_PROVIDER_REJECTION',
+  ]));
+
+  const invalid = sanitizeMetaProviderDiagnostic({
+    providerPhase: 'attacker_phase',
+    providerHttpStatus: 99,
+    providerCode: 1.5,
+    providerSubcode: 2 ** 31,
+    providerCategory: 'RAW_PROVIDER_MESSAGE',
+    providerIsTransient: 'true',
+    providerAttempts: 3,
+  });
+  check(() => assert.deepEqual(invalid, {
+    providerPhase: null,
+    providerHttpStatus: null,
+    providerCode: null,
+    providerSubcode: null,
+    providerCategory: null,
+    providerIsTransient: null,
+    providerAttempts: null,
+  }));
+
+  const valid = sanitizeMetaProviderDiagnostic({
+    providerPhase: 'short_token_exchange',
+    providerHttpStatus: 400,
+    providerCode: -2_147_483_648,
+    providerSubcode: 2_147_483_647,
+    providerCategory: 'UNKNOWN_PROVIDER_REJECTION',
+    providerIsTransient: false,
+    providerAttempts: 1,
+  });
+  check(() => assert.equal(valid.providerPhase, 'short_token_exchange'));
+  check(() => assert.equal(valid.providerHttpStatus, 400));
+  check(() => assert.equal(valid.providerCode, -2_147_483_648));
+  check(() => assert.equal(valid.providerSubcode, 2_147_483_647));
+  check(() => assert.equal(valid.providerCategory, 'UNKNOWN_PROVIDER_REJECTION'));
+  check(() => assert.equal(valid.providerIsTransient, false));
+  check(() => assert.equal(valid.providerAttempts, 1));
+
+  const unrelated = safeTelemetry({
+    action: 'status',
+    success: false,
+    code: 'INTERNAL_ERROR',
+    providerPhase: 'short_token_exchange',
+    providerHttpStatus: 400,
+    providerCode: 190,
+    providerSubcode: 123,
+    providerCategory: 'INVALID_OR_EXPIRED_CODE',
+    providerIsTransient: false,
+  });
+  for (const field of ['providerPhase', 'providerHttpStatus', 'providerCode', 'providerSubcode', 'providerCategory', 'providerIsTransient']) {
+    check(() => assert.equal(unrelated[field], null));
+  }
 }
 
 function identityBoundaryChecks() {
@@ -263,6 +335,143 @@ async function providerChecks() {
     (error) => error.code === 'META_PAGE_DISCOVERY_LIMIT',
   ));
   check(() => assert.equal(retryThenCapped.accountCalls(), 5));
+
+  const successfulExchange = makeExchangeProvider([
+    { payload: { access_token: 'synthetic-short-token', expires_in: 3600 }, status: 200 },
+    { payload: { access_token: 'synthetic-long-token', expires_in: 7200, token_type: 'bearer' }, status: 200 },
+  ]);
+  const exchanged = await successfulExchange.provider.exchangeCode({ code: 'synthetic-oauth-code' });
+  check(() => assert.equal(exchanged.accessToken, 'synthetic-long-token'));
+  check(() => assert.equal(successfulExchange.calls.length, 2));
+  check(() => assert.ok(successfulExchange.calls.every((call) => call.url === 'https://graph.facebook.com/v25.0/oauth/access_token')));
+  check(() => assert.ok(successfulExchange.calls.every((call) => call.init.method === 'POST')));
+  check(() => assert.ok(successfulExchange.calls.every((call) => call.init.headers['Content-Type'] === 'application/x-www-form-urlencoded')));
+  const shortForm = new URLSearchParams(successfulExchange.calls[0].init.body);
+  const longForm = new URLSearchParams(successfulExchange.calls[1].init.body);
+  check(() => assert.deepEqual([...shortForm.keys()].sort(), ['client_id', 'client_secret', 'code', 'redirect_uri']));
+  check(() => assert.deepEqual([...longForm.keys()].sort(), ['client_id', 'client_secret', 'fb_exchange_token', 'grant_type']));
+  check(() => assert.equal(longForm.get('grant_type'), 'fb_exchange_token'));
+
+  const sensitiveFixtures = [
+    'fake-access-token-sensitive',
+    'fake-oauth-code-sensitive',
+    'fake-app-secret-sensitive',
+    '123456789012345-sensitive-client',
+    'https://sensitive.example.test/callback?code=secret',
+  ];
+  const maliciousMessage = `The authorization code is invalid or expired ${sensitiveFixtures.join(' ')}`;
+  const shortFailure = makeExchangeProvider([{
+    payload: { error: { code: 190, error_subcode: 463, is_transient: false, message: maliciousMessage } },
+    status: 400,
+  }]);
+  const shortError = await captureExchangeError(shortFailure.provider);
+  check(() => assert.equal(shortFailure.calls.length, 1));
+  assertSafeExchangeError(shortError, {
+    code: 'OAUTH_CODE_EXCHANGE_FAILED',
+    phase: 'short_token_exchange',
+    status: 400,
+    providerCode: 190,
+    providerSubcode: 463,
+    category: 'INVALID_OR_EXPIRED_CODE',
+    transient: false,
+    attempts: 1,
+  });
+  const shortTelemetry = safeTelemetry({
+    action: 'complete', success: false, code: shortError.code, stage: shortError.providerPhase,
+    attempts: shortError.providerAttempts, latencyMs: 625, ...shortError,
+  });
+  check(() => assert.equal(shortTelemetry.stage, 'short_token_exchange'));
+  check(() => assert.equal(shortTelemetry.providerCategory, 'INVALID_OR_EXPIRED_CODE'));
+  for (const sensitive of sensitiveFixtures) {
+    check(() => assert.equal(JSON.stringify(shortError).includes(sensitive), false));
+    check(() => assert.equal(JSON.stringify(shortTelemetry).includes(sensitive), false));
+  }
+
+  const longFailure = makeExchangeProvider([
+    { payload: { access_token: 'synthetic-short-token' }, status: 200 },
+    { payload: { error: { code: 101, error_subcode: 7, is_transient: false, message: 'Invalid client secret provided.' } }, status: 400 },
+  ]);
+  const longError = await captureExchangeError(longFailure.provider);
+  check(() => assert.equal(longFailure.calls.length, 2));
+  assertSafeExchangeError(longError, {
+    code: 'OAUTH_CODE_EXCHANGE_FAILED',
+    phase: 'long_token_exchange',
+    status: 400,
+    providerCode: 101,
+    providerSubcode: 7,
+    category: 'INVALID_CLIENT_CREDENTIALS',
+    transient: false,
+    attempts: 2,
+  });
+
+  const shortMissing = makeExchangeProvider([{ payload: { expires_in: 3600, token_type: 'bearer' }, status: 200 }]);
+  const shortMissingError = await captureExchangeError(shortMissing.provider);
+  assertSafeExchangeError(shortMissingError, {
+    code: 'OAUTH_CODE_EXCHANGE_FAILED', phase: 'short_token_exchange', status: 200,
+    providerCode: null, providerSubcode: null, category: 'SUCCESS_RESPONSE_MISSING_TOKEN', transient: false, attempts: 1,
+  });
+  check(() => assert.equal(shortMissing.calls.length, 1));
+
+  const longMissing = makeExchangeProvider([
+    { payload: { access_token: 'synthetic-short-token' }, status: 200 },
+    { payload: { access_token: 123, expires_in: 7200 }, status: 200 },
+  ]);
+  const longMissingError = await captureExchangeError(longMissing.provider);
+  assertSafeExchangeError(longMissingError, {
+    code: 'OAUTH_CODE_EXCHANGE_FAILED', phase: 'long_token_exchange', status: 200,
+    providerCode: null, providerSubcode: null, category: 'SUCCESS_RESPONSE_MISSING_TOKEN', transient: false, attempts: 2,
+  });
+  check(() => assert.equal(longMissing.calls.length, 2));
+
+  for (const scenario of [
+    { name: 'short network', steps: [{ throw: 'raw short network secret' }], signal: undefined, code: 'META_PROVIDER_UNAVAILABLE', phase: 'short_token_exchange', attempts: 1 },
+    { name: 'long network', steps: [{ payload: { access_token: 'synthetic-short-token' }, status: 200 }, { throw: 'raw long network secret' }], signal: undefined, code: 'META_PROVIDER_UNAVAILABLE', phase: 'long_token_exchange', attempts: 2 },
+    { name: 'short abort', steps: [{ throw: 'raw short abort secret' }], signal: { aborted: true }, code: 'META_PROVIDER_TIMEOUT', phase: 'short_token_exchange', attempts: 1 },
+    { name: 'long abort', steps: [{ payload: { access_token: 'synthetic-short-token' }, status: 200 }, { throw: 'raw long abort secret' }], signal: { aborted: true }, code: 'META_PROVIDER_TIMEOUT', phase: 'long_token_exchange', attempts: 2 },
+  ]) {
+    const fixture = makeExchangeProvider(scenario.steps);
+    const error = await captureExchangeError(fixture.provider, scenario.signal);
+    check(() => assert.equal(error.code, scenario.code, scenario.name));
+    check(() => assert.equal(error.providerPhase, scenario.phase, scenario.name));
+    check(() => assert.equal(error.providerHttpStatus, null, scenario.name));
+    check(() => assert.equal(error.providerCode, null, scenario.name));
+    check(() => assert.equal(error.providerSubcode, null, scenario.name));
+    check(() => assert.equal(error.providerCategory, 'PROVIDER_TEMPORARY_ERROR', scenario.name));
+    check(() => assert.equal(error.providerIsTransient, true, scenario.name));
+    check(() => assert.equal(error.providerAttempts, scenario.attempts, scenario.name));
+    check(() => assert.doesNotMatch(JSON.stringify(error), /raw .* secret/i, scenario.name));
+  }
+
+  for (const scenario of [
+    { status: 429, payload: { error: { code: 4, message: 'Unclassified throttling response.' } }, category: 'PROVIDER_RATE_LIMIT' },
+    { status: 503, payload: { error: { code: 2, message: 'Unclassified upstream response.' } }, category: 'PROVIDER_TEMPORARY_ERROR' },
+    { status: 400, payload: { error: { code: 2, is_transient: true, message: 'Unclassified provider response.' } }, category: 'PROVIDER_TEMPORARY_ERROR' },
+    { status: 400, payload: { error: { code: 999, message: 'Unclassified provider rejection.' } }, category: 'UNKNOWN_PROVIDER_REJECTION' },
+  ]) {
+    const fixture = makeExchangeProvider([{ payload: scenario.payload, status: scenario.status }]);
+    const error = await captureExchangeError(fixture.provider);
+    check(() => assert.equal(error.providerCategory, scenario.category));
+    check(() => assert.equal(error.providerHttpStatus, scenario.status));
+    check(() => assert.equal(error.providerAttempts, 1));
+  }
+
+  const malformedFailure = makeExchangeProvider([{ status: 400, malformed: true }]);
+  const malformedError = await captureExchangeError(malformedFailure.provider);
+  check(() => assert.equal(malformedError.providerCategory, 'UNKNOWN_PROVIDER_REJECTION'));
+  check(() => assert.equal(malformedError.providerCode, null));
+  check(() => assert.equal(malformedError.providerSubcode, null));
+
+  for (const [message, category] of [
+    ['The redirect_uri does not match the original redirect URI.', 'REDIRECT_URI_MISMATCH'],
+    ['This authorization code has already been used.', 'CODE_ALREADY_USED'],
+    ['Unsupported grant_type parameter.', 'UNSUPPORTED_GRANT_OR_PARAMETER'],
+    ['The application configuration is disabled.', 'APP_CONFIGURATION_ERROR'],
+    ['Provider rejected the request.', 'UNKNOWN_PROVIDER_REJECTION'],
+  ]) {
+    const diagnostic = normalizeMetaProviderDiagnostic({ error: { message } }, 400, 'short_token_exchange');
+    check(() => assert.equal(diagnostic.providerCategory, category));
+    check(() => assert.equal(diagnostic.providerAttempts, 1));
+  }
 }
 
 async function serviceChecks() {
@@ -411,11 +620,71 @@ async function serviceChecks() {
 
   await runtimeTtlChecks(serviceProvider);
   await lifecycleAuditRollbackChecks(serviceProvider);
+  await exchangeTelemetryChecks();
 
   await retentionChecks(serviceProvider);
   await healthChecks(serviceProvider);
   await authorizationChecks(serviceProvider);
   await identityLifecycleChecks(serviceProvider);
+}
+
+async function exchangeTelemetryChecks() {
+  for (const scenario of [
+    {
+      name: 'short exchange service failure',
+      steps: [{ payload: { error: { code: 190, error_subcode: 463, is_transient: false, message: 'Authorization code is expired.' } }, status: 400 }],
+      phase: 'short_token_exchange',
+      attempts: 1,
+      category: 'INVALID_OR_EXPIRED_CODE',
+    },
+    {
+      name: 'long exchange service failure',
+      steps: [
+        { payload: { access_token: 'synthetic-short-token' }, status: 200 },
+        { payload: { error: { code: 101, error_subcode: 7, is_transient: false, message: 'Invalid client secret provided.' } }, status: 400 },
+      ],
+      phase: 'long_token_exchange',
+      attempts: 2,
+      category: 'INVALID_CLIENT_CREDENTIALS',
+    },
+  ]) {
+    const memory = makeMemoryRepository();
+    const fixture = makeExchangeProvider(scenario.steps);
+    let discoveryCalls = 0;
+    const provider = {
+      ...fixture.provider,
+      exchangeCode: async (input) => {
+        check(() => assert.ok([...memory.states.values()].every((row) => row.consumedAt), scenario.name));
+        return fixture.provider.exchangeCode(input);
+      },
+      discover: async () => {
+        discoveryCalls += 1;
+        throw new Error('exchange failure reached discovery');
+      },
+    };
+    const deps = makeServiceDeps(memory, provider);
+    const started = await callService(deps, { action: 'start', companyId, returnPath: '/settings/social-connections' });
+    const state = new URL(started.authorizationUrl).searchParams.get('state');
+    await checkAsync(() => assert.rejects(
+      callService(deps, { action: 'complete', code: 'synthetic-oauth-code', state }),
+      (error) => error.code === 'OAUTH_CODE_EXCHANGE_FAILED',
+      scenario.name,
+    ));
+    const telemetry = memory.telemetry.at(-1);
+    check(() => assert.equal(telemetry.action, 'complete', scenario.name));
+    check(() => assert.equal(telemetry.success, false, scenario.name));
+    check(() => assert.equal(telemetry.code, 'OAUTH_CODE_EXCHANGE_FAILED', scenario.name));
+    check(() => assert.equal(telemetry.stage, scenario.phase, scenario.name));
+    check(() => assert.equal(telemetry.providerPhase, scenario.phase, scenario.name));
+    check(() => assert.equal(telemetry.providerCategory, scenario.category, scenario.name));
+    check(() => assert.equal(telemetry.attempts, scenario.attempts, scenario.name));
+    check(() => assert.equal(telemetry.providerIsTransient, false, scenario.name));
+    check(() => assert.equal(fixture.calls.length, scenario.attempts, scenario.name));
+    check(() => assert.equal(discoveryCalls, 0, scenario.name));
+    check(() => assert.equal(memory.states.size, 0, scenario.name));
+    check(() => assert.equal(memory.connections.size, 0, scenario.name));
+    check(() => assert.equal(memory.auditRecords.filter((record) => record.action === 'meta_oauth_completed').length, 0, scenario.name));
+  }
 }
 
 async function runtimeTtlChecks(provider) {
@@ -731,6 +1000,10 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(callbackPageSource, /onClick=\{\(\) => onReturn\(destination\)\}/));
   check(() => assert.equal((callbackPageSource.match(/completeMetaConnection\(callback\)/g) ?? []).length, 1));
   check(() => assert.match(contractsSource, /export const META_OAUTH_STATE_TTL_MS = 30 \* 60_000/));
+  check(() => assert.match(contractsSource, /export const META_TOKEN_EXCHANGE_PHASES = Object\.freeze\(\[\s*'short_token_exchange',\s*'long_token_exchange',\s*\]\)/));
+  check(() => assert.match(contractsSource, /export const META_PROVIDER_ERROR_CATEGORIES = Object\.freeze\(\[/));
+  check(() => assert.match(contractsSource, /providerHttpStatus: safeInteger/));
+  check(() => assert.match(contractsSource, /providerCategory: META_PROVIDER_ERROR_CATEGORIES\.includes/));
   check(() => assert.match(edgeSource, /stateTtlMs: META_OAUTH_STATE_TTL_MS/));
   check(() => assert.doesNotMatch(edgeSource, /stateTtlMs: 10 \* 60_000/));
   check(() => assert.match(serviceSource, /Math\.min\(META_OAUTH_STATE_TTL_MS, deps\.stateTtlMs\)/));
@@ -742,6 +1015,11 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(providerSource, /MAX_DISCOVERED_PAGES = 100/));
   check(() => assert.match(providerSource, /config_id: config\.loginConfigurationId/));
   check(() => assert.doesNotMatch(providerSource, /scope:/));
+  check(() => assert.match(providerSource, /signal, 'short_token_exchange'/));
+  check(() => assert.match(providerSource, /signal, 'long_token_exchange'/));
+  check(() => assert.match(serviceSource, /META_TOKEN_EXCHANGE_PHASES\.includes\(error\?\.providerPhase\)/));
+  check(() => assert.match(edgeSource, /\{ error: 'Meta connection request was rejected\.', code: normalized\.code \}/));
+  check(() => assert.doesNotMatch(edgeSource, /providerPhase|providerHttpStatus|providerSubcode|providerCategory|providerIsTransient/));
   check(() => assert.match(edgeSource, /replace_company_social_connection/));
   check(() => assert.match(edgeSource, /disconnect_company_social_connection/));
   check(() => assert.match(edgeSource, /create_company_social_oauth_state_with_audit/));
@@ -880,6 +1158,50 @@ function makeProvider(pageBatches, options = {}) {
     },
   });
   return { provider, calls, accountCalls: () => calls.filter((call) => new URL(call.url).pathname.endsWith('/me/accounts')).length };
+}
+
+function makeExchangeProvider(steps) {
+  const calls = [];
+  let nextStep = 0;
+  const provider = createMetaProvider({
+    config,
+    cryptoApi,
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init });
+      const step = steps[nextStep++];
+      if (!step) throw new Error('Unexpected synthetic token endpoint request');
+      if (step.throw) throw new Error(step.throw);
+      if (step.malformed) {
+        return { ok: false, status: step.status, json: async () => { throw new Error('synthetic malformed response'); } };
+      }
+      return response(step.payload, step.status);
+    },
+  });
+  return { provider, calls };
+}
+
+async function captureExchangeError(provider, signal = undefined) {
+  try {
+    await provider.exchangeCode({ code: 'synthetic-oauth-code', signal });
+  } catch (error) {
+    return error;
+  }
+  assert.fail('Expected token exchange to fail');
+}
+
+function assertSafeExchangeError(error, expected) {
+  check(() => assert.equal(error.code, expected.code));
+  check(() => assert.equal(error.providerPhase, expected.phase));
+  check(() => assert.equal(error.providerHttpStatus, expected.status));
+  check(() => assert.equal(error.providerCode, expected.providerCode));
+  check(() => assert.equal(error.providerSubcode, expected.providerSubcode));
+  check(() => assert.equal(error.providerCategory, expected.category));
+  check(() => assert.equal(error.providerIsTransient, expected.transient));
+  check(() => assert.equal(error.providerAttempts, expected.attempts));
+  check(() => assert.ok(Object.keys(error).every((key) => [
+    'name', 'code', 'status', 'providerPhase', 'providerHttpStatus', 'providerCode', 'providerSubcode',
+    'providerCategory', 'providerIsTransient', 'providerAttempts',
+  ].includes(key))));
 }
 
 function makeServiceDeps(repository, provider, overrides = {}) {
