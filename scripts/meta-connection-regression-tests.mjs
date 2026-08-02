@@ -13,7 +13,11 @@ import {
   META_PROVIDER,
   META_REQUESTED_SCOPES,
   MetaConnectionError,
+  assertMetaAccessRole,
   normalizeReturnPath,
+  requireActiveDomainSession,
+  requireBearerJwt,
+  requireVerifiedAuthUserId,
   runtimeConfigFromEnv,
 } from '../supabase/functions/_shared/meta-connection/contracts.js';
 import {
@@ -32,8 +36,12 @@ import { handleMetaConnection } from '../supabase/functions/_shared/meta-connect
 const cryptoApi = globalThis.crypto ?? webcrypto;
 const companyId = '00000000-0000-4000-8000-000000005501';
 const otherCompanyId = '00000000-0000-4000-8000-000000005504';
-const actorId = '00000000-0000-4000-8000-000000005502';
-const managerBId = '00000000-0000-4000-8000-000000005503';
+const platformDomainUserId = '00000000-0000-4000-8000-000000005502';
+const companyDomainUserId = '00000000-0000-4000-8000-000000005503';
+const companyFallbackDomainId = '00000000-0000-4000-8000-000000005505';
+const verifiedAuthUserId = '00000000-0000-4000-8000-000000005506';
+const otherAuthUserId = '00000000-0000-4000-8000-000000005507';
+const syntheticJwt = 'synthetic-header.synthetic-payload.synthetic-signature';
 const encryptionKey = Buffer.alloc(32, 17).toString('base64');
 const configValues = {
   META_APP_ID: '1234567890',
@@ -50,6 +58,7 @@ const check = (fn) => { fn(); checks += 1; };
 const checkAsync = async (fn) => { await fn(); checks += 1; };
 
 configurationChecks();
+identityBoundaryChecks();
 await encryptionChecks();
 await providerChecks();
 await serviceChecks();
@@ -81,6 +90,52 @@ function configurationChecks() {
   check(() => assert.equal(invalid({ META_OAUTH_REDIRECT_URI: 'https://preview.example.test/auth/meta/callback?next=https://attacker.test' }).configured, false));
 }
 
+function identityBoundaryChecks() {
+  const identities = [
+    platformDomainUserId,
+    companyDomainUserId,
+    companyFallbackDomainId,
+    verifiedAuthUserId,
+    otherAuthUserId,
+  ];
+  check(() => assert.equal(new Set(identities).size, identities.length));
+  check(() => assert.equal(requireBearerJwt(`Bearer ${syntheticJwt}`), syntheticJwt));
+  for (const authorization of ['', 'Bearer', 'bearer a.b.c', 'Bearer a.b', 'Bearer a.b.c trailing']) {
+    check(() => assert.throws(() => requireBearerJwt(authorization), (error) => error.code === 'AUTH_REQUIRED'));
+  }
+  check(() => assert.equal(requireVerifiedAuthUserId({ data: { user: { id: verifiedAuthUserId } }, error: null }), verifiedAuthUserId));
+  for (const result of [
+    { data: { user: { id: verifiedAuthUserId } }, error: new Error('synthetic verification failure') },
+    { data: { user: null }, error: null },
+    { data: { user: { id: 'not-a-uuid' } }, error: null },
+  ]) {
+    check(() => assert.throws(() => requireVerifiedAuthUserId(result), (error) => error.code === 'AUTH_REQUIRED'));
+  }
+  check(() => assert.equal(requireActiveDomainSession({ user_id: companyDomainUserId, status: 'active' }, null).user_id, companyDomainUserId));
+  check(() => assert.throws(
+    () => requireActiveDomainSession({ user_id: companyDomainUserId, status: 'disabled' }, null),
+    (error) => error.code === 'AUTH_REQUIRED',
+  ));
+
+  check(() => assert.doesNotThrow(() => assertMetaAccessRole({ kind: 'owner', role: 'owner' }, companyId)));
+  for (const role of ['admin', 'support', 'viewer']) {
+    check(() => assert.throws(() => assertMetaAccessRole({ kind: 'owner', role }, companyId), (error) => error.code === 'FORBIDDEN'));
+  }
+  for (const role of ['admin', 'manager']) {
+    check(() => assert.doesNotThrow(() => assertMetaAccessRole({ kind: 'company', role, company_id: companyId }, companyId)));
+  }
+  for (const role of ['dispatcher', 'technician', 'invited']) {
+    check(() => assert.throws(
+      () => assertMetaAccessRole({ kind: 'company', role, company_id: companyId }, companyId),
+      (error) => error.code === 'FORBIDDEN',
+    ));
+  }
+  check(() => assert.throws(
+    () => assertMetaAccessRole({ kind: 'company', role: 'admin', company_id: otherCompanyId }, companyId),
+    (error) => error.code === 'FORBIDDEN',
+  ));
+}
+
 async function encryptionChecks() {
   const stateA = generateOAuthState(32, cryptoApi);
   const stateB = generateOAuthState(32, cryptoApi);
@@ -93,7 +148,7 @@ async function encryptionChecks() {
 
   const pendingContext = pendingEnvelopeContext({
     companyId,
-    actorId,
+    actorId: verifiedAuthUserId,
     oauthStateId: '00000000-0000-4000-8000-000000005601',
     redirectUri: config.redirectUri,
   });
@@ -111,7 +166,7 @@ async function encryptionChecks() {
 
   const wrongPendingContexts = [
     pendingEnvelopeContext({ ...pendingContext, companyId: otherCompanyId }),
-    pendingEnvelopeContext({ ...pendingContext, actorId: managerBId }),
+    pendingEnvelopeContext({ ...pendingContext, actorId: otherAuthUserId }),
     pendingEnvelopeContext({ ...pendingContext, oauthStateId: '00000000-0000-4000-8000-000000005602' }),
     pendingEnvelopeContext({ ...pendingContext, redirectUri: 'https://other.example.test/auth/meta/callback' }),
   ];
@@ -241,26 +296,63 @@ async function serviceChecks() {
   check(() => assert.ok(generatedState));
   check(() => assert.equal(memory.states.size, 1));
   check(() => assert.ok([...memory.states.values()].every((row) => row.stateHash !== generatedState)));
+  const startedRow = [...memory.states.values()][0];
+  check(() => assert.equal(startedRow.actorAuthUserId, verifiedAuthUserId));
+  check(() => assert.equal(JSON.stringify(startedRow).includes(companyDomainUserId), false));
   check(() => assert.deepEqual(memory.auditRecords.at(-1), {
     action: 'meta_connection_started',
     resourceType: 'meta_social_authorization',
     resourceLabel: 'Meta authorization',
+    actorAuthUserId: verifiedAuthUserId,
   }));
   const completed = await callService(deps, { action: 'complete', code: 'provider-code', state: generatedState });
   check(() => assert.equal(completed.destination, 'social_connections'));
   check(() => assert.equal(completed.status, 'pending_asset_selection'));
   check(() => assert.equal(completed.assets.length, 2));
   check(() => assert.equal(JSON.stringify(completed).includes('user-secret'), false));
+  check(() => assert.equal(JSON.stringify(completed).includes(companyDomainUserId), false));
+  const pendingRow = memory.states.get(completed.oauthSessionId);
+  await checkAsync(async () => assert.equal(
+    (await decryptTokenBundle(
+      pendingRow.envelope,
+      encryptionKey,
+      pendingEnvelopeContext({
+        companyId,
+        actorId: verifiedAuthUserId,
+        oauthStateId: pendingRow.id,
+        redirectUri: pendingRow.redirectUri,
+      }),
+      cryptoApi,
+    )).schemaVersion,
+    'meta-pending-token-bundle-v1',
+  ));
+  await checkAsync(() => assert.rejects(
+    decryptTokenBundle(
+      pendingRow.envelope,
+      encryptionKey,
+      pendingEnvelopeContext({
+        companyId,
+        actorId: companyDomainUserId,
+        oauthStateId: pendingRow.id,
+        redirectUri: pendingRow.redirectUri,
+      }),
+      cryptoApi,
+    ),
+    (error) => error.code === 'CONNECTION_NEEDS_REAUTHORIZATION',
+  ));
   check(() => assert.deepEqual(memory.auditRecords.at(-1), {
     action: 'meta_oauth_completed',
     resourceType: 'meta_social_authorization',
     resourceLabel: 'Meta authorization',
+    actorAuthUserId: verifiedAuthUserId,
   }));
 
   const selected = await callService(deps, {
     action: 'select_asset', companyId, oauthSessionId: completed.oauthSessionId, pageId: '10001',
   });
   check(() => assert.equal(selected.connection.facebookPageId, '10001'));
+  check(() => assert.equal(memory.connections.get(selected.connection.id).connected_by, verifiedAuthUserId));
+  check(() => assert.equal(JSON.stringify(selected).includes(companyDomainUserId), false));
   check(() => assert.equal(activeConnections(memory, companyId).length, 1));
   check(() => assert.equal(companyStates(memory, companyId).length, 0));
 
@@ -279,8 +371,8 @@ async function serviceChecks() {
 
   const otherConnection = makeConnection('00000000-0000-4000-8000-000000005799', otherCompanyId, '90001');
   memory.connections.set(otherConnection.id, otherConnection);
-  addPending(memory, companyId, managerBId, '00000000-0000-4000-8000-000000005799');
-  addPending(memory, otherCompanyId, managerBId, '00000000-0000-4000-8000-000000005798');
+  addPending(memory, companyId, otherAuthUserId, '00000000-0000-4000-8000-000000005799');
+  addPending(memory, otherCompanyId, otherAuthUserId, '00000000-0000-4000-8000-000000005798');
   const providerCallsBeforeDisconnect = { ...providerCalls };
   const disconnected = await callService(deps, { action: 'disconnect', companyId, connectionId: replaced.connection.id });
   check(() => assert.equal(disconnected.status, 'revoked'));
@@ -319,6 +411,7 @@ async function serviceChecks() {
   await retentionChecks(serviceProvider);
   await healthChecks(serviceProvider);
   await authorizationChecks(serviceProvider);
+  await identityLifecycleChecks(serviceProvider);
 }
 
 async function lifecycleAuditRollbackChecks(provider) {
@@ -361,9 +454,9 @@ async function lifecycleAuditRollbackChecks(provider) {
 
 async function retentionChecks(provider) {
   const memory = makeMemoryRepository();
-  addPending(memory, companyId, actorId, '00000000-0000-4000-8000-000000005810', { expiresAt: '2026-07-31T21:59:00.000Z' });
-  addPending(memory, companyId, actorId, '00000000-0000-4000-8000-000000005811', { expiresAt: '2026-07-31T22:09:00.000Z' });
-  addPending(memory, otherCompanyId, actorId, '00000000-0000-4000-8000-000000005812', { expiresAt: '2026-07-31T21:59:00.000Z' });
+  addPending(memory, companyId, verifiedAuthUserId, '00000000-0000-4000-8000-000000005810', { expiresAt: '2026-07-31T21:59:00.000Z' });
+  addPending(memory, companyId, verifiedAuthUserId, '00000000-0000-4000-8000-000000005811', { expiresAt: '2026-07-31T22:09:00.000Z' });
+  addPending(memory, otherCompanyId, verifiedAuthUserId, '00000000-0000-4000-8000-000000005812', { expiresAt: '2026-07-31T21:59:00.000Z' });
   const deps = makeServiceDeps(memory, provider);
   await callService(deps, { action: 'status', companyId });
   check(() => assert.equal(memory.states.has('00000000-0000-4000-8000-000000005810'), false));
@@ -416,6 +509,7 @@ async function healthChecks(provider) {
     action: 'meta_health_checked',
     resourceType: 'meta_social_connection',
     resourceLabel: successConnection.facebook_page_name,
+    actorAuthUserId: verifiedAuthUserId,
   }));
 
   const dbFailureMemory = makeMemoryRepository();
@@ -441,6 +535,86 @@ async function authorizationChecks(provider) {
   const ownerDeps = makeServiceDeps(owner, provider, { sessionKind: 'owner', actorRole: 'owner' });
   const ownerStatus = await callService(ownerDeps, { action: 'status', companyId });
   check(() => assert.equal(ownerStatus.ok, true));
+
+  for (const role of ['admin', 'support', 'viewer']) {
+    const memory = makeMemoryRepository();
+    const deps = makeServiceDeps(memory, provider, { sessionKind: 'owner', actorRole: role });
+    await checkAsync(() => assert.rejects(callService(deps, { action: 'status', companyId }), (error) => error.code === 'FORBIDDEN'));
+    check(() => assert.equal(memory.states.size + memory.audits.length + memory.connections.size, 0));
+  }
+
+  for (const role of ['dispatcher', 'technician', 'invited']) {
+    const memory = makeMemoryRepository();
+    const deps = makeServiceDeps(memory, provider, { actorRole: role });
+    await checkAsync(() => assert.rejects(callService(deps, { action: 'status', companyId }), (error) => error.code === 'FORBIDDEN'));
+    check(() => assert.equal(memory.states.size + memory.audits.length + memory.connections.size, 0));
+  }
+
+  for (const actorRole of ['admin', 'manager']) {
+    const allowed = makeMemoryRepository();
+    const allowedDeps = makeServiceDeps(allowed, provider, { actorRole });
+    const status = await callService(allowedDeps, { action: 'status', companyId });
+    check(() => assert.equal(status.ok, true));
+  }
+
+  const crossCompany = makeMemoryRepository();
+  const crossCompanyDeps = makeServiceDeps(crossCompany, provider, { actorRole: 'admin', sessionCompanyId: otherCompanyId });
+  await checkAsync(() => assert.rejects(callService(crossCompanyDeps, { action: 'status', companyId }), (error) => error.code === 'FORBIDDEN'));
+
+  const inactive = makeMemoryRepository();
+  const inactiveDeps = makeServiceDeps(inactive, provider, { sessionStatus: 'disabled' });
+  await checkAsync(() => assert.rejects(callService(inactiveDeps, { action: 'status', companyId }), (error) => error.code === 'AUTH_REQUIRED'));
+
+  const malformedBearer = makeMemoryRepository();
+  await checkAsync(() => assert.rejects(
+    callServiceWithAuthorization(makeServiceDeps(malformedBearer, provider), { action: 'status', companyId }, 'Bearer malformed'),
+    (error) => error.code === 'AUTH_REQUIRED',
+  ));
+  const missingBearer = makeMemoryRepository();
+  await checkAsync(() => assert.rejects(
+    callServiceWithAuthorization(makeServiceDeps(missingBearer, provider), { action: 'status', companyId }, ''),
+    (error) => error.code === 'AUTH_REQUIRED',
+  ));
+
+  for (const getUserResult of [
+    { data: { user: { id: verifiedAuthUserId } }, error: new Error('synthetic verification failure') },
+    { data: { user: null }, error: null },
+  ]) {
+    const memory = makeMemoryRepository();
+    const deps = makeServiceDeps(memory, provider, { getUserResult });
+    await checkAsync(() => assert.rejects(callService(deps, { action: 'status', companyId }), (error) => error.code === 'AUTH_REQUIRED'));
+    check(() => assert.equal(memory.states.size + memory.audits.length + memory.connections.size, 0));
+  }
+
+  const callerIdentity = makeMemoryRepository();
+  const callerIdentityDeps = makeServiceDeps(callerIdentity, provider);
+  await checkAsync(() => assert.rejects(
+    callService(callerIdentityDeps, { action: 'start', companyId, returnPath: '/settings/social-connections', actorAuthUserId: otherAuthUserId }),
+    (error) => error.code === 'INVALID_REQUEST',
+  ));
+  check(() => assert.equal(callerIdentity.states.size + callerIdentity.audits.length + callerIdentity.connections.size, 0));
+}
+
+async function identityLifecycleChecks(provider) {
+  const scenarios = [
+    { sessionKind: 'owner', actorRole: 'owner', domainUserId: platformDomainUserId },
+    { sessionKind: 'company', actorRole: 'admin', domainUserId: companyDomainUserId },
+    { sessionKind: 'company', actorRole: 'manager', domainUserId: companyDomainUserId },
+    { sessionKind: 'company', actorRole: 'admin', domainUserId: companyFallbackDomainId },
+  ];
+  for (const scenario of scenarios) {
+    const memory = makeMemoryRepository();
+    const deps = makeServiceDeps(memory, provider, scenario);
+    const connection = await createConnectedFixture(deps);
+    check(() => assert.equal(connection.connected_by, verifiedAuthUserId));
+    check(() => assert.equal(JSON.stringify(connection).includes(scenario.domainUserId), false));
+    deps.provider.checkHealth = async () => ({ grantedScopes: [...META_REQUESTED_SCOPES], pageAvailable: true, attempts: 1 });
+    await callService(deps, { action: 'check_health', companyId, connectionId: connection.id });
+    await callService(deps, { action: 'disconnect', companyId, connectionId: connection.id });
+    check(() => assert.ok(memory.auditRecords.every((record) => record.actorAuthUserId === verifiedAuthUserId)));
+    check(() => assert.equal(JSON.stringify(memory.telemetry).includes(scenario.domainUserId), false));
+    check(() => assert.equal(JSON.stringify(memory.telemetry).includes(verifiedAuthUserId), false));
+  }
 }
 
 async function sourceAndSchemaChecks() {
@@ -479,6 +653,22 @@ async function sourceAndSchemaChecks() {
   check(() => assert.doesNotMatch(edgeSource, /from\(['"]audit_events['"]\)\.insert/));
   check(() => assert.doesNotMatch(serviceSource, /recordAudit\(/));
   check(() => assert.match(edgeSource, /if \(error\) throw new MetaConnectionError\('INTERNAL_ERROR'\)/));
+  check(() => assert.match(edgeSource, /const jwt = requireBearerJwt\(authorization\)/));
+  check(() => assert.match(edgeSource, /callerClient\.auth\.getUser\(jwt\)/));
+  check(() => assert.match(edgeSource, /catch \{\s*throw new MetaConnectionError\('AUTH_REQUIRED'\);\s*\}/));
+  check(() => assert.match(edgeSource, /domainUserId: String\(session\.user_id\)/));
+  check(() => assert.match(edgeSource, /authUserId,/));
+  check(() => assert.match(edgeSource, /actorAuthUserId: String\(session\.authUserId\)/));
+  check(() => assert.match(edgeSource, /actorDomainUserId: String\(session\.domainUserId\)/));
+  check(() => assert.doesNotMatch(edgeSource, /\bactorId:\s*String\(session\./));
+  check(() => assert.doesNotMatch(edgeSource, /input\.actorId\b/));
+  check(() => assert.doesNotMatch(serviceSource, /currentAccess\.actorId\b/));
+  check(() => assert.match(serviceSource, /actorId: currentAccess\.actorAuthUserId/));
+  check(() => assert.match(edgeSource, /p_actor_auth_user_id: input\.actorAuthUserId/g));
+  check(() => assert.match(edgeSource, /p_actor_id: input\.actorAuthUserId/g));
+  check(() => assert.doesNotMatch(serviceSource, /actorDomainUserId|domainUserId/));
+  check(() => assert.doesNotMatch(edgeSource, /atob\(|\.split\(['"]\.['"]\).*sub|decode.*jwt/i));
+  check(() => assert.doesNotMatch(edgeSource, /console\.[a-z]+\([^\n]*(authorization|jwt|authUserId|domainUserId)/i));
   check(() => assert.doesNotThrow(() => assertNoCanonicalPatchArtifacts(schemaSource)));
   const canonicalBlocks = extractMetaCanonicalBlocks(schemaSource);
   const migrationBlock = extractExactMarkedBlock(migrationSource, META_FOUNDATION_MARKERS);
@@ -579,17 +769,38 @@ function makeProvider(pageBatches, options = {}) {
 
 function makeServiceDeps(repository, provider, overrides = {}) {
   const sessionKind = overrides.sessionKind ?? 'company';
+  const actorRole = overrides.actorRole ?? (sessionKind === 'owner' ? 'owner' : 'manager');
+  const domainUserId = overrides.domainUserId ?? (sessionKind === 'owner' ? platformDomainUserId : companyDomainUserId);
+  const sessionCompanyId = overrides.sessionCompanyId ?? (sessionKind === 'company' ? companyId : null);
   return {
     auth: {
-      resolveSession: async () => ({ userId: actorId, kind: sessionKind }),
-      assertCompanyAccess: async (_session, requestedCompanyId) => {
-        if (overrides.accessAllowed === false || (sessionKind === 'company' && requestedCompanyId !== companyId)) {
-          throw new MetaConnectionError('FORBIDDEN');
-        }
+      resolveSession: async (authorization) => {
+        requireBearerJwt(authorization);
+        const authUserId = requireVerifiedAuthUserId(overrides.getUserResult ?? {
+          data: { user: { id: overrides.authUserId ?? verifiedAuthUserId } },
+          error: null,
+        });
+        const domainSession = requireActiveDomainSession({
+          user_id: domainUserId,
+          status: overrides.sessionStatus ?? 'active',
+        }, overrides.sessionError ?? null);
         return {
-          actorId,
+          domainUserId: domainSession.user_id,
+          authUserId,
+          kind: sessionKind,
+          role: actorRole,
+          company_id: sessionCompanyId,
+          name: 'Synthetic Manager',
+        };
+      },
+      assertCompanyAccess: async (session, requestedCompanyId) => {
+        if (overrides.accessAllowed === false) throw new MetaConnectionError('FORBIDDEN');
+        assertMetaAccessRole(session, requestedCompanyId);
+        return {
+          actorAuthUserId: session.authUserId,
+          actorDomainUserId: session.domainUserId,
           actorName: 'Synthetic Manager',
-          actorRole: overrides.actorRole ?? (sessionKind === 'owner' ? 'owner' : 'Manager'),
+          actorRole,
           companyId: requestedCompanyId,
         };
       },
@@ -633,7 +844,7 @@ function makeMemoryRepository() {
       const id = this.nextUuid();
       this.states.set(id, { id, ...input, consumedAt: null, envelope: null, assets: null });
       try {
-        appendAudit(this, 'meta_connection_started', 'meta_social_authorization', 'Meta authorization');
+        appendAudit(this, 'meta_connection_started', 'meta_social_authorization', 'Meta authorization', input.actorAuthUserId);
       } catch (error) {
         this.states.delete(id);
         throw error;
@@ -642,26 +853,26 @@ function makeMemoryRepository() {
     },
     async consumeOAuthState(input) {
       const row = [...this.states.values()].find((value) => value.stateHash === input.stateHash);
-      if (!row || row.consumedAt || row.companyId !== input.companyId || row.actorId !== input.actorId || row.provider !== input.provider || row.redirectUri !== input.redirectUri || Date.parse(row.expiresAt) <= Date.parse('2026-07-31T22:00:00.000Z')) return null;
+      if (!row || row.consumedAt || row.companyId !== input.companyId || row.actorAuthUserId !== input.actorAuthUserId || row.provider !== input.provider || row.redirectUri !== input.redirectUri || Date.parse(row.expiresAt) <= Date.parse('2026-07-31T22:00:00.000Z')) return null;
       row.consumedAt = '2026-07-31T22:00:00.000Z';
       return dbState(row);
     },
-    async classifyOAuthState(stateHash, requestedCompanyId, requestedActorId) {
+    async classifyOAuthState(stateHash, requestedCompanyId, requestedActorAuthUserId) {
       const row = [...this.states.values()].find((value) => value.stateHash === stateHash);
-      if (!row || row.companyId !== requestedCompanyId || row.actorId !== requestedActorId || row.provider !== META_PROVIDER) return 'OAUTH_STATE_INVALID';
+      if (!row || row.companyId !== requestedCompanyId || row.actorAuthUserId !== requestedActorAuthUserId || row.provider !== META_PROVIDER) return 'OAUTH_STATE_INVALID';
       if (row.consumedAt) return 'OAUTH_STATE_REPLAYED';
       if (Date.parse(row.expiresAt) <= Date.parse('2026-07-31T22:00:00.000Z')) return 'OAUTH_STATE_EXPIRED';
       return 'OAUTH_STATE_INVALID';
     },
     async saveOAuthDiscovery(input) {
       const row = this.states.get(input.oauthStateId);
-      if (!row || row.companyId !== input.companyId || row.actorId !== input.actorId || !row.consumedAt || row.envelope || row.assets) {
+      if (!row || row.companyId !== input.companyId || row.actorAuthUserId !== input.actorAuthUserId || !row.consumedAt || row.envelope || row.assets) {
         throw new MetaConnectionError('INTERNAL_ERROR');
       }
       row.envelope = input.envelope;
       row.assets = input.assets;
       try {
-        appendAudit(this, 'meta_oauth_completed', 'meta_social_authorization', 'Meta authorization');
+        appendAudit(this, 'meta_oauth_completed', 'meta_social_authorization', 'Meta authorization', input.actorAuthUserId);
       } catch (error) {
         row.envelope = null;
         row.assets = null;
@@ -681,14 +892,14 @@ function makeMemoryRepository() {
       }
       return deleted;
     },
-    async getStatus(requestedCompanyId, requestedActorId) {
+    async getStatus(requestedCompanyId, requestedActorAuthUserId) {
       const connection = activeConnections(this, requestedCompanyId).at(-1) ?? null;
-      const pending = [...this.states.values()].filter((row) => row.companyId === requestedCompanyId && row.actorId === requestedActorId && row.consumedAt && row.envelope && Date.parse(row.expiresAt) > Date.parse('2026-07-31T22:00:00.000Z')).at(-1);
+      const pending = [...this.states.values()].filter((row) => row.companyId === requestedCompanyId && row.actorAuthUserId === requestedActorAuthUserId && row.consumedAt && row.envelope && Date.parse(row.expiresAt) > Date.parse('2026-07-31T22:00:00.000Z')).at(-1);
       return { connection, pending: pending ? dbState(pending) : null };
     },
-    async getPendingOAuthSession(id, requestedCompanyId, requestedActorId) {
+    async getPendingOAuthSession(id, requestedCompanyId, requestedActorAuthUserId) {
       const row = this.states.get(id);
-      return row && row.companyId === requestedCompanyId && row.actorId === requestedActorId && row.consumedAt ? dbState(row) : null;
+      return row && row.companyId === requestedCompanyId && row.actorAuthUserId === requestedActorAuthUserId && row.consumedAt ? dbState(row) : null;
     },
     async replaceConnection(input) {
       for (const row of this.connections.values()) {
@@ -702,18 +913,18 @@ function makeMemoryRepository() {
         asset: input.asset,
         envelope: input.tokenEnvelope,
         scopes: input.grantedScopes,
-        actorId: input.actorId,
+        actorAuthUserId: input.actorAuthUserId,
         timestamp: input.timestamp,
         tokenExpiresAt: input.tokenExpiresAt,
       });
       this.connections.set(row.id, row);
       for (const [id, state] of [...this.states]) if (state.companyId === input.companyId && state.provider === input.provider) this.states.delete(id);
-      this.audits.push('meta_asset_selected');
+      appendAudit(this, 'meta_asset_selected', 'meta_social_connection', row.facebook_page_name, input.actorAuthUserId);
       return row;
     },
-    async deleteOAuthSession(id, requestedCompanyId, requestedActorId) {
+    async deleteOAuthSession(id, requestedCompanyId, requestedActorAuthUserId) {
       const row = this.states.get(id);
-      if (!row || row.companyId !== requestedCompanyId || row.actorId !== requestedActorId) throw new MetaConnectionError('INTERNAL_ERROR');
+      if (!row || row.companyId !== requestedCompanyId || row.actorAuthUserId !== requestedActorAuthUserId) throw new MetaConnectionError('INTERNAL_ERROR');
       this.states.delete(id);
     },
     async getConnection(id, requestedCompanyId) {
@@ -732,7 +943,7 @@ function makeMemoryRepository() {
         granted_scopes: input.grantedScopes,
       });
       try {
-        appendAudit(this, input.auditAction, 'meta_social_connection', previous.facebook_page_name);
+        appendAudit(this, input.auditAction, 'meta_social_connection', previous.facebook_page_name, input.actorAuthUserId);
       } catch (error) {
         this.connections.set(row.id, previous);
         throw error;
@@ -746,17 +957,17 @@ function makeMemoryRepository() {
       row.token_envelope = null;
       row.revoked_at = input.timestamp;
       for (const [id, state] of [...this.states]) if (state.companyId === input.companyId && state.provider === input.provider) this.states.delete(id);
-      this.audits.push('meta_connection_disconnected');
+      appendAudit(this, 'meta_connection_disconnected', 'meta_social_connection', row.facebook_page_name, input.actorAuthUserId);
       return row;
     },
   };
   return memory;
 }
 
-function appendAudit(memory, action, resourceType, resourceLabel) {
+function appendAudit(memory, action, resourceType, resourceLabel, actorAuthUserId) {
   if (memory.failAuditActions.has(action)) throw new MetaConnectionError('INTERNAL_ERROR');
   memory.audits.push(action);
-  memory.auditRecords.push({ action, resourceType, resourceLabel });
+  memory.auditRecords.push({ action, resourceType, resourceLabel, actorAuthUserId });
 }
 
 async function createConnectedFixture(deps) {
@@ -767,11 +978,11 @@ async function createConnectedFixture(deps) {
   return deps.repository.connections.get(selected.connection.id);
 }
 
-function addPending(memory, targetCompanyId, targetActorId, id, { expiresAt = '2026-07-31T22:09:00.000Z' } = {}) {
+function addPending(memory, targetCompanyId, targetActorAuthUserId, id, { expiresAt = '2026-07-31T22:09:00.000Z' } = {}) {
   memory.states.set(id, {
     id,
     companyId: targetCompanyId,
-    actorId: targetActorId,
+    actorAuthUserId: targetActorAuthUserId,
     provider: META_PROVIDER,
     stateHash: `hash-${id}`,
     redirectUri: config.redirectUri,
@@ -798,7 +1009,7 @@ function makeConnection(id, targetCompanyId, pageId, options = {}) {
     granted_scopes: options.scopes ?? [...META_REQUESTED_SCOPES],
     token_envelope: options.envelope ?? { synthetic: true },
     token_expires_at: options.tokenExpiresAt ?? '2026-08-30T00:00:00.000Z',
-    connected_by: options.actorId ?? actorId,
+    connected_by: options.actorAuthUserId ?? verifiedAuthUserId,
     connected_at: options.timestamp ?? '2026-07-31T22:00:00.000Z',
     last_checked_at: null,
     last_error_code: null,
@@ -810,7 +1021,7 @@ function dbState(row) {
   return {
     id: row.id,
     company_id: row.companyId,
-    actor_auth_user_id: row.actorId,
+    actor_auth_user_id: row.actorAuthUserId,
     provider: row.provider,
     redirect_uri: row.redirectUri,
     return_path: row.returnPath,
@@ -883,5 +1094,9 @@ function assertRequiredWithoutDefault(tableSource, columnName, contract) {
 }
 
 function callService(deps, body) {
-  return handleMetaConnection({ rawBody: JSON.stringify(body), authorization: 'Bearer synthetic-session', deps });
+  return callServiceWithAuthorization(deps, body, `Bearer ${syntheticJwt}`);
+}
+
+function callServiceWithAuthorization(deps, body, authorization) {
+  return handleMetaConnection({ rawBody: JSON.stringify(body), authorization, deps });
 }

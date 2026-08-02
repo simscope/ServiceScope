@@ -15,6 +15,9 @@ export const META_ACTIONS = Object.freeze([
 ]);
 export const META_RETURN_PATHS = Object.freeze(['/settings/social-connections']);
 
+const AUTH_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const BEARER_JWT_PATTERN = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/;
+
 const NORMALIZED_CODES = new Set([
   'OK',
   'AUTH_REQUIRED',
@@ -88,10 +91,43 @@ export function parseActionRequest(rawBody, maxBytes = 32_768) {
 
 export function requireUuid(value) {
   const clean = typeof value === 'string' ? value.trim() : '';
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(clean)) {
+  if (!AUTH_USER_ID_PATTERN.test(clean)) {
     throw new MetaConnectionError('INVALID_REQUEST');
   }
   return clean;
+}
+
+export function requireBearerJwt(authorization) {
+  const match = typeof authorization === 'string' ? authorization.match(BEARER_JWT_PATTERN) : null;
+  if (!match) throw new MetaConnectionError('AUTH_REQUIRED');
+  return match[1];
+}
+
+export function requireVerifiedAuthUserId(result) {
+  const userId = result?.error ? '' : result?.data?.user?.id;
+  if (typeof userId !== 'string' || !AUTH_USER_ID_PATTERN.test(userId)) {
+    throw new MetaConnectionError('AUTH_REQUIRED');
+  }
+  return userId;
+}
+
+export function requireActiveDomainSession(session, error) {
+  if (error || !session?.user_id || session.status !== 'active') {
+    throw new MetaConnectionError('AUTH_REQUIRED');
+  }
+  return session;
+}
+
+export function assertMetaAccessRole(session, requestedCompanyId) {
+  const kind = String(session?.kind ?? '');
+  const role = String(session?.role ?? '');
+  if (kind === 'owner' && role === 'owner') return;
+  if (
+    kind === 'company'
+    && String(session?.company_id ?? '') === requestedCompanyId
+    && (role === 'admin' || role === 'manager')
+  ) return;
+  throw new MetaConnectionError('FORBIDDEN');
 }
 
 export function optionalUuid(value) {
