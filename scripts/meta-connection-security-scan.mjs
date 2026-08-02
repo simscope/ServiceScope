@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { access, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   META_FOUNDATION_MARKERS,
   META_LIFECYCLE_MARKERS,
+  META_OAUTH_STATE_TTL_MARKERS,
   assertNoCanonicalPatchArtifacts,
   extractExactMarkedBlock,
   extractMetaCanonicalBlocks,
@@ -34,6 +36,7 @@ const serverSource = (await Promise.all(serverFiles.map(read))).join('\n');
 const featureSource = `${clientSource}\n${serverSource}`;
 const migration = await read('supabase/migrations/20260731220000_meta_social_connection_foundation.sql');
 const lifecycleAuditMigration = await read('supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql');
+const ttlCorrectiveMigration = await read('supabase/migrations/20260802203000_meta_social_oauth_state_ttl_30_minutes.sql');
 const canonicalSchema = await read('supabase/schema.sql');
 const sqlRunner = await read('scripts/meta-connection-sql-tests.mjs');
 const sqlSuite = await read('supabase/sql/meta-social-connection-security-checks.sql');
@@ -42,6 +45,7 @@ const appSource = await read('src/App.tsx');
 const onboardingSource = await read('src/components/portal/OnboardingPage.tsx');
 const restrictedSource = await read('src/features/company-voice/CompanyVoiceSettingsPage.tsx');
 const callbackSource = await read('src/features/meta-connection/callback.ts');
+const callbackPageSource = await read('src/features/meta-connection/MetaOAuthCallbackPage.tsx');
 const accessSource = await read('src/features/company-portal/companySettingsAccess.ts');
 const providerSource = await read('supabase/functions/_shared/meta-connection/provider.js');
 const serviceSource = await read('supabase/functions/_shared/meta-connection/service.js');
@@ -139,6 +143,8 @@ check(() => assert.match(migration, /revoke all on public\.company_social_connec
 check(() => assert.match(migration, /revoke all on public\.company_social_oauth_states from public, anon, authenticated/));
 check(() => assert.match(migration, /octet_length\(state_hash\) = 32/));
 check(() => assert.match(migration, /expires_at <= created_at \+ interval '10 minutes'/));
+check(() => assert.equal(gitBlobId(migration), 'e9006a37cab175f55b80d77e9c20d55b1e11836e'));
+check(() => assert.equal(gitBlobId(lifecycleAuditMigration), '14d7d7eb25dcb4d8df42c5333fe9eb2c86a5d981'));
 check(() => assert.match(migration, /consume_company_social_oauth_state/));
 check(() => assert.match(migration, /consumed_at is null/));
 check(() => assert.match(migration, /grant execute on function public\.consume_company_social_oauth_state[\s\S]*to service_role/));
@@ -160,6 +166,16 @@ check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.lifecycle),
   normalizeSqlForParity(extractExactMarkedBlock(lifecycleAuditMigration, META_LIFECYCLE_MARKERS)),
 ));
+check(() => assert.equal(
+  normalizeSqlForParity(canonicalBlocks.ttl),
+  normalizeSqlForParity(extractExactMarkedBlock(ttlCorrectiveMigration, META_OAUTH_STATE_TTL_MARKERS)),
+));
+check(() => assert.match(ttlCorrectiveMigration, /drop constraint company_social_oauth_states_expiry_check/));
+check(() => assert.match(ttlCorrectiveMigration, /add constraint company_social_oauth_states_expiry_check/));
+check(() => assert.doesNotMatch(ttlCorrectiveMigration, /if exists/i));
+check(() => assert.match(ttlCorrectiveMigration, /expires_at <= created_at \+ interval '30 minutes'/));
+check(() => assert.match(ttlCorrectiveMigration, /p_expires_at > p_timestamp \+ interval '30 minutes'/));
+check(() => assert.doesNotMatch(ttlCorrectiveMigration, /interval '10 minutes'/));
 
 const canonicalAuditTable = extractCreateTable(canonicalSchema, 'audit_events');
 const runnerAuditTable = extractCreateTable(sqlRunner, 'audit_events');
@@ -226,6 +242,16 @@ check(() => assert.match(lifecycleAuditMigration, /revoke all on function public
 check(() => assert.match(lifecycleAuditMigration, /grant execute on function public\.update_company_social_connection_health_with_audit[\s\S]*to service_role/));
 check(() => assert.doesNotMatch(lifecycleAuditMigration, /\bexecute\s+(format|p_)/i));
 check(() => assert.match(serviceSource, /returnDestinationForPath\(consumed\.return_path\)/));
+check(() => assert.match(serverSource, /export const META_OAUTH_STATE_TTL_MS = 30 \* 60_000/));
+check(() => assert.match(edgeSource, /stateTtlMs: META_OAUTH_STATE_TTL_MS/));
+check(() => assert.doesNotMatch(edgeSource, /stateTtlMs: 10 \* 60_000/));
+check(() => assert.match(serviceSource, /Math\.min\(META_OAUTH_STATE_TTL_MS, deps\.stateTtlMs\)/));
+check(() => assert.match(migration, /expires_at > clock_timestamp\(\)/));
+check(() => assert.doesNotMatch(serviceSource, /requestBody\.(?:stateTtlMs|ttl)|body\.(?:stateTtlMs|ttl)/));
+check(() => assert.match(callbackPageSource, /'expired'/));
+check(() => assert.match(callbackPageSource, /OAUTH_STATE_EXPIRED/));
+check(() => assert.match(callbackPageSource, /Authorization expired/));
+check(() => assert.doesNotMatch(callbackPageSource, /startMetaConnection/));
 check(() => assert.match(serviceSource, /cleanupOAuthStates/));
 check(() => assert.match(serviceSource, /REAUTHORIZATION_CODES/));
 check(() => assert.match(serviceSource, /TRANSIENT_PROVIDER_CODES/));
@@ -282,4 +308,9 @@ function assertRequiredWithoutDefault(tableSource, columnName, contract) {
   assert.ok(line, `${columnName} is missing`);
   assert.match(line, contract);
   assert.doesNotMatch(line, /\bdefault\b/i);
+}
+
+function gitBlobId(source) {
+  const body = Buffer.from(source.replace(/\r\n?/g, '\n'), 'utf8');
+  return createHash('sha1').update(`blob ${body.length}\0`).update(body).digest('hex');
 }

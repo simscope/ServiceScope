@@ -103,6 +103,39 @@ insert into meta_sql_assertions(label) values
   ('transactional RPC no dynamic SQL'),
   ('transactional RPC PUBLIC denied');
 
+do $$
+declare
+  constraint_count integer;
+  constraint_definition text;
+  function_definition text;
+begin
+  select count(*)::integer, max(pg_get_constraintdef(oid))
+  into constraint_count, constraint_definition
+  from pg_constraint
+  where conrelid = 'public.company_social_oauth_states'::regclass
+    and conname = 'company_social_oauth_states_expiry_check';
+
+  if constraint_count <> 1 then raise exception 'OAuth state expiry constraint count is %', constraint_count; end if;
+  if constraint_definition !~* 'expires_at > created_at' then raise exception 'OAuth state expiry lower bound is missing'; end if;
+  if constraint_definition !~* '(00:30:00|30 minutes)' then raise exception 'OAuth state 30-minute bound is missing'; end if;
+  if constraint_definition ~* '(00:10:00|10 minutes)' then raise exception 'OAuth state 10-minute bound remains effective'; end if;
+
+  select pg_get_functiondef(
+    'public.create_company_social_oauth_state_with_audit(uuid,uuid,text,text,text,bytea,text,text,timestamp with time zone,timestamp with time zone)'::regprocedure
+  ) into function_definition;
+  if function_definition !~* 'interval ''30 minutes''' then raise exception 'transactional start 30-minute bound is missing'; end if;
+  if function_definition ~* 'interval ''10 minutes''' then raise exception 'transactional start 10-minute bound remains effective'; end if;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('expiry constraint exact name and singleton'),
+  ('expiry constraint lower bound preserved'),
+  ('expiry constraint 30-minute maximum'),
+  ('expiry constraint 10-minute maximum removed'),
+  ('transactional start RPC 30-minute maximum'),
+  ('transactional start RPC 10-minute maximum removed');
+
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-000000005201', 'meta-admin-a@example.test'),
   ('00000000-0000-0000-0000-000000005202', 'meta-manager-a@example.test'),
@@ -151,11 +184,15 @@ begin
     '00000000-0000-0000-0000-000000005206',
     'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c1', 32), 'hex'),
     'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
-    now() + interval '9 minutes', now()
+    now() + interval '30 minutes', now()
   );
 
   if created_state.id is null or octet_length(created_state.state_hash) <> 32 then
     raise exception 'transactional start did not create a valid state';
+  end if;
+  if created_state.actor_auth_user_id <> '00000000-0000-0000-0000-000000005206'
+    or not exists (select 1 from auth.users where id = created_state.actor_auth_user_id) then
+    raise exception 'transactional start did not preserve verified Auth UID ownership';
   end if;
   if not exists (
     select 1 from public.audit_events
@@ -173,9 +210,39 @@ end;
 $$;
 
 insert into meta_sql_assertions(label) values
+  ('transactional start exact 30-minute bound accepted'),
   ('transactional start state success'),
   ('transactional start audit success'),
-  ('transactional start resource contract');
+  ('transactional start resource contract'),
+  ('transactional start verified Auth UID FK');
+
+do $$
+declare
+  near_bound public.company_social_oauth_states%rowtype;
+  legacy_bound public.company_social_oauth_states%rowtype;
+begin
+  select * into near_bound
+  from public.create_company_social_oauth_state_with_audit(
+    '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+    'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('cb', 32), 'hex'),
+    'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+    now() + interval '29 minutes 59.999 seconds', now()
+  );
+  select * into legacy_bound
+  from public.create_company_social_oauth_state_with_audit(
+    '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+    'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('cc', 32), 'hex'),
+    'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+    now() + interval '10 minutes', now()
+  );
+  if near_bound.id is null or legacy_bound.id is null then
+    raise exception 'accepted OAuth state bound was not created';
+  end if;
+end;
+$$;
+insert into meta_sql_assertions(label) values
+  ('transactional start below 30-minute bound accepted'),
+  ('existing 10-minute state remains valid');
 
 do $$
 begin
@@ -228,11 +295,44 @@ begin
       '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
       'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c6', 32), 'hex'),
       'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
-      now() + interval '11 minutes', now()
+      now() + interval '31 minutes', now()
     );
     raise exception 'transactional start accepted invalid expiry';
   exception when raise_exception then
     if sqlerrm = 'transactional start accepted invalid expiry' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c8', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now(), now()
+    );
+    raise exception 'transactional start accepted zero expiry';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted zero expiry' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c9', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now() - interval '1 millisecond', now()
+    );
+    raise exception 'transactional start accepted negative expiry';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted negative expiry' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('ca', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now() + interval '30 minutes 0.001 seconds', now()
+    );
+    raise exception 'transactional start accepted over-bound expiry';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted over-bound expiry' then raise; end if;
   end;
 end;
 $$;
@@ -242,7 +342,10 @@ insert into meta_sql_assertions(label) values
   ('transactional start hash validation'),
   ('transactional start redirect validation'),
   ('transactional start return-path validation'),
-  ('transactional start expiry validation');
+  ('transactional start 31-minute rejection'),
+  ('transactional start zero expiry rejection'),
+  ('transactional start negative expiry rejection'),
+  ('transactional start minimally over-bound rejection');
 
 create or replace function public.meta_sql_reject_start_audit()
 returns trigger
@@ -674,6 +777,13 @@ declare
   matched integer;
 begin
   select count(*) into matched from public.consume_company_social_oauth_state(
+    decode(repeat('a1', 32), 'hex'), '00000000-0000-0000-0000-000000005302',
+    '00000000-0000-0000-0000-000000005201', 'meta-facebook-login',
+    'https://preview.example.test/auth/meta/callback'
+  );
+  if matched <> 0 then raise exception 'wrong company consumed state'; end if;
+
+  select count(*) into matched from public.consume_company_social_oauth_state(
     decode(repeat('a1', 32), 'hex'), '00000000-0000-0000-0000-000000005301',
     '00000000-0000-0000-0000-000000005202', 'meta-facebook-login',
     'https://preview.example.test/auth/meta/callback'
@@ -718,6 +828,7 @@ end;
 $$;
 
 insert into meta_sql_assertions(label) values
+  ('state company binding'),
   ('state actor binding'),
   ('state redirect binding'),
   ('state provider binding'),

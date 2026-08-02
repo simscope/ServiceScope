@@ -1,5 +1,6 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
+  META_OAUTH_STATE_TTL_MS,
   META_PROVIDER,
   MetaConnectionError,
   assertMetaAccessRole,
@@ -58,7 +59,7 @@ function makeDependencies() {
     rateLimiter,
     cryptoApi: globalThis.crypto,
     maxBodyBytes: 32_768,
-    stateTtlMs: 10 * 60_000,
+    stateTtlMs: META_OAUTH_STATE_TTL_MS,
     retentionCleanupLimit: 50,
     newUuid: () => crypto.randomUUID(),
     timeoutController: createTimeoutController,

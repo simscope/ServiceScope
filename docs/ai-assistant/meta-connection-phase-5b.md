@@ -61,13 +61,15 @@ The application does not add a `scope` query parameter. Page/Instagram publishin
 
 1. An authenticated company settings manager or platform owner selects **Connect Meta**.
 2. `meta-social-connection:start` resolves `app_current_session`, validates `can_manage_company`, allowlists the return path, performs bounded expired-state cleanup, generates at least 32 random bytes, and stores only the SHA-256 state hash.
-3. The state row is actor-, company-, provider-, redirect-, and return-path-bound and expires within ten minutes.
+3. The state row is actor-, company-, provider-, redirect-, and return-path-bound and expires within 30 minutes. The TTL remains server-controlled, bounded, and one-time; 30 minutes accommodates manual login, 2FA, and consent flows that can exceed ten minutes.
 4. The browser navigates to `https://www.facebook.com/v25.0/dialog/oauth` with exactly `client_id`, `redirect_uri`, `config_id`, `response_type=code`, `override_default_response_type=true`, and `state`.
 5. Meta returns to `/auth/meta/callback` with `code`, `state`, or safe provider error fields.
 6. The callback captures those fields only in module memory and immediately calls `history.replaceState` to remove the query.
 7. An authenticated callback sends the response to `meta-social-connection:complete`; the browser never exchanges the code and never receives an authorization token.
 8. The server atomically consumes the state before code exchange. Wrong actor/company/provider/redirect, expiry, and replay fail closed. Every terminal completion path deletes the exact consumed state row.
 9. The server derives the typed return destination from the consumed row. The browser never supplies a destination, and the callback returns to the existing Social connections view without a dead hash route.
+
+An expired callback fails before code exchange or any Page/Instagram provider request. The callback shows a safe **Authorization expired** state and requires the user to return to Social connections and start a new authorization; it never retries or starts automatically. A later ordinary status/start cleanup deletes the expired state, while the lifecycle audit history is intentionally retained.
 
 No callback value is written to local storage, session storage, DOM text, logs, telemetry, or error details.
 
@@ -145,7 +147,7 @@ The App ID and Login Configuration ID must be numeric. The redirect URI must exa
 
 ## Schema validation
 
-The migration block and the canonical `supabase/schema.sql` block are byte-normalized and compared by regression tests. The SQL security suite applies the real migration to an isolated in-memory PGlite PostgreSQL instance, exercises ACLs, state consume/replay, retention, tenant isolation, malformed envelopes, same/different Page replacement, multi-actor cleanup, local disconnect, audits, and Admin/Manager capability, then rolls back and verifies zero artifacts. It never connects to the remote Supabase project.
+The foundation, lifecycle-audit, and OAuth-state-TTL corrective migration blocks are byte-normalized against their ordered canonical `supabase/schema.sql` blocks. The SQL security suite applies those migrations sequentially to an isolated in-memory PGlite PostgreSQL instance, verifies the final 30-minute table/RPC bounds, exercises ACLs, state consume/replay, retention, tenant isolation, malformed envelopes, same/different Page replacement, multi-actor cleanup, local disconnect, audits, and Admin/Manager capability, then rolls back and verifies zero artifacts. It never connects to the remote Supabase project.
 
 ## App Review and rollout gates
 
