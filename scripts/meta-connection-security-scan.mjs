@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import { access, readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  META_FOUNDATION_MARKERS,
+  META_LIFECYCLE_MARKERS,
+  assertNoCanonicalPatchArtifacts,
+  extractExactMarkedBlock,
+  extractMetaCanonicalBlocks,
+  normalizeSqlForParity,
+} from './meta-canonical-schema.mjs';
 
 const root = new URL('..', import.meta.url);
 const read = (path) => readFile(new URL(path, root), 'utf8');
@@ -127,10 +135,15 @@ check(() => assert.match(migration, /disconnect_company_social_connection/));
 check(() => assert.match(migration, /cleanup_company_social_oauth_states/));
 check(() => assert.match(migration, /token_envelope_shape_check/));
 check(() => assert.match(migration, /pending_envelope_shape_check/));
-check(() => assert.equal(normalizeSql(extractSchemaBlock(canonicalSchema)), normalizeSql(extractSchemaBlock(migration))));
+check(() => assert.doesNotThrow(() => assertNoCanonicalPatchArtifacts(canonicalSchema)));
+const canonicalBlocks = extractMetaCanonicalBlocks(canonicalSchema);
 check(() => assert.equal(
-  normalizeSql(extractLifecycleAuditSchemaBlock(canonicalSchema)),
-  normalizeSql(extractLifecycleAuditSchemaBlock(lifecycleAuditMigration)),
+  normalizeSqlForParity(canonicalBlocks.foundation),
+  normalizeSqlForParity(extractExactMarkedBlock(migration, META_FOUNDATION_MARKERS)),
+));
+check(() => assert.equal(
+  normalizeSqlForParity(canonicalBlocks.lifecycle),
+  normalizeSqlForParity(extractExactMarkedBlock(lifecycleAuditMigration, META_LIFECYCLE_MARKERS)),
 ));
 
 const canonicalAuditTable = extractCreateTable(canonicalSchema, 'audit_events');
@@ -228,18 +241,6 @@ try {
 
 console.log(`Meta connection security scan passed: ${checks}`);
 
-function extractSchemaBlock(source) {
-  const match = source.match(/-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_CONNECTION_SCHEMA_END/);
-  assert.ok(match, 'Meta schema parity block is missing');
-  return match[0];
-}
-
-function extractLifecycleAuditSchemaBlock(source) {
-  const match = source.match(/-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_END/);
-  assert.ok(match, 'Meta lifecycle audit schema parity block is missing');
-  return match[0];
-}
-
 function extractCreateTable(source, tableName) {
   const match = source.match(new RegExp(`create table (?:public\\.)?${tableName}\\s*\\([\\s\\S]*?\\n\\s*\\);`, 'i'));
   assert.ok(match, `${tableName} table definition is missing`);
@@ -266,8 +267,4 @@ function assertRequiredWithoutDefault(tableSource, columnName, contract) {
   assert.ok(line, `${columnName} is missing`);
   assert.match(line, contract);
   assert.doesNotMatch(line, /\bdefault\b/i);
-}
-
-function normalizeSql(value) {
-  return value.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 }

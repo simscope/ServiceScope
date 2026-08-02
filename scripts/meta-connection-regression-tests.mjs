@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { webcrypto } from 'node:crypto';
 import {
+  META_FOUNDATION_MARKERS,
+  META_LIFECYCLE_MARKERS,
+  assertNoCanonicalPatchArtifacts,
+  extractExactMarkedBlock,
+  extractMetaCanonicalBlocks,
+  normalizeSqlForParity,
+} from './meta-canonical-schema.mjs';
+import {
   META_PROVIDER,
   META_REQUESTED_SCOPES,
   MetaConnectionError,
@@ -471,12 +479,43 @@ async function sourceAndSchemaChecks() {
   check(() => assert.doesNotMatch(edgeSource, /from\(['"]audit_events['"]\)\.insert/));
   check(() => assert.doesNotMatch(serviceSource, /recordAudit\(/));
   check(() => assert.match(edgeSource, /if \(error\) throw new MetaConnectionError\('INTERNAL_ERROR'\)/));
-  const migrationBlock = extractSchemaBlock(migrationSource);
-  const canonicalBlock = extractSchemaBlock(schemaSource);
-  check(() => assert.equal(normalizeSql(canonicalBlock), normalizeSql(migrationBlock)));
-  const lifecycleAuditMigrationBlock = extractLifecycleAuditSchemaBlock(lifecycleAuditMigrationSource);
-  const canonicalLifecycleAuditBlock = extractLifecycleAuditSchemaBlock(schemaSource);
-  check(() => assert.equal(normalizeSql(canonicalLifecycleAuditBlock), normalizeSql(lifecycleAuditMigrationBlock)));
+  check(() => assert.doesNotThrow(() => assertNoCanonicalPatchArtifacts(schemaSource)));
+  const canonicalBlocks = extractMetaCanonicalBlocks(schemaSource);
+  const migrationBlock = extractExactMarkedBlock(migrationSource, META_FOUNDATION_MARKERS);
+  const lifecycleAuditMigrationBlock = extractExactMarkedBlock(lifecycleAuditMigrationSource, META_LIFECYCLE_MARKERS);
+  check(() => assert.equal(normalizeSqlForParity(canonicalBlocks.foundation), normalizeSqlForParity(migrationBlock)));
+  check(() => assert.equal(normalizeSqlForParity(canonicalBlocks.lifecycle), normalizeSqlForParity(lifecycleAuditMigrationBlock)));
+
+  const validCanonicalFixture = [
+    META_FOUNDATION_MARKERS.begin,
+    'select 1;',
+    META_FOUNDATION_MARKERS.end,
+    '',
+    '-- blocks remain adjacent except for comments and whitespace',
+    META_LIFECYCLE_MARKERS.begin,
+    'select 2;',
+    META_LIFECYCLE_MARKERS.end,
+  ].join('\n');
+  const invalidCanonicalFixtures = [
+    validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, `+${META_FOUNDATION_MARKERS.begin}`),
+    validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, `${META_FOUNDATION_MARKERS.begin}\n${META_FOUNDATION_MARKERS.begin}`),
+    validCanonicalFixture.replace(`${META_FOUNDATION_MARKERS.end}\n`, ''),
+    validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, ` ${META_FOUNDATION_MARKERS.begin}`),
+    validCanonicalFixture.replace(META_FOUNDATION_MARKERS.begin, `${META_FOUNDATION_MARKERS.begin} trailing`),
+    [
+      META_FOUNDATION_MARKERS.begin,
+      META_LIFECYCLE_MARKERS.begin,
+      META_FOUNDATION_MARKERS.end,
+      META_LIFECYCLE_MARKERS.end,
+    ].join('\n'),
+  ];
+  check(() => assert.doesNotThrow(() => extractMetaCanonicalBlocks(validCanonicalFixture)));
+  for (const fixture of invalidCanonicalFixtures) {
+    check(() => assert.throws(
+      () => extractMetaCanonicalBlocks(fixture),
+      (error) => error?.code === 'CANONICAL_SCHEMA_MARKER_INVALID',
+    ));
+  }
   for (const rpc of [
     'create_company_social_oauth_state_with_audit',
     'save_company_social_oauth_discovery_with_audit',
@@ -815,18 +854,6 @@ function mutate(value) {
   return first + value.slice(1);
 }
 
-function extractSchemaBlock(source) {
-  const match = source.match(/-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_CONNECTION_SCHEMA_END/);
-  assert.ok(match, 'Meta schema parity block is missing');
-  return match[0];
-}
-
-function extractLifecycleAuditSchemaBlock(source) {
-  const match = source.match(/-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_END/);
-  assert.ok(match, 'Meta lifecycle audit schema parity block is missing');
-  return match[0];
-}
-
 function extractCreateTable(source, tableName) {
   const match = source.match(new RegExp(`create table (?:public\\.)?${tableName}\\s*\\([\\s\\S]*?\\n\\s*\\);`, 'i'));
   assert.ok(match, `${tableName} table definition is missing`);
@@ -853,10 +880,6 @@ function assertRequiredWithoutDefault(tableSource, columnName, contract) {
   assert.ok(line, `${columnName} is missing`);
   assert.match(line, contract);
   assert.doesNotMatch(line, /\bdefault\b/i);
-}
-
-function normalizeSql(value) {
-  return value.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 }
 
 function callService(deps, body) {

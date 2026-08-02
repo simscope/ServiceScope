@@ -1438,7 +1438,7 @@ create policy "company members can delete email files" on storage.objects
 -- insert into public.platform_users (auth_user_id, name, email, role, status)
 -- values ('00000000-0000-0000-0000-000000000000', 'Your Name', 'you@example.com', 'owner', 'active');
 
-+-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN
+-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN
 create table public.company_social_connections (
   id uuid primary key default gen_random_uuid(),
   company_id uuid not null references public.companies(id) on delete cascade,

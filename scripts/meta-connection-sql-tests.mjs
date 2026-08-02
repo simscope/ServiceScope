@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { extractMetaCanonicalBlocks } from './meta-canonical-schema.mjs';
 
 const foundationMigration = await readFile(new URL('../supabase/migrations/20260731220000_meta_social_connection_foundation.sql', import.meta.url), 'utf8');
 const lifecycleAuditMigration = await readFile(new URL('../supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql', import.meta.url), 'utf8');
+const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
 const suite = await readFile(new URL('../supabase/sql/meta-social-connection-security-checks.sql', import.meta.url), 'utf8');
-const db = new PGlite();
+const canonicalBlocks = extractMetaCanonicalBlocks(canonicalSchema);
 
-await db.exec(`
+const prerequisiteSchema = `
   create role anon nologin;
   create role authenticated nologin;
   create role service_role nologin;
@@ -65,7 +67,10 @@ await db.exec(`
         and role in ('admin', 'manager')
     );
   $$;
-`);
+`;
+
+const db = new PGlite();
+await db.exec(prerequisiteSchema);
 
 await db.exec(foundationMigration);
 await db.exec(lifecycleAuditMigration);
@@ -95,4 +100,86 @@ const counts = artifacts.rows[0];
 assert.deepEqual(counts, { connections: 0, oauth_states: 0, audits: 0, companies: 0, auth_users: 0 });
 
 await db.close();
-console.log(`Meta SQL security checks passed: ${assertionCount}; rollback artifacts: 0`);
+
+const canonicalDb = new PGlite();
+await canonicalDb.exec(prerequisiteSchema);
+await canonicalDb.exec(canonicalBlocks.foundation);
+await canonicalDb.exec(canonicalBlocks.lifecycle);
+
+let canonicalAssertionCount = 0;
+const canonicalCheck = (fn) => {
+  fn();
+  canonicalAssertionCount += 1;
+};
+const canonicalRpcNames = [
+  'consume_company_social_oauth_state',
+  'cleanup_company_social_oauth_states',
+  'replace_company_social_connection',
+  'disconnect_company_social_connection',
+  'create_company_social_oauth_state_with_audit',
+  'save_company_social_oauth_discovery_with_audit',
+  'update_company_social_connection_health_with_audit',
+];
+const rpcNameList = canonicalRpcNames.map((name) => `'${name}'`).join(', ');
+
+const canonicalRpcs = await canonicalDb.query(`
+  select
+    count(distinct p.proname)::integer as distinct_total,
+    count(*) filter (where has_function_privilege('service_role', p.oid, 'EXECUTE'))::integer as service_allowed,
+    count(*) filter (
+      where not has_function_privilege('anon', p.oid, 'EXECUTE')
+        and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+    )::integer as browser_denied
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = 'public'
+    and p.proname in (${rpcNameList})
+`);
+canonicalCheck(() => assert.equal(canonicalRpcs.rows[0].distinct_total, canonicalRpcNames.length));
+canonicalCheck(() => assert.equal(canonicalRpcs.rows[0].service_allowed, canonicalRpcNames.length));
+canonicalCheck(() => assert.equal(canonicalRpcs.rows[0].browser_denied, canonicalRpcNames.length));
+
+const canonicalTables = await canonicalDb.query(`
+  select
+    count(*)::integer as total,
+    count(*) filter (where c.relrowsecurity)::integer as rls_enabled,
+    count(*) filter (
+      where has_table_privilege('service_role', c.oid, 'SELECT')
+        and has_table_privilege('service_role', c.oid, 'INSERT')
+        and has_table_privilege('service_role', c.oid, 'UPDATE')
+        and has_table_privilege('service_role', c.oid, 'DELETE')
+    )::integer as service_allowed,
+    count(*) filter (
+      where not has_table_privilege('anon', c.oid, 'SELECT')
+        and not has_table_privilege('authenticated', c.oid, 'SELECT')
+    )::integer as browser_denied
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relname in ('company_social_connections', 'company_social_oauth_states')
+`);
+canonicalCheck(() => assert.equal(canonicalTables.rows[0].total, 2));
+canonicalCheck(() => assert.equal(canonicalTables.rows[0].rls_enabled, 2));
+canonicalCheck(() => assert.equal(canonicalTables.rows[0].service_allowed, 2));
+canonicalCheck(() => assert.equal(canonicalTables.rows[0].browser_denied, 2));
+
+const canonicalArtifacts = await canonicalDb.query(`
+  select
+    (select count(*)::integer from public.company_social_connections) as connections,
+    (select count(*)::integer from public.company_social_oauth_states) as oauth_states,
+    (select count(*)::integer from public.audit_events) as audits,
+    (select count(*)::integer from public.companies) as companies,
+    (select count(*)::integer from auth.users) as auth_users
+`);
+canonicalCheck(() => assert.deepEqual(canonicalArtifacts.rows[0], {
+  connections: 0,
+  oauth_states: 0,
+  audits: 0,
+  companies: 0,
+  auth_users: 0,
+}));
+
+await canonicalDb.close();
+console.log(
+  `Meta SQL security checks passed: ${assertionCount + canonicalAssertionCount}; canonical foundation/lifecycle execution passed; rollback artifacts: 0`,
+);
