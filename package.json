@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/patch-payroll-payment-history.cjs && vite --host 127.0.0.1",
-    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-patch && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:content-engine && npm run test:company-voice && npm run test:media-analysis && npm run test:media-planning && npm run test:preview-qa && tsc -b && vite build && npm run test:preview-qa-bundle",
+    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-patch && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:content-engine && npm run test:company-voice && npm run test:meta-connection && npm run test:meta-connection-sql && npm run test:media-analysis && npm run test:media-planning && npm run test:preview-qa && tsc -b && vite build && npm run test:preview-qa-bundle && npm run test:meta-connection-scan",
     "test:social-post": "tsc scripts/social-post-regression-tests.ts --target ES2020 --module NodeNext --moduleResolution NodeNext --outDir .tmp/social-post-tests --skipLibCheck && node .tmp/social-post-tests/scripts/social-post-regression-tests.js",
     "test:warehouse-import": "node scripts/warehouse-import-regression-tests.mjs",
     "test:warehouse-categories": "node scripts/warehouse-categories-regression-tests.mjs",
@@ -16,6 +16,9 @@
     "test:content-engine": "node scripts/content-engine-regression-tests.mjs",
     "test:company-voice": "node scripts/company-voice-regression-tests.mjs",
     "test:company-voice-scan": "node scripts/company-voice-security-scan.mjs",
+    "test:meta-connection": "node scripts/meta-connection-regression-tests.mjs",
+    "test:meta-connection-sql": "node scripts/meta-connection-sql-tests.mjs",
+    "test:meta-connection-scan": "node scripts/meta-connection-security-scan.mjs",
     "test:media-analysis": "node scripts/media-analysis-regression-tests.mjs",
     "test:media-planning": "node scripts/media-planning-regression-tests.mjs",
     "test:payroll-patch": "node scripts/payroll-payment-history-patch-regression-tests.cjs",
@@ -39,6 +42,7 @@
     "react-leaflet": "^4.2.1"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@types/leaflet": "^1.9.12",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
