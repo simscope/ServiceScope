@@ -33,6 +33,7 @@ const configValues = {
   META_GRAPH_API_VERSION: 'v25.0',
   META_LOGIN_CONFIGURATION_ID: '9876543210',
   META_OAUTH_REDIRECT_URI: 'https://preview.example.test/auth/meta/callback',
+  META_REQUEST_TIMEOUT_MS: '8000',
   META_TOKEN_ENCRYPTION_KEY_V1: encryptionKey,
 };
 const config = runtimeConfigFromEnv((key) => configValues[key]);
@@ -199,6 +200,21 @@ async function providerChecks() {
 }
 
 async function serviceChecks() {
+  const configurationOnlyMemory = makeMemoryRepository();
+  const configurationOnlyProvider = {
+    buildAuthorizationUrl: () => { throw new Error('configuration-only status reached provider'); },
+    exchangeCode: async () => { throw new Error('configuration-only status reached provider'); },
+    discover: async () => { throw new Error('configuration-only status reached provider'); },
+    checkHealth: async () => { throw new Error('configuration-only status reached provider'); },
+  };
+  const configurationOnlyDeps = makeServiceDeps(configurationOnlyMemory, configurationOnlyProvider);
+  const configurationOnlyStatus = await callService(configurationOnlyDeps, { action: 'status', companyId });
+  check(() => assert.equal(configurationOnlyStatus.configured, true));
+  check(() => assert.equal(configurationOnlyMemory.providerCalls, 0));
+  check(() => assert.equal(configurationOnlyMemory.states.size, 0));
+  check(() => assert.equal(configurationOnlyMemory.audits.length, 0));
+  check(() => assert.equal(configurationOnlyMemory.connections.size, 0));
+
   const memory = makeMemoryRepository();
   const providerCalls = { exchange: 0, discover: 0, health: 0 };
   const serviceProvider = {
@@ -217,11 +233,21 @@ async function serviceChecks() {
   check(() => assert.ok(generatedState));
   check(() => assert.equal(memory.states.size, 1));
   check(() => assert.ok([...memory.states.values()].every((row) => row.stateHash !== generatedState)));
+  check(() => assert.deepEqual(memory.auditRecords.at(-1), {
+    action: 'meta_connection_started',
+    resourceType: 'meta_social_authorization',
+    resourceLabel: 'Meta authorization',
+  }));
   const completed = await callService(deps, { action: 'complete', code: 'provider-code', state: generatedState });
   check(() => assert.equal(completed.destination, 'social_connections'));
   check(() => assert.equal(completed.status, 'pending_asset_selection'));
   check(() => assert.equal(completed.assets.length, 2));
   check(() => assert.equal(JSON.stringify(completed).includes('user-secret'), false));
+  check(() => assert.deepEqual(memory.auditRecords.at(-1), {
+    action: 'meta_oauth_completed',
+    resourceType: 'meta_social_authorization',
+    resourceLabel: 'Meta authorization',
+  }));
 
   const selected = await callService(deps, {
     action: 'select_asset', companyId, oauthSessionId: completed.oauthSessionId, pageId: '10001',
@@ -280,9 +306,49 @@ async function serviceChecks() {
   check(() => assert.equal(invalidConfigMemory.states.size, 0));
   check(() => assert.deepEqual(providerCalls, callsBeforeInvalidStart));
 
+  await lifecycleAuditRollbackChecks(serviceProvider);
+
   await retentionChecks(serviceProvider);
   await healthChecks(serviceProvider);
   await authorizationChecks(serviceProvider);
+}
+
+async function lifecycleAuditRollbackChecks(provider) {
+  const startMemory = makeMemoryRepository();
+  startMemory.failAuditActions.add('meta_connection_started');
+  const startDeps = makeServiceDeps(startMemory, provider);
+  await checkAsync(() => assert.rejects(
+    callService(startDeps, { action: 'start', companyId, returnPath: '/settings/social-connections' }),
+    (error) => error.code === 'INTERNAL_ERROR',
+  ));
+  check(() => assert.equal(startMemory.states.size, 0));
+  check(() => assert.equal(startMemory.audits.length, 0));
+
+  const completeMemory = makeMemoryRepository();
+  const completeDeps = makeServiceDeps(completeMemory, provider);
+  const started = await callService(completeDeps, { action: 'start', companyId, returnPath: '/settings/social-connections' });
+  completeMemory.failAuditActions.add('meta_oauth_completed');
+  const rawState = new URL(started.authorizationUrl).searchParams.get('state');
+  await checkAsync(() => assert.rejects(
+    callService(completeDeps, { action: 'complete', code: 'provider-code', state: rawState }),
+    (error) => error.code === 'INTERNAL_ERROR',
+  ));
+  check(() => assert.equal(completeMemory.states.size, 0));
+  check(() => assert.equal(completeMemory.audits.includes('meta_oauth_completed'), false));
+  check(() => assert.ok([...completeMemory.states.values()].every((row) => row.envelope === null && row.assets === null)));
+
+  const healthMemory = makeMemoryRepository();
+  const healthDeps = makeServiceDeps(healthMemory, provider);
+  const connection = await createConnectedFixture(healthDeps);
+  const previousConnection = structuredClone(healthMemory.connections.get(connection.id));
+  const previousAuditCount = healthMemory.audits.length;
+  healthMemory.failAuditActions.add('meta_health_checked');
+  await checkAsync(() => assert.rejects(
+    callService(healthDeps, { action: 'check_health', companyId, connectionId: connection.id }),
+    (error) => error.code === 'INTERNAL_ERROR',
+  ));
+  check(() => assert.deepEqual(healthMemory.connections.get(connection.id), previousConnection));
+  check(() => assert.equal(healthMemory.audits.length, previousAuditCount));
 }
 
 async function retentionChecks(provider) {
@@ -338,6 +404,11 @@ async function healthChecks(provider) {
   const success = await callService(successDeps, { action: 'check_health', companyId, connectionId: successConnection.id });
   check(() => assert.equal(success.connection.status, 'connected'));
   check(() => assert.equal(successMemory.telemetry.at(-1).attempts, 2));
+  check(() => assert.deepEqual(successMemory.auditRecords.at(-1), {
+    action: 'meta_health_checked',
+    resourceType: 'meta_social_connection',
+    resourceLabel: successConnection.facebook_page_name,
+  }));
 
   const dbFailureMemory = makeMemoryRepository();
   const dbFailureDeps = makeServiceDeps(dbFailureMemory, provider);
@@ -366,7 +437,7 @@ async function authorizationChecks(provider) {
 
 async function sourceAndSchemaChecks() {
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-  const [accessSource, appSource, callbackSource, serviceSource, providerSource, edgeSource, migrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
+  const [accessSource, appSource, callbackSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
     read('src/features/company-portal/companySettingsAccess.ts'),
     read('src/App.tsx'),
     read('src/features/meta-connection/callback.ts'),
@@ -374,6 +445,7 @@ async function sourceAndSchemaChecks() {
     read('supabase/functions/_shared/meta-connection/provider.js'),
     read('supabase/functions/meta-social-connection/index.ts'),
     read('supabase/migrations/20260731220000_meta_social_connection_foundation.sql'),
+    read('supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql'),
     read('supabase/schema.sql'),
     read('scripts/meta-connection-sql-tests.mjs'),
   ]);
@@ -393,10 +465,29 @@ async function sourceAndSchemaChecks() {
   check(() => assert.doesNotMatch(providerSource, /scope:/));
   check(() => assert.match(edgeSource, /replace_company_social_connection/));
   check(() => assert.match(edgeSource, /disconnect_company_social_connection/));
+  check(() => assert.match(edgeSource, /create_company_social_oauth_state_with_audit/));
+  check(() => assert.match(edgeSource, /save_company_social_oauth_discovery_with_audit/));
+  check(() => assert.match(edgeSource, /update_company_social_connection_health_with_audit/));
+  check(() => assert.doesNotMatch(edgeSource, /from\(['"]audit_events['"]\)\.insert/));
+  check(() => assert.doesNotMatch(serviceSource, /recordAudit\(/));
   check(() => assert.match(edgeSource, /if \(error\) throw new MetaConnectionError\('INTERNAL_ERROR'\)/));
   const migrationBlock = extractSchemaBlock(migrationSource);
   const canonicalBlock = extractSchemaBlock(schemaSource);
   check(() => assert.equal(normalizeSql(canonicalBlock), normalizeSql(migrationBlock)));
+  const lifecycleAuditMigrationBlock = extractLifecycleAuditSchemaBlock(lifecycleAuditMigrationSource);
+  const canonicalLifecycleAuditBlock = extractLifecycleAuditSchemaBlock(schemaSource);
+  check(() => assert.equal(normalizeSql(canonicalLifecycleAuditBlock), normalizeSql(lifecycleAuditMigrationBlock)));
+  for (const rpc of [
+    'create_company_social_oauth_state_with_audit',
+    'save_company_social_oauth_discovery_with_audit',
+    'update_company_social_connection_health_with_audit',
+  ]) {
+    check(() => assert.match(lifecycleAuditMigrationBlock, new RegExp(`create or replace function public\\.${rpc}`)));
+  }
+  check(() => assert.match(lifecycleAuditMigrationBlock, /resource_label, details/));
+  check(() => assert.match(lifecycleAuditMigrationBlock, /'Meta authorization'/g));
+  check(() => assert.match(lifecycleAuditMigrationBlock, /locked_connection\.facebook_page_name/));
+  check(() => assert.doesNotMatch(lifecycleAuditMigrationBlock, /execute\s+(format|p_actor|p_resource)/i));
   check(() => assert.match(migrationBlock, /company_social_connections_active_provider_unique/));
   check(() => assert.match(migrationBlock, /where status <> 'revoked'/));
   check(() => assert.match(migrationBlock, /token_envelope_shape_check/));
@@ -485,10 +576,12 @@ function makeMemoryRepository() {
     states: new Map(),
     connections: new Map(),
     audits: [],
+    auditRecords: [],
     telemetry: [],
     providerCalls: 0,
     failCleanup: false,
     failHealthUpdate: false,
+    failAuditActions: new Set(),
     nextUuid() {
       sequence += 1;
       return `00000000-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
@@ -500,6 +593,12 @@ function makeMemoryRepository() {
     async createOAuthState(input) {
       const id = this.nextUuid();
       this.states.set(id, { id, ...input, consumedAt: null, envelope: null, assets: null });
+      try {
+        appendAudit(this, 'meta_connection_started', 'meta_social_authorization', 'Meta authorization');
+      } catch (error) {
+        this.states.delete(id);
+        throw error;
+      }
       return { id };
     },
     async consumeOAuthState(input) {
@@ -515,11 +614,21 @@ function makeMemoryRepository() {
       if (Date.parse(row.expiresAt) <= Date.parse('2026-07-31T22:00:00.000Z')) return 'OAUTH_STATE_EXPIRED';
       return 'OAUTH_STATE_INVALID';
     },
-    async saveOAuthDiscovery(id, requestedCompanyId, requestedActorId, envelope, assets) {
-      const row = this.states.get(id);
-      if (!row || row.companyId !== requestedCompanyId || row.actorId !== requestedActorId || !row.consumedAt) throw new MetaConnectionError('INTERNAL_ERROR');
-      row.envelope = envelope;
-      row.assets = assets;
+    async saveOAuthDiscovery(input) {
+      const row = this.states.get(input.oauthStateId);
+      if (!row || row.companyId !== input.companyId || row.actorId !== input.actorId || !row.consumedAt || row.envelope || row.assets) {
+        throw new MetaConnectionError('INTERNAL_ERROR');
+      }
+      row.envelope = input.envelope;
+      row.assets = input.assets;
+      try {
+        appendAudit(this, 'meta_oauth_completed', 'meta_social_authorization', 'Meta authorization');
+      } catch (error) {
+        row.envelope = null;
+        row.assets = null;
+        throw error;
+      }
+      return dbState(row);
     },
     async cleanupOAuthStates({ companyId: requestedCompanyId, provider, now, limit }) {
       if (this.failCleanup) throw new MetaConnectionError('INTERNAL_ERROR');
@@ -572,16 +681,23 @@ function makeMemoryRepository() {
       const row = this.connections.get(id);
       return row?.company_id === requestedCompanyId ? row : null;
     },
-    async updateHealth(id, input) {
+    async updateHealth(input) {
       if (this.failHealthUpdate) throw new MetaConnectionError('INTERNAL_ERROR');
-      const row = this.connections.get(id);
+      const row = this.connections.get(input.connectionId);
       if (!row) throw new MetaConnectionError('INTERNAL_ERROR');
+      const previous = structuredClone(row);
       Object.assign(row, {
         status: input.status,
         last_error_code: input.lastErrorCode,
         last_checked_at: input.checkedAt,
         granted_scopes: input.grantedScopes,
       });
+      try {
+        appendAudit(this, input.auditAction, 'meta_social_connection', previous.facebook_page_name);
+      } catch (error) {
+        this.connections.set(row.id, previous);
+        throw error;
+      }
       return row;
     },
     async disconnectConnection(input) {
@@ -594,9 +710,14 @@ function makeMemoryRepository() {
       this.audits.push('meta_connection_disconnected');
       return row;
     },
-    async recordAudit(input) { this.audits.push(input.event); },
   };
   return memory;
+}
+
+function appendAudit(memory, action, resourceType, resourceLabel) {
+  if (memory.failAuditActions.has(action)) throw new MetaConnectionError('INTERNAL_ERROR');
+  memory.audits.push(action);
+  memory.auditRecords.push({ action, resourceType, resourceLabel });
 }
 
 async function createConnectedFixture(deps) {
@@ -697,6 +818,12 @@ function mutate(value) {
 function extractSchemaBlock(source) {
   const match = source.match(/-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_CONNECTION_SCHEMA_END/);
   assert.ok(match, 'Meta schema parity block is missing');
+  return match[0];
+}
+
+function extractLifecycleAuditSchemaBlock(source) {
+  const match = source.match(/-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_END/);
+  assert.ok(match, 'Meta lifecycle audit schema parity block is missing');
   return match[0];
 }
 

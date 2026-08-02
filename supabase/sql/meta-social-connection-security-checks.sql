@@ -47,7 +47,10 @@ begin
     'public.consume_company_social_oauth_state(bytea,uuid,uuid,text,text)',
     'public.cleanup_company_social_oauth_states(uuid,text,timestamp with time zone,integer)',
     'public.replace_company_social_connection(uuid,uuid,text,text,text,text,text,text,text[],jsonb,timestamp with time zone,uuid,text,text,timestamp with time zone)',
-    'public.disconnect_company_social_connection(uuid,uuid,text,uuid,text,text,timestamp with time zone)'
+    'public.disconnect_company_social_connection(uuid,uuid,text,uuid,text,text,timestamp with time zone)',
+    'public.create_company_social_oauth_state_with_audit(uuid,uuid,text,text,text,bytea,text,text,timestamp with time zone,timestamp with time zone)',
+    'public.save_company_social_oauth_discovery_with_audit(uuid,uuid,uuid,text,text,text,jsonb,jsonb,timestamp with time zone)',
+    'public.update_company_social_connection_health_with_audit(uuid,uuid,uuid,text,text,text,text,text,text[],text,timestamp with time zone)'
   ] loop
     if has_function_privilege('anon', signature, 'EXECUTE')
       or has_function_privilege('authenticated', signature, 'EXECUTE') then
@@ -64,25 +67,62 @@ insert into meta_sql_assertions(label) values
   ('consume RPC ACL'),
   ('cleanup RPC ACL'),
   ('replace RPC ACL'),
-  ('disconnect RPC ACL');
+  ('disconnect RPC ACL'),
+  ('transactional start RPC ACL'),
+  ('transactional completion RPC ACL'),
+  ('transactional health RPC ACL');
+
+do $$
+declare
+  signature text;
+  proc_record record;
+begin
+  foreach signature in array array[
+    'public.create_company_social_oauth_state_with_audit(uuid,uuid,text,text,text,bytea,text,text,timestamp with time zone,timestamp with time zone)',
+    'public.save_company_social_oauth_discovery_with_audit(uuid,uuid,uuid,text,text,text,jsonb,jsonb,timestamp with time zone)',
+    'public.update_company_social_connection_health_with_audit(uuid,uuid,uuid,text,text,text,text,text,text[],text,timestamp with time zone)'
+  ] loop
+    select prosecdef, proconfig, prosrc, coalesce(array_to_string(proacl, ','), '') as acl
+    into proc_record
+    from pg_proc
+    where oid = signature::regprocedure;
+
+    if not proc_record.prosecdef then raise exception '% is not SECURITY DEFINER', signature; end if;
+    if proc_record.proconfig is null or not ('search_path=""' = any(proc_record.proconfig)) then
+      raise exception '% does not have an empty search_path', signature;
+    end if;
+    if proc_record.prosrc ~* '\mexecute\M' then raise exception '% contains dynamic SQL', signature; end if;
+    if proc_record.acl ~ '(^|,)=X/' then raise exception 'PUBLIC can execute %', signature; end if;
+  end loop;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('transactional RPC SECURITY DEFINER'),
+  ('transactional RPC empty search_path'),
+  ('transactional RPC no dynamic SQL'),
+  ('transactional RPC PUBLIC denied');
 
 insert into auth.users (id, email) values
   ('00000000-0000-0000-0000-000000005201', 'meta-admin-a@example.test'),
   ('00000000-0000-0000-0000-000000005202', 'meta-manager-a@example.test'),
   ('00000000-0000-0000-0000-000000005203', 'meta-tech-a@example.test'),
   ('00000000-0000-0000-0000-000000005204', 'meta-outsider@example.test'),
-  ('00000000-0000-0000-0000-000000005205', 'meta-admin-b@example.test');
+  ('00000000-0000-0000-0000-000000005205', 'meta-admin-b@example.test'),
+  ('00000000-0000-0000-0000-000000005206', 'meta-lifecycle@example.test');
 
 insert into public.companies (id, name, owner_name, owner_email) values
   ('00000000-0000-0000-0000-000000005301', 'Meta Tenant A', 'Meta Owner A', 'meta-owner-a@example.test'),
   ('00000000-0000-0000-0000-000000005302', 'Meta Tenant B', 'Meta Owner B', 'meta-owner-b@example.test'),
-  ('00000000-0000-0000-0000-000000005303', 'Meta Constraint Fixture', 'Meta Constraint Owner', 'meta-constraint@example.test');
+  ('00000000-0000-0000-0000-000000005303', 'Meta Constraint Fixture', 'Meta Constraint Owner', 'meta-constraint@example.test'),
+  ('00000000-0000-0000-0000-000000005304', 'Meta Lifecycle Fixture', 'Meta Lifecycle Owner', 'meta-lifecycle-owner@example.test');
 
 insert into public.company_users (company_id, auth_user_id, name, email, role, status) values
   ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005201', 'Meta Admin A', 'meta-admin-a@example.test', 'admin', 'active'),
   ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005202', 'Meta Manager A', 'meta-manager-a@example.test', 'manager', 'active'),
   ('00000000-0000-0000-0000-000000005301', '00000000-0000-0000-0000-000000005203', 'Meta Technician A', 'meta-tech-a@example.test', 'technician', 'active'),
-  ('00000000-0000-0000-0000-000000005302', '00000000-0000-0000-0000-000000005205', 'Meta Admin B', 'meta-admin-b@example.test', 'admin', 'active');
+  ('00000000-0000-0000-0000-000000005302', '00000000-0000-0000-0000-000000005205', 'Meta Admin B', 'meta-admin-b@example.test', 'admin', 'active'),
+  ('00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'meta-lifecycle@example.test', 'admin', 'active');
 
 insert into meta_sql_assertions(label) values ('isolated fixtures created');
 
@@ -100,6 +140,516 @@ begin
 end;
 $$;
 insert into meta_sql_assertions(label) values ('audit resource_label not-null contract enforced');
+
+do $$
+declare
+  created_state public.company_social_oauth_states%rowtype;
+begin
+  select * into created_state
+  from public.create_company_social_oauth_state_with_audit(
+    '00000000-0000-0000-0000-000000005304',
+    '00000000-0000-0000-0000-000000005206',
+    'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c1', 32), 'hex'),
+    'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+    now() + interval '9 minutes', now()
+  );
+
+  if created_state.id is null or octet_length(created_state.state_hash) <> 32 then
+    raise exception 'transactional start did not create a valid state';
+  end if;
+  if not exists (
+    select 1 from public.audit_events
+    where action = 'meta_connection_started'
+      and category = 'access'
+      and resource_type = 'meta_social_authorization'
+      and resource = 'Meta social connection'
+      and resource_id = created_state.id::text
+      and resource_label = 'Meta authorization'
+      and details = 'Meta connection lifecycle action completed.'
+  ) then
+    raise exception 'transactional start audit is incompatible';
+  end if;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('transactional start state success'),
+  ('transactional start audit success'),
+  ('transactional start resource contract');
+
+do $$
+begin
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'other-provider', decode(repeat('c2', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now() + interval '9 minutes', now()
+    );
+    raise exception 'transactional start accepted invalid provider';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted invalid provider' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c3', 31), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now() + interval '9 minutes', now()
+    );
+    raise exception 'transactional start accepted invalid hash';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted invalid hash' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c4', 32), 'hex'),
+      'https://preview.example.test/auth/meta/callback', '/settings/social-connections',
+      now() + interval '9 minutes', now()
+    );
+    raise exception 'transactional start accepted invalid redirect';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted invalid redirect' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c5', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/other',
+      now() + interval '9 minutes', now()
+    );
+    raise exception 'transactional start accepted invalid return path';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted invalid return path' then raise; end if;
+  end;
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c6', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now() + interval '11 minutes', now()
+    );
+    raise exception 'transactional start accepted invalid expiry';
+  exception when raise_exception then
+    if sqlerrm = 'transactional start accepted invalid expiry' then raise; end if;
+  end;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('transactional start provider validation'),
+  ('transactional start hash validation'),
+  ('transactional start redirect validation'),
+  ('transactional start return-path validation'),
+  ('transactional start expiry validation');
+
+create or replace function public.meta_sql_reject_start_audit()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.action = 'meta_connection_started' then raise exception 'synthetic start audit failure'; end if;
+  return new;
+end;
+$$;
+create trigger meta_sql_reject_start_audit
+before insert on public.audit_events
+for each row execute function public.meta_sql_reject_start_audit();
+
+do $$
+begin
+  begin
+    perform * from public.create_company_social_oauth_state_with_audit(
+      '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206',
+      'Meta Lifecycle Admin', 'admin', 'meta-facebook-login', decode(repeat('c7', 32), 'hex'),
+      'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections',
+      now() + interval '9 minutes', now()
+    );
+    raise exception 'start unexpectedly succeeded';
+  exception when raise_exception then
+    if sqlerrm = 'start unexpectedly succeeded' then raise; end if;
+    if sqlerrm <> 'synthetic start audit failure' then raise; end if;
+  end;
+  if exists (select 1 from public.company_social_oauth_states where state_hash = decode(repeat('c7', 32), 'hex')) then
+    raise exception 'start audit failure retained OAuth state';
+  end if;
+  if exists (select 1 from public.audit_events where action = 'meta_connection_started' and resource_id in (
+    select id::text from public.company_social_oauth_states where state_hash = decode(repeat('c7', 32), 'hex')
+  )) then
+    raise exception 'failed start retained audit row';
+  end if;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('start audit failure surfaced'),
+  ('start audit failure rolls back state'),
+  ('failed start rollback artifacts zero');
+
+drop trigger meta_sql_reject_start_audit on public.audit_events;
+drop function public.meta_sql_reject_start_audit();
+
+insert into public.company_social_oauth_states (
+  id, company_id, actor_auth_user_id, provider, state_hash, redirect_uri, return_path,
+  expires_at, consumed_at, created_at, updated_at
+) values
+  ('00000000-0000-0000-0000-000000005461', '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206', 'meta-facebook-login', decode(repeat('d1', 32), 'hex'), 'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections', now() + interval '9 minutes', now(), now(), now()),
+  ('00000000-0000-0000-0000-000000005462', '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206', 'meta-facebook-login', decode(repeat('d2', 32), 'hex'), 'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections', now() + interval '9 minutes', now(), now(), now()),
+  ('00000000-0000-0000-0000-000000005463', '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206', 'meta-facebook-login', decode(repeat('d3', 32), 'hex'), 'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections', now() - interval '1 minute', now() - interval '2 minutes', now() - interval '10 minutes', now() - interval '2 minutes'),
+  ('00000000-0000-0000-0000-000000005464', '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206', 'meta-facebook-login', decode(repeat('d4', 32), 'hex'), 'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections', now() + interval '9 minutes', now(), now(), now()),
+  ('00000000-0000-0000-0000-000000005465', '00000000-0000-0000-0000-000000005304', '00000000-0000-0000-0000-000000005206', 'meta-facebook-login', decode(repeat('d5', 32), 'hex'), 'https://servicescope-inky.vercel.app/auth/meta/callback', '/settings/social-connections', now() + interval '9 minutes', null, now(), now());
+
+select * from public.save_company_social_oauth_discovery_with_audit(
+  '00000000-0000-0000-0000-000000005461', '00000000-0000-0000-0000-000000005304',
+  '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+  '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"EEEEEEEEEEEEEEEE","ciphertext":"EEEEEEEEEEEEEEEEEEEEEEE"}'::jsonb,
+  '[{"pageId":"40001","pageName":"Lifecycle Page"}]'::jsonb, now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from public.company_social_oauth_states
+    where id = '00000000-0000-0000-0000-000000005461'
+      and encrypted_pending_token_bundle is not null
+      and jsonb_array_length(discovered_assets) = 1
+  ) then raise exception 'completion did not save exact consumed state'; end if;
+  if not exists (
+    select 1 from public.audit_events
+    where action = 'meta_oauth_completed'
+      and resource_type = 'meta_social_authorization'
+      and resource_id = '00000000-0000-0000-0000-000000005461'
+      and resource_label = 'Meta authorization'
+  ) then raise exception 'completion audit missing'; end if;
+
+  begin
+    perform * from public.save_company_social_oauth_discovery_with_audit(
+      '00000000-0000-0000-0000-000000005462', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005205', 'Meta Admin B', 'admin', 'meta-facebook-login',
+      '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"FFFFFFFFFFFFFFFF","ciphertext":"FFFFFFFFFFFFFFFFFFFFFFF"}'::jsonb,
+      '[]'::jsonb, now()
+    );
+    raise exception 'completion accepted wrong actor';
+  exception when raise_exception then
+    if sqlerrm = 'completion accepted wrong actor' then raise; end if;
+  end;
+
+  begin
+    perform * from public.save_company_social_oauth_discovery_with_audit(
+      '00000000-0000-0000-0000-000000005462', '00000000-0000-0000-0000-000000005301',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"FFFFFFFFFFFFFFFF","ciphertext":"FFFFFFFFFFFFFFFFFFFFFFF"}'::jsonb,
+      '[]'::jsonb, now()
+    );
+    raise exception 'completion accepted wrong company';
+  exception when raise_exception then
+    if sqlerrm = 'completion accepted wrong company' then raise; end if;
+  end;
+
+  begin
+    perform * from public.save_company_social_oauth_discovery_with_audit(
+      '00000000-0000-0000-0000-000000005463', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"GGGGGGGGGGGGGGGG","ciphertext":"GGGGGGGGGGGGGGGGGGGGGGG"}'::jsonb,
+      '[]'::jsonb, now()
+    );
+    raise exception 'completion accepted expired state';
+  exception when raise_exception then
+    if sqlerrm = 'completion accepted expired state' then raise; end if;
+  end;
+
+  begin
+    perform * from public.save_company_social_oauth_discovery_with_audit(
+      '00000000-0000-0000-0000-000000005465', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"JJJJJJJJJJJJJJJJ","ciphertext":"JJJJJJJJJJJJJJJJJJJJJJJ"}'::jsonb,
+      '[]'::jsonb, now()
+    );
+    raise exception 'completion accepted unconsumed state';
+  exception when raise_exception then
+    if sqlerrm = 'completion accepted unconsumed state' then raise; end if;
+  end;
+
+  begin
+    perform * from public.save_company_social_oauth_discovery_with_audit(
+      '00000000-0000-0000-0000-000000005461', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"KKKKKKKKKKKKKKKK","ciphertext":"KKKKKKKKKKKKKKKKKKKKKKK"}'::jsonb,
+      '[]'::jsonb, now()
+    );
+    raise exception 'completion replaced existing pending material';
+  exception when raise_exception then
+    if sqlerrm = 'completion replaced existing pending material' then raise; end if;
+  end;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('transactional completion success'),
+  ('transactional completion audit success'),
+  ('transactional completion exact-state binding'),
+  ('transactional completion actor binding'),
+  ('transactional completion company binding'),
+  ('transactional completion expiry validation'),
+  ('transactional completion consumed-state validation'),
+  ('transactional completion pending-material replacement denied');
+
+create or replace function public.meta_sql_reject_completion_audit()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.action = 'meta_oauth_completed' then raise exception 'synthetic completion audit failure'; end if;
+  return new;
+end;
+$$;
+create trigger meta_sql_reject_completion_audit
+before insert on public.audit_events
+for each row execute function public.meta_sql_reject_completion_audit();
+
+do $$
+begin
+  begin
+    perform * from public.save_company_social_oauth_discovery_with_audit(
+      '00000000-0000-0000-0000-000000005464', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-pending","iv":"HHHHHHHHHHHHHHHH","ciphertext":"HHHHHHHHHHHHHHHHHHHHHHH"}'::jsonb,
+      '[{"pageId":"40002"}]'::jsonb, now()
+    );
+    raise exception 'completion unexpectedly succeeded';
+  exception when raise_exception then
+    if sqlerrm = 'completion unexpectedly succeeded' then raise; end if;
+    if sqlerrm <> 'synthetic completion audit failure' then raise; end if;
+  end;
+  if exists (
+    select 1 from public.company_social_oauth_states
+    where id = '00000000-0000-0000-0000-000000005464'
+      and (encrypted_pending_token_bundle is not null or discovered_assets is not null)
+  ) then raise exception 'completion audit failure retained pending material'; end if;
+  if exists (select 1 from public.audit_events where action = 'meta_oauth_completed' and resource_id = '00000000-0000-0000-0000-000000005464') then
+    raise exception 'failed completion retained audit row';
+  end if;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('completion audit failure surfaced'),
+  ('completion audit failure rolls back envelope'),
+  ('completion audit failure rolls back assets'),
+  ('failed completion leaves no pending secret material'),
+  ('failed completion leaves no audit row');
+
+drop trigger meta_sql_reject_completion_audit on public.audit_events;
+drop function public.meta_sql_reject_completion_audit();
+
+insert into public.company_social_connections (
+  id, company_id, provider, status, facebook_page_id, facebook_page_name,
+  granted_scopes, token_envelope, connected_by, connected_at, created_at, updated_at
+) values
+  (
+    '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+    'meta-facebook-login', 'connected', '40001', 'Lifecycle Page',
+    array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+    '{"schemaVersion":"encrypted-social-token-v1","algorithm":"AES-GCM","keyVersion":1,"purpose":"meta-connection","iv":"IIIIIIIIIIIIIIII","ciphertext":"IIIIIIIIIIIIIIIIIIIIIII"}'::jsonb,
+    '00000000-0000-0000-0000-000000005206', now(), now(), now()
+  ),
+  (
+    '00000000-0000-0000-0000-000000005562', '00000000-0000-0000-0000-000000005304',
+    'meta-facebook-login', 'revoked', '40002', 'Revoked Lifecycle Page',
+    array['pages_show_list', 'pages_read_engagement', 'instagram_basic'], null,
+    '00000000-0000-0000-0000-000000005206', now(), now(), now()
+  );
+
+select * from public.update_company_social_connection_health_with_audit(
+  '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+  '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+  'connected', null, array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+  'meta_health_checked', now()
+);
+
+select * from public.update_company_social_connection_health_with_audit(
+  '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+  '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+  'needs_reauthorization', 'META_TOKEN_INVALID', array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+  'meta_connection_needs_reauthorization', now()
+);
+
+select * from public.update_company_social_connection_health_with_audit(
+  '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+  '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+  'needs_reauthorization', 'META_RATE_LIMITED', array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+  'meta_health_checked', now()
+);
+
+do $$
+begin
+  if not exists (
+    select 1 from public.company_social_connections
+    where id = '00000000-0000-0000-0000-000000005561'
+      and status = 'needs_reauthorization'
+      and last_error_code = 'META_RATE_LIMITED'
+      and last_checked_at is not null
+  ) then raise exception 'health transitions were not persisted'; end if;
+  if not exists (
+    select 1 from public.audit_events
+    where resource_id = '00000000-0000-0000-0000-000000005561'
+      and action = 'meta_health_checked'
+      and resource_type = 'meta_social_connection'
+      and resource_label = 'Lifecycle Page'
+  ) then raise exception 'health audit did not use locked Page label'; end if;
+  if not exists (
+    select 1 from public.audit_events
+    where resource_id = '00000000-0000-0000-0000-000000005561'
+      and action = 'meta_connection_needs_reauthorization'
+  ) then raise exception 'reauthorization audit missing'; end if;
+
+  begin
+    perform * from public.update_company_social_connection_health_with_audit(
+      '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      'connected', null, array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+      'meta_asset_selected', now()
+    );
+    raise exception 'health accepted invalid audit action';
+  exception when raise_exception then
+    if sqlerrm = 'health accepted invalid audit action' then raise; end if;
+  end;
+
+  begin
+    perform * from public.update_company_social_connection_health_with_audit(
+      '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      'connected', null, array['pages_show_list', 'pages_read_engagement'],
+      'meta_health_checked', now()
+    );
+    raise exception 'health accepted incomplete scopes';
+  exception when raise_exception then
+    if sqlerrm = 'health accepted incomplete scopes' then raise; end if;
+  end;
+
+  begin
+    perform * from public.update_company_social_connection_health_with_audit(
+      '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      'connected', 'bad-code', array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+      'meta_health_checked', now()
+    );
+    raise exception 'health accepted non-normalized error code';
+  exception when raise_exception then
+    if sqlerrm = 'health accepted non-normalized error code' then raise; end if;
+  end;
+
+  begin
+    perform * from public.update_company_social_connection_health_with_audit(
+      '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      'error', 'META_PROVIDER_UNAVAILABLE', array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+      'meta_health_checked', now()
+    );
+    raise exception 'health accepted invalid status transition';
+  exception when raise_exception then
+    if sqlerrm = 'health accepted invalid status transition' then raise; end if;
+  end;
+
+  begin
+    perform * from public.update_company_social_connection_health_with_audit(
+      '00000000-0000-0000-0000-000000005562', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      'connected', null, array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+      'meta_health_checked', now()
+    );
+    raise exception 'health accepted revoked connection';
+  exception when raise_exception then
+    if sqlerrm = 'health accepted revoked connection' then raise; end if;
+  end;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('transactional health success'),
+  ('transactional needs-reauthorization transition'),
+  ('transient health status preservation'),
+  ('health Page label server-derived'),
+  ('health invalid action rejected'),
+  ('health granted scopes validated'),
+  ('health normalized error code validated'),
+  ('health status transition validated'),
+  ('health revoked connection rejected');
+
+create or replace function public.meta_sql_reject_health_audit()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.action = 'meta_health_checked' then raise exception 'synthetic health audit failure'; end if;
+  return new;
+end;
+$$;
+create trigger meta_sql_reject_health_audit
+before insert on public.audit_events
+for each row execute function public.meta_sql_reject_health_audit();
+
+do $$
+declare
+  before_row public.company_social_connections%rowtype;
+  audit_count_before integer;
+begin
+  select * into before_row from public.company_social_connections
+  where id = '00000000-0000-0000-0000-000000005561';
+  select count(*) into audit_count_before from public.audit_events
+  where resource_id = '00000000-0000-0000-0000-000000005561';
+
+  begin
+    perform * from public.update_company_social_connection_health_with_audit(
+      '00000000-0000-0000-0000-000000005561', '00000000-0000-0000-0000-000000005304',
+      '00000000-0000-0000-0000-000000005206', 'Meta Lifecycle Admin', 'admin', 'meta-facebook-login',
+      'connected', null, array['pages_show_list', 'pages_read_engagement', 'instagram_basic'],
+      'meta_health_checked', now() + interval '1 minute'
+    );
+    raise exception 'health unexpectedly succeeded';
+  exception when raise_exception then
+    if sqlerrm = 'health unexpectedly succeeded' then raise; end if;
+    if sqlerrm <> 'synthetic health audit failure' then raise; end if;
+  end;
+
+  if not exists (
+    select 1 from public.company_social_connections
+    where id = before_row.id
+      and status = before_row.status
+      and last_error_code is not distinct from before_row.last_error_code
+      and last_checked_at is not distinct from before_row.last_checked_at
+      and granted_scopes = before_row.granted_scopes
+      and updated_at is not distinct from before_row.updated_at
+  ) then raise exception 'health audit failure did not roll back connection fields'; end if;
+  if (select count(*) from public.audit_events where resource_id = before_row.id::text) <> audit_count_before then
+    raise exception 'health audit failure retained audit row';
+  end if;
+end;
+$$;
+
+insert into meta_sql_assertions(label) values
+  ('health audit failure surfaced'),
+  ('health audit failure rolls back status'),
+  ('health audit failure rolls back error'),
+  ('health audit failure rolls back timestamp'),
+  ('health audit failure rolls back scopes'),
+  ('failed health leaves no audit row');
+
+drop trigger meta_sql_reject_health_audit on public.audit_events;
+drop function public.meta_sql_reject_health_audit();
+
+do $$
+begin
+  if exists (
+    select 1 from public.audit_events
+    where action in ('meta_connection_started', 'meta_oauth_completed', 'meta_health_checked', 'meta_connection_needs_reauthorization')
+      and concat_ws(' ', action, coalesce(resource_type, ''), resource, coalesce(resource_id, ''), resource_label, details, metadata::text)
+        ~* '(encrypted-social-token-v1|meta-pending|eeeeeeeeeeeeeeee|iiiiiiiiiiiiiiii)'
+  ) then raise exception 'lifecycle audit contains secret-bearing material'; end if;
+end;
+$$;
+insert into meta_sql_assertions(label) values ('transactional lifecycle audit secret exclusion');
 
 insert into public.company_social_oauth_states (
   id, company_id, actor_auth_user_id, provider, state_hash, redirect_uri, return_path, expires_at, created_at

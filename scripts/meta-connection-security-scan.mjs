@@ -25,6 +25,7 @@ const clientSource = (await Promise.all(clientFiles.map(read))).join('\n');
 const serverSource = (await Promise.all(serverFiles.map(read))).join('\n');
 const featureSource = `${clientSource}\n${serverSource}`;
 const migration = await read('supabase/migrations/20260731220000_meta_social_connection_foundation.sql');
+const lifecycleAuditMigration = await read('supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql');
 const canonicalSchema = await read('supabase/schema.sql');
 const sqlRunner = await read('scripts/meta-connection-sql-tests.mjs');
 const sqlSuite = await read('supabase/sql/meta-social-connection-security-checks.sql');
@@ -75,6 +76,10 @@ for (const forbiddenClientTerm of [
   /pageAccessToken/,
   /userAccessToken/,
   /appsecret_proof/,
+  /resourceLabel/,
+  /auditLabel/,
+  /resourceType/,
+  /auditAction/,
 ]) {
   check(() => assert.doesNotMatch(clientSource, forbiddenClientTerm));
 }
@@ -123,14 +128,24 @@ check(() => assert.match(migration, /cleanup_company_social_oauth_states/));
 check(() => assert.match(migration, /token_envelope_shape_check/));
 check(() => assert.match(migration, /pending_envelope_shape_check/));
 check(() => assert.equal(normalizeSql(extractSchemaBlock(canonicalSchema)), normalizeSql(extractSchemaBlock(migration))));
+check(() => assert.equal(
+  normalizeSql(extractLifecycleAuditSchemaBlock(canonicalSchema)),
+  normalizeSql(extractLifecycleAuditSchemaBlock(lifecycleAuditMigration)),
+));
 
 const canonicalAuditTable = extractCreateTable(canonicalSchema, 'audit_events');
 const runnerAuditTable = extractCreateTable(sqlRunner, 'audit_events');
 const runnerCompaniesTable = extractCreateTable(sqlRunner, 'companies');
 const replaceFunction = extractFunction(migration, 'replace_company_social_connection');
 const disconnectFunction = extractFunction(migration, 'disconnect_company_social_connection');
+const startFunction = extractFunction(lifecycleAuditMigration, 'create_company_social_oauth_state_with_audit');
+const completionFunction = extractFunction(lifecycleAuditMigration, 'save_company_social_oauth_discovery_with_audit');
+const healthFunction = extractFunction(lifecycleAuditMigration, 'update_company_social_connection_health_with_audit');
 const replaceAudit = extractAuditInsert(replaceFunction);
 const disconnectAudit = extractAuditInsert(disconnectFunction);
+const startAudit = extractAuditInsert(startFunction);
+const completionAudit = extractAuditInsert(completionFunction);
+const healthAudit = extractAuditInsert(healthFunction);
 const requiredAuditColumns = [
   'company_id', 'actor_user_id', 'actor_name', 'actor_role', 'category', 'action',
   'resource_type', 'resource', 'resource_id', 'resource_label', 'details',
@@ -140,11 +155,20 @@ check(() => assertRequiredWithoutDefault(runnerAuditTable, 'resource_label', /te
 check(() => assertRequiredWithoutDefault(runnerCompaniesTable, 'owner_email', /text\s+not\s+null/i));
 check(() => assert.deepEqual(replaceAudit.columns, requiredAuditColumns));
 check(() => assert.deepEqual(disconnectAudit.columns, requiredAuditColumns));
+check(() => assert.deepEqual(startAudit.columns, requiredAuditColumns));
+check(() => assert.deepEqual(completionAudit.columns, requiredAuditColumns));
+check(() => assert.deepEqual(healthAudit.columns, requiredAuditColumns));
 check(() => assert.match(replaceAudit.statement, /p_facebook_page_name/));
 check(() => assert.match(disconnectAudit.statement, /disconnected\.facebook_page_name/));
+check(() => assert.match(startAudit.statement, /'Meta authorization'/));
+check(() => assert.match(completionAudit.statement, /'Meta authorization'/));
+check(() => assert.match(healthAudit.statement, /locked_connection\.facebook_page_name/));
 check(() => assert.match(replaceAudit.statement, /'meta_social_connection'/));
 check(() => assert.match(disconnectAudit.statement, /'meta_social_connection'/));
-for (const audit of [replaceAudit, disconnectAudit]) {
+check(() => assert.match(startAudit.statement, /'meta_social_authorization'/));
+check(() => assert.match(completionAudit.statement, /'meta_social_authorization'/));
+check(() => assert.match(healthAudit.statement, /'meta_social_connection'/));
+for (const audit of [replaceAudit, disconnectAudit, startAudit, completionAudit, healthAudit]) {
   check(() => assert.doesNotMatch(audit.statement, /token_envelope|encrypted_pending|state_hash|access_token|ciphertext/i));
 }
 check(() => assert.match(sqlSuite, /insert into public\.companies\s*\(id, name, owner_name, owner_email\)/i));
@@ -164,6 +188,15 @@ check(() => assert.doesNotMatch(providerSource, /paging\.next/));
 check(() => assert.doesNotMatch(providerSource, /method:\s*'DELETE'/));
 check(() => assert.doesNotMatch(serviceSource, /provider\.revoke|providerRevokeSucceeded/));
 check(() => assert.match(serviceSource, /disconnectConnection/));
+check(() => assert.doesNotMatch(serviceSource, /recordAudit\(/));
+check(() => assert.match(edgeSource, /create_company_social_oauth_state_with_audit/));
+check(() => assert.match(edgeSource, /save_company_social_oauth_discovery_with_audit/));
+check(() => assert.match(edgeSource, /update_company_social_connection_health_with_audit/));
+check(() => assert.doesNotMatch(edgeSource, /from\(['"]audit_events['"]\)\.insert/));
+check(() => assert.match(lifecycleAuditMigration, /p_audit_action not in \('meta_health_checked', 'meta_connection_needs_reauthorization'\)/));
+check(() => assert.match(lifecycleAuditMigration, /revoke all on function public\.create_company_social_oauth_state_with_audit[\s\S]*from public, anon, authenticated/));
+check(() => assert.match(lifecycleAuditMigration, /grant execute on function public\.update_company_social_connection_health_with_audit[\s\S]*to service_role/));
+check(() => assert.doesNotMatch(lifecycleAuditMigration, /\bexecute\s+(format|p_)/i));
 check(() => assert.match(serviceSource, /returnDestinationForPath\(consumed\.return_path\)/));
 check(() => assert.match(serviceSource, /cleanupOAuthStates/));
 check(() => assert.match(serviceSource, /REAUTHORIZATION_CODES/));
@@ -198,6 +231,12 @@ console.log(`Meta connection security scan passed: ${checks}`);
 function extractSchemaBlock(source) {
   const match = source.match(/-- META_SOCIAL_CONNECTION_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_CONNECTION_SCHEMA_END/);
   assert.ok(match, 'Meta schema parity block is missing');
+  return match[0];
+}
+
+function extractLifecycleAuditSchemaBlock(source) {
+  const match = source.match(/-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_BEGIN[\s\S]*?-- META_SOCIAL_LIFECYCLE_AUDIT_SCHEMA_END/);
+  assert.ok(match, 'Meta lifecycle audit schema parity block is missing');
   return match[0];
 }
 

@@ -107,20 +107,21 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
     },
 
     async createOAuthState(input: Record<string, unknown>) {
-      const { data, error } = await adminClient.from('company_social_oauth_states')
-        .insert({
-          company_id: input.companyId,
-          actor_auth_user_id: input.actorId,
-          provider: input.provider,
-          state_hash: input.stateHash,
-          redirect_uri: input.redirectUri,
-          return_path: input.returnPath,
-          expires_at: input.expiresAt,
-        })
-        .select('id')
-        .single();
-      if (error || !data?.id) throw new MetaConnectionError('INTERNAL_ERROR');
-      return data;
+      const { data, error } = await adminClient.rpc('create_company_social_oauth_state_with_audit', {
+        p_company_id: input.companyId,
+        p_actor_auth_user_id: input.actorId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_provider: input.provider,
+        p_state_hash: input.stateHash,
+        p_redirect_uri: input.redirectUri,
+        p_return_path: input.returnPath,
+        p_expires_at: input.expiresAt,
+        p_timestamp: input.timestamp,
+      });
+      const row = Array.isArray(data) ? data[0] : null;
+      if (error || !row?.id) throw new MetaConnectionError('INTERNAL_ERROR');
+      return row;
     },
 
     async consumeOAuthState(input: Record<string, unknown>) {
@@ -150,17 +151,21 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return 'OAUTH_STATE_INVALID';
     },
 
-    async saveOAuthDiscovery(id: string, companyId: string, actorId: string, envelope: unknown, assets: unknown) {
-      const { data, error } = await adminClient
-        .from('company_social_oauth_states')
-        .update({ encrypted_pending_token_bundle: envelope, discovered_assets: assets, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .eq('company_id', companyId)
-        .eq('actor_auth_user_id', actorId)
-        .not('consumed_at', 'is', null)
-        .select('id')
-        .single();
-      if (error || data?.id !== id) throw new MetaConnectionError('INTERNAL_ERROR');
+    async saveOAuthDiscovery(input: Record<string, unknown>) {
+      const { data, error } = await adminClient.rpc('save_company_social_oauth_discovery_with_audit', {
+        p_oauth_state_id: input.oauthStateId,
+        p_company_id: input.companyId,
+        p_actor_auth_user_id: input.actorId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_provider: input.provider,
+        p_encrypted_pending_token_bundle: input.envelope,
+        p_discovered_assets: input.assets,
+        p_timestamp: input.timestamp,
+      });
+      const row = Array.isArray(data) ? data[0] : null;
+      if (error || row?.id !== input.oauthStateId) throw new MetaConnectionError('INTERNAL_ERROR');
+      return row;
     },
 
     async cleanupOAuthStates(input: Record<string, unknown>) {
@@ -253,21 +258,23 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return data;
     },
 
-    async updateHealth(id: string, input: Record<string, unknown>) {
-      const { data, error } = await adminClient
-        .from('company_social_connections')
-        .update({
-          status: input.status,
-          last_checked_at: input.checkedAt,
-          last_error_code: input.lastErrorCode,
-          granted_scopes: input.grantedScopes,
-          updated_at: input.checkedAt,
-        })
-        .eq('id', id)
-        .select('*')
-        .single();
-      if (error || !data) throw new MetaConnectionError('INTERNAL_ERROR');
-      return data;
+    async updateHealth(input: Record<string, unknown>) {
+      const { data, error } = await adminClient.rpc('update_company_social_connection_health_with_audit', {
+        p_connection_id: input.connectionId,
+        p_company_id: input.companyId,
+        p_actor_id: input.actorId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_provider: input.provider,
+        p_status: input.status,
+        p_last_error_code: input.lastErrorCode,
+        p_granted_scopes: input.grantedScopes,
+        p_audit_action: input.auditAction,
+        p_timestamp: input.checkedAt,
+      });
+      const row = Array.isArray(data) ? data[0] : null;
+      if (error || row?.id !== input.connectionId) throw new MetaConnectionError('INTERNAL_ERROR');
+      return row;
     },
 
     async disconnectConnection(input: Record<string, unknown>) {
@@ -285,20 +292,6 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return row;
     },
 
-    async recordAudit(input: Record<string, unknown>) {
-      const { error } = await adminClient.from('audit_events').insert({
-        company_id: input.companyId,
-        actor_user_id: input.actorId,
-        actor_name: input.actorName,
-        actor_role: input.actorRole,
-        category: 'access',
-        action: input.event,
-        resource: 'Meta social connection',
-        resource_id: input.connectionId,
-        details: 'Meta connection lifecycle action completed.',
-      });
-      if (error) throw new MetaConnectionError('INTERNAL_ERROR');
-    },
   };
 }
 

@@ -110,13 +110,15 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       await deps.repository.createOAuthState({
         companyId: currentAccess.companyId,
         actorId: currentAccess.actorId,
+        actorName: currentAccess.actorName,
+        actorRole: currentAccess.actorRole,
         provider: META_PROVIDER,
         stateHash: hash,
         redirectUri: config.redirectUri,
         returnPath,
         expiresAt: new Date(deps.now() + Math.min(10 * 60_000, deps.stateTtlMs)).toISOString(),
+        timestamp: new Date(deps.now()).toISOString(),
       });
-      await recordAudit('meta_connection_started', currentAccess, null);
       return { ok: true, provider: META_PROVIDER, authorizationUrl: deps.provider.buildAuthorizationUrl({ state }) };
     }
 
@@ -165,8 +167,17 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
             }),
             deps.cryptoApi,
           );
-          await deps.repository.saveOAuthDiscovery(consumed.id, currentAccess.companyId, currentAccess.actorId, envelope, assets);
-          await recordAudit('meta_oauth_completed', currentAccess, null);
+          await deps.repository.saveOAuthDiscovery({
+            oauthStateId: consumed.id,
+            companyId: currentAccess.companyId,
+            actorId: currentAccess.actorId,
+            actorName: currentAccess.actorName,
+            actorRole: currentAccess.actorRole,
+            provider: META_PROVIDER,
+            envelope,
+            assets,
+            timestamp: new Date(deps.now()).toISOString(),
+          });
           return {
             ok: true,
             provider: META_PROVIDER,
@@ -276,13 +287,19 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         }
         const grantedScopes = assertRequiredScopes(health.grantedScopes);
         if (!health.pageAvailable) throw new MetaConnectionError('META_PAGE_UNAVAILABLE');
-        const updated = await deps.repository.updateHealth(connection.id, {
+        const updated = await deps.repository.updateHealth({
+          connectionId: connection.id,
+          companyId: currentAccess.companyId,
+          actorId: currentAccess.actorId,
+          actorName: currentAccess.actorName,
+          actorRole: currentAccess.actorRole,
+          provider: META_PROVIDER,
           status: 'connected',
           lastErrorCode: null,
           grantedScopes,
           checkedAt: new Date(deps.now()).toISOString(),
+          auditAction: 'meta_health_checked',
         });
-        await recordAudit('meta_health_checked', currentAccess, connection.id);
         return { ok: true, connection: safeConnection(updated) };
       } catch (error) {
         attempts = providerAttempts(error, attempts);
@@ -290,13 +307,20 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         if (normalized.code === 'INTERNAL_ERROR') throw normalized;
         const reauthorize = REAUTHORIZATION_CODES.has(normalized.code);
         if (!reauthorize && !TRANSIENT_PROVIDER_CODES.has(normalized.code)) throw normalized;
-        const updated = await deps.repository.updateHealth(connection.id, {
+        const auditAction = reauthorize ? 'meta_connection_needs_reauthorization' : 'meta_health_checked';
+        const updated = await deps.repository.updateHealth({
+          connectionId: connection.id,
+          companyId: currentAccess.companyId,
+          actorId: currentAccess.actorId,
+          actorName: currentAccess.actorName,
+          actorRole: currentAccess.actorRole,
+          provider: META_PROVIDER,
           status: reauthorize ? 'needs_reauthorization' : connection.status,
           lastErrorCode: normalized.code,
           grantedScopes: connection.granted_scopes,
           checkedAt: new Date(deps.now()).toISOString(),
+          auditAction,
         });
-        await recordAudit(reauthorize ? 'meta_connection_needs_reauthorization' : 'meta_health_checked', currentAccess, connection.id);
         return { ok: false, code: normalized.code, connection: safeConnection(updated) };
       }
     }
@@ -317,16 +341,6 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       return { ok: true, status: 'revoked' };
     }
 
-    async function recordAudit(event, currentAccess, connectionId) {
-      await deps.repository.recordAudit({
-        event,
-        companyId: currentAccess.companyId,
-        actorId: currentAccess.actorId,
-        actorName: currentAccess.actorName,
-        actorRole: currentAccess.actorRole,
-        connectionId,
-      });
-    }
   } catch (error) {
     attempts = providerAttempts(error, attempts);
     const normalized = normalizeError(error);

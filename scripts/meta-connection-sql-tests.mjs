@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 
-const migration = await readFile(new URL('../supabase/migrations/20260731220000_meta_social_connection_foundation.sql', import.meta.url), 'utf8');
+const foundationMigration = await readFile(new URL('../supabase/migrations/20260731220000_meta_social_connection_foundation.sql', import.meta.url), 'utf8');
+const lifecycleAuditMigration = await readFile(new URL('../supabase/migrations/20260802020000_meta_social_lifecycle_audit_transactions.sql', import.meta.url), 'utf8');
 const suite = await readFile(new URL('../supabase/sql/meta-social-connection-security-checks.sql', import.meta.url), 'utf8');
 const db = new PGlite();
 
@@ -66,7 +67,8 @@ await db.exec(`
   $$;
 `);
 
-await db.exec(migration);
+await db.exec(foundationMigration);
+await db.exec(lifecycleAuditMigration);
 await db.exec('create temp table meta_sql_assertions (label text primary key);');
 
 let assertionCount = 0;
