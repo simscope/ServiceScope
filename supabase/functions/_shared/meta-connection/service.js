@@ -62,7 +62,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
     }
     if (!requestedCompanyId) throw new MetaConnectionError('INVALID_REQUEST');
     const access = await deps.auth.assertCompanyAccess(session, requestedCompanyId, authorization);
-    deps.rateLimiter.assert({ actorId: access.actorId, companyId: access.companyId, action });
+    deps.rateLimiter.assert({ actorId: access.actorAuthUserId, companyId: access.companyId, action });
 
     if (action === 'status' || action === 'start') {
       stage = 'retention_cleanup';
@@ -89,7 +89,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
 
     async function status({ access: currentAccess }) {
       stage = 'status';
-      const snapshot = await deps.repository.getStatus(currentAccess.companyId, currentAccess.actorId);
+      const snapshot = await deps.repository.getStatus(currentAccess.companyId, currentAccess.actorAuthUserId);
       return {
         ok: true,
         provider: META_PROVIDER,
@@ -109,7 +109,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const hash = await hashOAuthState(state, deps.cryptoApi);
       await deps.repository.createOAuthState({
         companyId: currentAccess.companyId,
-        actorId: currentAccess.actorId,
+        actorAuthUserId: currentAccess.actorAuthUserId,
         actorName: currentAccess.actorName,
         actorRole: currentAccess.actorRole,
         provider: META_PROVIDER,
@@ -128,12 +128,12 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const consumed = await deps.repository.consumeOAuthState({
         stateHash: hash,
         companyId: currentAccess.companyId,
-        actorId: currentAccess.actorId,
+        actorAuthUserId: currentAccess.actorAuthUserId,
         provider: META_PROVIDER,
         redirectUri: config.redirectUri,
       });
       if (!consumed) {
-        const reason = await deps.repository.classifyOAuthState(hash, currentAccess.companyId, currentAccess.actorId);
+        const reason = await deps.repository.classifyOAuthState(hash, currentAccess.companyId, currentAccess.actorAuthUserId);
         throw new MetaConnectionError(reason);
       }
       try {
@@ -161,7 +161,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
             config.encryptionKey,
             pendingEnvelopeContext({
               companyId: currentAccess.companyId,
-              actorId: currentAccess.actorId,
+              actorId: currentAccess.actorAuthUserId,
               oauthStateId: consumed.id,
               redirectUri: consumed.redirect_uri,
             }),
@@ -170,7 +170,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
           await deps.repository.saveOAuthDiscovery({
             oauthStateId: consumed.id,
             companyId: currentAccess.companyId,
-            actorId: currentAccess.actorId,
+            actorAuthUserId: currentAccess.actorAuthUserId,
             actorName: currentAccess.actorName,
             actorRole: currentAccess.actorRole,
             provider: META_PROVIDER,
@@ -191,7 +191,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         }
       } catch (error) {
         attempts = providerAttempts(error, attempts);
-        await deps.repository.deleteOAuthSession(consumed.id, currentAccess.companyId, currentAccess.actorId);
+        await deps.repository.deleteOAuthSession(consumed.id, currentAccess.companyId, currentAccess.actorAuthUserId);
         throw error;
       }
     }
@@ -201,7 +201,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const config = assertRuntimeConfigured(deps.config);
       const oauthSessionId = requireUuid(requestBody.oauthSessionId);
       const pageId = requireShortString(requestBody.pageId, 40);
-      const pending = await deps.repository.getPendingOAuthSession(oauthSessionId, currentAccess.companyId, currentAccess.actorId);
+      const pending = await deps.repository.getPendingOAuthSession(oauthSessionId, currentAccess.companyId, currentAccess.actorAuthUserId);
       if (!pending || Date.parse(pending.expires_at) <= deps.now()) throw new MetaConnectionError('OAUTH_STATE_EXPIRED');
       const assets = Array.isArray(pending.discovered_assets) ? pending.discovered_assets.map(safeAsset) : [];
       const selected = assets.find((asset) => asset.pageId === pageId);
@@ -211,7 +211,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         config.encryptionKey,
         pendingEnvelopeContext({
           companyId: currentAccess.companyId,
-          actorId: currentAccess.actorId,
+          actorId: currentAccess.actorAuthUserId,
           oauthStateId: pending.id,
           redirectUri: pending.redirect_uri,
         }),
@@ -236,7 +236,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const connection = await deps.repository.replaceConnection({
         connectionId,
         companyId: currentAccess.companyId,
-        actorId: currentAccess.actorId,
+        actorAuthUserId: currentAccess.actorAuthUserId,
         actorName: currentAccess.actorName,
         actorRole: currentAccess.actorRole,
         provider: META_PROVIDER,
@@ -290,7 +290,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         const updated = await deps.repository.updateHealth({
           connectionId: connection.id,
           companyId: currentAccess.companyId,
-          actorId: currentAccess.actorId,
+          actorAuthUserId: currentAccess.actorAuthUserId,
           actorName: currentAccess.actorName,
           actorRole: currentAccess.actorRole,
           provider: META_PROVIDER,
@@ -311,7 +311,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         const updated = await deps.repository.updateHealth({
           connectionId: connection.id,
           companyId: currentAccess.companyId,
-          actorId: currentAccess.actorId,
+          actorAuthUserId: currentAccess.actorAuthUserId,
           actorName: currentAccess.actorName,
           actorRole: currentAccess.actorRole,
           provider: META_PROVIDER,
@@ -331,7 +331,7 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
       const connection = await deps.repository.disconnectConnection({
         connectionId,
         companyId: currentAccess.companyId,
-        actorId: currentAccess.actorId,
+        actorAuthUserId: currentAccess.actorAuthUserId,
         actorName: currentAccess.actorName,
         actorRole: currentAccess.actorRole,
         provider: META_PROVIDER,

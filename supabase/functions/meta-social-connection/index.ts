@@ -2,6 +2,10 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import {
   META_PROVIDER,
   MetaConnectionError,
+  assertMetaAccessRole,
+  requireActiveDomainSession,
+  requireBearerJwt,
+  requireVerifiedAuthUserId,
   runtimeConfigFromEnv,
 } from '../_shared/meta-connection/contracts.js';
 import { createMetaProvider } from '../_shared/meta-connection/provider.js';
@@ -66,26 +70,40 @@ function makeDependencies() {
 function createAuthRepository(supabaseUrl: string, anonKey: string) {
   return {
     async resolveSession(authorization: string) {
+      const jwt = requireBearerJwt(authorization);
       const callerClient = createClient(supabaseUrl, anonKey, {
         auth: { persistSession: false },
         global: { headers: { Authorization: authorization } },
       });
+      let authResult;
+      try {
+        authResult = await callerClient.auth.getUser(jwt);
+      } catch {
+        throw new MetaConnectionError('AUTH_REQUIRED');
+      }
+      const authUserId = requireVerifiedAuthUserId(authResult);
       const { data, error } = await callerClient.rpc('app_current_session');
-      const session = Array.isArray(data) ? data[0] : null;
-      if (error || !session?.user_id || session.status !== 'active') throw new MetaConnectionError('AUTH_REQUIRED');
-      return { ...session, callerClient };
+      const session = requireActiveDomainSession(Array.isArray(data) ? data[0] : null, error);
+      return {
+        domainUserId: String(session.user_id),
+        authUserId,
+        name: session.name,
+        role: session.role,
+        kind: session.kind,
+        company_id: session.company_id,
+        callerClient,
+      };
     },
 
     async assertCompanyAccess(session: Record<string, unknown>, companyId: string) {
-      const kind = String(session.kind ?? '');
-      const sessionCompanyId = String(session.company_id ?? '');
-      if (kind === 'company' && sessionCompanyId !== companyId) throw new MetaConnectionError('FORBIDDEN');
-      if (kind !== 'company' && kind !== 'owner') throw new MetaConnectionError('FORBIDDEN');
+      assertMetaAccessRole(session, companyId);
+      const kind = String(session.kind);
       const callerClient = session.callerClient as ReturnType<typeof createClient>;
       const { data, error } = await callerClient.rpc('can_manage_company', { target_company_id: companyId });
       if (error || data !== true) throw new MetaConnectionError('FORBIDDEN');
       return {
-        actorId: String(session.user_id),
+        actorAuthUserId: String(session.authUserId),
+        actorDomainUserId: String(session.domainUserId),
         actorName: safeAuditText(session.name, 'Authenticated user'),
         actorRole: safeAuditText(session.role, kind),
         companyId,
@@ -109,7 +127,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
     async createOAuthState(input: Record<string, unknown>) {
       const { data, error } = await adminClient.rpc('create_company_social_oauth_state_with_audit', {
         p_company_id: input.companyId,
-        p_actor_auth_user_id: input.actorId,
+        p_actor_auth_user_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_provider: input.provider,
@@ -128,7 +146,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       const { data, error } = await adminClient.rpc('consume_company_social_oauth_state', {
         p_state_hash: input.stateHash,
         p_company_id: input.companyId,
-        p_actor_auth_user_id: input.actorId,
+        p_actor_auth_user_id: input.actorAuthUserId,
         p_provider: input.provider,
         p_redirect_uri: input.redirectUri,
       });
@@ -136,14 +154,14 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return Array.isArray(data) ? data[0] ?? null : null;
     },
 
-    async classifyOAuthState(stateHash: string, companyId: string, actorId: string) {
+    async classifyOAuthState(stateHash: string, companyId: string, actorAuthUserId: string) {
       const { data, error } = await adminClient
         .from('company_social_oauth_states')
         .select('company_id,actor_auth_user_id,provider,expires_at,consumed_at')
         .eq('state_hash', stateHash)
         .maybeSingle();
       if (error) throw new MetaConnectionError('INTERNAL_ERROR');
-      if (!data || data.company_id !== companyId || data.actor_auth_user_id !== actorId || data.provider !== META_PROVIDER) {
+      if (!data || data.company_id !== companyId || data.actor_auth_user_id !== actorAuthUserId || data.provider !== META_PROVIDER) {
         return 'OAUTH_STATE_INVALID';
       }
       if (data.consumed_at) return 'OAUTH_STATE_REPLAYED';
@@ -155,7 +173,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       const { data, error } = await adminClient.rpc('save_company_social_oauth_discovery_with_audit', {
         p_oauth_state_id: input.oauthStateId,
         p_company_id: input.companyId,
-        p_actor_auth_user_id: input.actorId,
+        p_actor_auth_user_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_provider: input.provider,
@@ -179,7 +197,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return Number(data);
     },
 
-    async getStatus(companyId: string, actorId: string) {
+    async getStatus(companyId: string, actorAuthUserId: string) {
       const [connectionResult, pendingResult] = await Promise.all([
         adminClient
           .from('company_social_connections')
@@ -193,7 +211,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
           .from('company_social_oauth_states')
           .select('id,expires_at,discovered_assets')
           .eq('company_id', companyId)
-          .eq('actor_auth_user_id', actorId)
+          .eq('actor_auth_user_id', actorAuthUserId)
           .not('consumed_at', 'is', null)
           .not('encrypted_pending_token_bundle', 'is', null)
           .gt('expires_at', new Date().toISOString())
@@ -205,13 +223,13 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return { connection: connectionResult.data ?? null, pending: pendingResult.data ?? null };
     },
 
-    async getPendingOAuthSession(id: string, companyId: string, actorId: string) {
+    async getPendingOAuthSession(id: string, companyId: string, actorAuthUserId: string) {
       const { data, error } = await adminClient
         .from('company_social_oauth_states')
         .select('id,company_id,actor_auth_user_id,redirect_uri,expires_at,discovered_assets,encrypted_pending_token_bundle')
         .eq('id', id)
         .eq('company_id', companyId)
-        .eq('actor_auth_user_id', actorId)
+        .eq('actor_auth_user_id', actorAuthUserId)
         .not('consumed_at', 'is', null)
         .maybeSingle();
       if (error) throw new MetaConnectionError('INTERNAL_ERROR');
@@ -232,7 +250,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_granted_scopes: input.grantedScopes,
         p_token_envelope: input.tokenEnvelope,
         p_token_expires_at: input.tokenExpiresAt,
-        p_actor_id: input.actorId,
+        p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_timestamp: input.timestamp,
@@ -242,12 +260,12 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return row;
     },
 
-    async deleteOAuthSession(id: string, companyId: string, actorId: string) {
+    async deleteOAuthSession(id: string, companyId: string, actorAuthUserId: string) {
       const { data, error } = await adminClient.from('company_social_oauth_states')
         .delete()
         .eq('id', id)
         .eq('company_id', companyId)
-        .eq('actor_auth_user_id', actorId)
+        .eq('actor_auth_user_id', actorAuthUserId)
         .select('id');
       if (error || !Array.isArray(data) || data.length !== 1 || data[0]?.id !== id) throw new MetaConnectionError('INTERNAL_ERROR');
     },
@@ -262,7 +280,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       const { data, error } = await adminClient.rpc('update_company_social_connection_health_with_audit', {
         p_connection_id: input.connectionId,
         p_company_id: input.companyId,
-        p_actor_id: input.actorId,
+        p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_provider: input.provider,
@@ -282,7 +300,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_connection_id: input.connectionId,
         p_company_id: input.companyId,
         p_provider: input.provider,
-        p_actor_id: input.actorId,
+        p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_timestamp: input.timestamp,

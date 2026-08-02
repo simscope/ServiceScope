@@ -32,6 +32,12 @@ Missing components added by this phase:
 - restricted Social connections UI and callback page;
 - regression, isolated SQL security, source, and bundle scans.
 
+## Actor identity boundary
+
+The domain session identity and Supabase Auth identity are deliberately separate. `platform_users.id`, `company_users.id`, and the company-owner email fallback `companies.id` remain internal business identities. Meta lifecycle authorization verifies the bearer JWT server-side with `auth.getUser(jwt)` and uses only the resulting `auth.users.id` for OAuth-state ownership, pending-token AAD, `connected_by`, lifecycle RPC actor arguments, and `audit_events.actor_user_id`.
+
+The Edge boundary allows a platform session only when its role is `owner`. Company sessions must be active, belong to the requested company, and have role `admin` or `manager`. Platform `admin`, `support`, and `viewer` roles, plus company `dispatcher` and `technician` roles, are rejected server-side before `can_manage_company` can authorize the request. Domain IDs are never substituted for the verified Auth actor ID and are not returned in browser responses or telemetry.
+
 ## Official Meta contract
 
 The authorization contract was checked on 2026-07-31 against Meta's official [Facebook Login for Business documentation](https://developers.facebook.com/docs/facebook-login/facebook-login-for-business). That documentation establishes `config_id` as the Business Login configuration selector and recommends omitting `scope` for User access-token configurations.
