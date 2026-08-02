@@ -13,6 +13,22 @@ export const META_ACTIONS = Object.freeze([
   'check_health',
   'disconnect',
 ]);
+export const META_TOKEN_EXCHANGE_PHASES = Object.freeze([
+  'short_token_exchange',
+  'long_token_exchange',
+]);
+export const META_PROVIDER_ERROR_CATEGORIES = Object.freeze([
+  'INVALID_CLIENT_CREDENTIALS',
+  'REDIRECT_URI_MISMATCH',
+  'INVALID_OR_EXPIRED_CODE',
+  'CODE_ALREADY_USED',
+  'UNSUPPORTED_GRANT_OR_PARAMETER',
+  'APP_CONFIGURATION_ERROR',
+  'PROVIDER_RATE_LIMIT',
+  'PROVIDER_TEMPORARY_ERROR',
+  'SUCCESS_RESPONSE_MISSING_TOKEN',
+  'UNKNOWN_PROVIDER_REJECTION',
+]);
 export const META_RETURN_PATHS = Object.freeze(['/settings/social-connections']);
 export const META_OAUTH_STATE_TTL_MS = 30 * 60_000;
 
@@ -46,12 +62,25 @@ const NORMALIZED_CODES = new Set([
 ]);
 
 export class MetaConnectionError extends Error {
-  constructor(code, status = statusForCode(code)) {
+  constructor(code, status = statusForCode(code), providerDiagnostic = null) {
     super(NORMALIZED_CODES.has(code) ? code : 'INTERNAL_ERROR');
     this.name = 'MetaConnectionError';
     this.code = NORMALIZED_CODES.has(code) ? code : 'INTERNAL_ERROR';
     this.status = status;
+    if (providerDiagnostic) Object.assign(this, sanitizeMetaProviderDiagnostic(providerDiagnostic));
   }
+}
+
+export function sanitizeMetaProviderDiagnostic(value) {
+  return {
+    providerPhase: META_TOKEN_EXCHANGE_PHASES.includes(value?.providerPhase) ? value.providerPhase : null,
+    providerHttpStatus: safeInteger(value?.providerHttpStatus, 100, 599),
+    providerCode: safeInteger(value?.providerCode, -2_147_483_648, 2_147_483_647),
+    providerSubcode: safeInteger(value?.providerSubcode, -2_147_483_648, 2_147_483_647),
+    providerCategory: META_PROVIDER_ERROR_CATEGORIES.includes(value?.providerCategory) ? value.providerCategory : null,
+    providerIsTransient: typeof value?.providerIsTransient === 'boolean' ? value.providerIsTransient : null,
+    providerAttempts: value?.providerAttempts === 1 || value?.providerAttempts === 2 ? value.providerAttempts : null,
+  };
 }
 
 export function statusForCode(code) {
@@ -259,6 +288,9 @@ export function safePending(row) {
 }
 
 export function safeTelemetry(event) {
+  const providerDiagnostic = event?.action === 'complete'
+    ? sanitizeMetaProviderDiagnostic(event)
+    : sanitizeMetaProviderDiagnostic(null);
   return {
     event: 'meta-social-connection',
     action: META_ACTIONS.includes(event?.action) ? event.action : 'unknown',
@@ -268,6 +300,12 @@ export function safeTelemetry(event) {
     stage: safeLabel(event?.stage, 60) || 'unknown',
     attempts: Number.isInteger(event?.attempts) ? Math.max(0, Math.min(12, event.attempts)) : 0,
     latencyMs: Number.isFinite(event?.latencyMs) ? Math.max(0, Math.round(event.latencyMs)) : 0,
+    providerPhase: providerDiagnostic.providerPhase,
+    providerHttpStatus: providerDiagnostic.providerHttpStatus,
+    providerCode: providerDiagnostic.providerCode,
+    providerSubcode: providerDiagnostic.providerSubcode,
+    providerCategory: providerDiagnostic.providerCategory,
+    providerIsTransient: providerDiagnostic.providerIsTransient,
   };
 }
 
@@ -345,4 +383,8 @@ function cleanEnv(value) {
 function boundedNumber(value, min, max, fallback) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
+
+function safeInteger(value, min, max) {
+  return Number.isInteger(value) && value >= min && value <= max ? value : null;
 }
