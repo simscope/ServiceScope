@@ -21,20 +21,7 @@ export async function buildAuthorizedContext({ request, session, repository }) {
     repository.listInvoices(company.id, job.id),
     repository.listComments(company.id, job.id),
   ]);
-  const privateValues = unique([
-    job.job_number,
-    job.notes,
-    job.service_call_fee_cents,
-    job.labor_cents,
-    customer?.organization,
-    customer?.primary_name,
-    customer?.primary_email,
-    customer?.primary_phone,
-    customer?.notes,
-    location?.address,
-    ...(invoices ?? []).flatMap((invoice) => [invoice.invoice_number, invoice.amount_cents, invoice.status]),
-    ...(comments ?? []).map((comment) => comment.message),
-  ]);
+  const privateValues = buildPrivateValues({ job, customer, location, invoices, comments });
   const mediaStateById = new Map(request.mediaState.map((item) => [item.id, item]));
   const evidence = [
     claim('system-equipment', 'System/equipment', job.system, 'Job issue', privateValues),
@@ -69,6 +56,23 @@ export async function buildAuthorizedContext({ request, session, repository }) {
     privateValues,
     companyVoice: resolveCompanyVoiceContext(companyVoiceSettings, request.channel),
   };
+}
+
+export function buildPrivateValues({ job, customer, location, invoices = [], comments = [] }) {
+  return unique([
+    job.job_number,
+    job.notes,
+    job.service_call_fee_cents,
+    job.labor_cents,
+    customer?.organization,
+    customer?.primary_name,
+    customer?.primary_email,
+    customer?.primary_phone,
+    customer?.notes,
+    location?.address,
+    ...invoices.flatMap((invoice) => [invoice.invoice_number, invoice.amount_cents, invoice.status]),
+    ...comments.map((comment) => comment.message),
+  ]);
 }
 
 function claim(id, label, value, source, privateValues) {

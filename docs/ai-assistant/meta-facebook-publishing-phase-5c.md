@@ -1,0 +1,40 @@
+# Meta Facebook publishing Phase 5C1
+
+Phase 5C1 adds a reviewed foundation for publishing one text-only post immediately to the Facebook Page already selected in a ServiceScope Meta connection. It does not publish media, Instagram content, scheduled posts, or background jobs.
+
+## Official Meta contract
+
+Contract verified on 2026-08-03 against Meta's official [Page posts guide](https://developers.facebook.com/docs/pages-api/posts/), [Pages API getting started guide](https://developers.facebook.com/docs/pages-api/getting-started/), and versioned [Page feed reference](https://developers.facebook.com/docs/graph-api/reference/v25.0/page/feed/).
+
+- Endpoint: `POST /v25.0/{page-id}/feed`.
+- Authorization: Page access token in the server-side `Authorization` header.
+- Content: form-encoded `message` containing the exact approved final text.
+- Publishing capability: `pages_manage_posts`.
+- Success: a non-empty post identifier, retained server-side only.
+- Failure: the Graph error envelope is reduced to bounded numeric diagnostics and an allowlisted category.
+
+Meta's current documentation UI may render examples using its newest default Graph version. ServiceScope remains explicitly pinned to the reviewed `v25.0` contract.
+
+## Permission model
+
+The existing discovery contract remains `pages_show_list`, `pages_read_engagement`, and `instagram_basic`. A connection with only those scopes remains connected and continues to pass its normal status and health contracts. Facebook publishing is a separate capability that is enabled only when the connected record also contains `pages_manage_posts`.
+
+Users must deliberately reconnect Meta through a separately approved rollout to grant publishing access. This code does not start OAuth or change the Meta application configuration.
+
+## Human and privacy boundaries
+
+The AI Assistant exposes publishing only inside a Facebook draft. The confirmation dialog shows the destination Page name, exact final text, character count, text-only limitation, and privacy status. Publishing remains disabled until the user checks the explicit approval control. Editing the draft invalidates that approval.
+
+The server reloads the job, customer, location, invoice, and comment context. It reuses the content engine private-values builder and privacy utility, then applies generic email, phone, street-address, access-code, invoice-number, unresolved-placeholder, and control-character checks. A privacy finding rejects the exact text; the server never silently substitutes a scrubbed version.
+
+## Delivery safety
+
+Each approved operation has a company-scoped UUID idempotency key. The transactional begin RPC validates tenant, job, connection, Page, encrypted envelope, actor, message hash, and publishing permission before recording `publishing` and its audit event. A used key never produces another provider request.
+
+The provider adapter makes exactly one request and has no automatic retry. A definite HTTP rejection becomes `failed`. A timeout, network failure, or persistence uncertainty after the request becomes `delivery_unknown`; the UI tells the user to inspect the Page before attempting any new publication.
+
+The Page token is decrypted from the existing AES-GCM connection envelope with its exact AAD and exists only in Edge memory. Publication history, provider post identifiers, diagnostics, and lifecycle audits are server-only. Browser status responses contain only capability and normalized publication state.
+
+## Deferred gates
+
+Remote migration application, Edge deployment, Meta permission changes, OAuth reconnect, App Review, live Graph calls, and live publishing are separate rollout gates. Media upload, Instagram publishing, scheduling, editing, deletion, comments, insights, retries, workers, cron, and webhooks are outside Phase 5C1.

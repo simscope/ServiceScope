@@ -13,6 +13,11 @@ export const META_ACTIONS = Object.freeze([
   'check_health',
   'disconnect',
 ]);
+export const META_FACEBOOK_PUBLISHING_SCOPE = 'pages_manage_posts';
+export const META_ALLOWED_SCOPES = Object.freeze([
+  ...META_REQUESTED_SCOPES,
+  META_FACEBOOK_PUBLISHING_SCOPE,
+]);
 export const META_TOKEN_EXCHANGE_PHASES = Object.freeze([
   'short_token_exchange',
   'long_token_exchange',
@@ -251,7 +256,7 @@ export function safeAsset(asset) {
 
 export function normalizeGrantedScopes(scopes) {
   if (!Array.isArray(scopes)) return [];
-  return [...new Set(scopes.map((scope) => safeScope(scope)).filter((scope) => META_REQUESTED_SCOPES.includes(scope)))];
+  return [...new Set(scopes.map((scope) => safeScope(scope)).filter((scope) => META_ALLOWED_SCOPES.includes(scope)))];
 }
 
 export function assertRequiredScopes(scopes) {

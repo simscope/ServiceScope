@@ -826,6 +826,117 @@ button {
   resize: vertical;
 }
 
+.facebook-publish-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-color);
+}
+
+.facebook-publish-heading,
+.facebook-publish-review-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.facebook-publish-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.facebook-publish-heading span,
+.facebook-publish-panel > p,
+.facebook-publish-modal p,
+.facebook-publish-modal header span {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.facebook-publish-panel > .primary-button {
+  justify-self: start;
+}
+
+.facebook-publish-result {
+  padding: 10px 12px;
+  border-left: 3px solid var(--border-color);
+}
+
+.facebook-publish-result.success {
+  border-color: #218739;
+  color: #17662a;
+}
+
+.facebook-publish-result.error {
+  border-color: #c53a32;
+  color: #a12d27;
+}
+
+.facebook-publish-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(12 18 28 / 58%);
+}
+
+.facebook-publish-modal {
+  width: min(620px, 100%);
+  max-height: min(760px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 20px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--surface-color, #fff);
+  box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
+}
+
+.facebook-publish-modal header,
+.facebook-publish-modal footer {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.facebook-publish-modal header h3 {
+  margin: 0 0 4px;
+  font-size: 1.05rem;
+}
+
+.facebook-publish-preview {
+  margin: 18px 0;
+  padding: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border-color);
+  background: var(--surface-muted, #f6f7f8);
+}
+
+.facebook-publish-review-status {
+  margin-bottom: 12px;
+}
+
+.facebook-publish-approval {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  margin: 18px 0;
+  line-height: 1.45;
+}
+
+.facebook-publish-approval input {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+}
+
+.facebook-publish-modal footer {
+  justify-content: flex-end;
+}
+
 .ai-assistant-media-browser {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
