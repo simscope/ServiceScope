@@ -41,6 +41,12 @@ All four publication lifecycle audits use the same verified authentication user 
 
 The Page token is decrypted from the existing AES-GCM connection envelope with its exact AAD and exists only in Edge memory. Publication history, provider post identifiers, diagnostics, and lifecycle audits are server-only. Browser status responses contain only capability and normalized publication state.
 
+## Production ACL corrective
+
+The foundation rollout detected that Supabase default table grants gave `service_role` broader direct privileges than the migration intended. The rollout stopped before the publishing Edge Function was deployed. A separate corrective migration revokes all direct privileges on `company_social_publications`, restores only `SELECT`, `INSERT`, and `UPDATE` for `service_role`, and repeats the browser-role revocation fail-closed.
+
+The corrective changes no rows, connection state, OAuth state, audit events, RLS, policies, table structure, constraints, indexes, or RPC definitions. It performs no OAuth, Graph, provider, or live publication operation.
+
 ## Deferred gates
 
 Remote migration application, Edge deployment, Meta permission changes, OAuth reconnect, App Review, live Graph calls, and live publishing are separate rollout gates. Media upload, Instagram publishing, scheduling, editing, deletion, comments, insights, retries, workers, cron, and webhooks are outside Phase 5C1.
