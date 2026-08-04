@@ -970,11 +970,14 @@ async function identityLifecycleChecks(provider) {
 
 async function sourceAndSchemaChecks() {
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-  const [accessSource, appSource, callbackSource, callbackPageSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
+  const [accessSource, appSource, callbackSource, callbackPageSource, clientContractsSource, socialConnectionsSource, responsiveSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
     read('src/features/company-portal/companySettingsAccess.ts'),
     read('src/App.tsx'),
     read('src/features/meta-connection/callback.ts'),
     read('src/features/meta-connection/MetaOAuthCallbackPage.tsx'),
+    read('src/features/meta-connection/contracts.ts'),
+    read('src/features/meta-connection/SocialConnectionsPanel.tsx'),
+    read('src/styles/responsive.css'),
     read('supabase/functions/_shared/meta-connection/contracts.js'),
     read('supabase/functions/_shared/meta-connection/service.js'),
     read('supabase/functions/_shared/meta-connection/provider.js'),
@@ -999,6 +1002,52 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(callbackPageSource, /Connection could not be completed/));
   check(() => assert.match(callbackPageSource, /onClick=\{\(\) => onReturn\(destination\)\}/));
   check(() => assert.equal((callbackPageSource.match(/completeMetaConnection\(callback\)/g) ?? []).length, 1));
+  check(() => assert.match(clientContractsSource, /export const META_FACEBOOK_PUBLISHING_SCOPE =\s*'pages_manage_posts' as const/));
+  check(() => assert.match(clientContractsSource, /META_REQUESTED_SCOPES = \['pages_show_list', 'pages_read_engagement', 'instagram_basic'\] as const/));
+  check(() => assert.doesNotMatch(
+    clientContractsSource.match(/META_REQUESTED_SCOPES\s*=\s*\[([^\]]*)\]/)?.[1] ?? '',
+    /pages_manage_posts/,
+  ));
+  const reconnectExpressions = extractReconnectExpressions(socialConnectionsSource);
+  const reconnectState = (value) => reconnectExpressions(value, 'pages_manage_posts');
+  const healthyThreeScope = reconnectState(reconnectFixture(['pages_show_list', 'pages_read_engagement', 'instagram_basic']));
+  const healthyFourScope = reconnectState(reconnectFixture(['instagram_basic', 'pages_manage_posts', 'pages_show_list', 'pages_read_engagement']));
+  const needsReauthorization = reconnectState(reconnectFixture([], { status: 'needs_reauthorization' }));
+  const expired = reconnectState(reconnectFixture([], { tokenExpiryStatus: 'expired' }));
+  const emptyScopes = reconnectState(reconnectFixture([]));
+  const unknownScopes = reconnectState(reconnectFixture(['unknown_scope']));
+  const revoked = reconnectState(reconnectFixture([], { status: 'revoked' }));
+  check(() => assert.deepEqual(healthyThreeScope, {
+    authorizationReconnectRequired: false,
+    missingPublishingPermission: true,
+    publishingReconnectRequired: true,
+  }));
+  check(() => assert.deepEqual(healthyFourScope, {
+    authorizationReconnectRequired: false,
+    missingPublishingPermission: false,
+    publishingReconnectRequired: false,
+  }));
+  check(() => assert.equal(needsReauthorization.authorizationReconnectRequired, true));
+  check(() => assert.equal(expired.authorizationReconnectRequired, true));
+  check(() => assert.equal(emptyScopes.publishingReconnectRequired, true));
+  check(() => assert.equal(unknownScopes.publishingReconnectRequired, true));
+  check(() => assert.equal(revoked.publishingReconnectRequired, false));
+  check(() => assert.match(socialConnectionsSource, /authorizationReconnectRequired \? 'warning-state' : 'connected-state'/));
+  check(() => assert.match(socialConnectionsSource, /authorizationReconnectRequired \? 'Needs reauthorization' : 'Connected'/));
+  check(() => assert.match(socialConnectionsSource, /<ScopeList scopes=\{value\.grantedScopes\} \/>/));
+  check(() => assert.match(socialConnectionsSource, /Facebook publishing permission is not enabled\. Reconnect Meta to add pages_manage_posts\./));
+  check(() => assert.match(socialConnectionsSource, /authorizationReconnectRequired \|\| publishingReconnectRequired \? \([\s\S]*onClick=\{onReconnect\}[\s\S]*Reconnect Meta/));
+  check(() => assert.match(socialConnectionsSource, /!authorizationReconnectRequired \? \([\s\S]*onClick=\{onCheck\}[\s\S]*Check connection/));
+  check(() => assert.match(socialConnectionsSource, /onClick=\{onDisconnect\}[\s\S]*Disconnect Meta/));
+  check(() => assert.match(socialConnectionsSource, /disabled=\{busy\} onClick=\{onReconnect\}/));
+  check(() => assert.match(socialConnectionsSource, /disabled=\{busy\} onClick=\{onCheck\}/));
+  check(() => assert.match(socialConnectionsSource, /disabled=\{busy\} onClick=\{onDisconnect\}/));
+  check(() => assert.match(socialConnectionsSource, /openingMeta \? 'Opening Meta\.\.\.' : 'Reconnect Meta'/));
+  check(() => assert.match(socialConnectionsSource, /onReconnect=\{connection\.start\}/));
+  check(() => assert.doesNotMatch(socialConnectionsSource, /onReconnect=\{[^}]*disconnect|disconnect\([^)]*\)[\s\S]{0,160}connection\.start/));
+  check(() => assert.match(responsiveSource, /@media \(max-width: 1120px\) \{[\s\S]*\.onboarding-grid \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
+  check(() => assert.match(responsiveSource, /@media \(max-width: 560px\) \{[\s\S]*\.social-connection-actions \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
+  check(() => assert.match(responsiveSource, /\.social-connection-actions > button \{[\s\S]*width: 100%/));
   check(() => assert.match(contractsSource, /export const META_OAUTH_STATE_TTL_MS = 30 \* 60_000/));
   check(() => assert.match(contractsSource, /export const META_TOKEN_EXCHANGE_PHASES = Object\.freeze\(\[\s*'short_token_exchange',\s*'long_token_exchange',\s*\]\)/));
   check(() => assert.match(contractsSource, /export const META_PROVIDER_ERROR_CATEGORIES = Object\.freeze\(\[/));
@@ -1130,6 +1179,29 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(replaceAudit.statement, /p_facebook_page_name/));
   check(() => assert.match(disconnectAudit.statement, /disconnected\.facebook_page_name/));
   check(() => assert.doesNotMatch(`${replaceAudit.statement}\n${disconnectAudit.statement}`, /token_envelope|encrypted_pending|state_hash|access_token|ciphertext/i));
+}
+
+function extractReconnectExpressions(source) {
+  const expression = (name) => {
+    const match = source.match(new RegExp(`const ${name} = ([\\s\\S]*?);`));
+    assert.ok(match, `${name} expression is missing`);
+    return match[1];
+  };
+  return new Function('value', 'META_FACEBOOK_PUBLISHING_SCOPE', `
+    const authorizationReconnectRequired = ${expression('authorizationReconnectRequired')};
+    const missingPublishingPermission = ${expression('missingPublishingPermission')};
+    const publishingReconnectRequired = ${expression('publishingReconnectRequired')};
+    return { authorizationReconnectRequired, missingPublishingPermission, publishingReconnectRequired };
+  `);
+}
+
+function reconnectFixture(grantedScopes, overrides = {}) {
+  return {
+    status: 'connected',
+    tokenExpiryStatus: 'valid',
+    grantedScopes,
+    ...overrides,
+  };
 }
 
 function makeProvider(pageBatches, options = {}) {
