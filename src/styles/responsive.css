@@ -1937,6 +1937,11 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .onboarding-grid {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .portal-hero {
     display: grid;
   }
@@ -2140,11 +2145,6 @@ textarea {
 }
 
 @media (max-width: 560px) {
-  .onboarding-grid {
-    min-width: 0;
-    grid-template-columns: minmax(0, 1fr);
-  }
-
   .social-connection-actions {
     display: grid;
     grid-template-columns: minmax(0, 1fr);

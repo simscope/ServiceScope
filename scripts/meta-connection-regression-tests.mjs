@@ -1045,7 +1045,7 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(socialConnectionsSource, /openingMeta \? 'Opening Meta\.\.\.' : 'Reconnect Meta'/));
   check(() => assert.match(socialConnectionsSource, /onReconnect=\{connection\.start\}/));
   check(() => assert.doesNotMatch(socialConnectionsSource, /onReconnect=\{[^}]*disconnect|disconnect\([^)]*\)[\s\S]{0,160}connection\.start/));
-  check(() => assert.match(responsiveSource, /@media \(max-width: 560px\) \{[\s\S]*\.onboarding-grid \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
+  check(() => assert.match(responsiveSource, /@media \(max-width: 1120px\) \{[\s\S]*\.onboarding-grid \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
   check(() => assert.match(responsiveSource, /@media \(max-width: 560px\) \{[\s\S]*\.social-connection-actions \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
   check(() => assert.match(responsiveSource, /\.social-connection-actions > button \{[\s\S]*width: 100%/));
   check(() => assert.match(contractsSource, /export const META_OAUTH_STATE_TTL_MS = 30 \* 60_000/));
