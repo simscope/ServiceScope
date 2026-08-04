@@ -970,13 +970,14 @@ async function identityLifecycleChecks(provider) {
 
 async function sourceAndSchemaChecks() {
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-  const [accessSource, appSource, callbackSource, callbackPageSource, clientContractsSource, socialConnectionsSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
+  const [accessSource, appSource, callbackSource, callbackPageSource, clientContractsSource, socialConnectionsSource, responsiveSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
     read('src/features/company-portal/companySettingsAccess.ts'),
     read('src/App.tsx'),
     read('src/features/meta-connection/callback.ts'),
     read('src/features/meta-connection/MetaOAuthCallbackPage.tsx'),
     read('src/features/meta-connection/contracts.ts'),
     read('src/features/meta-connection/SocialConnectionsPanel.tsx'),
+    read('src/styles/responsive.css'),
     read('supabase/functions/_shared/meta-connection/contracts.js'),
     read('supabase/functions/_shared/meta-connection/service.js'),
     read('supabase/functions/_shared/meta-connection/provider.js'),
@@ -1044,6 +1045,9 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(socialConnectionsSource, /openingMeta \? 'Opening Meta\.\.\.' : 'Reconnect Meta'/));
   check(() => assert.match(socialConnectionsSource, /onReconnect=\{connection\.start\}/));
   check(() => assert.doesNotMatch(socialConnectionsSource, /onReconnect=\{[^}]*disconnect|disconnect\([^)]*\)[\s\S]{0,160}connection\.start/));
+  check(() => assert.match(responsiveSource, /@media \(max-width: 560px\) \{[\s\S]*\.onboarding-grid \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
+  check(() => assert.match(responsiveSource, /@media \(max-width: 560px\) \{[\s\S]*\.social-connection-actions \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
+  check(() => assert.match(responsiveSource, /\.social-connection-actions > button \{[\s\S]*width: 100%/));
   check(() => assert.match(contractsSource, /export const META_OAUTH_STATE_TTL_MS = 30 \* 60_000/));
   check(() => assert.match(contractsSource, /export const META_TOKEN_EXCHANGE_PHASES = Object\.freeze\(\[\s*'short_token_exchange',\s*'long_token_exchange',\s*\]\)/));
   check(() => assert.match(contractsSource, /export const META_PROVIDER_ERROR_CATEGORIES = Object\.freeze\(\[/));

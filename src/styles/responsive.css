@@ -2140,6 +2140,21 @@ textarea {
 }
 
 @media (max-width: 560px) {
+  .onboarding-grid {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .social-connection-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .social-connection-actions > button {
+    width: 100%;
+    justify-content: center;
+  }
+
   .metrics-grid,
   .form-row,
   .nav-list,
