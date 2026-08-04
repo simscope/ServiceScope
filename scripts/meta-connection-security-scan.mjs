@@ -76,7 +76,13 @@ for (const forbidden of [
   check(() => assert.doesNotMatch(featureSource, forbidden));
 }
 
-check(() => assert.doesNotMatch(clientSource, /pages_manage_posts/i));
+check(() => assert.equal((clientSource.match(/pages_manage_posts/g) ?? []).length, 2));
+check(() => assert.match(clientSource, /META_FACEBOOK_PUBLISHING_SCOPE\s*=\s*'pages_manage_posts'/));
+check(() => assert.match(clientSource, /Reconnect Meta to add pages_manage_posts/));
+check(() => assert.doesNotMatch(
+  clientSource.match(/META_REQUESTED_SCOPES\s*=\s*\[([^\]]*)\]/)?.[1] ?? '',
+  /pages_manage_posts/,
+));
 check(() => assert.match(contractsSource, /META_FACEBOOK_PUBLISHING_SCOPE\s*=\s*'pages_manage_posts'/));
 check(() => assert.doesNotMatch(`${providerSource}\n${serviceSource}\n${edgeSource}`, /\/feed\b|publish_facebook_text/i));
 
@@ -328,7 +334,6 @@ try {
     /META_APP_SECRET/,
     /META_TOKEN_ENCRYPTION_KEY/,
     /server-only-app-secret/,
-    /pages_manage_posts/,
     /instagram_content_publish/,
     /instagram_business_content_publish/,
     /\/media_publish\b/,

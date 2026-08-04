@@ -21,6 +21,8 @@ The existing discovery contract remains `pages_show_list`, `pages_read_engagemen
 
 Users must deliberately reconnect Meta through a separately approved rollout to grant publishing access. This code does not start OAuth or change the Meta application configuration.
 
+The Social connections panel keeps a healthy three-scope connection marked as connected while showing publishing permission guidance and a primary **Reconnect Meta** action. The existing check and disconnect actions remain available; connections that already include `pages_manage_posts` keep the standard connected controls without the reconnect warning.
+
 ## Human and privacy boundaries
 
 The AI Assistant exposes publishing only inside a Facebook draft. The confirmation dialog shows the destination Page name, exact final text, character count, text-only limitation, and privacy status. Publishing remains disabled until the user checks the explicit approval control. Editing the draft invalidates that approval.

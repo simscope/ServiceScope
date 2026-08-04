@@ -1,6 +1,6 @@
 import { CheckCircle2, Facebook, Instagram, Link2, RefreshCw, ShieldCheck, Unplug } from 'lucide-react';
 import { useState } from 'react';
-import { META_REQUESTED_SCOPES, type MetaSafeConnection } from './contracts';
+import { META_FACEBOOK_PUBLISHING_SCOPE, META_REQUESTED_SCOPES, type MetaSafeConnection } from './contracts';
 import { useMetaSocialConnection } from './useMetaSocialConnection';
 
 export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
@@ -86,6 +86,7 @@ export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
         <ConnectedState
           value={snapshot.connection}
           busy={busy}
+          openingMeta={connection.busy === 'starting'}
           confirmDisconnect={confirmDisconnect}
           onCheck={connection.check}
           onReconnect={connection.start}
@@ -106,6 +107,7 @@ export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
 function ConnectedState({
   value,
   busy,
+  openingMeta,
   confirmDisconnect,
   onCheck,
   onReconnect,
@@ -115,6 +117,7 @@ function ConnectedState({
 }: {
   value: MetaSafeConnection;
   busy: boolean;
+  openingMeta: boolean;
   confirmDisconnect: boolean;
   onCheck: () => void;
   onReconnect: () => void;
@@ -122,13 +125,17 @@ function ConnectedState({
   onCancelDisconnect: () => void;
   onConfirmDisconnect: () => void;
 }) {
-  const needsReauthorization = value.status === 'needs_reauthorization' || value.tokenExpiryStatus === 'expired';
+  const authorizationReconnectRequired = value.status === 'needs_reauthorization' || value.tokenExpiryStatus === 'expired';
+  const missingPublishingPermission = !value.grantedScopes.includes(META_FACEBOOK_PUBLISHING_SCOPE);
+  const publishingReconnectRequired = value.status !== 'revoked'
+    && !authorizationReconnectRequired
+    && missingPublishingPermission;
   return (
-    <div className={`social-connection-state ${needsReauthorization ? 'warning-state' : 'connected-state'}`}>
+    <div className={`social-connection-state ${authorizationReconnectRequired ? 'warning-state' : 'connected-state'}`}>
       <div className="social-connected-summary">
-        {needsReauthorization ? <ShieldCheck size={20} aria-hidden="true" /> : <CheckCircle2 size={20} aria-hidden="true" />}
+        {authorizationReconnectRequired ? <ShieldCheck size={20} aria-hidden="true" /> : <CheckCircle2 size={20} aria-hidden="true" />}
         <div>
-          <strong>{needsReauthorization ? 'Needs reauthorization' : 'Connected'}</strong>
+          <strong>{authorizationReconnectRequired ? 'Needs reauthorization' : 'Connected'}</strong>
           <p><Facebook size={15} aria-hidden="true" /> {value.facebookPageName}</p>
           {value.instagramUsername ? <p><Instagram size={15} aria-hidden="true" /> @{value.instagramUsername}</p> : <p>Facebook-only connection</p>}
         </div>
@@ -140,16 +147,22 @@ function ConnectedState({
         <div><dt>Authorization expiry</dt><dd>{value.tokenExpiryStatus}</dd></div>
       </dl>
       <ScopeList scopes={value.grantedScopes} />
+      {publishingReconnectRequired ? (
+        <p className="social-connection-status">
+          Facebook publishing permission is not enabled. Reconnect Meta to add pages_manage_posts.
+        </p>
+      ) : null}
       <div className="social-connection-actions">
-        {needsReauthorization ? (
+        {authorizationReconnectRequired || publishingReconnectRequired ? (
           <button className="primary-button" type="button" disabled={busy} onClick={onReconnect}>
-            <Facebook size={16} aria-hidden="true" /> Reconnect Meta
+            <Facebook size={16} aria-hidden="true" /> {openingMeta ? 'Opening Meta...' : 'Reconnect Meta'}
           </button>
-        ) : (
+        ) : null}
+        {!authorizationReconnectRequired ? (
           <button className="secondary-button" type="button" disabled={busy} onClick={onCheck}>
             <RefreshCw size={16} aria-hidden="true" /> Check connection
           </button>
-        )}
+        ) : null}
         <button className="secondary-button danger-button" type="button" disabled={busy} onClick={onDisconnect}>
           <Unplug size={16} aria-hidden="true" /> Disconnect Meta
         </button>
