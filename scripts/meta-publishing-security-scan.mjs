@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ const [
   client,
   panel,
   migration,
+  aclMigration,
   schema,
   config,
 ] = await Promise.all([
@@ -25,6 +27,7 @@ const [
   read('src/features/meta-publishing/clientApi.ts'),
   read('src/components/portal/FacebookPublishPanel.tsx'),
   read('supabase/migrations/20260803193000_meta_facebook_publish_foundation.sql'),
+  read('supabase/migrations/20260804011000_meta_facebook_publish_service_role_acl_fix.sql'),
   read('supabase/schema.sql'),
   read('supabase/config.toml'),
 ]);
@@ -33,6 +36,19 @@ const browserSources = `${client}\n${panel}`;
 const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}`;
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
+
+for (const [source, expectedBlob] of [
+  [edge, '69360a6c9a94a79268d78ad20e8608c085ef6865'],
+  [service, 'e74136792c47300c165aaf39fb12178efdae097c'],
+  [provider, '81538357a7a3f0f06e7a38d826abc9914a79728e'],
+  [contracts, '84b13ef26cf14ecfc4d0914dee00df059e2fd766'],
+  [privacy, '385690ebdf79875a17561210ebc7741759b15438'],
+  [client, '65b6aabeeca9da5fed927e21202cd1788145ccb6'],
+  [panel, 'b15db38c709c4a309515696ef142abc88b609de4'],
+  [migration, 'd3f2ec8ae086b0a481084a98096fff27f439668a'],
+]) {
+  check(() => assert.equal(gitBlobSha(source), expectedBlob));
+}
 
 check(() => assert.doesNotMatch(browserSources, /graph\.facebook\.com/i));
 check(() => assert.doesNotMatch(browserSources, /access[_-]?token|token_envelope|ciphertext|appsecret_proof/i));
@@ -119,6 +135,21 @@ check(() => assert.match(migration, /p_actor_id, btrim\(p_actor_name\), btrim\(p
 check(() => assert.doesNotMatch(migration, /raw provider|access token|app secret|fbtrace/i));
 check(() => assert.match(schema, /-- META_FACEBOOK_PUBLISH_SCHEMA_BEGIN/));
 check(() => assert.match(schema, /-- META_FACEBOOK_PUBLISH_SCHEMA_END/));
+check(() => assert.match(aclMigration, /-- META_FACEBOOK_PUBLISH_ACL_FIX_BEGIN/));
+check(() => assert.match(aclMigration, /-- META_FACEBOOK_PUBLISH_ACL_FIX_END/));
+check(() => assert.match(aclMigration, /revoke all privileges\s+on table public\.company_social_publications\s+from service_role;/i));
+check(() => assert.match(aclMigration, /grant select, insert, update\s+on table public\.company_social_publications\s+to service_role;/i));
+check(() => assert.match(aclMigration, /revoke all privileges\s+on table public\.company_social_publications\s+from public, anon, authenticated;/i));
+check(() => assert.ok(
+  aclMigration.indexOf('from service_role;') < aclMigration.indexOf('grant select, insert, update'),
+));
+const serviceRoleGrantStatements = aclMigration.match(/grant[\s\S]*?to service_role;/gi) ?? [];
+check(() => assert.equal(serviceRoleGrantStatements.length, 1));
+check(() => assert.doesNotMatch(serviceRoleGrantStatements[0], /\b(?:delete|truncate|references|trigger|maintain)\b/i));
+check(() => assert.doesNotMatch(aclMigration, /grant all(?: privileges)?[\s\S]*?service_role/i));
+check(() => assert.doesNotMatch(aclMigration, /alter default privileges/i));
+check(() => assert.match(schema, /-- META_FACEBOOK_PUBLISH_ACL_FIX_BEGIN/));
+check(() => assert.match(schema, /-- META_FACEBOOK_PUBLISH_ACL_FIX_END/));
 
 const telemetryShape = service.match(/safePublishingTelemetry\(\{([\s\S]*?)\}\)/g) ?? [];
 check(() => assert.ok(telemetryShape.length >= 3));
@@ -155,4 +186,12 @@ async function readTree(directory) {
     else if (/\.(?:js|css|html|map)$/i.test(entry.name)) output += await readFile(path, 'utf8');
   }
   return output;
+}
+
+function gitBlobSha(source) {
+  const contents = Buffer.from(source, 'utf8');
+  return createHash('sha1')
+    .update(`blob ${contents.byteLength}\0`)
+    .update(contents)
+    .digest('hex');
 }

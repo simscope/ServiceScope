@@ -2682,3 +2682,17 @@ comment on function public.fail_company_facebook_publication(uuid, uuid, uuid, t
 comment on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, timestamptz) is
   'Marks an indeterminate provider delivery result without retry and writes its safe audit atomically.';
 -- META_FACEBOOK_PUBLISH_SCHEMA_END
+
+-- META_FACEBOOK_PUBLISH_ACL_FIX_BEGIN
+revoke all privileges
+on table public.company_social_publications
+from service_role;
+
+grant select, insert, update
+on table public.company_social_publications
+to service_role;
+
+revoke all privileges
+on table public.company_social_publications
+from public, anon, authenticated;
+-- META_FACEBOOK_PUBLISH_ACL_FIX_END

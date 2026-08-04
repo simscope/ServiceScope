@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import {
+  META_FACEBOOK_PUBLISH_ACL_FIX_MARKERS,
   META_FACEBOOK_PUBLISH_MARKERS,
   extractExactMarkedBlock,
   extractMetaCanonicalBlocks,
@@ -13,6 +14,7 @@ const migrationNames = [
   '20260802020000_meta_social_lifecycle_audit_transactions.sql',
   '20260802203000_meta_social_oauth_state_ttl_30_minutes.sql',
   '20260803193000_meta_facebook_publish_foundation.sql',
+  '20260804011000_meta_facebook_publish_service_role_acl_fix.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -23,6 +25,10 @@ const check = (fn) => { fn(); checks += 1; };
 check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.publishing),
   normalizeSqlForParity(extractExactMarkedBlock(migrations[3], META_FACEBOOK_PUBLISH_MARKERS)),
+));
+check(() => assert.equal(
+  normalizeSqlForParity(canonicalBlocks.publishingAclFix),
+  normalizeSqlForParity(extractExactMarkedBlock(migrations[4], META_FACEBOOK_PUBLISH_ACL_FIX_MARKERS)),
 ));
 
 const prerequisiteSchema = `
@@ -74,7 +80,13 @@ const verifiedActor = { name: 'Verified Publisher', role: 'manager' };
 
 const db = new PGlite();
 await db.exec(prerequisiteSchema);
-for (const migration of migrations) await db.exec(migration);
+for (const migration of migrations.slice(0, 4)) await db.exec(migration);
+await db.exec('grant all privileges on table public.company_social_publications to service_role;');
+const simulatedDefaultAcl = await directTablePrivileges(db, 'service_role');
+for (const privilege of ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 'TRUNCATE', 'UPDATE']) {
+  check(() => assert.ok(simulatedDefaultAcl.includes(privilege)));
+}
+await db.exec(migrations[4]);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -120,6 +132,9 @@ const grants = await db.query(`
     has_table_privilege('service_role', 'public.company_social_publications', 'INSERT') as service_insert,
     has_table_privilege('service_role', 'public.company_social_publications', 'UPDATE') as service_update,
     has_table_privilege('service_role', 'public.company_social_publications', 'DELETE') as service_delete,
+    has_table_privilege('service_role', 'public.company_social_publications', 'TRUNCATE') as service_truncate,
+    has_table_privilege('service_role', 'public.company_social_publications', 'REFERENCES') as service_references,
+    has_table_privilege('service_role', 'public.company_social_publications', 'TRIGGER') as service_trigger,
     has_table_privilege('anon', 'public.company_social_publications', 'SELECT') as anon_select,
     has_table_privilege('authenticated', 'public.company_social_publications', 'SELECT') as authenticated_select
 `);
@@ -127,15 +142,45 @@ check(() => assert.equal(grants.rows[0].service_select, true));
 check(() => assert.equal(grants.rows[0].service_insert, true));
 check(() => assert.equal(grants.rows[0].service_update, true));
 check(() => assert.equal(grants.rows[0].service_delete, false));
+check(() => assert.equal(grants.rows[0].service_truncate, false));
+check(() => assert.equal(grants.rows[0].service_references, false));
+check(() => assert.equal(grants.rows[0].service_trigger, false));
 check(() => assert.equal(grants.rows[0].anon_select, false));
 check(() => assert.equal(grants.rows[0].authenticated_select, false));
+
+const maintainPrivilege = await optionalTablePrivilege(db, 'service_role', 'MAINTAIN');
+if (maintainPrivilege.supported) check(() => assert.equal(maintainPrivilege.allowed, false));
+const serviceDirectPrivileges = await directTablePrivileges(db, 'service_role');
+check(() => assert.deepEqual(serviceDirectPrivileges, ['INSERT', 'SELECT', 'UPDATE']));
+for (const role of ['anon', 'authenticated']) {
+  const roleDirectPrivileges = await directTablePrivileges(db, role);
+  check(() => assert.deepEqual(roleDirectPrivileges, []));
+  const browserPrivileges = await db.query(`select
+    has_table_privilege($1, 'public.company_social_publications', 'SELECT') as can_select,
+    has_table_privilege($1, 'public.company_social_publications', 'INSERT') as can_insert,
+    has_table_privilege($1, 'public.company_social_publications', 'UPDATE') as can_update,
+    has_table_privilege($1, 'public.company_social_publications', 'DELETE') as can_delete,
+    has_table_privilege($1, 'public.company_social_publications', 'TRUNCATE') as can_truncate,
+    has_table_privilege($1, 'public.company_social_publications', 'REFERENCES') as can_references,
+    has_table_privilege($1, 'public.company_social_publications', 'TRIGGER') as can_trigger
+  `, [role]);
+  check(() => assert.ok(Object.values(browserPrivileges.rows[0]).every((allowed) => allowed === false)));
+}
+const publicTableAcl = await db.query(`
+  select a.privilege_type
+  from pg_class c
+  cross join lateral aclexplode(c.relacl) a
+  where c.oid='public.company_social_publications'::regclass and a.grantee=0
+`);
+check(() => assert.deepEqual(publicTableAcl.rows, []));
 
 const rpcNames = ['begin_company_facebook_publication', 'complete_company_facebook_publication', 'fail_company_facebook_publication', 'mark_company_facebook_publication_unknown'];
 const rpcGrants = await db.query(`
   select p.proname,
     has_function_privilege('service_role', p.oid, 'EXECUTE') as service_allowed,
     has_function_privilege('anon', p.oid, 'EXECUTE') as anon_allowed,
-    has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_allowed
+    has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_allowed,
+    coalesce((select bool_or(a.privilege_type='EXECUTE') from aclexplode(p.proacl) a where a.grantee=0), false) as public_allowed
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.proname = any($1::text[])
 `, [rpcNames]);
@@ -144,6 +189,7 @@ for (const row of rpcGrants.rows) {
   check(() => assert.equal(row.service_allowed, true));
   check(() => assert.equal(row.anon_allowed, false));
   check(() => assert.equal(row.authenticated_allowed, false));
+  check(() => assert.equal(row.public_allowed, false));
 }
 const rpcShapes = await db.query(`
   select proname, pronargs
@@ -301,9 +347,41 @@ await canonicalDb.exec(canonicalBlocks.foundation);
 await canonicalDb.exec(canonicalBlocks.lifecycle);
 await canonicalDb.exec(canonicalBlocks.ttl);
 await canonicalDb.exec(canonicalBlocks.publishing);
+await canonicalDb.exec('grant all privileges on table public.company_social_publications to service_role;');
+await canonicalDb.exec(canonicalBlocks.publishingAclFix);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
+const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
+check(() => assert.deepEqual(canonicalDirectPrivileges, ['INSERT', 'SELECT', 'UPDATE']));
 await canonicalDb.close();
+
+const isolationDb = new PGlite();
+await isolationDb.exec(prerequisiteSchema);
+for (const migration of migrations.slice(0, 4)) await isolationDb.exec(migration);
+await isolationDb.exec('grant all privileges on table public.company_social_publications to service_role;');
+await isolationDb.query(`insert into auth.users (id,email) values ($1,'acl-hotfix@example.test')`, [ids.actor]);
+await isolationDb.query(`insert into public.companies (id,name,owner_email) values ($1,'ACL fixture','acl-hotfix@example.test')`, [ids.company]);
+await isolationDb.query(`insert into public.company_social_connections (
+  id,company_id,provider,status,facebook_page_id,facebook_page_name,granted_scopes,token_envelope,connected_by,connected_at
+) values ($1,$2,'meta-facebook-login','connected','10001','ACL fixture Page',array['pages_show_list','pages_read_engagement','instagram_basic'],$3::jsonb,$4,now())`, [ids.connection, ids.company, envelope, ids.actor]);
+await isolationDb.query(`insert into public.audit_events (
+  company_id,category,action,actor_user_id,actor_name,actor_role,resource_type,resource_id,resource,resource_label,details
+) select $1,'access','meta_acl_fixture_' || value::text,$2,'ACL fixture','manager','meta_social_connection',value::text,'Meta social connection','ACL fixture','Fixture audit'
+  from generate_series(1,8) value`, [ids.company, ids.actor]);
+
+const isolationBefore = await captureIsolationState(isolationDb);
+check(() => assert.deepEqual(isolationBefore.counts, { connections: 1, states: 0, audits: 8, publications: 0 }));
+await isolationDb.exec(migrations[4]);
+const isolationAfter = await captureIsolationState(isolationDb);
+check(() => assert.deepEqual(isolationAfter, isolationBefore));
+const isolationDirectPrivileges = await directTablePrivileges(isolationDb, 'service_role');
+check(() => assert.deepEqual(isolationDirectPrivileges, ['INSERT', 'SELECT', 'UPDATE']));
+await isolationDb.exec(migrations[4]);
+const repeatedDirectPrivileges = await directTablePrivileges(isolationDb, 'service_role');
+const isolationAfterRepeat = await captureIsolationState(isolationDb);
+check(() => assert.deepEqual(repeatedDirectPrivileges, ['INSERT', 'SELECT', 'UPDATE']));
+check(() => assert.deepEqual(isolationAfterRepeat, isolationBefore));
+await isolationDb.close();
 
 console.log(`Meta publishing SQL checks passed: ${checks}; rollback artifacts: 0`);
 
@@ -329,4 +407,49 @@ async function assertRejectsSql(sql, params = []) {
   }
   await db.exec('release savepoint meta_expected_rejection;');
   check(() => assert.equal(rejected, true));
+}
+
+async function directTablePrivileges(database, role) {
+  const result = await database.query(`
+    select distinct a.privilege_type
+    from pg_class c
+    cross join lateral aclexplode(c.relacl) a
+    join pg_roles r on r.oid=a.grantee
+    where c.oid='public.company_social_publications'::regclass and r.rolname=$1
+    order by a.privilege_type
+  `, [role]);
+  return result.rows.map((row) => row.privilege_type);
+}
+
+async function optionalTablePrivilege(database, role, privilege) {
+  try {
+    const result = await database.query(`select has_table_privilege($1, 'public.company_social_publications', $2) as allowed`, [role, privilege]);
+    return { supported: true, allowed: result.rows[0].allowed };
+  } catch {
+    return { supported: false, allowed: false };
+  }
+}
+
+async function captureIsolationState(database) {
+  const counts = await database.query(`select
+    (select count(*)::integer from public.company_social_connections) as connections,
+    (select count(*)::integer from public.company_social_oauth_states) as states,
+    (select count(*)::integer from public.audit_events) as audits,
+    (select count(*)::integer from public.company_social_publications) as publications
+  `);
+  const connection = await database.query(`select provider,status,facebook_page_name,granted_scopes,token_envelope::text,connected_by from public.company_social_connections order by id`);
+  const rls = await database.query(`select relrowsecurity from pg_class where oid='public.company_social_publications'::regclass`);
+  const constraints = await database.query(`select conname,pg_get_constraintdef(oid) as definition from pg_constraint where conrelid='public.company_social_publications'::regclass order by conname`);
+  const indexes = await database.query(`select indexname,indexdef from pg_indexes where schemaname='public' and tablename='company_social_publications' order by indexname`);
+  const functions = await database.query(`select p.proname,pg_get_functiondef(p.oid) as definition,p.proacl::text as acl
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.proname = any($1::text[]) order by p.proname`, [rpcNames]);
+  return {
+    counts: counts.rows[0],
+    connection: connection.rows,
+    rls: rls.rows,
+    constraints: constraints.rows,
+    indexes: indexes.rows,
+    functions: functions.rows,
+  };
 }
