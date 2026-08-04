@@ -1,4 +1,6 @@
 import {
+  META_AUTHORIZATION_INTENTS,
+  META_FACEBOOK_PUBLISHING_SCOPE,
   META_OAUTH_STATE_TTL_MS,
   META_PROVIDER,
   META_REQUESTED_SCOPES,
@@ -104,9 +106,24 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
     }
 
     async function start({ body: requestBody, access: currentAccess }) {
-      stage = 'oauth_state';
       const config = assertRuntimeConfigured(deps.config);
       const returnPath = normalizeReturnPath(requestBody.returnPath);
+      const authorizationIntent = requestBody.authorizationIntent;
+      if (authorizationIntent === META_AUTHORIZATION_INTENTS[0]) {
+        stage = 'authorization_intent';
+        const snapshot = await deps.repository.getStatus(currentAccess.companyId, currentAccess.actorAuthUserId);
+        const connection = snapshot.connection;
+        const grantedScopes = Array.isArray(connection?.granted_scopes) ? connection.granted_scopes : [];
+        if (
+          !connection
+          || connection.status !== 'connected'
+          || !META_REQUESTED_SCOPES.every((scope) => grantedScopes.includes(scope))
+          || grantedScopes.includes(META_FACEBOOK_PUBLISHING_SCOPE)
+        ) {
+          throw new MetaConnectionError('INVALID_REQUEST');
+        }
+      }
+      stage = 'oauth_state';
       if (!Number.isFinite(deps.stateTtlMs) || deps.stateTtlMs <= 0) {
         throw new MetaConnectionError('INTERNAL_ERROR');
       }
@@ -126,7 +143,11 @@ export async function handleMetaConnection({ rawBody, authorization, deps }) {
         expiresAt: new Date(timestamp + boundedStateTtlMs).toISOString(),
         timestamp: new Date(timestamp).toISOString(),
       });
-      return { ok: true, provider: META_PROVIDER, authorizationUrl: deps.provider.buildAuthorizationUrl({ state }) };
+      return {
+        ok: true,
+        provider: META_PROVIDER,
+        authorizationUrl: deps.provider.buildAuthorizationUrl({ state, authorizationIntent }),
+      };
     }
 
     async function complete({ body: requestBody, access: currentAccess, stateHash: hash }) {

@@ -3,6 +3,8 @@ export const META_REQUESTED_SCOPES = ['pages_show_list', 'pages_read_engagement'
 export const META_FACEBOOK_PUBLISHING_SCOPE =
   'pages_manage_posts' as const;
 
+export type MetaAuthorizationIntent = 'facebook_publishing';
+
 export type MetaConnectionStatus = 'connected' | 'needs_reauthorization' | 'error' | 'revoked';
 
 export type MetaSafeAsset = {

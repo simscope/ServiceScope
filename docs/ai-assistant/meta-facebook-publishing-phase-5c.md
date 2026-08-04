@@ -23,6 +23,8 @@ Users must deliberately reconnect Meta through a separately approved rollout to 
 
 The Social connections panel keeps a healthy three-scope connection marked as connected while showing publishing permission guidance and a primary **Reconnect Meta** action. The existing check and disconnect actions remain available; connections that already include `pages_manage_posts` keep the standard connected controls without the reconnect warning.
 
+The publishing reconnect uses a bounded `facebook_publishing` authorization intent. The browser cannot supply scopes or OAuth parameters: the server accepts only that exact intent, verifies an active healthy connection has the three discovery scopes and lacks `pages_manage_posts`, and then adds only `scope=pages_manage_posts` and `auth_type=rerequest` to the existing configuration-based authorization URL. Initial connection and authorization-recovery flows remain unchanged and do not use rerequest parameters.
+
 ## Human and privacy boundaries
 
 The AI Assistant exposes publishing only inside a Facebook draft. The confirmation dialog shows the destination Page name, exact final text, character count, text-only limitation, and privacy status. Publishing remains disabled until the user checks the explicit approval control. Editing the draft invalidates that approval.

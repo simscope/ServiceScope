@@ -6,7 +6,7 @@ import {
   selectMetaAsset,
   startMetaConnection,
 } from './clientApi';
-import type { MetaConnectionSnapshot } from './contracts';
+import type { MetaAuthorizationIntent, MetaConnectionSnapshot } from './contracts';
 
 export function useMetaSocialConnection(companyId: string) {
   const [snapshot, setSnapshot] = useState<MetaConnectionSnapshot | null>(null);
@@ -27,11 +27,11 @@ export function useMetaSocialConnection(companyId: string) {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function start() {
+  async function start(authorizationIntent?: MetaAuthorizationIntent) {
     setBusy('starting');
     setMessage('');
     try {
-      const result = await startMetaConnection(companyId);
+      const result = await startMetaConnection(companyId, authorizationIntent);
       window.location.assign(result.authorizationUrl);
     } catch (error) {
       setBusy('');
