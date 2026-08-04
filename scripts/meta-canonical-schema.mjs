@@ -16,6 +16,12 @@ export const META_OAUTH_STATE_TTL_MARKERS = Object.freeze({
   label: 'Meta OAuth state TTL corrective',
 });
 
+export const META_FACEBOOK_PUBLISH_MARKERS = Object.freeze({
+  begin: '-- META_FACEBOOK_PUBLISH_SCHEMA_BEGIN',
+  end: '-- META_FACEBOOK_PUBLISH_SCHEMA_END',
+  label: 'Meta Facebook publishing',
+});
+
 const ALL_MARKERS = [
   META_FOUNDATION_MARKERS.begin,
   META_FOUNDATION_MARKERS.end,
@@ -23,6 +29,8 @@ const ALL_MARKERS = [
   META_LIFECYCLE_MARKERS.end,
   META_OAUTH_STATE_TTL_MARKERS.begin,
   META_OAUTH_STATE_TTL_MARKERS.end,
+  META_FACEBOOK_PUBLISH_MARKERS.begin,
+  META_FACEBOOK_PUBLISH_MARKERS.end,
 ];
 
 const PATCH_ARTIFACT_PATTERNS = [
@@ -66,6 +74,9 @@ export function extractMetaCanonicalBlocks(source) {
   const lifecycleEnd = uniqueMarkerIndex(lines, META_LIFECYCLE_MARKERS.end, 'Meta lifecycle audit END');
   const ttlBegin = uniqueMarkerIndex(lines, META_OAUTH_STATE_TTL_MARKERS.begin, 'Meta OAuth state TTL corrective BEGIN');
   const ttlEnd = uniqueMarkerIndex(lines, META_OAUTH_STATE_TTL_MARKERS.end, 'Meta OAuth state TTL corrective END');
+  const publishingPair = optionalMarkerPair(lines, META_FACEBOOK_PUBLISH_MARKERS);
+  const publishingBegin = publishingPair?.begin ?? null;
+  const publishingEnd = publishingPair?.end ?? null;
 
   if (!(
     foundationBegin < foundationEnd
@@ -73,13 +84,22 @@ export function extractMetaCanonicalBlocks(source) {
     && lifecycleBegin < lifecycleEnd
     && lifecycleEnd < ttlBegin
     && ttlBegin < ttlEnd
+    && (publishingBegin === null || (
+      ttlEnd < publishingBegin
+      && publishingBegin < publishingEnd
+    ))
   )) {
     fail('canonical Meta blocks must be ordered and non-overlapping');
   }
 
   const betweenFoundationAndLifecycle = lines.slice(foundationEnd + 1, lifecycleBegin).join('\n');
   const betweenLifecycleAndTtl = lines.slice(lifecycleEnd + 1, ttlBegin).join('\n');
-  if (!containsOnlyWhitespaceAndComments(betweenFoundationAndLifecycle) || !containsOnlyWhitespaceAndComments(betweenLifecycleAndTtl)) {
+  const betweenTtlAndPublishing = publishingBegin === null ? '' : lines.slice(ttlEnd + 1, publishingBegin).join('\n');
+  if (
+    !containsOnlyWhitespaceAndComments(betweenFoundationAndLifecycle)
+    || !containsOnlyWhitespaceAndComments(betweenLifecycleAndTtl)
+    || !containsOnlyWhitespaceAndComments(betweenTtlAndPublishing)
+  ) {
     fail('only whitespace or comments may appear between canonical Meta blocks');
   }
 
@@ -87,6 +107,7 @@ export function extractMetaCanonicalBlocks(source) {
     foundation: lines.slice(foundationBegin, foundationEnd + 1).join('\n'),
     lifecycle: lines.slice(lifecycleBegin, lifecycleEnd + 1).join('\n'),
     ttl: lines.slice(ttlBegin, ttlEnd + 1).join('\n'),
+    publishing: publishingBegin === null ? null : lines.slice(publishingBegin, publishingEnd + 1).join('\n'),
   };
 }
 
@@ -123,6 +144,20 @@ function uniqueMarkerIndex(lines, marker, label) {
     fail(`${label} marker count must be exactly one; received ${indexes.length}`);
   }
   return indexes[0];
+}
+
+function optionalMarkerPair(lines, markers) {
+  const beginIndexes = [];
+  const endIndexes = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index] === markers.begin) beginIndexes.push(index);
+    if (lines[index] === markers.end) endIndexes.push(index);
+  }
+  if (beginIndexes.length === 0 && endIndexes.length === 0) return null;
+  if (beginIndexes.length !== 1 || endIndexes.length !== 1) {
+    fail(`${markers.label} marker counts must both be exactly one; received ${beginIndexes.length}/${endIndexes.length}`);
+  }
+  return { begin: beginIndexes[0], end: endIndexes[0] };
 }
 
 function containsOnlyWhitespaceAndComments(value) {

@@ -40,6 +40,9 @@ verify_jwt = true
 [functions.meta-social-connection]
 verify_jwt = true
 
+[functions.meta-social-publish]
+verify_jwt = true
+
 [functions.mailbox-oauth-callback]
 verify_jwt = false
 

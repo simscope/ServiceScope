@@ -48,6 +48,7 @@ import {
   reconcileMediaPlanningState,
 } from '../../features/media-planning/planningState';
 import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
+import { FacebookPublishPanel } from './FacebookPublishPanel';
 import { loadCompanyVoiceSummary } from '../../features/company-voice/clientApi';
 import {
   buildGenerationPreferencesByChannel,
@@ -595,6 +596,17 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                   ))}
                 </div>
                 {aiStatusByChannel[draft.channel] ? <p className="ai-assistant-ai-status">{aiStatusByChannel[draft.channel]}</p> : null}
+                {draft.channel === 'Facebook' && selectedJob ? (
+                  <FacebookPublishPanel
+                    key={`${companyId}:${selectedJob.id}`}
+                    companyId={companyId}
+                    jobId={selectedJob.id}
+                    jobStatus={selectedJob.status}
+                    message={draftWorkspace.drafts[draft.channel] ?? draft.body}
+                    selectedMediaCount={selectedMediaCount}
+                    privacyStatus="Server privacy validation will run again before publishing."
+                  />
+                ) : null}
               </article>
             ))}
           </section>
@@ -603,7 +615,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
 
       <p className="ai-assistant-phase-note">
         Drafts stay grounded in selected job data. Media analysis uses the secure server function only; no provider keys,
-        private media links, publishing, OAuth, or database writes run in the browser.
+        private media links, OAuth, provider tokens, or direct database writes run in the browser.
       </p>
     </section>
   );

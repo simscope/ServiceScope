@@ -62,7 +62,6 @@ for (const forbidden of [
   /\/photos\b/i,
   /\/videos\b/i,
   /\/media_publish\b/i,
-  /pages_manage_posts/i,
   /instagram_content_publish/i,
   /instagram_business_content_publish/i,
   /pages_manage_metadata/i,
@@ -76,6 +75,10 @@ for (const forbidden of [
 ]) {
   check(() => assert.doesNotMatch(featureSource, forbidden));
 }
+
+check(() => assert.doesNotMatch(clientSource, /pages_manage_posts/i));
+check(() => assert.match(contractsSource, /META_FACEBOOK_PUBLISHING_SCOPE\s*=\s*'pages_manage_posts'/));
+check(() => assert.doesNotMatch(`${providerSource}\n${serviceSource}\n${edgeSource}`, /\/feed\b|publish_facebook_text/i));
 
 for (const secretName of [/VITE_META_APP_SECRET/, /VITE_META_LOGIN_CONFIGURATION_ID/, /VITE_META_TOKEN/, /VITE_META.*ENCRYPTION/i]) {
   check(() => assert.doesNotMatch(featureSource, secretName));
@@ -266,7 +269,10 @@ check(() => assert.match(serviceSource, /META_TOKEN_EXCHANGE_PHASES\.includes\(e
 check(() => assert.match(serviceSource, /deps\.telemetry\.record\(safeTelemetry\(/));
 check(() => assert.match(edgeSource, /\{ error: 'Meta connection request was rejected\.', code: normalized\.code \}/));
 check(() => assert.doesNotMatch(edgeSource, /providerPhase|providerHttpStatus|providerCode|providerSubcode|providerCategory|providerIsTransient/));
-check(() => assert.doesNotMatch(`${migration}\n${lifecycleAuditMigration}\n${ttlCorrectiveMigration}\n${canonicalSchema}`, /provider_(?:phase|http_status|subcode|category|is_transient)|meta_provider_telemetry/i));
+check(() => assert.doesNotMatch(
+  `${migration}\n${lifecycleAuditMigration}\n${ttlCorrectiveMigration}\n${canonicalBlocks.foundation}\n${canonicalBlocks.lifecycle}\n${canonicalBlocks.ttl}`,
+  /provider_(?:phase|http_status|subcode|category|is_transient)|meta_provider_telemetry/i,
+));
 check(() => assert.match(regressionSource, /fake-access-token-sensitive/));
 check(() => assert.match(regressionSource, /fake-oauth-code-sensitive/));
 check(() => assert.match(regressionSource, /fake-app-secret-sensitive/));
