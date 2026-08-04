@@ -1,4 +1,4 @@
-import type { FacebookPublicationSummary } from './contracts.js';
+import { normalizeFacebookPublishingMessage, type FacebookPublicationSummary } from './contracts.js';
 
 export type FacebookPublishWorkspaceState = {
   confirmationOpen: boolean;
@@ -8,6 +8,8 @@ export type FacebookPublishWorkspaceState = {
   submitting: boolean;
   result: FacebookPublicationSummary | null;
   error: string;
+  errorCode: string;
+  pageCheckAcknowledged: boolean;
 };
 
 export const emptyFacebookPublishWorkspace: FacebookPublishWorkspaceState = {
@@ -18,7 +20,24 @@ export const emptyFacebookPublishWorkspace: FacebookPublishWorkspaceState = {
   submitting: false,
   result: null,
   error: '',
+  errorCode: '',
+  pageCheckAcknowledged: false,
 };
+
+export function resetFacebookPublishWorkspace(): FacebookPublishWorkspaceState {
+  return { ...emptyFacebookPublishWorkspace };
+}
+
+export function facebookPublicationInProgress(lastPublication: FacebookPublicationSummary | null | undefined) {
+  return lastPublication?.status === 'publishing';
+}
+
+export function facebookPublicationNeedsPageCheck(
+  lastPublication: FacebookPublicationSummary | null | undefined,
+  errorCode = '',
+) {
+  return lastPublication?.status === 'delivery_unknown' || errorCode === 'META_PUBLICATION_DELIVERY_UNKNOWN';
+}
 
 export function openFacebookPublishConfirmation(message: string, idempotencyKey: string): FacebookPublishWorkspaceState {
   return {
@@ -30,8 +49,14 @@ export function openFacebookPublishConfirmation(message: string, idempotencyKey:
 }
 
 export function invalidateFacebookPublishApproval(state: FacebookPublishWorkspaceState, currentMessage: string) {
-  if (!state.approvedMessage || currentMessage.trim() === state.approvedMessage) return state;
-  return { ...emptyFacebookPublishWorkspace };
+  let normalized = '';
+  try {
+    normalized = normalizeFacebookPublishingMessage(currentMessage);
+  } catch {
+    return resetFacebookPublishWorkspace();
+  }
+  if (!state.approvedMessage || normalized === state.approvedMessage) return state;
+  return resetFacebookPublishWorkspace();
 }
 
 export function beginFacebookPublishSubmission(state: FacebookPublishWorkspaceState) {

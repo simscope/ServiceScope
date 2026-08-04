@@ -7,6 +7,7 @@ import { connectionEnvelopeContext, encryptTokenBundle } from '../supabase/funct
 import {
   MetaPublishingError,
   facebookPublishingEnabled,
+  normalizeApprovedMessage,
   parsePublishingRequest,
   runtimePublishingConfig,
   safePublishingTelemetry,
@@ -16,9 +17,15 @@ import { createFacebookPublishingProvider } from '../supabase/functions/_shared/
 import { handleMetaPublishing } from '../supabase/functions/_shared/meta-publishing/service.js';
 import {
   beginFacebookPublishSubmission,
+  facebookPublicationInProgress,
+  facebookPublicationNeedsPageCheck,
   invalidateFacebookPublishApproval,
   openFacebookPublishConfirmation,
+  resetFacebookPublishWorkspace,
 } from '../.tmp/meta-publishing-tests/workspaceState.js';
+import {
+  normalizeFacebookPublishingMessage,
+} from '../.tmp/meta-publishing-tests/contracts.js';
 
 const cryptoApi = globalThis.crypto ?? webcrypto;
 const ids = {
@@ -26,6 +33,7 @@ const ids = {
   otherCompany: '00000000-0000-4000-8000-000000008002',
   actor: '00000000-0000-4000-8000-000000008003',
   job: '00000000-0000-4000-8000-000000008004',
+  jobB: '00000000-0000-4000-8000-000000008006',
   connection: '00000000-0000-4000-8000-000000008005',
 };
 const jwt = 'synthetic-header.synthetic-payload.synthetic-signature';
@@ -42,6 +50,7 @@ const checkAsync = async (fn) => { await fn(); checks += 1; };
 
 configurationAndAccessChecks();
 telemetryChecks();
+multilineContractChecks();
 privacyChecks();
 workspaceChecks();
 await providerChecks();
@@ -71,6 +80,7 @@ function configurationAndAccessChecks() {
   check(() => assert.throws(() => assertMetaAccessRole({ kind: 'company', role: 'admin', company_id: ids.otherCompany }, ids.company), /FORBIDDEN/));
 
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
+  check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));
   for (const invalid of [
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: crypto.randomUUID() },
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: crypto.randomUUID(), explicitApproval: false },
@@ -85,6 +95,32 @@ function configurationAndAccessChecks() {
     }
   }
   check(() => assert.throws(() => parsePublishingRequest('x'.repeat(24_001), 24_000), /INVALID_REQUEST/));
+}
+
+function multilineContractChecks() {
+  const exact = [
+    'Service story: our team documented work for a rooftop unit.',
+    'The reported issue was: insufficient cooling.',
+    'Recorded work performed: replaced the failed contactor.',
+    'Final result: normal operation verified.',
+  ].join('\n');
+  const aiResult = 'Headline: Rooftop unit service update\nBody: Replaced the failed contactor.\nCTA: Schedule documented service support.';
+  for (const value of [exact, aiResult]) {
+    check(() => assert.equal(normalizeApprovedMessage(value), value));
+    check(() => assert.equal(normalizeFacebookPublishingMessage(value), value));
+  }
+  for (const [input, expected] of [
+    [`  ${exact}\r\n  `, exact],
+    ['Line one\r\n\r\nLine three', 'Line one\n\nLine three'],
+    ['Line one\rLine two', 'Line one\nLine two'],
+  ]) {
+    check(() => assert.equal(normalizeApprovedMessage(input), expected));
+    check(() => assert.equal(normalizeFacebookPublishingMessage(input), expected));
+  }
+  for (const invalid of ['bad\ttext', '\tbad text', `bad\u0000text`, `bad\u000btext`, `bad\u007ftext`, '[private]']) {
+    check(() => assert.throws(() => normalizeApprovedMessage(invalid), /INVALID_REQUEST/));
+    check(() => assert.throws(() => normalizeFacebookPublishingMessage(invalid), /INVALID_REQUEST/));
+  }
 }
 
 function telemetryChecks() {
@@ -126,7 +162,8 @@ function privacyChecks() {
 }
 
 function workspaceChecks() {
-  const opened = openFacebookPublishConfirmation('Exact final text', '00000000-0000-4000-8000-000000008010');
+  const multiline = 'Exact final text\n\nSecond paragraph';
+  const opened = openFacebookPublishConfirmation(multiline, '00000000-0000-4000-8000-000000008010');
   check(() => assert.equal(opened.confirmationOpen, true));
   check(() => assert.equal(opened.approved, false));
   check(() => assert.equal(beginFacebookPublishSubmission(opened).shouldSubmit, false));
@@ -135,14 +172,32 @@ function workspaceChecks() {
   check(() => assert.equal(begun.shouldSubmit, true));
   check(() => assert.equal(beginFacebookPublishSubmission(begun.state).shouldSubmit, false));
   check(() => assert.equal(invalidateFacebookPublishApproval(approved, 'Edited final text').confirmationOpen, false));
-  check(() => assert.equal(invalidateFacebookPublishApproval(approved, 'Exact final text').confirmationOpen, true));
+  check(() => assert.equal(invalidateFacebookPublishApproval(approved, multiline).confirmationOpen, true));
   const settled = { ...approved, confirmationOpen: false, result: { status: 'published' } };
-  check(() => assert.equal(invalidateFacebookPublishApproval(settled, 'Exact final text').result?.status, 'published'));
+  check(() => assert.equal(invalidateFacebookPublishApproval(settled, multiline).result?.status, 'published'));
   check(() => assert.equal(invalidateFacebookPublishApproval(settled, 'Edited final text').result, null));
+  check(() => assert.equal(facebookPublicationInProgress({ status: 'publishing' }), true));
+  check(() => assert.equal(facebookPublicationInProgress({ status: 'published' }), false));
+  check(() => assert.equal(facebookPublicationNeedsPageCheck({ status: 'delivery_unknown' }), true));
+  check(() => assert.equal(facebookPublicationNeedsPageCheck(null, 'META_PUBLICATION_DELIVERY_UNKNOWN'), true));
+
+  const jobA = { ...settled, approvedMessage: multiline, idempotencyKey: '00000000-0000-4000-8000-000000008011' };
+  const jobB = resetFacebookPublishWorkspace();
+  check(() => assert.equal(jobB.result, null));
+  check(() => assert.equal(jobB.idempotencyKey, null));
+  check(() => assert.equal(jobB.confirmationOpen, false));
+  const jobBOpened = openFacebookPublishConfirmation(multiline, '00000000-0000-4000-8000-000000008012');
+  check(() => assert.notEqual(jobBOpened.idempotencyKey, jobA.idempotencyKey));
 }
 
 async function providerChecks() {
   const sensitiveToken = 'fake-page-access-token-sensitive';
+  const multiline = [
+    'Service story: our team documented work for a rooftop unit.',
+    'The reported issue was: insufficient cooling.',
+    'Recorded work performed: replaced the failed contactor.',
+    'Final result: normal operation verified.',
+  ].join('\n');
   const calls = [];
   const provider = createFacebookPublishingProvider({
     config,
@@ -152,7 +207,7 @@ async function providerChecks() {
       return new Response(JSON.stringify({ id: '10001_20002' }), { status: 200 });
     },
   });
-  const result = await provider.publishText({ pageId: '10001', pageAccessToken: sensitiveToken, message: 'Approved text', signal: new AbortController().signal });
+  const result = await provider.publishText({ pageId: '10001', pageAccessToken: sensitiveToken, message: multiline, signal: new AbortController().signal });
   check(() => assert.equal(result.providerPostId, '10001_20002'));
   check(() => assert.equal(calls.length, 1));
   check(() => assert.equal(calls[0].url, 'https://graph.facebook.com/v25.0/10001/feed'));
@@ -160,7 +215,8 @@ async function providerChecks() {
   check(() => assert.equal(calls[0].options.headers.Authorization, `Bearer ${sensitiveToken}`));
   check(() => assert.ok(!calls[0].url.includes(sensitiveToken)));
   check(() => assert.ok(!String(calls[0].options.body).includes(sensitiveToken)));
-  check(() => assert.match(String(calls[0].options.body), /message=Approved\+text/));
+  check(() => assert.equal(new URLSearchParams(String(calls[0].options.body)).get('message'), multiline));
+  check(() => assert.match(String(calls[0].options.body), /%0A/));
 
   const rejected = createFacebookPublishingProvider({
     config,
@@ -187,23 +243,45 @@ async function providerChecks() {
 
 async function serviceChecks() {
   const base = await makeDependencies();
-  const threeScope = await invoke(base, { action: 'status', companyId: ids.company });
+  const threeScope = await invoke(base, { action: 'status', companyId: ids.company, jobId: ids.job });
   check(() => assert.equal(threeScope.connected, true));
   check(() => assert.equal(threeScope.facebookPublishingEnabled, false));
   check(() => assert.deepEqual(threeScope.missingPermissions, ['pages_manage_posts']));
 
   base.context.connection.granted_scopes = publishingScopes();
-  const ready = await invoke(base, { action: 'status', companyId: ids.company });
+  const ready = await invoke(base, { action: 'status', companyId: ids.company, jobId: ids.job });
   check(() => assert.equal(ready.facebookPublishingEnabled, true));
   check(() => assert.deepEqual(ready.missingPermissions, []));
+  check(() => assert.ok(!JSON.stringify(ready).includes(ids.job)));
+  const companyOnlyStatus = await invoke(base, { action: 'status', companyId: ids.company });
+  check(() => assert.equal(companyOnlyStatus.facebookPublishingEnabled, true));
+  await checkAsync(() => assert.rejects(
+    invoke(base, { action: 'status', companyId: ids.company, jobId: ids.jobB }),
+    /FORBIDDEN/,
+  ));
 
   const idempotencyKey = '00000000-0000-4000-8000-000000008020';
-  const request = publishRequest('Replaced the contactor and verified normal operation.', idempotencyKey);
+  const exactMultiline = [
+    'Service story: our team documented work for a rooftop unit.',
+    'The reported issue was: insufficient cooling.',
+    'Recorded work performed: replaced the failed contactor.',
+    'Final result: normal operation verified.',
+  ].join('\n');
+  const request = publishRequest(`  ${exactMultiline.replace(/\n/g, '\r\n')}  `, idempotencyKey);
   const published = await invoke(base, request);
   check(() => assert.equal(published.status, 'published'));
   check(() => assert.equal(base.providerCalls.length, 1));
   check(() => assert.ok(!('providerPostId' in published)));
   check(() => assert.ok(!JSON.stringify(published).includes('10001_20002')));
+  check(() => assert.equal(base.providerCalls[0].message, exactMultiline));
+  check(() => assert.equal(base.beginInputs[0].message, exactMultiline));
+  check(() => assert.deepEqual(
+    { actorAuthUserId: base.beginInputs[0].actorAuthUserId, actorName: base.beginInputs[0].actorName, actorRole: base.beginInputs[0].actorRole },
+    { actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' },
+  ));
+  const expectedHash = `\\x${Buffer.from(await cryptoApi.subtle.digest('SHA-256', new TextEncoder().encode(exactMultiline))).toString('hex')}`;
+  check(() => assert.equal(base.beginInputs[0].messageSha256, expectedHash));
+  check(() => assert.deepEqual(base.terminalActors[0], { action: 'complete', actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }));
   await invoke(base, request);
   check(() => assert.equal(base.providerCalls.length, 1));
 
@@ -234,16 +312,28 @@ async function serviceChecks() {
     markUnknownError: new Error('database detail'),
   });
   unknownPersistenceFailure.context.connection.granted_scopes = publishingScopes();
+  const unknownPersistenceKey = '00000000-0000-4000-8000-000000008031';
   await checkAsync(() => assert.rejects(
-    invoke(unknownPersistenceFailure, publishRequest('Verified safe operation.', crypto.randomUUID())),
+    invoke(unknownPersistenceFailure, publishRequest('Verified safe operation.', unknownPersistenceKey)),
     /META_PUBLICATION_DELIVERY_UNKNOWN/,
   ));
+  check(() => assert.equal(unknownPersistenceFailure.publications.get(unknownPersistenceKey).publication_status, 'publishing'));
+  await checkAsync(() => assert.rejects(
+    invoke(unknownPersistenceFailure, publishRequest('Verified safe operation.', unknownPersistenceKey)),
+    /META_PUBLICATION_IN_PROGRESS/,
+  ));
+  check(() => assert.equal(unknownPersistenceFailure.providerCalls.length, 1));
+  const remounted = await invoke(unknownPersistenceFailure, { action: 'status', companyId: ids.company, jobId: ids.job });
+  check(() => assert.equal(remounted.lastPublication.status, 'publishing'));
+  check(() => assert.equal(facebookPublicationInProgress(remounted.lastPublication), true));
+  check(() => assert.doesNotMatch(JSON.stringify(unknownPersistenceFailure.telemetryEvents), /database detail|Verified safe operation/));
 
   const failure = await makeDependencies({ providerError: new MetaPublishingError('META_PUBLICATION_PROVIDER_REJECTED', undefined, { providerHttpStatus: 403, providerCode: 200, providerCategory: 'MISSING_PERMISSION', providerIsTransient: false }) });
   failure.context.connection.granted_scopes = publishingScopes();
   const failureKey = '00000000-0000-4000-8000-000000008040';
   await checkAsync(() => assert.rejects(invoke(failure, publishRequest('Verified normal operation.', failureKey)), /META_PUBLICATION_PROVIDER_REJECTED/));
   check(() => assert.equal(failure.publications.get(failureKey).publication_status, 'failed'));
+  check(() => assert.deepEqual(failure.terminalActors[0], { action: 'fail', actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }));
   await checkAsync(() => assert.rejects(invoke(failure, publishRequest('Verified normal operation.', failureKey)), /META_PUBLICATION_PROVIDER_REJECTED/));
   check(() => assert.equal(failure.providerCalls.length, 1));
 
@@ -252,6 +342,18 @@ async function serviceChecks() {
   brokenEnvelope.context.connection.token_envelope = { invalid: true };
   await checkAsync(() => assert.rejects(invoke(brokenEnvelope, publishRequest('Verified operation.', crypto.randomUUID())), /META_CONNECTION_NEEDS_REAUTHORIZATION/));
   check(() => assert.equal(brokenEnvelope.providerCalls.length, 0));
+
+  const unsupported = await makeDependencies();
+  unsupported.context.connection.granted_scopes = publishingScopes();
+  unsupported.context.job.status = 'In progress';
+  await checkAsync(() => assert.rejects(
+    invoke(unsupported, publishRequest('This action is unavailable.', crypto.randomUUID())),
+    /INVALID_REQUEST/,
+  ));
+  check(() => assert.equal(unsupported.providerCalls.length, 0));
+
+  check(() => assert.deepEqual(network.terminalActors[0], { action: 'unknown', actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }));
+  check(() => assert.equal(base.statusCalls[0].jobId, ids.job));
 
   for (const event of [...base.telemetryEvents, ...network.telemetryEvents, ...failure.telemetryEvents, ...brokenEnvelope.telemetryEvents]) {
     check(() => assert.deepEqual(Object.keys(event).sort(), [
@@ -270,12 +372,18 @@ async function sourceChecks() {
   check(() => assert.match(edge, /app_current_session/));
   check(() => assert.match(edge, /can_manage_company/));
   check(() => assert.match(edge, /some\(\(result\) => result\.error\)/));
+  check(() => assert.match(edge, /\.eq\('job_id', jobId\)/));
   check(() => assert.doesNotMatch(client, /graph\.facebook\.com|access_token|pageId|connectionId/));
   check(() => assert.match(provider, /Authorization: `Bearer \$\{pageAccessToken\}`/));
   check(() => assert.doesNotMatch(provider, /access_token/));
   check(() => assert.doesNotMatch(provider, /for\s*\(|while\s*\(/));
   check(() => assert.match(panel, /I reviewed the exact final text and approve publishing it to the Facebook Page now\./));
   check(() => assert.match(panel, /selected photos and videos will not be uploaded/i));
+  check(() => assert.match(panel, /A Facebook publication for this job is already in progress\./));
+  check(() => assert.match(panel, /I checked the Facebook Page and understand that continuing will create a new publication\./));
+  check(() => assert.match(panel, /\[companyId, jobId\]/));
+  check(() => assert.match(panel, /Completed.*Warranty/s));
+  check(() => assert.doesNotMatch(panel, /retry/i));
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
 }
 
@@ -305,21 +413,41 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
   };
   const publications = new Map();
   const providerCalls = [];
+  const beginInputs = [];
+  const terminalActors = [];
+  const statusCalls = [];
   const telemetryEvents = [];
   let clock = Date.parse('2026-08-03T12:00:00.000Z');
   return {
     context,
     publications,
     providerCalls,
+    beginInputs,
+    terminalActors,
+    statusCalls,
     telemetryEvents,
     auth: {
       resolveSession: async () => ({ kind: 'company', role: 'admin', company_id: ids.company }),
       assertCompanyAccess: async () => ({ actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }),
     },
     repository: {
-      getStatus: async () => ({ connection, lastPublication: null }),
+      getStatus: async (companyId, jobId) => {
+        statusCalls.push({ companyId, jobId });
+        if (companyId !== ids.company || (jobId && jobId !== context.job.id)) throw new MetaPublishingError('FORBIDDEN');
+        const latest = [...publications.values()].reverse().find((row) => !jobId || row.job_id === jobId);
+        return {
+          connection,
+          lastPublication: latest ? {
+            status: latest.publication_status,
+            approved_at: latest.publication_approved_at,
+            published_at: latest.publication_published_at,
+            last_error_code: latest.publication_last_error_code,
+          } : null,
+        };
+      },
       getPublicationContext: async () => context,
       beginPublication: async (input) => {
+        beginInputs.push(input);
         const existing = publications.get(input.idempotencyKey);
         if (existing) return { ...existing, should_publish: false };
         const row = {
@@ -328,18 +456,26 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
           publication_approved_at: input.timestamp,
           publication_published_at: null,
           publication_last_error_code: null,
+          job_id: input.jobId,
           should_publish: true,
         };
         publications.set(input.idempotencyKey, row);
         return row;
       },
-      completePublication: async (input) => updatePublication(publications, input.publicationId, {
-        publication_status: 'published', publication_published_at: input.timestamp, publication_last_error_code: null,
-      }),
-      failPublication: async (input) => updatePublication(publications, input.publicationId, {
-        publication_status: 'failed', publication_published_at: null, publication_last_error_code: input.lastErrorCode,
-      }),
+      completePublication: async (input) => {
+        terminalActors.push(actorRecord('complete', input));
+        return updatePublication(publications, input.publicationId, {
+          publication_status: 'published', publication_published_at: input.timestamp, publication_last_error_code: null,
+        });
+      },
+      failPublication: async (input) => {
+        terminalActors.push(actorRecord('fail', input));
+        return updatePublication(publications, input.publicationId, {
+          publication_status: 'failed', publication_published_at: null, publication_last_error_code: input.lastErrorCode,
+        });
+      },
       markUnknown: async (input) => {
+        terminalActors.push(actorRecord('unknown', input));
         if (markUnknownError) throw markUnknownError;
         return updatePublication(publications, input.publicationId, {
           publication_status: 'delivery_unknown', publication_published_at: null,
@@ -361,6 +497,15 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
     timeoutController: () => ({ signal: new AbortController().signal, clear() {} }),
     now: () => { clock += 10; return clock; },
     telemetry: { record: (event) => telemetryEvents.push(event) },
+  };
+}
+
+function actorRecord(action, input) {
+  return {
+    action,
+    actorAuthUserId: input.actorAuthUserId,
+    actorName: input.actorName,
+    actorRole: input.actorRole,
   };
 }
 

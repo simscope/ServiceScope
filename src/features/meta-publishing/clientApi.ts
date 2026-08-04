@@ -3,8 +3,12 @@ import type { FacebookPublishingSnapshot, FacebookPublishResult } from './contra
 
 const functionName = 'meta-social-publish';
 
-export function loadFacebookPublishingStatus(companyId: string) {
-  return supabaseFunction<FacebookPublishingSnapshot>(functionName, { action: 'status', companyId });
+export function loadFacebookPublishingStatus(companyId: string, jobId?: string) {
+  return supabaseFunction<FacebookPublishingSnapshot>(functionName, {
+    action: 'status',
+    companyId,
+    ...(jobId ? { jobId } : {}),
+  });
 }
 
 export function publishFacebookText(input: {

@@ -67,7 +67,7 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
     throw new MetaPublishingError('INVALID_REQUEST');
   }
   const allowed = value.action === 'status'
-    ? ['action', 'companyId']
+    ? ['action', 'companyId', 'jobId']
     : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new MetaPublishingError('INVALID_REQUEST');
   return value;
@@ -80,8 +80,19 @@ export function requireUuid(value) {
 }
 
 export function normalizeApprovedMessage(value) {
-  const clean = typeof value === 'string' ? value.trim() : '';
-  if (!clean || clean.length > 5000 || /[\u0000-\u001f\u007f]/.test(clean) || /\[private\]/i.test(clean)) {
+  const canonicalLineEndings = typeof value === 'string'
+    ? value.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+    : '';
+  if (/[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/.test(canonicalLineEndings)) {
+    throw new MetaPublishingError('INVALID_REQUEST');
+  }
+  const clean = canonicalLineEndings.trim();
+  const characterCount = Array.from(clean).length;
+  if (
+    characterCount < 1
+    || characterCount > 5000
+    || /\[private\]/i.test(clean)
+  ) {
     throw new MetaPublishingError('INVALID_REQUEST');
   }
   return clean;

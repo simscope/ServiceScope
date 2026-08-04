@@ -102,7 +102,17 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
 
 function createRepository(adminClient: ReturnType<typeof createClient>) {
   return {
-    async getStatus(companyId: string) {
+    async getStatus(companyId: string, jobId?: string) {
+      if (jobId) {
+        const { data: job, error: jobError } = await adminClient
+          .from('jobs')
+          .select('id')
+          .eq('id', jobId)
+          .eq('company_id', companyId)
+          .maybeSingle();
+        if (jobError) throw new MetaPublishingError('INTERNAL_ERROR');
+        if (!job) throw new MetaPublishingError('FORBIDDEN');
+      }
       const { data: connection, error: connectionError } = await adminClient
         .from('company_social_connections')
         .select('status,facebook_page_name,granted_scopes')
@@ -113,13 +123,14 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         .limit(1)
         .maybeSingle();
       if (connectionError) throw new MetaPublishingError('INTERNAL_ERROR');
-      const { data: lastPublication, error: publicationError } = await adminClient
+      let publicationQuery = adminClient
         .from('company_social_publications')
         .select('status,approved_at,published_at,last_error_code')
         .eq('company_id', companyId)
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+      if (jobId) publicationQuery = publicationQuery.eq('job_id', jobId);
+      const { data: lastPublication, error: publicationError } = await publicationQuery.maybeSingle();
       if (publicationError) throw new MetaPublishingError('INTERNAL_ERROR');
       return { connection, lastPublication };
     },
@@ -181,6 +192,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_publication_id: input.publicationId,
         p_company_id: input.companyId,
         p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
         p_provider_post_id: input.providerPostId,
         p_timestamp: input.timestamp,
       });
@@ -192,6 +205,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_publication_id: input.publicationId,
         p_company_id: input.companyId,
         p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
         p_provider_http_status: diagnostic.providerHttpStatus ?? null,
         p_provider_error_code: diagnostic.providerCode ?? null,
         p_provider_error_subcode: diagnostic.providerSubcode ?? null,
@@ -207,6 +222,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_publication_id: input.publicationId,
         p_company_id: input.companyId,
         p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
         p_timestamp: input.timestamp,
       });
     },

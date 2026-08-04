@@ -8,7 +8,7 @@ const GENERIC_PRIVATE_PATTERNS = Object.freeze([
   /\b(?:access|door|gate|lockbox)\s+(?:code|pin)\s*[:#-]?\s*[A-Za-z0-9-]{3,20}\b/i,
   /\b(?:invoice|inv)\s*(?:number|no\.?|#)\s*[:#-]?\s*[A-Za-z0-9-]{2,30}\b/i,
   /\[private\]/i,
-  /[\u0000-\u001f\u007f]/,
+  /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/,
 ]);
 
 export function assertPublicationPrivacy(message, privateValues) {

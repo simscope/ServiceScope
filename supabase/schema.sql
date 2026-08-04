@@ -2236,7 +2236,7 @@ create table public.company_social_publications (
     check (
       approved_message = btrim(approved_message)
       and char_length(approved_message) between 1 and 5000
-      and approved_message !~ '[[:cntrl:]]'
+      and translate(approved_message, E'\n', '') !~ '[[:cntrl:]]'
       and lower(approved_message) not like '%[private]%'
     ),
   constraint company_social_publications_message_hash_check
@@ -2352,7 +2352,7 @@ begin
   if p_approved_message is null
     or p_approved_message <> btrim(p_approved_message)
     or char_length(p_approved_message) not between 1 and 5000
-    or p_approved_message ~ '[[:cntrl:]]'
+    or translate(p_approved_message, E'\n', '') ~ '[[:cntrl:]]'
     or lower(p_approved_message) like '%[private]%'
     or octet_length(p_message_sha256) <> 32
     or p_message_sha256 <> sha256(convert_to(p_approved_message, 'UTF8'))
@@ -2463,6 +2463,8 @@ create or replace function public.complete_company_facebook_publication(
   p_publication_id uuid,
   p_company_id uuid,
   p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
   p_provider_post_id text,
   p_timestamp timestamptz
 )
@@ -2477,7 +2479,11 @@ declare
 begin
   if p_provider_post_id is null
     or char_length(btrim(p_provider_post_id)) not between 1 and 200
-    or p_provider_post_id ~ '[[:cntrl:]]' then
+    or p_provider_post_id ~ '[[:cntrl:]]'
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
     raise exception 'invalid provider post id';
   end if;
 
@@ -2502,7 +2508,7 @@ begin
     company_id, actor_user_id, actor_name, actor_role, category, action,
     resource_type, resource, resource_id, resource_label, details, metadata
   ) values (
-    p_company_id, p_actor_id, 'Authenticated user', 'publisher', 'access',
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
     'meta_publication_published', 'meta_social_publication', 'Facebook publication',
     updated_publication.id::text, 'Facebook publication',
     'Meta publication lifecycle action completed.',
@@ -2520,6 +2526,8 @@ create or replace function public.fail_company_facebook_publication(
   p_publication_id uuid,
   p_company_id uuid,
   p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
   p_provider_http_status integer,
   p_provider_error_code integer,
   p_provider_error_subcode integer,
@@ -2543,7 +2551,11 @@ begin
     )
     or p_last_error_code is null
     or p_last_error_code !~ '^[A-Z0-9_]{2,80}$'
-    or (p_provider_http_status is not null and p_provider_http_status not between 100 and 599) then
+    or (p_provider_http_status is not null and p_provider_http_status not between 100 and 599)
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
     raise exception 'invalid publication failure';
   end if;
 
@@ -2571,7 +2583,7 @@ begin
     company_id, actor_user_id, actor_name, actor_role, category, action,
     resource_type, resource, resource_id, resource_label, details, metadata
   ) values (
-    p_company_id, p_actor_id, 'Authenticated user', 'publisher', 'access',
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
     'meta_publication_failed', 'meta_social_publication', 'Facebook publication',
     updated_publication.id::text, 'Facebook publication',
     'Meta publication lifecycle action completed.',
@@ -2589,6 +2601,8 @@ create or replace function public.mark_company_facebook_publication_unknown(
   p_publication_id uuid,
   p_company_id uuid,
   p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
   p_timestamp timestamptz
 )
 returns setof public.company_social_publications
@@ -2600,6 +2614,13 @@ declare
   locked_publication public.company_social_publications%rowtype;
   updated_publication public.company_social_publications%rowtype;
 begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
+    raise exception 'invalid publication actor';
+  end if;
+
   select * into locked_publication
   from public.company_social_publications
   where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
@@ -2622,7 +2643,7 @@ begin
     company_id, actor_user_id, actor_name, actor_role, category, action,
     resource_type, resource, resource_id, resource_label, details, metadata
   ) values (
-    p_company_id, p_actor_id, 'Authenticated user', 'publisher', 'access',
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
     'meta_publication_delivery_unknown', 'meta_social_publication', 'Facebook publication',
     updated_publication.id::text, 'Facebook publication',
     'Meta publication lifecycle action completed.',
@@ -2637,14 +2658,14 @@ end;
 $$;
 
 revoke all on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, uuid, text, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.fail_company_facebook_publication(uuid, uuid, uuid, integer, integer, integer, text, boolean, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, timestamptz) from public, anon, authenticated;
 
 grant execute on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, uuid, text, text, timestamptz) to service_role;
-grant execute on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, timestamptz) to service_role;
-grant execute on function public.fail_company_facebook_publication(uuid, uuid, uuid, integer, integer, integer, text, boolean, text, timestamptz) to service_role;
-grant execute on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, timestamptz) to service_role;
+grant execute on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, timestamptz) to service_role;
+grant execute on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, timestamptz) to service_role;
 
 comment on table public.company_social_publications is
   'Server-only Facebook Page text publication history. Browser roles have no direct access.';
@@ -2654,10 +2675,10 @@ comment on column public.company_social_publications.provider_post_id is
   'Server-only Meta post identifier. Never return to browser clients.';
 comment on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, uuid, text, text, timestamptz) is
   'Validates and begins one idempotent Facebook Page text publication with an atomic safe audit.';
-comment on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, timestamptz) is
+comment on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, timestamptz) is
   'Marks an exact publishing row published and writes its safe audit atomically.';
-comment on function public.fail_company_facebook_publication(uuid, uuid, uuid, integer, integer, integer, text, boolean, text, timestamptz) is
+comment on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, timestamptz) is
   'Marks a definite provider rejection failed using normalized diagnostics and a safe atomic audit.';
-comment on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, timestamptz) is
+comment on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, timestamptz) is
   'Marks an indeterminate provider delivery result without retry and writes its safe audit atomically.';
 -- META_FACEBOOK_PUBLISH_SCHEMA_END

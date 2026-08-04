@@ -27,7 +27,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
     const access = await deps.auth.assertCompanyAccess(session, companyId);
 
     if (action === 'status') {
-      const snapshot = await deps.repository.getStatus(companyId);
+      const jobId = body.jobId === undefined ? undefined : requireUuid(body.jobId);
+      const snapshot = await deps.repository.getStatus(companyId, jobId);
       const result = safePublishingStatus({ config: deps.config, ...snapshot });
       deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
       return result;
@@ -114,6 +115,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
           publicationId: beginning.publication_id,
           companyId,
           actorAuthUserId: access.actorAuthUserId,
+          actorName: access.actorName,
+          actorRole: access.actorRole,
           timestamp: new Date(deps.now()).toISOString(),
         });
         throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, {
@@ -125,6 +128,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         publicationId: beginning.publication_id,
         companyId,
         actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
         diagnostic,
         lastErrorCode: error?.code === 'META_PUBLICATION_FAILED'
           ? 'META_PUBLICATION_FAILED'
@@ -143,6 +148,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         publicationId: beginning.publication_id,
         companyId,
         actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
         providerPostId: providerResult.providerPostId,
         timestamp: new Date(deps.now()).toISOString(),
       });
@@ -151,6 +158,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         publicationId: beginning.publication_id,
         companyId,
         actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
         timestamp: new Date(deps.now()).toISOString(),
       });
       throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, {

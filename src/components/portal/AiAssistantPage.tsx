@@ -598,8 +598,10 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                 {aiStatusByChannel[draft.channel] ? <p className="ai-assistant-ai-status">{aiStatusByChannel[draft.channel]}</p> : null}
                 {draft.channel === 'Facebook' && selectedJob ? (
                   <FacebookPublishPanel
+                    key={`${companyId}:${selectedJob.id}`}
                     companyId={companyId}
                     jobId={selectedJob.id}
+                    jobStatus={selectedJob.status}
                     message={draftWorkspace.drafts[draft.channel] ?? draft.body}
                     selectedMediaCount={selectedMediaCount}
                     privacyStatus="Server privacy validation will run again before publishing."

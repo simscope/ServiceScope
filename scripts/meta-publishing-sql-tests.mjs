@@ -70,6 +70,7 @@ const ids = {
   connection: '00000000-0000-4000-8000-000000007007',
   threeScopeConnection: '00000000-0000-4000-8000-000000007008',
 };
+const verifiedActor = { name: 'Verified Publisher', role: 'manager' };
 
 const db = new PGlite();
 await db.exec(prerequisiteSchema);
@@ -144,6 +145,38 @@ for (const row of rpcGrants.rows) {
   check(() => assert.equal(row.anon_allowed, false));
   check(() => assert.equal(row.authenticated_allowed, false));
 }
+const rpcShapes = await db.query(`
+  select proname, pronargs
+  from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public' and p.proname = any($1::text[])
+`, [rpcNames]);
+check(() => assert.deepEqual(
+  Object.fromEntries(rpcShapes.rows.map((row) => [row.proname, row.pronargs])),
+  {
+    begin_company_facebook_publication: 11,
+    complete_company_facebook_publication: 7,
+    fail_company_facebook_publication: 12,
+    mark_company_facebook_publication_unknown: 6,
+  },
+));
+
+const multilineMessage = [
+  'Service story: our team documented work for a rooftop unit.',
+  'The reported issue was: insufficient cooling.',
+  '',
+  'Recorded work performed: replaced the failed contactor.',
+  'Final result: normal operation verified.',
+].join('\n');
+await db.exec('savepoint multiline_contract;');
+const multilinePublication = '00000000-0000-4000-8000-000000007009';
+const multilineKey = '00000000-0000-4000-8000-000000007019';
+await beginPublication(multilinePublication, ids.company, ids.connection, ids.job, multilineKey, multilineMessage, ids.actor);
+const storedMultiline = await db.query(`select approved_message, encode(message_sha256, 'hex') as message_hash from public.company_social_publications where id=$1`, [multilinePublication]);
+const multilineHash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(multilineMessage))).toString('hex');
+check(() => assert.equal(storedMultiline.rows[0].approved_message, multilineMessage));
+check(() => assert.equal(storedMultiline.rows[0].message_hash, multilineHash));
+await db.exec('rollback to savepoint multiline_contract;');
+await db.exec('release savepoint multiline_contract;');
 
 const publicationA = '00000000-0000-4000-8000-000000007010';
 const keyA = '00000000-0000-4000-8000-000000007011';
@@ -156,7 +189,7 @@ check(() => assert.equal(duplicateA.should_publish, false));
 check(() => assert.equal(duplicateA.publication_status, 'publishing'));
 await assertRejectsSql(beginSql(), ['00000000-0000-4000-8000-000000007013', ids.company, ids.connection, ids.job, keyA, 'Different payload', ids.actor]);
 
-await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,'10001_20002',now())`, [publicationA, ids.company, ids.actor]);
+await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_20002',now())`, [publicationA, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 const publishedDuplicate = await beginPublication('00000000-0000-4000-8000-000000007014', ids.company, ids.connection, ids.job, keyA, messageA, ids.actor);
 check(() => assert.equal(publishedDuplicate.should_publish, false));
 check(() => assert.equal(publishedDuplicate.publication_status, 'published'));
@@ -164,7 +197,7 @@ check(() => assert.equal(publishedDuplicate.publication_status, 'published'));
 const publicationB = '00000000-0000-4000-8000-000000007020';
 const keyB = '00000000-0000-4000-8000-000000007021';
 await beginPublication(publicationB, ids.company, ids.connection, ids.job, keyB, 'Measured airflow is within specification.', ids.actor);
-await db.query(`select * from public.fail_company_facebook_publication($1,$2,$3,403,200,10,'MISSING_PERMISSION',false,'META_PUBLICATION_PROVIDER_REJECTED',now())`, [publicationB, ids.company, ids.actor]);
+await db.query(`select * from public.fail_company_facebook_publication($1,$2,$3,$4,$5,403,200,10,'MISSING_PERMISSION',false,'META_PUBLICATION_PROVIDER_REJECTED',now())`, [publicationB, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 const failedDuplicate = await beginPublication('00000000-0000-4000-8000-000000007022', ids.company, ids.connection, ids.job, keyB, 'Measured airflow is within specification.', ids.actor);
 check(() => assert.equal(failedDuplicate.should_publish, false));
 check(() => assert.equal(failedDuplicate.publication_status, 'failed'));
@@ -174,7 +207,7 @@ await assertRejectsSql(`update public.company_social_publications set provider_e
 const publicationC = '00000000-0000-4000-8000-000000007030';
 const keyC = '00000000-0000-4000-8000-000000007031';
 await beginPublication(publicationC, ids.company, ids.connection, ids.job, keyC, 'System start-up completed successfully.', ids.actor);
-await db.query(`select * from public.mark_company_facebook_publication_unknown($1,$2,$3,now())`, [publicationC, ids.company, ids.actor]);
+await db.query(`select * from public.mark_company_facebook_publication_unknown($1,$2,$3,$4,$5,now())`, [publicationC, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 const unknownDuplicate = await beginPublication('00000000-0000-4000-8000-000000007032', ids.company, ids.connection, ids.job, keyC, 'System start-up completed successfully.', ids.actor);
 check(() => assert.equal(unknownDuplicate.should_publish, false));
 check(() => assert.equal(unknownDuplicate.publication_status, 'delivery_unknown'));
@@ -186,11 +219,14 @@ check(() => assert.equal(transitions.rows[0].provider_post_id, '10001_20002'));
 check(() => assert.equal(transitions.rows[1].provider_error_category, 'MISSING_PERMISSION'));
 check(() => assert.equal(transitions.rows[2].last_error_code, 'META_PUBLICATION_DELIVERY_UNKNOWN'));
 
-const audits = await db.query(`select action,metadata from public.audit_events where action like 'meta_publication_%' order by created_at,id`);
+const audits = await db.query(`select action,actor_user_id,actor_name,actor_role,metadata from public.audit_events where action like 'meta_publication_%' order by created_at,id`);
 check(() => assert.deepEqual([...new Set(audits.rows.map((row) => row.action))].sort(), [
   'meta_publication_delivery_unknown', 'meta_publication_failed', 'meta_publication_published', 'meta_publication_started',
 ]));
 for (const audit of audits.rows) {
+  check(() => assert.equal(audit.actor_user_id, ids.actor));
+  check(() => assert.equal(audit.actor_name, verifiedActor.name));
+  check(() => assert.equal(audit.actor_role, verifiedActor.role));
   check(() => assert.deepEqual(Object.keys(audit.metadata).sort(), ['attempts', 'channel', 'messageCharacterCount', 'status'].sort()));
 }
 
@@ -198,9 +234,21 @@ await assertRejectsSql(beginSql(), ['00000000-0000-4000-8000-000000007040', ids.
 await assertRejectsSql(beginSql(), ['00000000-0000-4000-8000-000000007042', ids.otherCompany, ids.threeScopeConnection, ids.otherJob, '00000000-0000-4000-8000-000000007043', 'Missing capability.', ids.actor]);
 const actorIsolationPublication = '00000000-0000-4000-8000-000000007044';
 await beginPublication(actorIsolationPublication, ids.company, ids.connection, ids.job, '00000000-0000-4000-8000-000000007045', 'Actor isolation verified.', ids.actor);
-await assertRejectsSql(`select * from public.complete_company_facebook_publication($1,$2,$3,'10001_99999',now())`, [actorIsolationPublication, ids.company, ids.otherActor]);
+await assertRejectsSql(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_99999',now())`, [actorIsolationPublication, ids.company, ids.otherActor, verifiedActor.name, verifiedActor.role]);
 
-for (const invalidMessage of ['', ' leading', 'trailing ', '[private]', `bad\u0000control`, 'x'.repeat(5001)]) {
+for (const invalidMessage of [
+  '',
+  ' leading',
+  'trailing ',
+  '[private]',
+  `bad\u0000control`,
+  'bad\tcontrol',
+  `bad\u000bcontrol`,
+  `bad\u001fcontrol`,
+  `bad\u007fcontrol`,
+  'bad\rcontrol',
+  'x'.repeat(5001),
+]) {
   await assertRejectsSql(beginSql(), [crypto.randomUUID(), ids.company, ids.connection, ids.job, crypto.randomUUID(), invalidMessage, ids.actor]);
 }
 await assertRejectsSql(`insert into public.company_social_publications (
@@ -261,7 +309,7 @@ console.log(`Meta publishing SQL checks passed: ${checks}; rollback artifacts: 0
 
 function beginSql() {
   return `select * from public.begin_company_facebook_publication(
-    $1,$2,$3,$4,$5,$6,sha256(convert_to($6,'UTF8')),$7,'Publisher','admin',now()
+    $1,$2,$3,$4,$5,$6,sha256(convert_to($6,'UTF8')),$7,'${verifiedActor.name}','${verifiedActor.role}',now()
   )`;
 }
 
