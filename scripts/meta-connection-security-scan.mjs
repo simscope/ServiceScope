@@ -77,13 +77,25 @@ for (const forbidden of [
 }
 
 check(() => assert.equal((clientSource.match(/pages_manage_posts/g) ?? []).length, 2));
+check(() => assert.equal((clientSource.match(/facebook_publishing/g) ?? []).length, 2));
 check(() => assert.match(clientSource, /META_FACEBOOK_PUBLISHING_SCOPE\s*=\s*'pages_manage_posts'/));
+check(() => assert.match(clientSource, /type MetaAuthorizationIntent = 'facebook_publishing'/));
 check(() => assert.match(clientSource, /Reconnect Meta to add pages_manage_posts/));
 check(() => assert.doesNotMatch(
   clientSource.match(/META_REQUESTED_SCOPES\s*=\s*\[([^\]]*)\]/)?.[1] ?? '',
   /pages_manage_posts/,
 ));
 check(() => assert.match(contractsSource, /META_FACEBOOK_PUBLISHING_SCOPE\s*=\s*'pages_manage_posts'/));
+check(() => assert.match(contractsSource, /META_AUTHORIZATION_INTENTS = Object\.freeze\(\['facebook_publishing'\]\)/));
+check(() => assert.match(contractsSource, /start: \['action', 'companyId', 'returnPath', 'authorizationIntent'\]/));
+check(() => assert.match(contractsSource, /!META_AUTHORIZATION_INTENTS\.includes\(value\.authorizationIntent\)/));
+check(() => assert.match(providerSource, /authorizationIntent === META_AUTHORIZATION_INTENTS\[0\]/));
+check(() => assert.match(providerSource, /searchParams\.set\('scope', META_FACEBOOK_PUBLISHING_SCOPE\)/));
+check(() => assert.match(providerSource, /searchParams\.set\('auth_type', 'rerequest'\)/));
+check(() => assert.doesNotMatch(providerSource, /searchParams\.(?:set|append)\(authorizationIntent/));
+check(() => assert.doesNotMatch(serviceSource, /requestBody\.(?:scope|auth_type|permissions)/));
+check(() => assert.match(serviceSource, /META_REQUESTED_SCOPES\.every\(\(scope\) => grantedScopes\.includes\(scope\)\)/));
+check(() => assert.ok(serviceSource.indexOf('repository.getStatus') < serviceSource.indexOf('repository.createOAuthState')));
 check(() => assert.doesNotMatch(`${providerSource}\n${serviceSource}\n${edgeSource}`, /\/feed\b|publish_facebook_text/i));
 
 for (const secretName of [/VITE_META_APP_SECRET/, /VITE_META_LOGIN_CONFIGURATION_ID/, /VITE_META_TOKEN/, /VITE_META.*ENCRYPTION/i]) {

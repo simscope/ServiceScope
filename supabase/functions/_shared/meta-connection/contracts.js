@@ -14,6 +14,7 @@ export const META_ACTIONS = Object.freeze([
   'disconnect',
 ]);
 export const META_FACEBOOK_PUBLISHING_SCOPE = 'pages_manage_posts';
+export const META_AUTHORIZATION_INTENTS = Object.freeze(['facebook_publishing']);
 export const META_ALLOWED_SCOPES = Object.freeze([
   ...META_REQUESTED_SCOPES,
   META_FACEBOOK_PUBLISHING_SCOPE,
@@ -112,13 +113,20 @@ export function parseActionRequest(rawBody, maxBytes = 32_768) {
   }
   const allowedKeys = {
     status: ['action', 'companyId'],
-    start: ['action', 'companyId', 'returnPath'],
+    start: ['action', 'companyId', 'returnPath', 'authorizationIntent'],
     complete: ['action', 'code', 'state', 'providerError', 'providerErrorReason'],
     select_asset: ['action', 'companyId', 'oauthSessionId', 'pageId'],
     check_health: ['action', 'companyId', 'connectionId'],
     disconnect: ['action', 'companyId', 'connectionId'],
   }[value.action];
   if (Object.keys(value).some((key) => !allowedKeys.includes(key))) {
+    throw new MetaConnectionError('INVALID_REQUEST');
+  }
+  if (
+    value.action === 'start'
+    && value.authorizationIntent !== undefined
+    && !META_AUTHORIZATION_INTENTS.includes(value.authorizationIntent)
+  ) {
     throw new MetaConnectionError('INVALID_REQUEST');
   }
   return value;

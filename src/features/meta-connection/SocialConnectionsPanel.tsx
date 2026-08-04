@@ -1,6 +1,11 @@
 import { CheckCircle2, Facebook, Instagram, Link2, RefreshCw, ShieldCheck, Unplug } from 'lucide-react';
 import { useState } from 'react';
-import { META_FACEBOOK_PUBLISHING_SCOPE, META_REQUESTED_SCOPES, type MetaSafeConnection } from './contracts';
+import {
+  META_FACEBOOK_PUBLISHING_SCOPE,
+  META_REQUESTED_SCOPES,
+  type MetaAuthorizationIntent,
+  type MetaSafeConnection,
+} from './contracts';
 import { useMetaSocialConnection } from './useMetaSocialConnection';
 
 export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
@@ -75,7 +80,7 @@ export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
             <p>Connection requests only Page discovery and basic Instagram account access. Publishing permissions are not requested.</p>
           </div>
           <ScopeList />
-          <button className="primary-button" type="button" disabled={busy} onClick={connection.start}>
+          <button className="primary-button" type="button" disabled={busy} onClick={() => connection.start()}>
             <Facebook size={16} aria-hidden="true" />
             {connection.busy === 'starting' ? 'Opening Meta...' : 'Connect Meta'}
           </button>
@@ -120,7 +125,7 @@ function ConnectedState({
   openingMeta: boolean;
   confirmDisconnect: boolean;
   onCheck: () => void;
-  onReconnect: () => void;
+  onReconnect: (authorizationIntent?: MetaAuthorizationIntent) => void;
   onDisconnect: () => void;
   onCancelDisconnect: () => void;
   onConfirmDisconnect: () => void;
@@ -154,7 +159,12 @@ function ConnectedState({
       ) : null}
       <div className="social-connection-actions">
         {authorizationReconnectRequired || publishingReconnectRequired ? (
-          <button className="primary-button" type="button" disabled={busy} onClick={onReconnect}>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => onReconnect(publishingReconnectRequired ? 'facebook_publishing' : undefined)}
+          >
             <Facebook size={16} aria-hidden="true" /> {openingMeta ? 'Opening Meta...' : 'Reconnect Meta'}
           </button>
         ) : null}

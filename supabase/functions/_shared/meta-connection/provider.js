@@ -1,4 +1,6 @@
 import {
+  META_AUTHORIZATION_INTENTS,
+  META_FACEBOOK_PUBLISHING_SCOPE,
   META_PROVIDER,
   MetaConnectionError,
   safeAsset,
@@ -15,16 +17,21 @@ export function createMetaProvider({ config, fetchImpl = globalThis.fetch, crypt
   return {
     id: META_PROVIDER,
 
-    buildAuthorizationUrl({ state }) {
+    buildAuthorizationUrl({ state, authorizationIntent }) {
       const url = new URL(`https://www.facebook.com/${config.graphApiVersion}/dialog/oauth`);
-      url.search = new URLSearchParams({
+      const searchParams = new URLSearchParams({
         client_id: config.appId,
         redirect_uri: config.redirectUri,
         config_id: config.loginConfigurationId,
         response_type: 'code',
         override_default_response_type: 'true',
         state,
-      }).toString();
+      });
+      if (authorizationIntent === META_AUTHORIZATION_INTENTS[0]) {
+        searchParams.set('scope', META_FACEBOOK_PUBLISHING_SCOPE);
+        searchParams.set('auth_type', 'rerequest');
+      }
+      url.search = searchParams.toString();
       return url.toString();
     },
 

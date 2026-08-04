@@ -11,6 +11,9 @@ import {
   normalizeSqlForParity,
 } from './meta-canonical-schema.mjs';
 import {
+  META_ALLOWED_SCOPES,
+  META_AUTHORIZATION_INTENTS,
+  META_FACEBOOK_PUBLISHING_SCOPE,
   META_PROVIDER,
   META_PROVIDER_ERROR_CATEGORIES,
   META_OAUTH_STATE_TTL_MS,
@@ -19,6 +22,7 @@ import {
   MetaConnectionError,
   assertMetaAccessRole,
   normalizeReturnPath,
+  parseActionRequest,
   requireActiveDomainSession,
   requireBearerJwt,
   requireVerifiedAuthUserId,
@@ -80,6 +84,32 @@ function configurationChecks() {
   check(() => assert.equal(META_PROVIDER, 'meta-facebook-login'));
   check(() => assert.equal(META_OAUTH_STATE_TTL_MS, 1_800_000));
   check(() => assert.deepEqual(META_REQUESTED_SCOPES, ['pages_show_list', 'pages_read_engagement', 'instagram_basic']));
+  check(() => assert.deepEqual(META_ALLOWED_SCOPES, [...META_REQUESTED_SCOPES, 'pages_manage_posts']));
+  check(() => assert.deepEqual(META_AUTHORIZATION_INTENTS, ['facebook_publishing']));
+  check(() => assert.deepEqual(
+    parseActionRequest(JSON.stringify({ action: 'start', companyId, returnPath: '/settings/social-connections' })),
+    { action: 'start', companyId, returnPath: '/settings/social-connections' },
+  ));
+  check(() => assert.equal(
+    parseActionRequest(JSON.stringify({
+      action: 'start', companyId, returnPath: '/settings/social-connections', authorizationIntent: 'facebook_publishing',
+    })).authorizationIntent,
+    'facebook_publishing',
+  ));
+  for (const invalidStartField of [
+    { authorizationIntent: 'instagram_publishing' },
+    { authorizationIntent: '' },
+    { authorizationIntent: ['facebook_publishing'] },
+    { scope: 'pages_manage_posts' },
+    { auth_type: 'rerequest' },
+  ]) {
+    check(() => assert.throws(
+      () => parseActionRequest(JSON.stringify({
+        action: 'start', companyId, returnPath: '/settings/social-connections', ...invalidStartField,
+      })),
+      (error) => error.code === 'INVALID_REQUEST',
+    ));
+  }
   check(() => assert.equal(normalizeReturnPath('/settings/social-connections'), '/settings/social-connections'));
   check(() => assert.throws(() => normalizeReturnPath('https://attacker.example/return'), /INVALID_REQUEST/));
   check(() => assert.throws(() => normalizeReturnPath('//attacker.example'), /INVALID_REQUEST/));
@@ -282,7 +312,24 @@ async function providerChecks() {
   check(() => assert.equal(authorizationUrl.searchParams.get('response_type'), 'code'));
   check(() => assert.equal(authorizationUrl.searchParams.get('override_default_response_type'), 'true'));
   check(() => assert.equal(authorizationUrl.searchParams.has('scope'), false));
+  check(() => assert.equal(authorizationUrl.searchParams.has('auth_type'), false));
   check(() => assert.equal(authorizationUrl.searchParams.has('next'), false));
+  check(() => assert.deepEqual(
+    [...authorizationUrl.searchParams.keys()].sort(),
+    ['client_id', 'config_id', 'override_default_response_type', 'redirect_uri', 'response_type', 'state'],
+  ));
+  const publishingAuthorizationUrl = new URL(basic.provider.buildAuthorizationUrl({
+    state: generateOAuthState(32, cryptoApi),
+    authorizationIntent: 'facebook_publishing',
+  }));
+  check(() => assert.equal(publishingAuthorizationUrl.searchParams.get('config_id'), config.loginConfigurationId));
+  check(() => assert.equal(publishingAuthorizationUrl.searchParams.get('scope'), META_FACEBOOK_PUBLISHING_SCOPE));
+  check(() => assert.equal(publishingAuthorizationUrl.searchParams.get('auth_type'), 'rerequest'));
+  check(() => assert.equal(publishingAuthorizationUrl.searchParams.getAll('scope').length, 1));
+  check(() => assert.deepEqual(
+    [...publishingAuthorizationUrl.searchParams.keys()].sort(),
+    ['auth_type', 'client_id', 'config_id', 'override_default_response_type', 'redirect_uri', 'response_type', 'scope', 'state'],
+  ));
   const onePage = await basic.provider.discover({ userAccessToken: 'user-token-value' });
   check(() => assert.equal(onePage.pages.length, 1));
   check(() => assert.equal(onePage.attempts, 1));
@@ -490,6 +537,8 @@ async function serviceChecks() {
   check(() => assert.equal(configurationOnlyMemory.audits.length, 0));
   check(() => assert.equal(configurationOnlyMemory.connections.size, 0));
 
+  await permissionRerequestChecks();
+
   const memory = makeMemoryRepository();
   const providerCalls = { exchange: 0, discover: 0, health: 0 };
   const serviceProvider = {
@@ -626,6 +675,97 @@ async function serviceChecks() {
   await healthChecks(serviceProvider);
   await authorizationChecks(serviceProvider);
   await identityLifecycleChecks(serviceProvider);
+}
+
+async function permissionRerequestChecks() {
+  const makeAuthorizationProvider = () => {
+    const calls = [];
+    return {
+      calls,
+      provider: {
+        buildAuthorizationUrl: (input) => {
+          calls.push(input);
+          return `https://www.facebook.com/v25.0/dialog/oauth?state=${encodeURIComponent(input.state)}`;
+        },
+        exchangeCode: async () => { throw new Error('permission rerequest reached code exchange'); },
+        discover: async () => { throw new Error('permission rerequest reached discovery'); },
+        checkHealth: async () => { throw new Error('permission rerequest reached health'); },
+      },
+    };
+  };
+
+  const eligibleMemory = makeMemoryRepository();
+  const eligibleConnection = makeConnection('00000000-0000-4000-8000-000000005780', companyId, '10001');
+  eligibleMemory.connections.set(eligibleConnection.id, eligibleConnection);
+  const eligibleProvider = makeAuthorizationProvider();
+  await callService(makeServiceDeps(eligibleMemory, eligibleProvider.provider), {
+    action: 'start',
+    companyId,
+    returnPath: '/settings/social-connections',
+    authorizationIntent: 'facebook_publishing',
+  });
+  check(() => assert.equal(eligibleMemory.states.size, 1));
+  check(() => assert.equal(eligibleMemory.audits.filter((action) => action === 'meta_connection_started').length, 1));
+  check(() => assert.equal(eligibleMemory.connections.get(eligibleConnection.id).status, 'connected'));
+  check(() => assert.equal(eligibleProvider.calls.length, 1));
+  check(() => assert.equal(eligibleProvider.calls[0].authorizationIntent, 'facebook_publishing'));
+
+  for (const scenario of [
+    { label: 'missing connection' },
+    { label: 'already granted', scopes: [...META_REQUESTED_SCOPES, META_FACEBOOK_PUBLISHING_SCOPE] },
+    { label: 'revoked connection', status: 'revoked' },
+    { label: 'reauthorization connection', status: 'needs_reauthorization' },
+    { label: 'missing base scope', scopes: META_REQUESTED_SCOPES.slice(1) },
+  ]) {
+    const memory = makeMemoryRepository();
+    if (scenario.status || scenario.scopes) {
+      const connection = makeConnection('00000000-0000-4000-8000-000000005781', companyId, '10001', {
+        scopes: scenario.scopes,
+      });
+      if (scenario.status) connection.status = scenario.status;
+      memory.connections.set(connection.id, connection);
+    }
+    const fixture = makeAuthorizationProvider();
+    await checkAsync(() => assert.rejects(
+      callService(makeServiceDeps(memory, fixture.provider), {
+        action: 'start',
+        companyId,
+        returnPath: '/settings/social-connections',
+        authorizationIntent: 'facebook_publishing',
+      }),
+      (error) => error.code === 'INVALID_REQUEST',
+      scenario.label,
+    ));
+    check(() => assert.equal(memory.states.size, 0, scenario.label));
+    check(() => assert.equal(memory.audits.length, 0, scenario.label));
+    check(() => assert.equal(fixture.calls.length, 0, scenario.label));
+  }
+
+  const reauthorizationMemory = makeMemoryRepository();
+  const reauthorizationConnection = makeConnection('00000000-0000-4000-8000-000000005782', companyId, '10001');
+  reauthorizationConnection.status = 'needs_reauthorization';
+  reauthorizationMemory.connections.set(reauthorizationConnection.id, reauthorizationConnection);
+  const reauthorizationProvider = makeAuthorizationProvider();
+  await callService(makeServiceDeps(reauthorizationMemory, reauthorizationProvider.provider), {
+    action: 'start', companyId, returnPath: '/settings/social-connections',
+  });
+  check(() => assert.equal(reauthorizationProvider.calls.length, 1));
+  check(() => assert.equal(reauthorizationProvider.calls[0].authorizationIntent, undefined));
+
+  const untrustedProvider = makeAuthorizationProvider();
+  for (const untrusted of [
+    { authorizationIntent: 'pages_manage_posts' },
+    { scope: 'pages_manage_posts' },
+    { auth_type: 'rerequest' },
+  ]) {
+    await checkAsync(() => assert.rejects(
+      callService(makeServiceDeps(makeMemoryRepository(), untrustedProvider.provider), {
+        action: 'start', companyId, returnPath: '/settings/social-connections', ...untrusted,
+      }),
+      (error) => error.code === 'INVALID_REQUEST',
+    ));
+  }
+  check(() => assert.equal(untrustedProvider.calls.length, 0));
 }
 
 async function exchangeTelemetryChecks() {
@@ -970,12 +1110,14 @@ async function identityLifecycleChecks(provider) {
 
 async function sourceAndSchemaChecks() {
   const read = (path) => readFile(new URL(`../${path}`, import.meta.url), 'utf8');
-  const [accessSource, appSource, callbackSource, callbackPageSource, clientContractsSource, socialConnectionsSource, responsiveSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
+  const [accessSource, appSource, callbackSource, callbackPageSource, clientContractsSource, clientApiSource, connectionHookSource, socialConnectionsSource, responsiveSource, contractsSource, serviceSource, providerSource, edgeSource, migrationSource, lifecycleAuditMigrationSource, ttlMigrationSource, schemaSource, sqlRunnerSource] = await Promise.all([
     read('src/features/company-portal/companySettingsAccess.ts'),
     read('src/App.tsx'),
     read('src/features/meta-connection/callback.ts'),
     read('src/features/meta-connection/MetaOAuthCallbackPage.tsx'),
     read('src/features/meta-connection/contracts.ts'),
+    read('src/features/meta-connection/clientApi.ts'),
+    read('src/features/meta-connection/useMetaSocialConnection.ts'),
     read('src/features/meta-connection/SocialConnectionsPanel.tsx'),
     read('src/styles/responsive.css'),
     read('supabase/functions/_shared/meta-connection/contracts.js'),
@@ -1003,6 +1145,7 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(callbackPageSource, /onClick=\{\(\) => onReturn\(destination\)\}/));
   check(() => assert.equal((callbackPageSource.match(/completeMetaConnection\(callback\)/g) ?? []).length, 1));
   check(() => assert.match(clientContractsSource, /export const META_FACEBOOK_PUBLISHING_SCOPE =\s*'pages_manage_posts' as const/));
+  check(() => assert.match(clientContractsSource, /export type MetaAuthorizationIntent = 'facebook_publishing'/));
   check(() => assert.match(clientContractsSource, /META_REQUESTED_SCOPES = \['pages_show_list', 'pages_read_engagement', 'instagram_basic'\] as const/));
   check(() => assert.doesNotMatch(
     clientContractsSource.match(/META_REQUESTED_SCOPES\s*=\s*\[([^\]]*)\]/)?.[1] ?? '',
@@ -1036,14 +1179,20 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(socialConnectionsSource, /authorizationReconnectRequired \? 'Needs reauthorization' : 'Connected'/));
   check(() => assert.match(socialConnectionsSource, /<ScopeList scopes=\{value\.grantedScopes\} \/>/));
   check(() => assert.match(socialConnectionsSource, /Facebook publishing permission is not enabled\. Reconnect Meta to add pages_manage_posts\./));
-  check(() => assert.match(socialConnectionsSource, /authorizationReconnectRequired \|\| publishingReconnectRequired \? \([\s\S]*onClick=\{onReconnect\}[\s\S]*Reconnect Meta/));
+  check(() => assert.match(socialConnectionsSource, /authorizationReconnectRequired \|\| publishingReconnectRequired \? \([\s\S]*onClick=\{\(\) => onReconnect\(publishingReconnectRequired \? 'facebook_publishing' : undefined\)\}[\s\S]*Reconnect Meta/));
   check(() => assert.match(socialConnectionsSource, /!authorizationReconnectRequired \? \([\s\S]*onClick=\{onCheck\}[\s\S]*Check connection/));
   check(() => assert.match(socialConnectionsSource, /onClick=\{onDisconnect\}[\s\S]*Disconnect Meta/));
-  check(() => assert.match(socialConnectionsSource, /disabled=\{busy\} onClick=\{onReconnect\}/));
+  check(() => assert.match(socialConnectionsSource, /disabled=\{busy\}[\s\S]{0,120}onClick=\{\(\) => onReconnect\(publishingReconnectRequired \? 'facebook_publishing' : undefined\)\}/));
   check(() => assert.match(socialConnectionsSource, /disabled=\{busy\} onClick=\{onCheck\}/));
   check(() => assert.match(socialConnectionsSource, /disabled=\{busy\} onClick=\{onDisconnect\}/));
   check(() => assert.match(socialConnectionsSource, /openingMeta \? 'Opening Meta\.\.\.' : 'Reconnect Meta'/));
   check(() => assert.match(socialConnectionsSource, /onReconnect=\{connection\.start\}/));
+  check(() => assert.match(socialConnectionsSource, /onClick=\{\(\) => connection\.start\(\)\}[\s\S]*Connect Meta/));
+  check(() => assert.match(clientApiSource, /startMetaConnection\(companyId: string, authorizationIntent\?: MetaAuthorizationIntent\)/));
+  check(() => assert.match(clientApiSource, /\.\.\.\(authorizationIntent \? \{ authorizationIntent \} : \{\}\)/));
+  check(() => assert.doesNotMatch(clientApiSource, /\bscope\b|auth_type/));
+  check(() => assert.match(connectionHookSource, /start\(authorizationIntent\?: MetaAuthorizationIntent\)/));
+  check(() => assert.match(connectionHookSource, /startMetaConnection\(companyId, authorizationIntent\)/));
   check(() => assert.doesNotMatch(socialConnectionsSource, /onReconnect=\{[^}]*disconnect|disconnect\([^)]*\)[\s\S]{0,160}connection\.start/));
   check(() => assert.match(responsiveSource, /@media \(max-width: 1120px\) \{[\s\S]*\.onboarding-grid \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
   check(() => assert.match(responsiveSource, /@media \(max-width: 560px\) \{[\s\S]*\.social-connection-actions \{[\s\S]*grid-template-columns: minmax\(0, 1fr\)/));
@@ -1063,6 +1212,12 @@ async function sourceAndSchemaChecks() {
   check(() => assert.match(providerSource, /MAX_PAGE_REQUESTS = 5/));
   check(() => assert.match(providerSource, /MAX_DISCOVERED_PAGES = 100/));
   check(() => assert.match(providerSource, /config_id: config\.loginConfigurationId/));
+  check(() => assert.match(contractsSource, /META_AUTHORIZATION_INTENTS = Object\.freeze\(\['facebook_publishing'\]\)/));
+  check(() => assert.match(contractsSource, /start: \['action', 'companyId', 'returnPath', 'authorizationIntent'\]/));
+  check(() => assert.match(providerSource, /searchParams\.set\('scope', META_FACEBOOK_PUBLISHING_SCOPE\)/));
+  check(() => assert.match(providerSource, /searchParams\.set\('auth_type', 'rerequest'\)/));
+  check(() => assert.doesNotMatch(serviceSource, /requestBody\.(?:scope|auth_type|permissions)/));
+  check(() => assert.ok(serviceSource.indexOf('repository.getStatus') < serviceSource.indexOf('repository.createOAuthState')));
   check(() => assert.doesNotMatch(providerSource, /scope:/));
   check(() => assert.match(providerSource, /signal, 'short_token_exchange'/));
   check(() => assert.match(providerSource, /signal, 'long_token_exchange'/));

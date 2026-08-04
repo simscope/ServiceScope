@@ -1,6 +1,7 @@
 import { supabaseFunction } from '../../services/supabaseRest';
 import type {
   MetaConnectionSnapshot,
+  MetaAuthorizationIntent,
   MetaOAuthCallbackPayload,
   MetaReturnDestination,
   MetaSafeConnection,
@@ -13,11 +14,12 @@ export function loadMetaConnectionStatus(companyId: string) {
   return supabaseFunction<MetaConnectionSnapshot>(functionName, { action: 'status', companyId });
 }
 
-export function startMetaConnection(companyId: string) {
+export function startMetaConnection(companyId: string, authorizationIntent?: MetaAuthorizationIntent) {
   return supabaseFunction<{ ok: true; authorizationUrl: string }>(functionName, {
     action: 'start',
     companyId,
     returnPath: '/settings/social-connections',
+    ...(authorizationIntent ? { authorizationIntent } : {}),
   });
 }
 
