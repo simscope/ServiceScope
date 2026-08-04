@@ -171,6 +171,29 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       };
     },
 
+    async getPublicationAttachment(companyId: string, jobId: string, attachmentId: string) {
+      const { data, error } = await adminClient
+        .from('job_attachments')
+        .select('id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path,created_at')
+        .eq('id', attachmentId)
+        .eq('company_id', companyId)
+        .eq('job_id', jobId)
+        .maybeSingle();
+      if (error) throw new MetaPublishingError('INTERNAL_ERROR');
+      return data;
+    },
+
+    async downloadAttachmentBytes(input: Record<string, unknown>) {
+      const bucket = String(input.storageBucket ?? '');
+      const path = String(input.storagePath ?? '');
+      const maxBytes = Number(input.maxBytes) || 0;
+      if (!bucket || !path || maxBytes < 1) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
+      const { data, error } = await adminClient.storage.from(bucket).download(path);
+      if (error || !data) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
+      if (data.size < 1 || data.size > maxBytes) throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
+      return new Uint8Array(await data.arrayBuffer());
+    },
+
     async beginPublication(input: Record<string, unknown>) {
       return oneRpcRow(adminClient, 'begin_company_facebook_publication', {
         p_publication_id: input.publicationId,
@@ -180,6 +203,10 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_idempotency_key: input.idempotencyKey,
         p_approved_message: input.message,
         p_message_sha256: input.messageSha256,
+        p_publication_kind: input.publicationKind,
+        p_attachment_id: input.attachmentId,
+        p_safe_mime_type: input.safeMimeType,
+        p_media_count: input.mediaCount,
         p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,

@@ -38,13 +38,13 @@ let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 
 for (const [source, expectedBlob] of [
-  [edge, '69360a6c9a94a79268d78ad20e8608c085ef6865'],
-  [service, 'e74136792c47300c165aaf39fb12178efdae097c'],
-  [provider, '81538357a7a3f0f06e7a38d826abc9914a79728e'],
-  [contracts, '84b13ef26cf14ecfc4d0914dee00df059e2fd766'],
+  [edge, 'c51846fc58ade316c6706aa39582dfbd4e335ede'],
+  [service, 'bf38734387a43225d4ba055258f4491cba2934e7'],
+  [provider, 'f171a61271a74f765faec63177043a51ad13b661'],
+  [contracts, 'bb1a2a5423a6c399e5ee9ff3170b9241099629e0'],
   [privacy, '385690ebdf79875a17561210ebc7741759b15438'],
-  [client, '65b6aabeeca9da5fed927e21202cd1788145ccb6'],
-  [panel, 'b15db38c709c4a309515696ef142abc88b609de4'],
+  [client, '91fd37f4fce70f06800d2bf6008d90f94dd83869'],
+  [panel, 'e1e754dad76aa016a032c8e52fd0a5eb7a01266d'],
   [migration, 'd3f2ec8ae086b0a481084a98096fff27f439668a'],
 ]) {
   check(() => assert.equal(gitBlobSha(source), expectedBlob));
@@ -56,12 +56,14 @@ check(() => assert.doesNotMatch(browserSources, /META_APP_SECRET|META_TOKEN_ENCR
 check(() => assert.doesNotMatch(browserSources, /company_social_publications/));
 check(() => assert.doesNotMatch(browserSources, /providerPostId|provider_post_id|facebookPageId|facebook_page_id/));
 check(() => assert.doesNotMatch(browserSources, /instagram_content_publish|publish_instagram/i));
-check(() => assert.doesNotMatch(browserSources, /\bFormData\b|upload(?:Photo|Video|Media)|multipart\/form-data/i));
+check(() => assert.doesNotMatch(browserSources, /\bFormData\b|multipart\/form-data/i));
 check(() => assert.doesNotMatch(browserSources, /password/i));
 check(() => assert.match(client, /supabaseFunction<.*>\(functionName/s));
 check(() => assert.match(client, /action: 'publish_facebook_text'/));
+check(() => assert.match(client, /action: 'publish_facebook_single_photo'/));
 check(() => assert.match(client, /explicitApproval: true/));
 check(() => assert.match(client, /idempotencyKey: string/));
+check(() => assert.doesNotMatch(client, /mediaUrl|storagePath|base64|pageId|connectionId|accessToken/i));
 check(() => assert.match(panel, /crypto\.randomUUID\(\)/));
 check(() => assert.match(panel, /workspace\.submitting/));
 check(() => assert.match(panel, /invalidateFacebookPublishApproval/));
@@ -69,6 +71,7 @@ check(() => assert.match(panel, /loadFacebookPublishingStatus\(companyId, jobId\
 check(() => assert.match(panel, /snapshot\.lastPublication/));
 check(() => assert.match(panel, /pageCheckAcknowledged/));
 check(() => assert.match(panel, /Text-only - selected photos and videos will not be uploaded/i));
+check(() => assert.match(panel, /Exactly one approved selected photo will be uploaded/i));
 check(() => assert.match(panel, /META_PUBLICATION_DELIVERY_UNKNOWN|normalizePublishingError/));
 check(() => assert.doesNotMatch(panel, /retry/i));
 
@@ -99,13 +102,18 @@ check(() => assert.match(contracts, /Array\.from\(clean\)\.length/));
 check(() => assert.match(contracts, /replace\(\/\\r\\n\/g, '\\n'\)\.replace\(\/\\r\/g, '\\n'\)/));
 check(() => assert.match(contracts, /\[\\u0000-\\u0009\\u000b\\u000c\\u000e-\\u001f\\u007f\]/));
 check(() => assert.match(contracts, /value !== true/));
+check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
-check(() => assert.doesNotMatch(contracts, /scheduled|instagram|mediaIds|pageId|connectionId/));
+check(() => assert.doesNotMatch(contracts, /scheduled|instagram|mediaIds|mediaUrl|storagePath|base64|pageId|connectionId/));
 
 check(() => assert.match(provider, /https:\/\/graph\.facebook\.com\/\$\{config\.graphApiVersion\}/));
 check(() => assert.match(provider, /Authorization: `Bearer \$\{pageAccessToken\}`/));
 check(() => assert.match(provider, /'Content-Type': 'application\/x-www-form-urlencoded'/));
 check(() => assert.match(provider, /new URLSearchParams\(\{ message, appsecret_proof: proof \}\)/));
+check(() => assert.match(provider, /\$\{encodeURIComponent\(pageId\)\}\/photos/));
+check(() => assert.match(provider, /form\.set\('caption', message\)/));
+check(() => assert.match(provider, /form\.set\('published', 'true'\)/));
+check(() => assert.match(provider, /form\.set\('source', new Blob/));
 check(() => assert.doesNotMatch(provider, /access_token/));
 check(() => assert.doesNotMatch(provider, /searchParams|\?access/));
 check(() => assert.doesNotMatch(provider, /for\s*\(|while\s*\(|setInterval|setTimeout/));

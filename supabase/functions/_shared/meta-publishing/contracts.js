@@ -5,7 +5,7 @@ import {
   validEncryptionKey,
 } from '../meta-connection/contracts.js';
 
-export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'publish_facebook_text']);
+export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'publish_facebook_text', 'publish_facebook_single_photo']);
 export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'authorize',
   'validate_request',
@@ -40,6 +40,10 @@ const SAFE_CODES = new Set([
   'META_PUBLICATION_FAILED',
   'META_PUBLICATION_DELIVERY_UNKNOWN',
   'META_PUBLICATION_PROVIDER_REJECTED',
+  'META_PUBLICATION_MEDIA_REQUIRED',
+  'META_PUBLICATION_MEDIA_UNSUPPORTED',
+  'META_PUBLICATION_MEDIA_TOO_LARGE',
+  'META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED',
   'INTERNAL_ERROR',
 ]);
 
@@ -68,7 +72,9 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
   }
   const allowed = value.action === 'status'
     ? ['action', 'companyId', 'jobId']
-    : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
+    : value.action === 'publish_facebook_single_photo'
+      ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
+      : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new MetaPublishingError('INVALID_REQUEST');
   return value;
 }
@@ -108,6 +114,13 @@ export function facebookPublishingEnabled(connection) {
       && Array.isArray(connection.granted_scopes)
       && connection.granted_scopes.includes(META_FACEBOOK_PUBLISHING_SCOPE),
   );
+}
+
+export const supportedFacebookPhotoMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+export const maxFacebookPhotoBytes = 12_000_000;
+
+export function publicationKindForAction(action) {
+  return action === 'publish_facebook_single_photo' ? 'single_photo' : 'text_only';
 }
 
 export function runtimePublishingConfig(getEnv) {

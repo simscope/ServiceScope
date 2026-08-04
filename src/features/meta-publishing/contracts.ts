@@ -29,6 +29,10 @@ export const FACEBOOK_PUBLISH_ERROR_MESSAGES: Record<string, string> = {
   META_PUBLICATION_FAILED: 'Facebook did not accept this publication.',
   META_PUBLICATION_PROVIDER_REJECTED: 'Facebook rejected this publication.',
   META_PUBLICATION_DELIVERY_UNKNOWN: 'Facebook did not confirm whether the post was published. Check the Page before attempting any new publication.',
+  META_PUBLICATION_MEDIA_REQUIRED: 'Select one approved photo before publishing.',
+  META_PUBLICATION_MEDIA_UNSUPPORTED: 'The selected photo type is not supported for Facebook publishing.',
+  META_PUBLICATION_MEDIA_TOO_LARGE: 'The selected photo exceeds the publishing limit.',
+  META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED: 'The selected photo needs privacy review before publishing.',
 };
 
 const UNSAFE_PUBLISHING_CONTROL_PATTERN = /[\u0000-\u0009\u000b\u000c\u000e-\u001f\u007f]/;

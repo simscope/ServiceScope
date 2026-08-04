@@ -23,3 +23,17 @@ export function publishFacebookText(input: {
     ...input,
   }, { timeoutMs: 20_000 });
 }
+
+export function publishFacebookSinglePhoto(input: {
+  companyId: string;
+  jobId: string;
+  attachmentId: string;
+  message: string;
+  idempotencyKey: string;
+  explicitApproval: true;
+}) {
+  return supabaseFunction<FacebookPublishResult>(functionName, {
+    action: 'publish_facebook_single_photo',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}

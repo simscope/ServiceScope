@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { webcrypto } from 'node:crypto';
+import { randomUUID, webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { buildPrivateValues } from '../supabase/functions/_shared/content-engine/context.js';
 import { assertMetaAccessRole } from '../supabase/functions/_shared/meta-connection/contracts.js';
@@ -28,6 +28,7 @@ import {
 } from '../.tmp/meta-publishing-tests/contracts.js';
 
 const cryptoApi = globalThis.crypto ?? webcrypto;
+const newTestUuid = () => randomUUID();
 const ids = {
   company: '00000000-0000-4000-8000-000000008001',
   otherCompany: '00000000-0000-4000-8000-000000008002',
@@ -35,6 +36,7 @@ const ids = {
   job: '00000000-0000-4000-8000-000000008004',
   jobB: '00000000-0000-4000-8000-000000008006',
   connection: '00000000-0000-4000-8000-000000008005',
+  attachment: '00000000-0000-4000-8000-000000008007',
 };
 const jwt = 'synthetic-header.synthetic-payload.synthetic-signature';
 const encryptionKey = Buffer.alloc(32, 31).toString('base64');
@@ -82,10 +84,14 @@ function configurationAndAccessChecks() {
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));
   for (const invalid of [
-    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: crypto.randomUUID() },
-    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: crypto.randomUUID(), explicitApproval: false },
-    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: crypto.randomUUID(), explicitApproval: true, pageId: '123' },
-    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: crypto.randomUUID(), explicitApproval: true, scheduledAt: new Date().toISOString() },
+    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid() },
+    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: false },
+    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, pageId: '123' },
+    { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, scheduledAt: new Date().toISOString() },
+    { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, mediaUrl: 'https://example.test/photo.jpg' },
+    { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, storagePath: 'private/path.jpg' },
+    { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, base64: 'AA==' },
+    { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, pageId: '123' },
     { action: 'publish_instagram_text', companyId: ids.company },
   ]) {
     if (invalid.action === 'publish_facebook_text' && invalid.explicitApproval !== true) {
@@ -239,6 +245,30 @@ async function providerChecks() {
     malformed.publishText({ pageId: '10001', pageAccessToken: sensitiveToken, message: 'Approved', signal: new AbortController().signal }),
     (error) => error.code === 'META_PUBLICATION_FAILED' && error.diagnostic.providerCategory === 'RESPONSE_MISSING_POST_ID',
   ));
+
+  const photoCalls = [];
+  const photoProvider = createFacebookPublishingProvider({
+    config,
+    cryptoApi,
+    fetchImpl: async (url, options) => {
+      photoCalls.push({ url, options });
+      return new Response(JSON.stringify({ id: '10001_photo_30003' }), { status: 200 });
+    },
+  });
+  const photoResult = await photoProvider.publishSinglePhoto({
+    pageId: '10001',
+    pageAccessToken: sensitiveToken,
+    message: multiline,
+    photoBytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+    mimeType: 'image/jpeg',
+    signal: new AbortController().signal,
+  });
+  check(() => assert.equal(photoResult.providerPostId, '10001_photo_30003'));
+  check(() => assert.equal(photoCalls.length, 1));
+  check(() => assert.equal(photoCalls[0].url, 'https://graph.facebook.com/v25.0/10001/photos'));
+  check(() => assert.equal(photoCalls[0].options.method, 'POST'));
+  check(() => assert.equal(photoCalls[0].options.headers.Authorization, `Bearer ${sensitiveToken}`));
+  check(() => assert.ok(photoCalls[0].options.body instanceof FormData));
 }
 
 async function serviceChecks() {
@@ -295,7 +325,7 @@ async function serviceChecks() {
   ]) {
     await checkAsync(() => assert.rejects(invoke(base, body), /INVALID_REQUEST/));
   }
-  await checkAsync(() => assert.rejects(invoke(base, publishRequest('Contact private@example.test for access.', crypto.randomUUID())), /META_PUBLICATION_PRIVACY_REVIEW_REQUIRED/));
+  await checkAsync(() => assert.rejects(invoke(base, publishRequest('Contact private@example.test for access.', newTestUuid())), /META_PUBLICATION_PRIVACY_REVIEW_REQUIRED/));
   check(() => assert.equal(base.providerCalls.length, 1));
 
   const network = await makeDependencies({ providerError: new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, { providerCategory: 'DELIVERY_UNKNOWN' }) });
@@ -340,20 +370,46 @@ async function serviceChecks() {
   const brokenEnvelope = await makeDependencies();
   brokenEnvelope.context.connection.granted_scopes = publishingScopes();
   brokenEnvelope.context.connection.token_envelope = { invalid: true };
-  await checkAsync(() => assert.rejects(invoke(brokenEnvelope, publishRequest('Verified operation.', crypto.randomUUID())), /META_CONNECTION_NEEDS_REAUTHORIZATION/));
+  await checkAsync(() => assert.rejects(invoke(brokenEnvelope, publishRequest('Verified operation.', newTestUuid())), /META_CONNECTION_NEEDS_REAUTHORIZATION/));
   check(() => assert.equal(brokenEnvelope.providerCalls.length, 0));
 
   const unsupported = await makeDependencies();
   unsupported.context.connection.granted_scopes = publishingScopes();
   unsupported.context.job.status = 'In progress';
   await checkAsync(() => assert.rejects(
-    invoke(unsupported, publishRequest('This action is unavailable.', crypto.randomUUID())),
+    invoke(unsupported, publishRequest('This action is unavailable.', newTestUuid())),
     /INVALID_REQUEST/,
   ));
   check(() => assert.equal(unsupported.providerCalls.length, 0));
 
   check(() => assert.deepEqual(network.terminalActors[0], { action: 'unknown', actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }));
   check(() => assert.equal(base.statusCalls[0].jobId, ids.job));
+
+  const photoBase = await makeDependencies();
+  photoBase.context.connection.granted_scopes = publishingScopes();
+  const photoKey = '00000000-0000-4000-8000-000000008050';
+  const photoPublished = await invoke(photoBase, singlePhotoRequest('Verified normal operation.', photoKey));
+  check(() => assert.equal(photoPublished.status, 'published'));
+  check(() => assert.equal(photoBase.providerCalls.length, 1));
+  check(() => assert.equal(photoBase.providerCalls[0].kind, 'single_photo'));
+  check(() => assert.equal(photoBase.providerCalls[0].attachmentId, ids.attachment));
+  check(() => assert.equal(photoBase.beginInputs[0].publicationKind, 'single_photo'));
+  check(() => assert.equal(photoBase.beginInputs[0].attachmentId, ids.attachment));
+  check(() => assert.equal(photoBase.beginInputs[0].safeMimeType, 'image/jpeg'));
+  check(() => assert.equal(photoBase.beginInputs[0].mediaCount, 1));
+  check(() => assert.equal(photoBase.providerCalls[0].photoBytes.includes(0xe1), false));
+  await invoke(photoBase, singlePhotoRequest('Verified normal operation.', photoKey));
+  check(() => assert.equal(photoBase.providerCalls.length, 1));
+
+  const noPhoto = await makeDependencies({ attachment: null });
+  noPhoto.context.connection.granted_scopes = publishingScopes();
+  await checkAsync(() => assert.rejects(invoke(noPhoto, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_REQUIRED/));
+  const video = await makeDependencies({ attachmentPatch: { kind: 'video', mime_type: 'video/mp4' } });
+  video.context.connection.granted_scopes = publishingScopes();
+  await checkAsync(() => assert.rejects(invoke(video, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_UNSUPPORTED/));
+  const oversized = await makeDependencies({ attachmentPatch: { size_bytes: 12_000_001 } });
+  oversized.context.connection.granted_scopes = publishingScopes();
+  await checkAsync(() => assert.rejects(invoke(oversized, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_TOO_LARGE/));
 
   for (const event of [...base.telemetryEvents, ...network.telemetryEvents, ...failure.telemetryEvents, ...brokenEnvelope.telemetryEvents]) {
     check(() => assert.deepEqual(Object.keys(event).sort(), [
@@ -387,7 +443,7 @@ async function sourceChecks() {
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
 }
 
-async function makeDependencies({ providerError = null, markUnknownError = null } = {}) {
+async function makeDependencies({ providerError = null, markUnknownError = null, attachment = undefined, attachmentPatch = {} } = {}) {
   const connection = {
     id: ids.connection,
     company_id: ids.company,
@@ -410,6 +466,18 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
     location: { address: '' },
     invoices: [],
     comments: [],
+  };
+  const selectedAttachment = attachment === null ? null : {
+    id: ids.attachment,
+    company_id: ids.company,
+    job_id: ids.job,
+    name: 'approved-photo.jpg',
+    mime_type: 'image/jpeg',
+    size_bytes: 24,
+    kind: 'photo',
+    storage_bucket: 'job-files',
+    storage_path: `${ids.company}/${ids.job}/approved-photo.jpg`,
+    ...attachmentPatch,
   };
   const publications = new Map();
   const providerCalls = [];
@@ -446,6 +514,11 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
         };
       },
       getPublicationContext: async () => context,
+      getPublicationAttachment: async (companyId, jobId, attachmentId) => {
+        if (!selectedAttachment || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
+        return selectedAttachment;
+      },
+      downloadAttachmentBytes: async () => jpegWithExifBytes(),
       beginPublication: async (input) => {
         beginInputs.push(input);
         const existing = publications.get(input.idempotencyKey);
@@ -457,6 +530,10 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
           publication_published_at: null,
           publication_last_error_code: null,
           job_id: input.jobId,
+          publication_kind: input.publicationKind,
+          attachment_id: input.attachmentId,
+          safe_mime_type: input.safeMimeType,
+          media_count: input.mediaCount,
           should_publish: true,
         };
         publications.set(input.idempotencyKey, row);
@@ -485,15 +562,20 @@ async function makeDependencies({ providerError = null, markUnknownError = null 
     },
     provider: {
       publishText: async (input) => {
-        providerCalls.push(input);
+        providerCalls.push({ ...input, kind: 'text_only' });
         if (providerError) throw providerError;
         return { providerPostId: '10001_20002' };
+      },
+      publishSinglePhoto: async (input) => {
+        providerCalls.push({ ...input, kind: 'single_photo', attachmentId: ids.attachment });
+        if (providerError) throw providerError;
+        return { providerPostId: '10001_photo_30003' };
       },
     },
     config,
     cryptoApi,
     maxBodyBytes: 24_000,
-    newUuid: () => crypto.randomUUID(),
+    newUuid: () => newTestUuid(),
     timeoutController: () => ({ signal: new AbortController().signal, clear() {} }),
     now: () => { clock += 10; return clock; },
     telemetry: { record: (event) => telemetryEvents.push(event) },
@@ -532,6 +614,18 @@ function invoke(deps, body) {
 
 function publishRequest(message, idempotencyKey) {
   return { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message, idempotencyKey, explicitApproval: true };
+}
+
+function singlePhotoRequest(message, idempotencyKey) {
+  return { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message, idempotencyKey, explicitApproval: true };
+}
+
+function jpegWithExifBytes() {
+  return new Uint8Array([
+    0xff, 0xd8,
+    0xff, 0xe1, 0x00, 0x08, 0x45, 0x78, 0x69, 0x66, 0x00, 0x00,
+    0xff, 0xda, 0x00, 0x04, 0x11, 0x22, 0xff, 0xd9,
+  ]);
 }
 
 function discoveryScopes() {

@@ -142,6 +142,23 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     [selectedJob],
   );
   const analysisResultAttachments = mediaAnalysisWorkspace.result?.attachments ?? [];
+  const approvedFacebookPhotos = analysisResultAttachments
+    .filter((result) => (
+      result.kind === 'photo'
+      && selectedMediaIds.has(result.id)
+      && mediaAnalysisWorkspace.approvals[result.id] === 'approved'
+      && !result.findings.some((finding) => isPrivacyFinding(finding.category))
+    ))
+    .map((result) => {
+      const attachment = attachmentById.get(result.id);
+      return {
+        id: result.id,
+        name: attachment?.name ?? 'Approved photo',
+        dataUrl: attachment ? attachmentUrl(attachment) : '',
+        label: assistantContext?.publicSafe.media.find((item) => item.id === result.id)?.label,
+        mimeType: result.mimeType,
+      };
+    });
   const originalPlanningAttachmentIds = useMemo(() => {
     const assistantMediaIds = new Set(assistantContext?.publicSafe.media.map((item) => item.id) ?? []);
     return (selectedJob?.attachments ?? [])
@@ -604,6 +621,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                     jobStatus={selectedJob.status}
                     message={draftWorkspace.drafts[draft.channel] ?? draft.body}
                     selectedMediaCount={selectedMediaCount}
+                    approvedPhotos={approvedFacebookPhotos}
                     privacyStatus="Server privacy validation will run again before publishing."
                   />
                 ) : null}

@@ -36,6 +36,44 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       }
       return { providerPostId };
     },
+
+    async publishSinglePhoto({ pageId, pageAccessToken, message, photoBytes, mimeType, signal }) {
+      const endpoint = `https://graph.facebook.com/${config.graphApiVersion}/${encodeURIComponent(pageId)}/photos`;
+      const proof = await appSecretProof(pageAccessToken, config.appSecret, cryptoApi);
+      const form = new FormData();
+      form.set('caption', message);
+      form.set('published', 'true');
+      form.set('appsecret_proof', proof);
+      form.set('source', new Blob([photoBytes], { type: mimeType }), 'servicescope-photo');
+      let response;
+      try {
+        response = await fetchImpl(endpoint, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${pageAccessToken}`,
+            Accept: 'application/json',
+          },
+          body: form,
+          signal,
+        });
+      } catch {
+        throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, {
+          providerCategory: 'DELIVERY_UNKNOWN',
+        });
+      }
+
+      const payload = await readBoundedJson(response);
+      if (!response.ok) {
+        throw new MetaPublishingError('META_PUBLICATION_PROVIDER_REJECTED', undefined, providerDiagnostic(payload, response.status));
+      }
+      const providerPostId = typeof payload?.id === 'string' ? payload.id.trim() : '';
+      if (!providerPostId || providerPostId.length > 200 || /[\u0000-\u001f]/.test(providerPostId)) {
+        throw new MetaPublishingError('META_PUBLICATION_FAILED', undefined, {
+          providerCategory: 'RESPONSE_MISSING_POST_ID',
+        });
+      }
+      return { providerPostId };
+    },
   };
 }
 
