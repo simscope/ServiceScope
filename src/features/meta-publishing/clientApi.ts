@@ -50,6 +50,33 @@ export function revokeFacebookPublicationPhotoApproval(input: {
   }, { timeoutMs: 20_000 });
 }
 
+export function excludeFacebookPublicationPhoto(input: {
+  companyId: string;
+  jobId: string;
+  attachmentId: string;
+  explicitApproval: true;
+  exclusionReason?: string;
+}) {
+  return supabaseFunction<{ ok: true; attachmentId: string; excluded: true; approvalStatus: 'revoked' | 'pending' }>(functionName, {
+    action: 'exclude_facebook_publication_photo',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
+export function resolveFacebookPublicationPhotoFalsePositive(input: {
+  companyId: string;
+  jobId: string;
+  attachmentId: string;
+  findingIds: string[];
+  explicitApproval: true;
+  resolutionReason?: string;
+}) {
+  return supabaseFunction<{ ok: true; attachmentId: string; privacyReviewStatus: 'blocked' | 'resolved_false_positive'; resolvedFindingCount: number }>(functionName, {
+    action: 'resolve_facebook_publication_photo_false_positive',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
 export function publishFacebookSinglePhoto(input: {
   companyId: string;
   jobId: string;

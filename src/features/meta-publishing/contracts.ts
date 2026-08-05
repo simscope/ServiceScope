@@ -17,6 +17,9 @@ export type FacebookPublishingSnapshot = {
   lastPublication: FacebookPublicationSummary | null;
   eligiblePhotos: Array<{
     attachmentId: string;
+    displayName: string;
+    previewUrl: string | null;
+    mimeType: 'image/jpeg' | 'image/png';
     approvalStatus: 'approved' | 'revoked' | 'pending';
     approvedAt: string | null;
     revokedAt: string | null;

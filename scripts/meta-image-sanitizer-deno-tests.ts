@@ -1,6 +1,7 @@
 import { assert, assertEquals, assertNotEquals, assertRejects } from 'https://deno.land/std@0.224.0/assert/mod.ts';
 import { Image } from 'https://deno.land/x/imagescript@1.3.0/mod.ts';
 import { createImageScriptProcessor } from '../supabase/functions/_shared/meta-publishing/imageProcessor.js';
+import { createFacebookPublishingProvider } from '../supabase/functions/_shared/meta-publishing/provider.js';
 
 const processor = createImageScriptProcessor();
 const limits = { maxBytes: 12_000_000, maxPixels: 40_000_000, maxWidth: 10_000, maxHeight: 10_000 };
@@ -73,6 +74,52 @@ Deno.test('predecode rejects malformed, mismatched, unsupported, and oversized f
     assertEquals(entry.bytes, original);
   }
   assertEquals(providerCalls.length, 0);
+});
+
+Deno.test('production sanitizer output is the exact multipart provider payload', async () => {
+  const clean = await jpegFixture(2, 2);
+  const withMetadata = injectJpegMetadata(clean, [
+    exifSegment('Exif\0\0Synthetic camera'),
+    exifSegment('GPS\0\0Synthetic coordinates'),
+    app1Segment('http://ns.adobe.com/xap/1.0/\0<x:xmpmeta>synthetic</x:xmpmeta>'),
+  ]);
+  const original = new Uint8Array(withMetadata);
+  const sanitized = await processor.sanitize({ bytes: withMetadata, mimeType: 'image/jpeg', ...limits });
+  const calls: Array<{ caption: string; published: string; source: File }> = [];
+  const provider = createFacebookPublishingProvider({
+    config: { graphApiVersion: 'v25.0', appSecret: 'test-secret' },
+    cryptoApi: crypto,
+    fetchImpl: async (_url: string, init: RequestInit) => {
+      const form = init.body as FormData;
+      calls.push({
+        caption: String(form.get('caption')),
+        published: String(form.get('published')),
+        source: form.get('source') as File,
+      });
+      return new Response(JSON.stringify({ id: '10001_photo_30003' }), { status: 200 });
+    },
+  });
+
+  const result = await provider.publishSinglePhoto({
+    pageId: '10001',
+    pageAccessToken: 'page-token',
+    message: 'Exact reviewed message.',
+    photoBytes: sanitized.bytes,
+    mimeType: sanitized.mimeType,
+  });
+
+  assertEquals(result.providerMediaId, '10001_photo_30003');
+  assertEquals(calls.length, 1);
+  assertEquals(calls[0].caption, 'Exact reviewed message.');
+  assertEquals(calls[0].published, 'true');
+  assertEquals(calls[0].source.type, 'image/jpeg');
+  const multipartBytes = new Uint8Array(await calls[0].source.arrayBuffer());
+  assertEquals(multipartBytes, sanitized.bytes);
+  assertNotEquals(await sha256Hex(multipartBytes), await sha256Hex(original));
+  assertEquals(withMetadata, original);
+  assert(!containsAscii(multipartBytes, 'Exif'));
+  assert(!containsAscii(multipartBytes, 'GPS'));
+  assert(!containsAscii(multipartBytes, 'xmpmeta'));
 });
 
 async function jpegFixture(width: number, height: number) {

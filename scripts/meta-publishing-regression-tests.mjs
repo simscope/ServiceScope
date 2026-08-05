@@ -510,7 +510,7 @@ async function sourceChecks() {
   check(() => assert.match(panel, /selected photos and videos will not be uploaded/i));
   check(() => assert.match(panel, /A Facebook publication for this job is already in progress\./));
   check(() => assert.match(panel, /blocked until a reconciliation workflow resolves the unknown delivery state/i));
-  check(() => assert.match(panel, /\[companyId, jobId\]/));
+  check(() => assert.match(panel, /\[companyId, jobId, refreshToken\]/));
   check(() => assert.match(panel, /Completed.*Warranty/s));
   check(() => assert.doesNotMatch(panel, /retry/i));
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
@@ -559,7 +559,11 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
   const statusCalls = [];
   const telemetryEvents = [];
   const revokeInputs = [];
+  const excludeInputs = [];
+  const falsePositiveInputs = [];
   let photoRevoked = false;
+  let photoExcluded = false;
+  let findingsResolved = false;
   let clock = Date.parse('2026-08-03T12:00:00.000Z');
   return {
     context,
@@ -588,7 +592,13 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
           } : null,
           eligiblePhotos: photoApproved && selectedAttachment && !photoRevoked ? [{
             attachmentId: ids.attachment,
+            displayName: 'approved-photo.jpg',
+            previewUrl: null,
+            mimeType: 'image/jpeg',
             approvalStatus: 'approved',
+            approvedAt: '2026-08-03T12:00:00.000Z',
+            revokedAt: null,
+            analysisRunId: '00000000-0000-4000-8000-000000008081',
             analysisStatus: 'completed',
             privacyReviewStatus: 'passed',
             checksumMatch: true,
@@ -622,8 +632,19 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
           revoked_at: input.timestamp,
         };
       },
+      excludePublicationPhoto: async (input) => {
+        excludeInputs.push(input);
+        photoExcluded = true;
+        photoRevoked = true;
+        return { attachment_id: input.attachmentId, excluded: true, revoked_approval_id: newTestUuid() };
+      },
+      resolvePublicationPhotoFalsePositive: async (input) => {
+        falsePositiveInputs.push(input);
+        findingsResolved = true;
+        return { attachment_id: input.attachmentId, privacy_review_status: 'resolved_false_positive', resolved_finding_count: input.findingIds.length };
+      },
       getPublicationPhotoApproval: async (companyId, jobId, attachmentId, attachmentSha256) => {
-        if (photoRevoked || !photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
+        if (photoRevoked || photoExcluded || !photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
         const expected = `\\x${Buffer.from(await cryptoApi.subtle.digest('SHA-256', jpegWithExifBytes())).toString('hex')}`;
         return attachmentSha256 === expected ? {
           id: '00000000-0000-4000-8000-000000008080',
@@ -632,6 +653,31 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
           approved_at: '2026-08-03T12:00:00.000Z',
           revoked_at: null,
         } : null;
+      },
+      revalidatePublicationPhotoEligibility: async (companyId, jobId, attachmentId, attachmentSha256) => {
+        if (photoRevoked || photoExcluded || !photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
+        const expected = `\\x${Buffer.from(await cryptoApi.subtle.digest('SHA-256', jpegWithExifBytes())).toString('hex')}`;
+        if (attachmentSha256 !== expected) return null;
+        const approval = {
+          id: '00000000-0000-4000-8000-000000008080',
+          analysis_run_id: '00000000-0000-4000-8000-000000008081',
+          approval_status: 'approved',
+          approved_at: '2026-08-03T12:00:00.000Z',
+          revoked_at: null,
+        };
+        return {
+          attachmentId,
+          approvalId: approval.id,
+          approvalStatus: 'approved',
+          approvedAt: approval.approved_at,
+          revokedAt: null,
+          analysisRunId: approval.analysis_run_id,
+          analysisStatus: 'completed',
+          privacyReviewStatus: findingsResolved ? 'resolved_false_positive' : 'passed',
+          checksumMatch: true,
+          eligibleForFacebookPublication: true,
+          approval,
+        };
       },
       beginPublication: async (input) => {
         beginInputs.push(input);

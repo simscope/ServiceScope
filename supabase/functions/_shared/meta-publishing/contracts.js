@@ -5,7 +5,15 @@ import {
   validEncryptionKey,
 } from '../meta-connection/contracts.js';
 
-export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'approve_facebook_publication_photo', 'revoke_facebook_publication_photo_approval', 'publish_facebook_text', 'publish_facebook_single_photo']);
+export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze([
+  'status',
+  'approve_facebook_publication_photo',
+  'revoke_facebook_publication_photo_approval',
+  'exclude_facebook_publication_photo',
+  'resolve_facebook_publication_photo_false_positive',
+  'publish_facebook_text',
+  'publish_facebook_single_photo',
+]);
 export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'authorize',
   'validate_request',
@@ -77,9 +85,13 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
       ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'approvalReason']
       : value.action === 'revoke_facebook_publication_photo_approval'
         ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason']
-      : value.action === 'publish_facebook_single_photo'
-        ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
-        : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
+        : value.action === 'exclude_facebook_publication_photo'
+          ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'exclusionReason']
+          : value.action === 'resolve_facebook_publication_photo_false_positive'
+            ? ['action', 'companyId', 'jobId', 'attachmentId', 'findingIds', 'explicitApproval', 'resolutionReason']
+            : value.action === 'publish_facebook_single_photo'
+              ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
+              : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new MetaPublishingError('INVALID_REQUEST');
   return value;
 }
@@ -129,6 +141,15 @@ export function normalizeApprovalReason(value) {
   if (!clean) return null;
   if (clean.length > 240 || /[<>\u0000-\u001f]/.test(clean)) throw new MetaPublishingError('INVALID_REQUEST');
   return clean;
+}
+
+export function normalizeFindingIds(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50) throw new MetaPublishingError('INVALID_REQUEST');
+  const ids = value.map((item) => (typeof item === 'string' ? item.trim() : ''));
+  if (ids.some((item) => !item || item.length > 120 || !/^[A-Za-z0-9_.:-]+$/.test(item))) {
+    throw new MetaPublishingError('INVALID_REQUEST');
+  }
+  return [...new Set(ids)];
 }
 
 export function publicationIntentSource({
@@ -251,11 +272,25 @@ function safeLabel(value, maxLength) {
   return clean && clean.length <= maxLength && !/[<>\u0000-\u001f]/.test(clean) ? clean : null;
 }
 
+function safeUrl(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  if (!clean || clean.length > 2048 || /[\u0000-\u001f<>]/.test(clean)) return null;
+  try {
+    const url = new URL(clean);
+    return ['https:', 'data:'].includes(url.protocol) ? clean : null;
+  } catch {
+    return null;
+  }
+}
+
 function safeEligiblePhoto(value) {
   const attachmentId = typeof value?.attachmentId === 'string' && UUID_PATTERN.test(value.attachmentId) ? value.attachmentId : null;
   if (!attachmentId) return null;
   return {
     attachmentId,
+    displayName: safeLabel(value?.displayName, 120) ?? 'Approved photo',
+    previewUrl: safeUrl(value?.previewUrl),
+    mimeType: supportedFacebookPhotoMimeTypes.has(value?.mimeType) ? value.mimeType : 'image/jpeg',
     approvalStatus: ['approved', 'revoked', 'pending'].includes(value?.approvalStatus) ? value.approvalStatus : 'pending',
     approvedAt: safeTimestamp(value?.approvedAt),
     revokedAt: safeTimestamp(value?.revokedAt),

@@ -49,7 +49,12 @@ import {
 } from '../../features/media-planning/planningState';
 import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
 import { FacebookPublishPanel } from './FacebookPublishPanel';
-import { approveFacebookPublicationPhoto, revokeFacebookPublicationPhotoApproval } from '../../features/meta-publishing/clientApi';
+import {
+  approveFacebookPublicationPhoto,
+  excludeFacebookPublicationPhoto,
+  resolveFacebookPublicationPhotoFalsePositive,
+  revokeFacebookPublicationPhotoApproval,
+} from '../../features/meta-publishing/clientApi';
 import { loadCompanyVoiceSummary } from '../../features/company-voice/clientApi';
 import {
   buildGenerationPreferencesByChannel,
@@ -87,6 +92,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
   const [aiPendingChannel, setAiPendingChannel] = useState<AssistantChannel | null>(null);
   const [mediaAnalysisWorkspace, setMediaAnalysisWorkspace] = useState(() => createMediaAnalysisWorkspaceState(selectedJob?.id));
   const [mediaPlanningState, setMediaPlanningState] = useState(() => createMediaPlanningState(selectedJob?.id));
+  const [facebookStatusRefreshToken, setFacebookStatusRefreshToken] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +124,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     setAiPendingChannel(null);
     setMediaAnalysisWorkspace(createMediaAnalysisWorkspaceState(selectedJob?.id));
     setMediaPlanningState(createMediaPlanningState(selectedJob?.id));
+    setFacebookStatusRefreshToken((current) => current + 1);
   }, [selectedJob?.id]);
 
   const summary = selectedJob ? buildAssistantJobSummary(selectedJob) : null;
@@ -143,23 +150,6 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     [selectedJob],
   );
   const analysisResultAttachments = mediaAnalysisWorkspace.result?.attachments ?? [];
-  const approvedFacebookPhotos = analysisResultAttachments
-    .filter((result) => (
-      result.kind === 'photo'
-      && selectedMediaIds.has(result.id)
-      && mediaAnalysisWorkspace.approvals[result.id] === 'approved'
-      && !result.findings.some((finding) => isPrivacyFinding(finding.category))
-    ))
-    .map((result) => {
-      const attachment = attachmentById.get(result.id);
-      return {
-        id: result.id,
-        name: attachment?.name ?? 'Approved photo',
-        dataUrl: attachment ? attachmentUrl(attachment) : '',
-        label: assistantContext?.publicSafe.media.find((item) => item.id === result.id)?.label,
-        mimeType: result.mimeType,
-      };
-    });
   const originalPlanningAttachmentIds = useMemo(() => {
     const assistantMediaIds = new Set(assistantContext?.publicSafe.media.map((item) => item.id) ?? []);
     return (selectedJob?.attachments ?? [])
@@ -324,6 +314,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
         idempotencyKey: requestId,
       });
       setMediaAnalysisWorkspace((current) => applyMediaAnalysisResult(current, result, requestId, requestJobId));
+      setFacebookStatusRefreshToken((current) => current + 1);
     } catch (error) {
       const normalized = normalizeMediaAnalysisError(error);
       setMediaAnalysisWorkspace((current) => applyMediaAnalysisError(current, normalized.message, requestId));
@@ -346,6 +337,23 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
           explicitApproval: true,
           approvalReason: 'Approved in AI Assistant media review.',
         });
+      } else if (approval === 'excluded') {
+        await excludeFacebookPublicationPhoto({
+          companyId,
+          jobId: selectedJob.id,
+          attachmentId,
+          explicitApproval: true,
+          exclusionReason: 'Excluded in AI Assistant media review.',
+        });
+      } else if (approval === 'false_positive') {
+        await resolveFacebookPublicationPhotoFalsePositive({
+          companyId,
+          jobId: selectedJob.id,
+          attachmentId,
+          findingIds: result.findings.filter((finding) => isPrivacyFinding(finding.category)).map((finding) => finding.findingId),
+          explicitApproval: true,
+          resolutionReason: 'Marked false positive in AI Assistant media review.',
+        });
       } else {
         await revokeFacebookPublicationPhotoApproval({
           companyId,
@@ -356,6 +364,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
         });
       }
       setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, approval));
+      setFacebookStatusRefreshToken((current) => current + 1);
     } catch {
       setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, 'pending'));
     }
@@ -649,7 +658,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                     jobStatus={selectedJob.status}
                     message={draftWorkspace.drafts[draft.channel] ?? draft.body}
                     selectedMediaCount={selectedMediaCount}
-                    approvedPhotos={approvedFacebookPhotos}
+                    refreshToken={facebookStatusRefreshToken}
                     privacyStatus="Server privacy validation will run again before publishing."
                   />
                 ) : null}

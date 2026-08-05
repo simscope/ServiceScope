@@ -7,6 +7,7 @@ import {
   maxFacebookPhotoBytes,
   normalizeApprovalReason,
   normalizeApprovedMessage,
+  normalizeFindingIds,
   parsePublishingRequest,
   publicationIntentSource,
   publicationKindForAction,
@@ -102,6 +103,68 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       return { ok: true, attachmentId: String(row.attachment_id ?? attachmentId), approvalStatus: 'revoked', revokedAt: row.revoked_at ?? null };
     }
 
+    if (action === 'exclude_facebook_publication_photo') {
+      stage = 'privacy_review';
+      assertExplicitApproval(body.explicitApproval);
+      const jobId = requireUuid(body.jobId);
+      const attachmentId = requireUuid(body.attachmentId);
+      const publicationContext = await deps.repository.getPublicationContext(companyId, jobId);
+      if (!publicationContext?.job || String(publicationContext.job.company_id) !== companyId) {
+        throw new MetaPublishingError('FORBIDDEN');
+      }
+      const photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
+      if (!photo || String(photo.company_id) !== companyId || String(photo.job_id) !== jobId) throw new MetaPublishingError('FORBIDDEN');
+      const row = await deps.repository.excludePublicationPhoto({
+        companyId,
+        jobId,
+        attachmentId,
+        actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
+        exclusionReason: normalizeApprovalReason(body.exclusionReason),
+        timestamp: new Date(deps.now()).toISOString(),
+      });
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return {
+        ok: true,
+        attachmentId: String(row.attachment_id ?? attachmentId),
+        excluded: true,
+        approvalStatus: row.revoked_approval_id ? 'revoked' : 'pending',
+      };
+    }
+
+    if (action === 'resolve_facebook_publication_photo_false_positive') {
+      stage = 'privacy_review';
+      assertExplicitApproval(body.explicitApproval);
+      const jobId = requireUuid(body.jobId);
+      const attachmentId = requireUuid(body.attachmentId);
+      const findingIds = normalizeFindingIds(body.findingIds);
+      const publicationContext = await deps.repository.getPublicationContext(companyId, jobId);
+      if (!publicationContext?.job || String(publicationContext.job.company_id) !== companyId) {
+        throw new MetaPublishingError('FORBIDDEN');
+      }
+      const photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
+      if (!photo || String(photo.company_id) !== companyId || String(photo.job_id) !== jobId) throw new MetaPublishingError('FORBIDDEN');
+      const row = await deps.repository.resolvePublicationPhotoFalsePositive({
+        companyId,
+        jobId,
+        attachmentId,
+        findingIds,
+        actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
+        resolutionReason: normalizeApprovalReason(body.resolutionReason),
+        timestamp: new Date(deps.now()).toISOString(),
+      });
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return {
+        ok: true,
+        attachmentId: String(row.attachment_id ?? attachmentId),
+        privacyReviewStatus: row.privacy_review_status === 'resolved_false_positive' ? 'resolved_false_positive' : 'blocked',
+        resolvedFindingCount: Number(row.resolved_finding_count) || 0,
+      };
+    }
+
     stage = 'validate_request';
     if (!deps.config.configured) throw new MetaPublishingError('META_PUBLISH_NOT_CONFIGURED');
     assertExplicitApproval(body.explicitApproval);
@@ -173,6 +236,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       attachmentId,
       safeMimeType: photo?.mimeType ?? null,
       mediaCount: photo ? 1 : 0,
+      publicationAuditMetadata: photo?.auditMetadata ?? {},
       actorAuthUserId: access.actorAuthUserId,
       actorName: access.actorName,
       actorRole: access.actorRole,
@@ -215,6 +279,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
           actorAuthUserId: access.actorAuthUserId,
           actorName: access.actorName,
           actorRole: access.actorRole,
+          publicationAuditMetadata: photo ? { ...photo.auditMetadata, providerCallCount: 1 } : {},
           timestamp: new Date(deps.now()).toISOString(),
         });
         throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, {
@@ -229,6 +294,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         actorName: access.actorName,
         actorRole: access.actorRole,
         diagnostic,
+        publicationAuditMetadata: photo ? { ...photo.auditMetadata, providerCallCount: 1 } : {},
         lastErrorCode: error?.code === 'META_PUBLICATION_FAILED'
           ? 'META_PUBLICATION_FAILED'
           : 'META_PUBLICATION_PROVIDER_REJECTED',
@@ -250,7 +316,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         actorRole: access.actorRole,
         providerPostId: providerResult.providerPostId,
         providerMediaId: providerResult.providerMediaId ?? null,
-        publicationAuditMetadata: photo?.auditMetadata ?? {},
+        publicationAuditMetadata: photo ? { ...photo.auditMetadata, providerCallCount: 1 } : {},
         timestamp: new Date(deps.now()).toISOString(),
       });
     } catch {
@@ -260,6 +326,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         actorAuthUserId: access.actorAuthUserId,
         actorName: access.actorName,
         actorRole: access.actorRole,
+        publicationAuditMetadata: photo ? { ...photo.auditMetadata, providerCallCount: 1 } : {},
         timestamp: new Date(deps.now()).toISOString(),
       });
       throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, {
@@ -292,10 +359,11 @@ async function validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValu
     maxBytes: maxFacebookPhotoBytes,
   });
   const originalSha256 = await sha256Hex(originalBytes, deps.cryptoApi);
-  const approval = await deps.repository.getPublicationPhotoApproval(companyId, jobId, photo.id, originalSha256);
-  if (!approval || approval.approval_status !== 'approved' || approval.revoked_at) {
+  const eligibility = await deps.repository.revalidatePublicationPhotoEligibility(companyId, jobId, photo.id, originalSha256);
+  if (!eligibility?.eligibleForFacebookPublication || !eligibility.approval) {
     throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
   }
+  const approval = eligibility.approval;
   const processor = deps.imageProcessor;
   if (!processor?.sanitize) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
   const sanitized = await processor.sanitize({
@@ -335,7 +403,7 @@ async function validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValu
       gpsStripped: true,
       sanitizer: sanitized.sanitizer ?? 'ImageScript',
       sanitizerVersion: sanitized.sanitizerVersion ?? '1.3.0',
-      providerCallCount: 1,
+      providerCallCount: 0,
     },
   };
 }

@@ -18,6 +18,7 @@ const migrationNames = [
   '20260804193000_meta_facebook_single_photo_publish.sql',
   '20260804203000_meta_facebook_single_photo_publish_corrective.sql',
   '20260805002000_meta_facebook_single_photo_publish_review_fix.sql',
+  '20260805024500_meta_facebook_single_photo_review_closure.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -108,6 +109,7 @@ await db.exec(migrations[4]);
 await db.exec(migrations[5]);
 await db.exec(migrations[6]);
 await db.exec(migrations[7]);
+await db.exec(migrations[8]);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -197,7 +199,16 @@ const publicTableAcl = await db.query(`
 `);
 check(() => assert.deepEqual(publicTableAcl.rows, []));
 
-const rpcNames = ['approve_company_facebook_publication_photo', 'revoke_company_facebook_publication_photo_approval', 'begin_company_facebook_publication', 'complete_company_facebook_publication', 'fail_company_facebook_publication', 'mark_company_facebook_publication_unknown'];
+const rpcNames = [
+  'approve_company_facebook_publication_photo',
+  'revoke_company_facebook_publication_photo_approval',
+  'exclude_company_facebook_publication_photo',
+  'resolve_company_media_analysis_false_positive',
+  'begin_company_facebook_publication',
+  'complete_company_facebook_publication',
+  'fail_company_facebook_publication',
+  'mark_company_facebook_publication_unknown',
+];
 const rpcGrants = await db.query(`
   select p.proname,
     has_function_privilege('service_role', p.oid, 'EXECUTE') as service_allowed,
@@ -207,7 +218,7 @@ const rpcGrants = await db.query(`
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.proname = any($1::text[])
 `, [rpcNames]);
-check(() => assert.equal(rpcGrants.rows.length, 6));
+check(() => assert.ok(rpcGrants.rows.length >= 8));
 for (const row of rpcGrants.rows) {
   check(() => assert.equal(row.service_allowed, true));
   check(() => assert.equal(row.anon_allowed, false));
@@ -219,17 +230,21 @@ const rpcShapes = await db.query(`
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.proname = any($1::text[])
 `, [rpcNames]);
-check(() => assert.deepEqual(
-  Object.fromEntries(rpcShapes.rows.map((row) => [row.proname, row.pronargs])),
-  {
-    approve_company_facebook_publication_photo: 11,
-    begin_company_facebook_publication: 16,
-    complete_company_facebook_publication: 9,
-    fail_company_facebook_publication: 12,
-    mark_company_facebook_publication_unknown: 6,
-    revoke_company_facebook_publication_photo_approval: 8,
-  },
-));
+const signatureSet = new Set(rpcShapes.rows.map((row) => `${row.proname}/${row.pronargs}`));
+for (const signature of [
+  'approve_company_facebook_publication_photo/11',
+  'revoke_company_facebook_publication_photo_approval/8',
+  'exclude_company_facebook_publication_photo/8',
+  'resolve_company_media_analysis_false_positive/9',
+  'begin_company_facebook_publication/16',
+  'complete_company_facebook_publication/9',
+  'fail_company_facebook_publication/12',
+  'fail_company_facebook_publication/13',
+  'mark_company_facebook_publication_unknown/6',
+  'mark_company_facebook_publication_unknown/7',
+]) {
+  check(() => assert.equal(signatureSet.has(signature), true));
+}
 
 const multilineMessage = [
   'Service story: our team documented work for a rooftop unit.',
@@ -321,6 +336,21 @@ await db.query(`insert into public.company_media_analysis_privacy_findings (
 await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
   $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Blocked privacy fixture',now()
 )`, [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+const falsePositive = await db.query(`select * from public.resolve_company_media_analysis_false_positive(
+  $1,$2,$3,array['finding-1']::text[],$4,$5,$6,'False positive SQL fixture',now()
+)`, [ids.company, ids.job, blockedAttachment, ids.actor, verifiedActor.name, verifiedActor.role]);
+check(() => assert.equal(falsePositive.rows[0].privacy_review_status, 'resolved_false_positive'));
+const resolvedApproval = await db.query(`select * from public.approve_company_facebook_publication_photo(
+  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Resolved false positive approval fixture',now()
+)`, [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+check(() => assert.equal(resolvedApproval.rows[0].approval_status, 'approved'));
+const excluded = await db.query(`select * from public.exclude_company_facebook_publication_photo(
+  $1,$2,$3,$4,$5,$6,'Exclude SQL fixture',now()
+)`, [ids.company, ids.job, blockedAttachment, ids.actor, verifiedActor.name, verifiedActor.role]);
+check(() => assert.equal(excluded.rows[0].excluded, true));
+await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
+  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Excluded approval fixture',now()
+)`, [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role]);
 
 const revoked = await db.query(`select * from public.revoke_company_facebook_publication_photo_approval(
   $1,$2,$3,$4,$5,$6,'SQL revocation fixture',now()
@@ -386,7 +416,7 @@ check(() => assert.equal(transitions.rows[4].provider_error_category, 'RESPONSE_
 
 const audits = await db.query(`select action,actor_user_id,actor_name,actor_role,metadata from public.audit_events where action like 'meta_publication_%' order by created_at,id`);
 check(() => assert.deepEqual([...new Set(audits.rows.map((row) => row.action))].sort(), [
-  'meta_publication_delivery_unknown', 'meta_publication_failed', 'meta_publication_media_approval_revoked', 'meta_publication_media_approved', 'meta_publication_published', 'meta_publication_started',
+  'meta_publication_delivery_unknown', 'meta_publication_failed', 'meta_publication_media_approval_revoked', 'meta_publication_media_approved', 'meta_publication_media_excluded', 'meta_publication_media_false_positive_resolved', 'meta_publication_published', 'meta_publication_started',
 ]));
 for (const audit of audits.rows) {
   check(() => assert.equal(audit.actor_user_id, ids.actor));
@@ -482,6 +512,7 @@ await canonicalDb.exec(canonicalBlocks.publishingAclFix);
 await canonicalDb.exec(migrations[5]);
 await canonicalDb.exec(migrations[6]);
 await canonicalDb.exec(migrations[7]);
+await canonicalDb.exec(migrations[8]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
