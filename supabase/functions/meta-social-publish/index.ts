@@ -304,6 +304,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
+        p_publication_audit_metadata: input.publicationAuditMetadata ?? {},
         p_timestamp: input.timestamp,
       });
     },
@@ -383,6 +384,7 @@ async function listPhotoEligibility(
     .eq('job_id', jobId)
     .in('attachment_id', attachmentIds)
     .order('created_at', { ascending: false })
+    .order('id', { ascending: false })
     .limit(200);
   if (resultError) throw new MetaPublishingError('INTERNAL_ERROR');
   const runIds = [...new Set((results ?? []).map((row) => String(row.analysis_run_id ?? '')).filter(Boolean))];
@@ -447,16 +449,21 @@ async function listPhotoEligibility(
       : await storageSha256(adminClient, attachment);
     const approval = approvalByAttachment.get(attachmentId) ?? null;
     const approved = approval?.approval_status === 'approved' && !approval.revoked_at;
-    const selectedResult = (resultsByAttachment.get(attachmentId) ?? []).find((result) => {
-      const run = runById.get(String(result.analysis_run_id ?? ''));
-      return run?.status === 'completed'
-        && result.excluded !== true
-        && ['analyzed', 'metadata_only'].includes(String(result.analysis_status))
-        && ['passed', 'resolved_false_positive'].includes(String(result.privacy_review_status))
-        && unresolvedByResult.get(String(result.id)) === undefined
-        && currentSha256 === result.attachment_sha256
-        && (!approval || approval.analysis_run_id === result.analysis_run_id);
-    }) ?? null;
+    const selectedResult = (resultsByAttachment.get(attachmentId) ?? [])[0] ?? null;
+    const selectedRun = selectedResult ? runById.get(String(selectedResult.analysis_run_id ?? '')) : null;
+    const resultValid = Boolean(
+      selectedResult
+        && selectedRun?.status === 'completed'
+        && selectedRun.company_id === companyId
+        && selectedRun.job_id === jobId
+        && selectedResult.attachment_id === attachmentId
+        && selectedResult.excluded !== true
+        && ['analyzed', 'metadata_only'].includes(String(selectedResult.analysis_status))
+        && ['passed', 'resolved_false_positive'].includes(String(selectedResult.privacy_review_status))
+        && unresolvedByResult.get(String(selectedResult.id)) === undefined
+        && currentSha256 === selectedResult.attachment_sha256
+        && approval?.analysis_run_id === selectedResult.analysis_run_id,
+    );
     const checksumMatch = Boolean(
       currentSha256
         && selectedResult
@@ -473,11 +480,13 @@ async function listPhotoEligibility(
       approvalStatus: approved ? 'approved' : approval ? 'revoked' : 'pending',
       approvedAt: typeof approval?.approved_at === 'string' ? approval.approved_at : null,
       revokedAt: typeof approval?.revoked_at === 'string' ? approval.revoked_at : null,
-      analysisRunId: typeof selectedResult?.analysis_run_id === 'string' ? selectedResult.analysis_run_id : null,
-      analysisStatus: selectedResult ? 'completed' : 'missing',
-      privacyReviewStatus: selectedResult?.privacy_review_status === 'resolved_false_positive' ? 'resolved_false_positive' : selectedResult ? 'passed' : 'blocked',
+      analysisRunId: resultValid && typeof selectedResult?.analysis_run_id === 'string' ? selectedResult.analysis_run_id : null,
+      analysisStatus: selectedResult ? String(selectedRun?.status ?? 'missing') : 'missing',
+      privacyReviewStatus: resultValid && selectedResult?.privacy_review_status === 'resolved_false_positive'
+        ? 'resolved_false_positive'
+        : resultValid ? 'passed' : 'blocked',
       checksumMatch,
-      eligibleForFacebookPublication: Boolean(approved && selectedResult && checksumMatch),
+      eligibleForFacebookPublication: Boolean(approved && resultValid && checksumMatch),
     });
   }
   return rows;

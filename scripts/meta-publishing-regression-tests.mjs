@@ -442,6 +442,10 @@ async function serviceChecks() {
   check(() => assert.equal(photoBase.beginInputs[0].attachmentId, ids.attachment));
   check(() => assert.equal(photoBase.beginInputs[0].safeMimeType, 'image/jpeg'));
   check(() => assert.equal(photoBase.beginInputs[0].mediaCount, 1));
+  check(() => assert.equal(photoBase.beginInputs[0].publicationAuditMetadata.providerCallCount, 0));
+  check(() => assert.equal(photoBase.beginInputs[0].publicationAuditMetadata.analysisRunId, '00000000-0000-4000-8000-000000008081'));
+  check(() => assert.equal(photoBase.beginInputs[0].publicationAuditMetadata.approvalId, '00000000-0000-4000-8000-000000008080'));
+  check(() => assert.equal(photoBase.beginInputs[0].publicationAuditMetadata.sanitizer, 'ImageScript'));
   check(() => assert.equal(photoBase.providerCalls[0].photoBytes.includes(0xe1), false));
   check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.providerCallCount, 1));
   check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.sanitizer, 'ImageScript'));
@@ -452,6 +456,11 @@ async function serviceChecks() {
   check(() => assert.match(photoBase.terminalActors[0].publicationAuditMetadata.sanitizedHashPrefix, /^[0-9a-f]{16}$/));
   await invoke(photoBase, singlePhotoRequest('Verified normal operation.', photoKey));
   check(() => assert.equal(photoBase.providerCalls.length, 1));
+
+  const latestInvalidPhoto = await makeDependencies({ latestAnalysisInvalid: true });
+  latestInvalidPhoto.context.connection.granted_scopes = publishingScopes();
+  await checkAsync(() => assert.rejects(invoke(latestInvalidPhoto, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED/));
+  check(() => assert.equal(latestInvalidPhoto.providerCalls.length, 0));
 
   const revokedPhoto = await makeDependencies();
   revokedPhoto.context.connection.granted_scopes = publishingScopes();
@@ -497,6 +506,7 @@ async function sourceChecks() {
   const provider = await readFile(new URL('../supabase/functions/_shared/meta-publishing/provider.js', import.meta.url), 'utf8');
   const client = await readFile(new URL('../src/features/meta-publishing/clientApi.ts', import.meta.url), 'utf8');
   const panel = await readFile(new URL('../src/components/portal/FacebookPublishPanel.tsx', import.meta.url), 'utf8');
+  const assistant = await readFile(new URL('../src/components/portal/AiAssistantPage.tsx', import.meta.url), 'utf8');
   check(() => assert.match(edge, /auth\.getUser\(jwt\)/));
   check(() => assert.match(edge, /app_current_session/));
   check(() => assert.match(edge, /can_manage_company/));
@@ -512,11 +522,13 @@ async function sourceChecks() {
   check(() => assert.match(panel, /blocked until a reconciliation workflow resolves the unknown delivery state/i));
   check(() => assert.match(panel, /\[companyId, jobId, refreshToken\]/));
   check(() => assert.match(panel, /Completed.*Warranty/s));
+  check(() => assert.match(assistant, /if \(findingIds\.length === 0\) return/));
+  check(() => assert.match(assistant, /privacyFindings\.length \? \(/));
   check(() => assert.doesNotMatch(panel, /retry/i));
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
 }
 
-async function makeDependencies({ providerError = null, markUnknownError = null, attachment = undefined, attachmentPatch = {}, photoApproved = true } = {}) {
+async function makeDependencies({ providerError = null, markUnknownError = null, attachment = undefined, attachmentPatch = {}, photoApproved = true, latestAnalysisInvalid = false } = {}) {
   const connection = {
     id: ids.connection,
     company_id: ids.company,
@@ -655,7 +667,7 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
         } : null;
       },
       revalidatePublicationPhotoEligibility: async (companyId, jobId, attachmentId, attachmentSha256) => {
-        if (photoRevoked || photoExcluded || !photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
+        if (latestAnalysisInvalid || photoRevoked || photoExcluded || !photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
         const expected = `\\x${Buffer.from(await cryptoApi.subtle.digest('SHA-256', jpegWithExifBytes())).toString('hex')}`;
         if (attachmentSha256 !== expected) return null;
         const approval = {

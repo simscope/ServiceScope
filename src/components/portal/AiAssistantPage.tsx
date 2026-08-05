@@ -346,11 +346,13 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
           exclusionReason: 'Excluded in AI Assistant media review.',
         });
       } else if (approval === 'false_positive') {
+        const findingIds = result.findings.filter((finding) => isPrivacyFinding(finding.category)).map((finding) => finding.findingId);
+        if (findingIds.length === 0) return;
         await resolveFacebookPublicationPhotoFalsePositive({
           companyId,
           jobId: selectedJob.id,
           attachmentId,
-          findingIds: result.findings.filter((finding) => isPrivacyFinding(finding.category)).map((finding) => finding.findingId),
+          findingIds,
           explicitApproval: true,
           resolutionReason: 'Marked false positive in AI Assistant media review.',
         });
@@ -709,7 +711,9 @@ function MediaAnalysisResultCard({ result, attachment, approval, onApproval }: M
           <span>Review state: {approvalLabel(approval)}</span>
           <button className="secondary-button compact" type="button" onClick={() => onApproval('approved')}>Approve for use</button>
           <button className="secondary-button compact" type="button" onClick={() => onApproval('excluded')}>Exclude</button>
-          <button className="secondary-button compact" type="button" onClick={() => onApproval('false_positive')}>Mark false positive</button>
+          {privacyFindings.length ? (
+            <button className="secondary-button compact" type="button" onClick={() => onApproval('false_positive')}>Mark false positive</button>
+          ) : null}
         </div>
       </div>
     </article>
