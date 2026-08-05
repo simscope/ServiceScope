@@ -3773,7 +3773,7 @@ begin
     or p_actor_role is null
     or char_length(btrim(p_actor_role)) not between 1 and 80
     or jsonb_typeof(safe_metadata) <> 'object'
-    or safe_metadata::text ~* '(token|secret|signed|storage|exif|gps|private@example)'
+    or safe_metadata::text ~* '(token|secret|signed|storage|private@example|coordinates|latitude|longitude)'
     or (locked_publication.publication_kind = 'single_photo' and not (
       safe_metadata ?& array[
         'analysisRunId', 'approvalId', 'approvedAt', 'revoked',

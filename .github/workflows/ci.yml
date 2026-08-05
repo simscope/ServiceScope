@@ -84,7 +84,7 @@ jobs:
         run: deno check --allow-import supabase/functions/_shared/meta-publishing/imageProcessor.js
 
       - name: Real ImageScript sanitizer fixtures
-        run: deno test --allow-import scripts/meta-image-sanitizer-deno-tests.ts
+        run: deno test --allow-import --allow-net=deno.land scripts/meta-image-sanitizer-deno-tests.ts
 
   full-build:
     runs-on: ubuntu-latest

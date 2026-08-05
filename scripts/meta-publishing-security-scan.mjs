@@ -226,7 +226,7 @@ check(() => assert.match(ciWorkflow, /node-version: '22\.17\.1'/));
 check(() => assert.match(ciWorkflow, /denoland\/setup-deno@v2/));
 check(() => assert.match(ciWorkflow, /deno-version: '2\.1\.4'/));
 check(() => assert.match(ciWorkflow, /deno check .*imageProcessor\.js/));
-check(() => assert.match(ciWorkflow, /deno test .*meta-image-sanitizer-deno-tests\.ts/));
+check(() => assert.match(ciWorkflow, /deno test .*--allow-net=deno\.land.*meta-image-sanitizer-deno-tests\.ts/));
 check(() => assert.match(ciWorkflow, /npm run test:meta-publishing-sql/));
 check(() => assert.match(ciWorkflow, /npm run build/));
 check(() => assert.doesNotMatch(ciWorkflow, /deploy|supabase db push|supabase functions deploy|production|secrets\./i));

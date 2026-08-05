@@ -354,7 +354,8 @@ await db.query(`select * from public.complete_company_facebook_publication(
     'metadataStripped',true,
     'gpsStripped',true,
     'sanitizer','ImageScript',
-    'sanitizerVersion','1.3.0'
+    'sanitizerVersion','1.3.0',
+    'providerCallCount',1
   ),
   now()
 )`, [singlePhotoPublication, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, ids.analysisRun, approval.rows[0].id]);
