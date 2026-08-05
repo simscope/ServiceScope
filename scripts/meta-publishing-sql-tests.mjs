@@ -15,6 +15,8 @@ const migrationNames = [
   '20260802203000_meta_social_oauth_state_ttl_30_minutes.sql',
   '20260803193000_meta_facebook_publish_foundation.sql',
   '20260804011000_meta_facebook_publish_service_role_acl_fix.sql',
+  '20260804193000_meta_facebook_single_photo_publish.sql',
+  '20260804203000_meta_facebook_single_photo_publish_corrective.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -46,6 +48,18 @@ const prerequisiteSchema = `
     notes text not null default '',
     service_call_fee_cents integer not null default 0,
     labor_cents integer not null default 0
+  );
+  create table public.job_attachments (
+    id uuid primary key,
+    company_id uuid not null references public.companies(id),
+    job_id uuid not null references public.jobs(id),
+    name text not null default '',
+    mime_type text not null default '',
+    size_bytes integer not null default 0,
+    kind text not null default 'photo',
+    storage_bucket text,
+    storage_path text,
+    created_at timestamptz not null default now()
   );
   create table public.audit_events (
     id uuid primary key default gen_random_uuid(),
@@ -87,6 +101,8 @@ for (const privilege of ['DELETE', 'INSERT', 'REFERENCES', 'SELECT', 'TRIGGER', 
   check(() => assert.ok(simulatedDefaultAcl.includes(privilege)));
 }
 await db.exec(migrations[4]);
+await db.exec(migrations[5]);
+await db.exec(migrations[6]);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -174,7 +190,7 @@ const publicTableAcl = await db.query(`
 `);
 check(() => assert.deepEqual(publicTableAcl.rows, []));
 
-const rpcNames = ['begin_company_facebook_publication', 'complete_company_facebook_publication', 'fail_company_facebook_publication', 'mark_company_facebook_publication_unknown'];
+const rpcNames = ['approve_company_facebook_publication_photo', 'begin_company_facebook_publication', 'complete_company_facebook_publication', 'fail_company_facebook_publication', 'mark_company_facebook_publication_unknown'];
 const rpcGrants = await db.query(`
   select p.proname,
     has_function_privilege('service_role', p.oid, 'EXECUTE') as service_allowed,
@@ -184,7 +200,7 @@ const rpcGrants = await db.query(`
   from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.proname = any($1::text[])
 `, [rpcNames]);
-check(() => assert.equal(rpcGrants.rows.length, 4));
+check(() => assert.equal(rpcGrants.rows.length, 5));
 for (const row of rpcGrants.rows) {
   check(() => assert.equal(row.service_allowed, true));
   check(() => assert.equal(row.anon_allowed, false));
@@ -199,8 +215,9 @@ const rpcShapes = await db.query(`
 check(() => assert.deepEqual(
   Object.fromEntries(rpcShapes.rows.map((row) => [row.proname, row.pronargs])),
   {
-    begin_company_facebook_publication: 11,
-    complete_company_facebook_publication: 7,
+    approve_company_facebook_publication_photo: 11,
+    begin_company_facebook_publication: 16,
+    complete_company_facebook_publication: 8,
     fail_company_facebook_publication: 12,
     mark_company_facebook_publication_unknown: 6,
   },
@@ -235,7 +252,7 @@ check(() => assert.equal(duplicateA.should_publish, false));
 check(() => assert.equal(duplicateA.publication_status, 'publishing'));
 await assertRejectsSql(beginSql(), ['00000000-0000-4000-8000-000000007013', ids.company, ids.connection, ids.job, keyA, 'Different payload', ids.actor]);
 
-await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_20002',now())`, [publicationA, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
+await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_20002',null,now())`, [publicationA, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 const publishedDuplicate = await beginPublication('00000000-0000-4000-8000-000000007014', ids.company, ids.connection, ids.job, keyA, messageA, ids.actor);
 check(() => assert.equal(publishedDuplicate.should_publish, false));
 check(() => assert.equal(publishedDuplicate.publication_status, 'published'));
@@ -273,14 +290,15 @@ for (const audit of audits.rows) {
   check(() => assert.equal(audit.actor_user_id, ids.actor));
   check(() => assert.equal(audit.actor_name, verifiedActor.name));
   check(() => assert.equal(audit.actor_role, verifiedActor.role));
-  check(() => assert.deepEqual(Object.keys(audit.metadata).sort(), ['attempts', 'channel', 'messageCharacterCount', 'status'].sort()));
+  check(() => assert.ok(['Facebook', undefined].includes(audit.metadata.channel)));
+  check(() => assert.doesNotMatch(JSON.stringify(audit.metadata), /token|secret|signed|storage|EXIF|GPS|private@example/i));
 }
 
 await assertRejectsSql(beginSql(), ['00000000-0000-4000-8000-000000007040', ids.company, ids.connection, ids.otherJob, '00000000-0000-4000-8000-000000007041', 'Tenant mismatch.', ids.actor]);
 await assertRejectsSql(beginSql(), ['00000000-0000-4000-8000-000000007042', ids.otherCompany, ids.threeScopeConnection, ids.otherJob, '00000000-0000-4000-8000-000000007043', 'Missing capability.', ids.actor]);
 const actorIsolationPublication = '00000000-0000-4000-8000-000000007044';
 await beginPublication(actorIsolationPublication, ids.company, ids.connection, ids.job, '00000000-0000-4000-8000-000000007045', 'Actor isolation verified.', ids.actor);
-await assertRejectsSql(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_99999',now())`, [actorIsolationPublication, ids.company, ids.otherActor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_99999',null,now())`, [actorIsolationPublication, ids.company, ids.otherActor, verifiedActor.name, verifiedActor.role]);
 
 for (const invalidMessage of [
   '',
@@ -349,6 +367,8 @@ await canonicalDb.exec(canonicalBlocks.ttl);
 await canonicalDb.exec(canonicalBlocks.publishing);
 await canonicalDb.exec('grant all privileges on table public.company_social_publications to service_role;');
 await canonicalDb.exec(canonicalBlocks.publishingAclFix);
+await canonicalDb.exec(migrations[5]);
+await canonicalDb.exec(migrations[6]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
@@ -387,7 +407,9 @@ console.log(`Meta publishing SQL checks passed: ${checks}; rollback artifacts: 0
 
 function beginSql() {
   return `select * from public.begin_company_facebook_publication(
-    $1,$2,$3,$4,$5,$6,sha256(convert_to($6,'UTF8')),$7,'${verifiedActor.name}','${verifiedActor.role}',now()
+    $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::text,sha256(convert_to($6::text,'UTF8')),
+    sha256(convert_to(concat_ws(E'\\n','facebook_publication_intent_v1','meta-facebook-login','Facebook',$2::uuid::text,$4::uuid::text,$3::uuid::text,$7::uuid::text,'text_only',$6::text,''),'UTF8')),
+    'text_only',null::uuid,null::text,0::smallint,$7::uuid,'${verifiedActor.name}','${verifiedActor.role}',now()
   )`;
 }
 

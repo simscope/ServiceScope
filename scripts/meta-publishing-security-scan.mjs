@@ -38,13 +38,13 @@ let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 
 for (const [source, expectedBlob] of [
-  [edge, 'c51846fc58ade316c6706aa39582dfbd4e335ede'],
-  [service, 'bf38734387a43225d4ba055258f4491cba2934e7'],
-  [provider, 'f171a61271a74f765faec63177043a51ad13b661'],
-  [contracts, 'bb1a2a5423a6c399e5ee9ff3170b9241099629e0'],
+  [edge, '8130378e9e98d5f6e529ff99198550194e006f46'],
+  [service, 'e554cd1343321324448251b3e060c573faf68095'],
+  [provider, '7fe9af70b4c61ea5301ad38952753c62cd74cd2f'],
+  [contracts, '66943d1840573d2881dfb249e8b48d0ebd4cff88'],
   [privacy, '385690ebdf79875a17561210ebc7741759b15438'],
-  [client, '91fd37f4fce70f06800d2bf6008d90f94dd83869'],
-  [panel, 'e1e754dad76aa016a032c8e52fd0a5eb7a01266d'],
+  [client, '5445f313c86bd1b49e5ed03c6a5df59e88ab082b'],
+  [panel, '6aa6fc782522558317d4ffb2a847a35d5e6dbdad'],
   [migration, 'd3f2ec8ae086b0a481084a98096fff27f439668a'],
 ]) {
   check(() => assert.equal(gitBlobSha(source), expectedBlob));
@@ -61,6 +61,7 @@ check(() => assert.doesNotMatch(browserSources, /password/i));
 check(() => assert.match(client, /supabaseFunction<.*>\(functionName/s));
 check(() => assert.match(client, /action: 'publish_facebook_text'/));
 check(() => assert.match(client, /action: 'publish_facebook_single_photo'/));
+check(() => assert.match(client, /action: 'approve_facebook_publication_photo'/));
 check(() => assert.match(client, /explicitApproval: true/));
 check(() => assert.match(client, /idempotencyKey: string/));
 check(() => assert.doesNotMatch(client, /mediaUrl|storagePath|base64|pageId|connectionId|accessToken/i));
@@ -69,7 +70,8 @@ check(() => assert.match(panel, /workspace\.submitting/));
 check(() => assert.match(panel, /invalidateFacebookPublishApproval/));
 check(() => assert.match(panel, /loadFacebookPublishingStatus\(companyId, jobId\)/));
 check(() => assert.match(panel, /snapshot\.lastPublication/));
-check(() => assert.match(panel, /pageCheckAcknowledged/));
+check(() => assert.doesNotMatch(panel, /pageCheckAcknowledged|I checked the Facebook Page/));
+check(() => assert.match(panel, /blocked until a reconciliation workflow resolves the unknown delivery state/i));
 check(() => assert.match(panel, /Text-only - selected photos and videos will not be uploaded/i));
 check(() => assert.match(panel, /Exactly one approved selected photo will be uploaded/i));
 check(() => assert.match(panel, /META_PUBLICATION_DELIVERY_UNKNOWN|normalizePublishingError/));
@@ -93,6 +95,10 @@ check(() => assert.match(service, /assertPublicationPrivacy\(message, privateVal
 check(() => assert.match(service, /decryptTokenBundle/));
 check(() => assert.match(service, /connectionEnvelopeContext/));
 check(() => assert.match(service, /beginPublication/));
+check(() => assert.match(service, /publicationIntentSha256/));
+check(() => assert.match(service, /getPublicationPhotoApproval/));
+check(() => assert.match(service, /deps\.imageProcessor/));
+check(() => assert.match(service, /processor\.sanitize/));
 check(() => assert.match(service, /if \(!beginning\.should_publish\)/));
 check(() => assert.match(service, /markUnknown/));
 check(() => assert.match(service, /META_PUBLICATION_DELIVERY_UNKNOWN/));
@@ -104,7 +110,8 @@ check(() => assert.match(contracts, /\[\\u0000-\\u0009\\u000b\\u000c\\u000e-\\u0
 check(() => assert.match(contracts, /value !== true/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
-check(() => assert.doesNotMatch(contracts, /scheduled|instagram|mediaIds|mediaUrl|storagePath|base64|pageId|connectionId/));
+check(() => assert.doesNotMatch(contracts, /scheduled|instagram|mediaIds|mediaUrl|storagePath|base64/));
+check(() => assert.doesNotMatch(contracts.match(/const allowed[\s\S]*?;/)?.[0] ?? '', /pageId|connectionId/));
 
 check(() => assert.match(provider, /https:\/\/graph\.facebook\.com\/\$\{config\.graphApiVersion\}/));
 check(() => assert.match(provider, /Authorization: `Bearer \$\{pageAccessToken\}`/));
@@ -120,7 +127,7 @@ check(() => assert.doesNotMatch(provider, /for\s*\(|while\s*\(|setInterval|setTi
 check(() => assert.doesNotMatch(provider, /console\./));
 check(() => assert.doesNotMatch(provider, /rawMessage|fbtrace_id|x-fb-debug/));
 check(() => assert.doesNotMatch(provider, /return\s*\{[^}]*\b(?:message|payload|response|request|body|url|pageId)\s*:/s));
-check(() => assert.match(provider, /RESPONSE_MISSING_POST_ID/));
+check(() => assert.match(provider, /RESPONSE_MISSING_MEDIA_ID/));
 
 check(() => assert.match(migration, /alter table public\.company_social_publications enable row level security/));
 check(() => assert.match(migration, /revoke all on public\.company_social_publications from public, anon, authenticated/));
@@ -158,6 +165,9 @@ check(() => assert.doesNotMatch(aclMigration, /grant all(?: privileges)?[\s\S]*?
 check(() => assert.doesNotMatch(aclMigration, /alter default privileges/i));
 check(() => assert.match(schema, /-- META_FACEBOOK_PUBLISH_ACL_FIX_BEGIN/));
 check(() => assert.match(schema, /-- META_FACEBOOK_PUBLISH_ACL_FIX_END/));
+check(() => assert.match(schema, /publication_intent_sha256 bytea/));
+check(() => assert.match(schema, /company_social_publication_media_approvals/));
+check(() => assert.match(schema, /company_social_publications_company_intent_unique/));
 
 const telemetryShape = service.match(/safePublishingTelemetry\(\{([\s\S]*?)\}\)/g) ?? [];
 check(() => assert.ok(telemetryShape.length >= 3));

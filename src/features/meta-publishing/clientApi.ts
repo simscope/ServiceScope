@@ -24,6 +24,19 @@ export function publishFacebookText(input: {
   }, { timeoutMs: 20_000 });
 }
 
+export function approveFacebookPublicationPhoto(input: {
+  companyId: string;
+  jobId: string;
+  attachmentId: string;
+  explicitApproval: true;
+  approvalReason?: string;
+}) {
+  return supabaseFunction<{ ok: true; attachmentId: string; approvalStatus: 'approved'; approvedAt: string | null }>(functionName, {
+    action: 'approve_facebook_publication_photo',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
 export function publishFacebookSinglePhoto(input: {
   companyId: string;
   jobId: string;

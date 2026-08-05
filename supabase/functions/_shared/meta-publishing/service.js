@@ -5,8 +5,10 @@ import {
   assertExplicitApproval,
   facebookPublishingEnabled,
   maxFacebookPhotoBytes,
+  normalizeApprovalReason,
   normalizeApprovedMessage,
   parsePublishingRequest,
+  publicationIntentSource,
   publicationKindForAction,
   requireUuid,
   safePublicationResult,
@@ -35,6 +37,44 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       const result = safePublishingStatus({ config: deps.config, ...snapshot });
       deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
       return result;
+    }
+
+    if (action === 'approve_facebook_publication_photo') {
+      stage = 'privacy_review';
+      assertExplicitApproval(body.explicitApproval);
+      const jobId = requireUuid(body.jobId);
+      const attachmentId = requireUuid(body.attachmentId);
+      const publicationContext = await deps.repository.getPublicationContext(companyId, jobId);
+      if (!publicationContext?.job || String(publicationContext.job.company_id) !== companyId) {
+        throw new MetaPublishingError('FORBIDDEN');
+      }
+      if (!['Completed', 'Warranty'].includes(String(publicationContext.job.status))) {
+        throw new MetaPublishingError('INVALID_REQUEST');
+      }
+      const privateValues = buildPrivateValues(publicationContext);
+      let photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
+      photo = await validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues });
+      const originalBytes = await deps.repository.downloadAttachmentBytes({
+        storageBucket: String(photo.storage_bucket),
+        storagePath: String(photo.storage_path),
+        maxBytes: maxFacebookPhotoBytes,
+      });
+      const attachmentSha256 = await sha256Hex(originalBytes, deps.cryptoApi);
+      const row = await deps.repository.approvePublicationPhoto({
+        approvalId: deps.newUuid(),
+        companyId,
+        jobId,
+        attachmentId,
+        attachmentSha256,
+        attachmentMimeType: photo.mimeType,
+        actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
+        approvalReason: normalizeApprovalReason(body.approvalReason),
+        timestamp: new Date(deps.now()).toISOString(),
+      });
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return { ok: true, attachmentId: String(row.attachment_id ?? attachmentId), approvalStatus: 'approved', approvedAt: row.approved_at ?? null };
     }
 
     stage = 'validate_request';
@@ -85,6 +125,15 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
 
     stage = 'idempotency_begin';
     const messageSha256 = await sha256Hex(message, deps.cryptoApi);
+    const publicationIntentSha256 = await sha256Hex(publicationIntentSource({
+      companyId,
+      jobId,
+      connectionId: connection.id,
+      actorAuthUserId: access.actorAuthUserId,
+      publicationKind,
+      approvedMessage: message,
+      attachmentId,
+    }), deps.cryptoApi);
     const timestamp = new Date(deps.now()).toISOString();
     const beginning = await deps.repository.beginPublication({
       publicationId: deps.newUuid(),
@@ -94,6 +143,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       idempotencyKey,
       message,
       messageSha256,
+      publicationIntentSha256,
       publicationKind,
       attachmentId,
       safeMimeType: photo?.mimeType ?? null,
@@ -174,6 +224,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         actorName: access.actorName,
         actorRole: access.actorRole,
         providerPostId: providerResult.providerPostId,
+        providerMediaId: providerResult.providerMediaId ?? null,
         timestamp: new Date(deps.now()).toISOString(),
       });
     } catch {
@@ -208,6 +259,35 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
 }
 
 async function validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValues, deps }) {
+  photo = await validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues });
+  const originalBytes = await deps.repository.downloadAttachmentBytes({
+    storageBucket: String(photo.storage_bucket),
+    storagePath: String(photo.storage_path),
+    maxBytes: maxFacebookPhotoBytes,
+  });
+  const originalSha256 = await sha256Hex(originalBytes, deps.cryptoApi);
+  const approval = await deps.repository.getPublicationPhotoApproval(companyId, jobId, photo.id, originalSha256);
+  if (!approval || approval.approval_status !== 'approved' || approval.revoked_at) {
+    throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
+  }
+  const processor = deps.imageProcessor;
+  if (!processor?.sanitize) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
+  const sanitized = await processor.sanitize({
+    bytes: originalBytes,
+    mimeType: photo.mimeType,
+    maxBytes: maxFacebookPhotoBytes,
+    maxPixels: 40_000_000,
+    maxWidth: 10_000,
+    maxHeight: 10_000,
+  });
+  if (!sanitized || !supportedFacebookPhotoMimeTypes.has(sanitized.mimeType) || sanitized.bytes?.byteLength < 1) {
+    throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
+  }
+  if (sanitized.bytes.byteLength > maxFacebookPhotoBytes) throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
+  return { attachmentId: String(photo.id), mimeType: sanitized.mimeType, bytes: sanitized.bytes };
+}
+
+async function validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues }) {
   if (!photo) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
   if (String(photo.company_id) !== companyId || String(photo.job_id) !== jobId) {
     throw new MetaPublishingError('FORBIDDEN');
@@ -226,103 +306,7 @@ async function validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValu
   } catch {
     throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
   }
-  const originalBytes = await deps.repository.downloadAttachmentBytes({
-    storageBucket: String(photo.storage_bucket),
-    storagePath: String(photo.storage_path),
-    maxBytes: maxFacebookPhotoBytes,
-  });
-  const stripped = stripImageMetadata(originalBytes, mimeType);
-  if (!bytesMatchMime(stripped, mimeType)) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  if (stripped.byteLength < 1 || stripped.byteLength > maxFacebookPhotoBytes) {
-    throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
-  }
-  return { attachmentId: String(photo.id), mimeType, bytes: stripped };
-}
-
-function bytesMatchMime(bytes, mimeType) {
-  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (mimeType === 'image/jpeg') return view[0] === 0xff && view[1] === 0xd8 && view.at(-2) === 0xff && view.at(-1) === 0xd9;
-  if (mimeType === 'image/png') return view.length > 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((byte, index) => view[index] === byte);
-  if (mimeType === 'image/webp') return view.length > 12 && ascii(view, 0, 4) === 'RIFF' && ascii(view, 8, 12) === 'WEBP';
-  return false;
-}
-
-function stripImageMetadata(bytes, mimeType) {
-  const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-  if (mimeType === 'image/jpeg') return stripJpegMetadata(view);
-  if (mimeType === 'image/png') return stripPngMetadata(view);
-  if (mimeType === 'image/webp') return stripWebpMetadata(view);
-  throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-}
-
-function stripJpegMetadata(view) {
-  if (!bytesMatchMime(view, 'image/jpeg')) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  const chunks = [[view[0], view[1]]];
-  let offset = 2;
-  while (offset + 4 <= view.length) {
-    if (view[offset] !== 0xff) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-    const marker = view[offset + 1];
-    if (marker === 0xda) {
-      chunks.push([...view.slice(offset)]);
-      return new Uint8Array(chunks.flat());
-    }
-    const length = (view[offset + 2] << 8) + view[offset + 3];
-    if (length < 2 || offset + 2 + length > view.length) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-    const isMetadata = (marker >= 0xe1 && marker <= 0xef) || marker === 0xfe;
-    if (!isMetadata) chunks.push([...view.slice(offset, offset + 2 + length)]);
-    offset += 2 + length;
-  }
-  throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-}
-
-function stripPngMetadata(view) {
-  if (!bytesMatchMime(view, 'image/png')) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  const chunks = [...view.slice(0, 8)];
-  let offset = 8;
-  while (offset + 12 <= view.length) {
-    const length = readU32(view, offset);
-    const type = ascii(view, offset + 4, offset + 8);
-    const end = offset + 12 + length;
-    if (end > view.length) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-    const ancillary = type[0] === type[0].toLowerCase();
-    if (!ancillary || type === 'tRNS') chunks.push(...view.slice(offset, end));
-    offset = end;
-    if (type === 'IEND') return new Uint8Array(chunks);
-  }
-  throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-}
-
-function stripWebpMetadata(view) {
-  if (!bytesMatchMime(view, 'image/webp')) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  const chunks = [...view.slice(0, 12)];
-  let offset = 12;
-  while (offset + 8 <= view.length) {
-    const type = ascii(view, offset, offset + 4);
-    const length = readU32Le(view, offset + 4);
-    const end = offset + 8 + length + (length % 2);
-    if (end > view.length) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-    if (!['EXIF', 'XMP '].includes(type)) chunks.push(...view.slice(offset, end));
-    offset = end;
-  }
-  const output = new Uint8Array(chunks);
-  const size = output.length - 8;
-  output[4] = size & 0xff;
-  output[5] = (size >> 8) & 0xff;
-  output[6] = (size >> 16) & 0xff;
-  output[7] = (size >> 24) & 0xff;
-  return output;
-}
-
-function ascii(view, start, end) {
-  return String.fromCharCode(...view.slice(start, end));
-}
-
-function readU32(view, offset) {
-  return ((view[offset] << 24) | (view[offset + 1] << 16) | (view[offset + 2] << 8) | view[offset + 3]) >>> 0;
-}
-
-function readU32Le(view, offset) {
-  return (view[offset] | (view[offset + 1] << 8) | (view[offset + 2] << 16) | (view[offset + 3] << 24)) >>> 0;
+  return { ...photo, mimeType };
 }
 
 export function normalizePublishingError(error) {
@@ -356,7 +340,8 @@ function requirePageToken(value) {
 }
 
 async function sha256Hex(value, cryptoApi) {
-  const digest = await cryptoApi.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
+  const digest = await cryptoApi.subtle.digest('SHA-256', bytes);
   return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 

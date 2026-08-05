@@ -66,13 +66,13 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       if (!response.ok) {
         throw new MetaPublishingError('META_PUBLICATION_PROVIDER_REJECTED', undefined, providerDiagnostic(payload, response.status));
       }
-      const providerPostId = typeof payload?.id === 'string' ? payload.id.trim() : '';
-      if (!providerPostId || providerPostId.length > 200 || /[\u0000-\u001f]/.test(providerPostId)) {
+      const providerMediaId = typeof payload?.id === 'string' ? payload.id.trim() : '';
+      if (!providerMediaId || providerMediaId.length > 200 || /[\u0000-\u001f]/.test(providerMediaId)) {
         throw new MetaPublishingError('META_PUBLICATION_FAILED', undefined, {
-          providerCategory: 'RESPONSE_MISSING_POST_ID',
+          providerCategory: 'RESPONSE_MISSING_MEDIA_ID',
         });
       }
-      return { providerPostId };
+      return { providerPostId: null, providerMediaId };
     },
   };
 }

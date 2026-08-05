@@ -63,7 +63,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       || !['Completed', 'Warranty'].includes(jobStatus)
       || (mode === 'single_photo' && !selectedAttachmentId)
       || snapshot.lastPublication?.status === 'publishing'
-      || (snapshot.lastPublication?.status === 'delivery_unknown' && !workspace.pageCheckAcknowledged)
+      || snapshot.lastPublication?.status === 'delivery_unknown'
     ) return;
     setWorkspace(openFacebookPublishConfirmation(
       finalMessage,
@@ -120,7 +120,6 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
   const publicationInProgress = facebookPublicationInProgress(durablePublication);
   const deliveryUnknown = !publicationInProgress
     && facebookPublicationNeedsPageCheck(durablePublication, workspace.errorCode);
-  const durableUnknownConfirmed = durablePublication?.status === 'delivery_unknown';
   const unsupportedJob = !['Completed', 'Warranty'].includes(jobStatus);
   const selectedPhoto = approvedPhotos.find((photo) => photo.id === selectedAttachmentId) ?? null;
   const publishDisabled = !snapshot?.configured
@@ -129,7 +128,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
     || unsupportedJob
     || (mode === 'single_photo' && !selectedPhoto)
     || publicationInProgress
-    || (deliveryUnknown && (!durableUnknownConfirmed || !workspace.pageCheckAcknowledged))
+    || deliveryUnknown
     || workspace.submitting;
 
   return (
@@ -182,15 +181,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       {deliveryUnknown ? (
         <div className="facebook-publish-result error">
           <p>Facebook did not confirm whether the post was published.</p>
-          <p>Check the Facebook Page before creating another publication.</p>
-          {durableUnknownConfirmed ? <label className="facebook-publish-approval">
-            <input
-              type="checkbox"
-              checked={workspace.pageCheckAcknowledged}
-              onChange={(event) => setWorkspace((current) => ({ ...current, pageCheckAcknowledged: event.target.checked }))}
-            />
-            <span>I checked the Facebook Page and understand that continuing will create a new publication.</span>
-          </label> : null}
+          <p>Publishing this exact request is blocked until a reconciliation workflow resolves the unknown delivery state.</p>
         </div>
       ) : null}
       {durablePublication?.status === 'failed' && !workspace.error ? (

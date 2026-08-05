@@ -11,6 +11,7 @@ import {
   runtimePublishingConfig,
 } from '../_shared/meta-publishing/contracts.js';
 import { createFacebookPublishingProvider } from '../_shared/meta-publishing/provider.js';
+import { createImageScriptProcessor } from '../_shared/meta-publishing/imageProcessor.js';
 import {
   createTimeoutController,
   handleMetaPublishing,
@@ -51,6 +52,7 @@ function makeDependencies() {
     auth: createAuthRepository(supabaseUrl, anonKey),
     repository: createRepository(adminClient),
     provider: createFacebookPublishingProvider({ config }),
+    imageProcessor: createImageScriptProcessor(),
     config,
     cryptoApi: globalThis.crypto,
     maxBodyBytes: 24_000,
@@ -194,6 +196,39 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       return new Uint8Array(await data.arrayBuffer());
     },
 
+    async approvePublicationPhoto(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'approve_company_facebook_publication_photo', {
+        p_approval_id: input.approvalId,
+        p_company_id: input.companyId,
+        p_job_id: input.jobId,
+        p_attachment_id: input.attachmentId,
+        p_attachment_sha256: input.attachmentSha256,
+        p_attachment_mime_type: input.attachmentMimeType,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_approval_reason: input.approvalReason,
+        p_timestamp: input.timestamp,
+      });
+    },
+
+    async getPublicationPhotoApproval(companyId: string, jobId: string, attachmentId: string, attachmentSha256: string) {
+      const { data, error } = await adminClient
+        .from('company_social_publication_media_approvals')
+        .select('id,attachment_id,approval_status,approved_at,revoked_at')
+        .eq('company_id', companyId)
+        .eq('job_id', jobId)
+        .eq('attachment_id', attachmentId)
+        .eq('attachment_sha256', attachmentSha256)
+        .eq('approval_status', 'approved')
+        .is('revoked_at', null)
+        .order('approved_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new MetaPublishingError('INTERNAL_ERROR');
+      return data;
+    },
+
     async beginPublication(input: Record<string, unknown>) {
       return oneRpcRow(adminClient, 'begin_company_facebook_publication', {
         p_publication_id: input.publicationId,
@@ -203,6 +238,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_idempotency_key: input.idempotencyKey,
         p_approved_message: input.message,
         p_message_sha256: input.messageSha256,
+        p_publication_intent_sha256: input.publicationIntentSha256,
         p_publication_kind: input.publicationKind,
         p_attachment_id: input.attachmentId,
         p_safe_mime_type: input.safeMimeType,
@@ -222,6 +258,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_provider_post_id: input.providerPostId,
+        p_provider_media_id: input.providerMediaId,
         p_timestamp: input.timestamp,
       });
     },

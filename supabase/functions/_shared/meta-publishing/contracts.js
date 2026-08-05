@@ -5,7 +5,7 @@ import {
   validEncryptionKey,
 } from '../meta-connection/contracts.js';
 
-export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'publish_facebook_text', 'publish_facebook_single_photo']);
+export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'approve_facebook_publication_photo', 'publish_facebook_text', 'publish_facebook_single_photo']);
 export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'authorize',
   'validate_request',
@@ -24,6 +24,7 @@ export const FACEBOOK_PROVIDER_CATEGORIES = Object.freeze([
   'PROVIDER_REJECTED',
   'DELIVERY_UNKNOWN',
   'RESPONSE_MISSING_POST_ID',
+  'RESPONSE_MISSING_MEDIA_ID',
 ]);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -72,9 +73,11 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
   }
   const allowed = value.action === 'status'
     ? ['action', 'companyId', 'jobId']
-    : value.action === 'publish_facebook_single_photo'
-      ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
-      : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
+    : value.action === 'approve_facebook_publication_photo'
+      ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'approvalReason']
+      : value.action === 'publish_facebook_single_photo'
+        ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
+        : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new MetaPublishingError('INVALID_REQUEST');
   return value;
 }
@@ -116,8 +119,38 @@ export function facebookPublishingEnabled(connection) {
   );
 }
 
-export const supportedFacebookPhotoMimeTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+export const supportedFacebookPhotoMimeTypes = new Set(['image/jpeg', 'image/png']);
 export const maxFacebookPhotoBytes = 12_000_000;
+
+export function normalizeApprovalReason(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  if (!clean) return null;
+  if (clean.length > 240 || /[<>\u0000-\u001f]/.test(clean)) throw new MetaPublishingError('INVALID_REQUEST');
+  return clean;
+}
+
+export function publicationIntentSource({
+  companyId,
+  jobId,
+  connectionId,
+  actorAuthUserId,
+  publicationKind,
+  approvedMessage,
+  attachmentId,
+}) {
+  return [
+    'facebook_publication_intent_v1',
+    'meta-facebook-login',
+    'Facebook',
+    companyId,
+    jobId,
+    connectionId,
+    actorAuthUserId,
+    publicationKind,
+    approvedMessage,
+    publicationKind === 'single_photo' ? attachmentId : '',
+  ].join('\n');
+}
 
 export function publicationKindForAction(action) {
   return action === 'publish_facebook_single_photo' ? 'single_photo' : 'text_only';

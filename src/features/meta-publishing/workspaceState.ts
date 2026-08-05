@@ -11,7 +11,6 @@ export type FacebookPublishWorkspaceState = {
   result: FacebookPublicationSummary | null;
   error: string;
   errorCode: string;
-  pageCheckAcknowledged: boolean;
 };
 
 export const emptyFacebookPublishWorkspace: FacebookPublishWorkspaceState = {
@@ -25,7 +24,6 @@ export const emptyFacebookPublishWorkspace: FacebookPublishWorkspaceState = {
   result: null,
   error: '',
   errorCode: '',
-  pageCheckAcknowledged: false,
 };
 
 export function resetFacebookPublishWorkspace(): FacebookPublishWorkspaceState {
