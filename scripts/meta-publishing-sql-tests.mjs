@@ -393,7 +393,7 @@ for (const audit of audits.rows) {
   check(() => assert.equal(audit.actor_name, verifiedActor.name));
   check(() => assert.equal(audit.actor_role, verifiedActor.role));
   check(() => assert.ok(['Facebook', undefined].includes(audit.metadata.channel)));
-  check(() => assert.doesNotMatch(JSON.stringify(audit.metadata), /token|secret|signed|storage|EXIF|GPS|private@example/i));
+  check(() => assert.doesNotMatch(JSON.stringify(audit.metadata), /token|secret|signed|storage|coordinates|latitude|longitude|private@example/i));
 }
 const singlePhotoPublishedAudit = audits.rows.find((row) => row.action === 'meta_publication_published' && row.metadata.publicationKind === 'single_photo');
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.providerCallCount, 1));
