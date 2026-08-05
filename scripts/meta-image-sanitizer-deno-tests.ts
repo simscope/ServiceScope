@@ -89,7 +89,8 @@ Deno.test('production sanitizer output is the exact multipart provider payload',
   const provider = createFacebookPublishingProvider({
     config: { graphApiVersion: 'v25.0', appSecret: 'test-secret' },
     cryptoApi: crypto,
-    fetchImpl: async (_url: string, init: RequestInit) => {
+    fetchImpl: async (_input: string | Request | URL, init?: RequestInit) => {
+      assert(init);
       const form = init.body as FormData;
       calls.push({
         caption: String(form.get('caption')),
@@ -106,6 +107,7 @@ Deno.test('production sanitizer output is the exact multipart provider payload',
     message: 'Exact reviewed message.',
     photoBytes: sanitized.bytes,
     mimeType: sanitized.mimeType,
+    signal: new AbortController().signal,
   });
 
   assertEquals(result.providerMediaId, '10001_photo_30003');

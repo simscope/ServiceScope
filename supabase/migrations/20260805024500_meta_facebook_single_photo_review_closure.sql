@@ -49,24 +49,24 @@ begin
   for update of ar;
   if not found then raise exception 'media analysis evidence required'; end if;
 
-  update public.company_social_publication_media_approvals
+  update public.company_social_publication_media_approvals approval
   set approval_status = 'revoked',
       revoked_by = p_actor_id,
       revoked_at = p_timestamp,
       updated_at = p_timestamp,
-      approval_reason = coalesce(p_exclusion_reason, approval_reason)
-  where id = (
-    select id
-    from public.company_social_publication_media_approvals
-    where company_id = p_company_id
-      and job_id = p_job_id
-      and attachment_id = p_attachment_id
-      and approval_status = 'approved'
-      and revoked_at is null
-    order by approved_at desc
+      approval_reason = coalesce(p_exclusion_reason, approval.approval_reason)
+  where approval.id = (
+    select candidate.id
+    from public.company_social_publication_media_approvals candidate
+    where candidate.company_id = p_company_id
+      and candidate.job_id = p_job_id
+      and candidate.attachment_id = p_attachment_id
+      and candidate.approval_status = 'approved'
+      and candidate.revoked_at is null
+    order by candidate.approved_at desc
     limit 1
   )
-  returning id into revoked_id;
+  returning approval.id into revoked_id;
 
   update public.company_media_analysis_attachment_results
   set excluded = true,
@@ -147,24 +147,24 @@ begin
   for update of ar;
   if not found then raise exception 'media analysis evidence required'; end if;
 
-  update public.company_media_analysis_privacy_findings
+  update public.company_media_analysis_privacy_findings finding
   set resolved_as_false_positive = true,
       resolved_by = p_actor_id,
       resolved_at = p_timestamp
-  where attachment_result_id = selected_result.id
-    and company_id = p_company_id
-    and job_id = p_job_id
-    and attachment_id = p_attachment_id
-    and finding_id = any(p_finding_ids)
-    and resolved_as_false_positive = false;
+  where finding.attachment_result_id = selected_result.id
+    and finding.company_id = p_company_id
+    and finding.job_id = p_job_id
+    and finding.attachment_id = p_attachment_id
+    and finding.finding_id = any(p_finding_ids)
+    and finding.resolved_as_false_positive = false;
 
   get diagnostics resolved_count = row_count;
   if resolved_count < 1 then raise exception 'privacy finding not found'; end if;
 
   select count(*)::integer into unresolved_count
-  from public.company_media_analysis_privacy_findings
-  where attachment_result_id = selected_result.id
-    and resolved_as_false_positive = false;
+  from public.company_media_analysis_privacy_findings finding
+  where finding.attachment_result_id = selected_result.id
+    and finding.resolved_as_false_positive = false;
 
   if unresolved_count = 0 then
     update public.company_media_analysis_attachment_results
