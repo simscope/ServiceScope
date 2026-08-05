@@ -121,7 +121,11 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
   const deliveryUnknown = !publicationInProgress
     && facebookPublicationNeedsPageCheck(durablePublication, workspace.errorCode);
   const unsupportedJob = !['Completed', 'Warranty'].includes(jobStatus);
-  const selectedPhoto = approvedPhotos.find((photo) => photo.id === selectedAttachmentId) ?? null;
+  const eligiblePhotoIds = new Set((snapshot?.eligiblePhotos ?? [])
+    .filter((photo) => photo.eligibleForFacebookPublication && photo.approvalStatus === 'approved' && photo.checksumMatch)
+    .map((photo) => photo.attachmentId));
+  const serverEligiblePhotos = approvedPhotos.filter((photo) => eligiblePhotoIds.has(photo.id));
+  const selectedPhoto = serverEligiblePhotos.find((photo) => photo.id === selectedAttachmentId) ?? null;
   const publishDisabled = !snapshot?.configured
     || !snapshot.facebookPublishingEnabled
     || !normalizedMessage
@@ -158,7 +162,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       {mode === 'single_photo' ? (
         <div className="facebook-photo-picker">
           <p>Exactly one approved selected photo will be uploaded to Facebook Page {pageName}.</p>
-          {approvedPhotos.length ? approvedPhotos.map((photo) => (
+          {serverEligiblePhotos.length ? serverEligiblePhotos.map((photo) => (
             <label className="facebook-photo-option" key={photo.id}>
               <input
                 type="radio"
@@ -169,7 +173,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
               {photo.dataUrl ? <img src={photo.dataUrl} alt={photo.label || photo.name} /> : <span className="facebook-photo-thumb">Photo</span>}
               <span>{photo.label || photo.name || 'Approved photo'}</span>
             </label>
-          )) : <p className="facebook-publish-result error">Approve one analyzed selected photo before publishing with a photo.</p>}
+          )) : <p className="facebook-publish-result error">Approve one analyzed selected photo and wait for server eligibility before publishing with a photo.</p>}
         </div>
       ) : null}
       {unsupportedJob ? (

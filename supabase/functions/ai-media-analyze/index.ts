@@ -160,7 +160,89 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
       if (error || !data?.signedUrl) return null;
       return data.signedUrl;
     },
+    async recordMediaAnalysisResult(input: Record<string, unknown>) {
+      const request = input.request as Record<string, unknown>;
+      const context = input.context as Record<string, unknown>;
+      const result = input.result as Record<string, unknown>;
+      const runId = crypto.randomUUID();
+      const companyId = String(context.companyId ?? '');
+      const jobId = String(context.jobId ?? request.jobId ?? '');
+      const completedAt = String(input.completedAt ?? new Date().toISOString());
+      const { error: runError } = await adminClient.from('company_media_analysis_runs').insert({
+        id: runId,
+        company_id: companyId,
+        job_id: jobId,
+        correlation_id: String(request.idempotencyKey ?? runId),
+        status: result?.safety?.ok === false ? 'failed' : 'completed',
+        provider: safeBoundedText(result.provider, 'unknown'),
+        model: typeof result.model === 'string' ? safeBoundedText(result.model, 'unknown') : null,
+        analysis_version: 'media-analysis-v1',
+        completed_at: completedAt,
+        created_at: completedAt,
+        updated_at: completedAt,
+      });
+      if (runError) return;
+      const attachmentById = new Map((context.attachments as Array<Record<string, unknown>> ?? []).map((attachment) => [String(attachment.id), attachment]));
+      for (const item of (result.attachments as Array<Record<string, unknown>> ?? [])) {
+        const attachment = attachmentById.get(String(item.id));
+        if (!attachment || item.kind !== 'photo') continue;
+        const checksum = await attachmentSha256(adminClient, attachment);
+        if (!checksum) continue;
+        const privacyFindings = (item.findings as Array<Record<string, unknown>> ?? []).filter((finding) => String(finding.category ?? '').startsWith('possible_') || String(finding.category ?? '') === 'unknown_privacy_risk');
+        const resultId = crypto.randomUUID();
+        const reviewState = privacyFindings.length ? 'blocked' : 'passed';
+        const { error: attachmentError } = await adminClient.from('company_media_analysis_attachment_results').insert({
+          id: resultId,
+          analysis_run_id: runId,
+          company_id: companyId,
+          job_id: jobId,
+          attachment_id: String(item.id),
+          attachment_sha256: checksum,
+          detected_mime_type: String(item.mimeType ?? attachment.mimeType ?? '').toLowerCase(),
+          analysis_status: ['analyzed', 'metadata_only', 'manual_review'].includes(String(item.status)) ? item.status : 'manual_review',
+          privacy_review_status: reviewState,
+          excluded: false,
+          created_at: completedAt,
+        });
+        if (attachmentError) continue;
+        for (const finding of privacyFindings) {
+          await adminClient.from('company_media_analysis_privacy_findings').insert({
+            id: crypto.randomUUID(),
+            analysis_run_id: runId,
+            attachment_result_id: resultId,
+            company_id: companyId,
+            job_id: jobId,
+            attachment_id: String(item.id),
+            finding_id: safeBoundedText(finding.findingId, crypto.randomUUID()),
+            finding_category: safeFindingCategory(finding.category),
+            risk_level: ['low', 'medium', 'high'].includes(String(finding.riskLevel)) ? finding.riskLevel : 'high',
+            resolved_as_false_positive: false,
+            created_at: completedAt,
+          });
+        }
+      }
+    },
   };
+}
+
+async function attachmentSha256(adminClient: ReturnType<typeof createClient>, attachment: Record<string, unknown>) {
+  const bucket = String(attachment.storageBucket ?? attachment.storage_bucket ?? '');
+  const path = String(attachment.storagePath ?? attachment.storage_path ?? '');
+  if (!bucket || !path) return null;
+  const { data, error } = await adminClient.storage.from(bucket).download(path);
+  if (error || !data || data.size > 12_000_000) return null;
+  const digest = await crypto.subtle.digest('SHA-256', await data.arrayBuffer());
+  return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function safeBoundedText(value: unknown, fallback: string) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  return clean && clean.length <= 120 && !/[<>\u0000-\u001f]/.test(clean) ? clean : fallback;
+}
+
+function safeFindingCategory(value: unknown) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  return /^[a-z0-9_]{2,80}$/.test(clean) ? clean : 'unknown_privacy_risk';
 }
 
 function jsonResponse(body: unknown, status = 200) {

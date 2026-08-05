@@ -5,7 +5,7 @@ import {
   validEncryptionKey,
 } from '../meta-connection/contracts.js';
 
-export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'approve_facebook_publication_photo', 'publish_facebook_text', 'publish_facebook_single_photo']);
+export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'approve_facebook_publication_photo', 'revoke_facebook_publication_photo_approval', 'publish_facebook_text', 'publish_facebook_single_photo']);
 export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'authorize',
   'validate_request',
@@ -75,6 +75,8 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
     ? ['action', 'companyId', 'jobId']
     : value.action === 'approve_facebook_publication_photo'
       ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'approvalReason']
+      : value.action === 'revoke_facebook_publication_photo_approval'
+        ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason']
       : value.action === 'publish_facebook_single_photo'
         ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
         : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
@@ -169,7 +171,7 @@ export function runtimePublishingConfig(getEnv) {
   };
 }
 
-export function safePublishingStatus({ config, connection, lastPublication }) {
+export function safePublishingStatus({ config, connection, lastPublication, eligiblePhotos = [] }) {
   const enabled = facebookPublishingEnabled(connection);
   return {
     ok: true,
@@ -184,6 +186,7 @@ export function safePublishingStatus({ config, connection, lastPublication }) {
       publishedAt: safeTimestamp(lastPublication.published_at),
       errorCode: safeCode(lastPublication.last_error_code),
     } : null,
+    eligiblePhotos: Array.isArray(eligiblePhotos) ? eligiblePhotos.map(safeEligiblePhoto).filter(Boolean) : [],
   };
 }
 
@@ -246,6 +249,22 @@ function safeCode(value) {
 function safeLabel(value, maxLength) {
   const clean = typeof value === 'string' ? value.trim() : '';
   return clean && clean.length <= maxLength && !/[<>\u0000-\u001f]/.test(clean) ? clean : null;
+}
+
+function safeEligiblePhoto(value) {
+  const attachmentId = typeof value?.attachmentId === 'string' && UUID_PATTERN.test(value.attachmentId) ? value.attachmentId : null;
+  if (!attachmentId) return null;
+  return {
+    attachmentId,
+    approvalStatus: ['approved', 'revoked', 'pending'].includes(value?.approvalStatus) ? value.approvalStatus : 'pending',
+    approvedAt: safeTimestamp(value?.approvedAt),
+    revokedAt: safeTimestamp(value?.revokedAt),
+    analysisRunId: typeof value?.analysisRunId === 'string' && UUID_PATTERN.test(value.analysisRunId) ? value.analysisRunId : null,
+    analysisStatus: ['completed', 'missing', 'failed'].includes(value?.analysisStatus) ? value.analysisStatus : 'missing',
+    privacyReviewStatus: ['passed', 'blocked', 'resolved_false_positive'].includes(value?.privacyReviewStatus) ? value.privacyReviewStatus : 'blocked',
+    checksumMatch: value?.checksumMatch === true,
+    eligibleForFacebookPublication: value?.eligibleForFacebookPublication === true,
+  };
 }
 
 function cleanEnv(value) {

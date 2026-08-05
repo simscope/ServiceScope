@@ -49,7 +49,7 @@ import {
 } from '../../features/media-planning/planningState';
 import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
 import { FacebookPublishPanel } from './FacebookPublishPanel';
-import { approveFacebookPublicationPhoto } from '../../features/meta-publishing/clientApi';
+import { approveFacebookPublicationPhoto, revokeFacebookPublicationPhotoApproval } from '../../features/meta-publishing/clientApi';
 import { loadCompanyVoiceSummary } from '../../features/company-voice/clientApi';
 import {
   buildGenerationPreferencesByChannel,
@@ -331,18 +331,31 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
   }
 
   async function updateMediaApproval(attachmentId: string, approval: MediaReviewApprovalState) {
-    setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, approval));
-    if (!selectedJob || approval !== 'approved') return;
+    if (!selectedJob) return;
     const result = mediaAnalysisWorkspace.result?.attachments.find((item) => item.id === attachmentId);
-    if (!result || result.kind !== 'photo') return;
+    if (!result || result.kind !== 'photo') {
+      setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, approval));
+      return;
+    }
     try {
-      await approveFacebookPublicationPhoto({
-        companyId,
-        jobId: selectedJob.id,
-        attachmentId,
-        explicitApproval: true,
-        approvalReason: 'Approved in AI Assistant media review.',
-      });
+      if (approval === 'approved') {
+        await approveFacebookPublicationPhoto({
+          companyId,
+          jobId: selectedJob.id,
+          attachmentId,
+          explicitApproval: true,
+          approvalReason: 'Approved in AI Assistant media review.',
+        });
+      } else {
+        await revokeFacebookPublicationPhotoApproval({
+          companyId,
+          jobId: selectedJob.id,
+          attachmentId,
+          explicitApproval: true,
+          revocationReason: `Media review changed to ${approval}.`,
+        });
+      }
+      setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, approval));
     } catch {
       setMediaAnalysisWorkspace((current) => setMediaApproval(current, attachmentId, 'pending'));
     }

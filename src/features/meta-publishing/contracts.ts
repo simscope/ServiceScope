@@ -15,6 +15,17 @@ export type FacebookPublishingSnapshot = {
   facebookPublishingEnabled: boolean;
   missingPermissions: string[];
   lastPublication: FacebookPublicationSummary | null;
+  eligiblePhotos: Array<{
+    attachmentId: string;
+    approvalStatus: 'approved' | 'revoked' | 'pending';
+    approvedAt: string | null;
+    revokedAt: string | null;
+    analysisRunId: string | null;
+    analysisStatus: 'completed' | 'missing' | 'failed';
+    privacyReviewStatus: 'passed' | 'blocked' | 'resolved_false_positive';
+    checksumMatch: boolean;
+    eligibleForFacebookPublication: boolean;
+  }>;
 };
 
 export type FacebookPublishResult = FacebookPublicationSummary & {

@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'scripts/meta-*'
+      - 'src/components/portal/AiAssistantPage.tsx'
+      - 'src/components/portal/FacebookPublishPanel.tsx'
+      - 'src/features/meta-publishing/**'
+      - 'supabase/functions/_shared/meta-publishing/**'
+      - 'supabase/functions/_shared/media-analysis/**'
+      - 'supabase/functions/ai-media-analyze/**'
+      - 'supabase/functions/meta-social-publish/**'
+      - 'supabase/migrations/**meta_facebook**.sql'
+      - 'supabase/schema.sql'
+  push:
+    branches:
+      - codex/meta-facebook-single-photo-publish-pr1
+
+permissions:
+  contents: read
+
+jobs:
+  meta-publishing-node:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Meta publishing regression
+        run: npm run test:meta-publishing
+
+      - name: Meta publishing security scan
+        run: npm run test:meta-publishing-scan
+
+      - name: Typecheck
+        run: npx tsc -b
+
+  meta-publishing-sql:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Meta publishing SQL
+        run: npm run test:meta-publishing-sql
+
+  meta-image-sanitizer-deno:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: '2.1.4'
+
+      - name: Deno version
+        run: deno --version
+
+      - name: Check sanitizer module
+        run: deno check --allow-import supabase/functions/_shared/meta-publishing/imageProcessor.js
+
+      - name: Real ImageScript sanitizer fixtures
+        run: deno test --allow-import scripts/meta-image-sanitizer-deno-tests.ts
+
+  full-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Full build
+        run: npm run build

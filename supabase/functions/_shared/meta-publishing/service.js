@@ -77,6 +77,31 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       return { ok: true, attachmentId: String(row.attachment_id ?? attachmentId), approvalStatus: 'approved', approvedAt: row.approved_at ?? null };
     }
 
+    if (action === 'revoke_facebook_publication_photo_approval') {
+      stage = 'privacy_review';
+      assertExplicitApproval(body.explicitApproval);
+      const jobId = requireUuid(body.jobId);
+      const attachmentId = requireUuid(body.attachmentId);
+      const publicationContext = await deps.repository.getPublicationContext(companyId, jobId);
+      if (!publicationContext?.job || String(publicationContext.job.company_id) !== companyId) {
+        throw new MetaPublishingError('FORBIDDEN');
+      }
+      const photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
+      if (!photo || String(photo.company_id) !== companyId || String(photo.job_id) !== jobId) throw new MetaPublishingError('FORBIDDEN');
+      const row = await deps.repository.revokePublicationPhotoApproval({
+        companyId,
+        jobId,
+        attachmentId,
+        actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
+        revocationReason: normalizeApprovalReason(body.revocationReason),
+        timestamp: new Date(deps.now()).toISOString(),
+      });
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return { ok: true, attachmentId: String(row.attachment_id ?? attachmentId), approvalStatus: 'revoked', revokedAt: row.revoked_at ?? null };
+    }
+
     stage = 'validate_request';
     if (!deps.config.configured) throw new MetaPublishingError('META_PUBLISH_NOT_CONFIGURED');
     assertExplicitApproval(body.explicitApproval);
@@ -225,6 +250,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         actorRole: access.actorRole,
         providerPostId: providerResult.providerPostId,
         providerMediaId: providerResult.providerMediaId ?? null,
+        publicationAuditMetadata: photo?.auditMetadata ?? {},
         timestamp: new Date(deps.now()).toISOString(),
       });
     } catch {
@@ -284,7 +310,34 @@ async function validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValu
     throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
   }
   if (sanitized.bytes.byteLength > maxFacebookPhotoBytes) throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
-  return { attachmentId: String(photo.id), mimeType: sanitized.mimeType, bytes: sanitized.bytes };
+  const sanitizedSha256 = await sha256Hex(sanitized.bytes, deps.cryptoApi);
+  return {
+    attachmentId: String(photo.id),
+    mimeType: sanitized.mimeType,
+    bytes: sanitized.bytes,
+    approval,
+    auditMetadata: {
+      attachmentId: String(photo.id),
+      analysisRunId: safeAuditString(approval.analysis_run_id),
+      approvalId: safeAuditString(approval.id),
+      approvedAt: safeAuditString(approval.approved_at),
+      revoked: false,
+      originalMime: photo.mimeType,
+      detectedMime: sanitized.detectedMimeType ?? sanitized.mimeType,
+      sanitizedMime: sanitized.mimeType,
+      originalByteSize: originalBytes.byteLength,
+      sanitizedByteSize: sanitized.bytes.byteLength,
+      originalHashPrefix: hexPrefix(originalSha256),
+      sanitizedHashPrefix: hexPrefix(sanitizedSha256),
+      width: Number(sanitized.width) || null,
+      height: Number(sanitized.height) || null,
+      metadataStripped: true,
+      gpsStripped: true,
+      sanitizer: sanitized.sanitizer ?? 'ImageScript',
+      sanitizerVersion: sanitized.sanitizerVersion ?? '1.3.0',
+      providerCallCount: 1,
+    },
+  };
 }
 
 async function validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues }) {
@@ -343,6 +396,14 @@ async function sha256Hex(value, cryptoApi) {
   const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
   const digest = await cryptoApi.subtle.digest('SHA-256', bytes);
   return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexPrefix(byteaHex, length = 16) {
+  return typeof byteaHex === 'string' && byteaHex.startsWith('\\x') ? byteaHex.slice(2, 2 + length) : null;
+}
+
+function safeAuditString(value) {
+  return typeof value === 'string' && value.length <= 200 ? value : null;
 }
 
 async function markDeliveryUnknownBestEffort(repository, input) {

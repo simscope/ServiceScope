@@ -15,6 +15,7 @@ import {
 } from '../supabase/functions/_shared/meta-publishing/contracts.js';
 import { assertPublicationPrivacy } from '../supabase/functions/_shared/meta-publishing/privacy.js';
 import { createFacebookPublishingProvider } from '../supabase/functions/_shared/meta-publishing/provider.js';
+import { inspectImageHeader } from '../supabase/functions/_shared/meta-publishing/imageProcessor.js';
 import { handleMetaPublishing } from '../supabase/functions/_shared/meta-publishing/service.js';
 import {
   beginFacebookPublishSubmission,
@@ -56,6 +57,7 @@ telemetryChecks();
 multilineContractChecks();
 privacyChecks();
 workspaceChecks();
+imagePreflightChecks();
 await providerChecks();
 await serviceChecks();
 await sourceChecks();
@@ -84,6 +86,7 @@ function configurationAndAccessChecks() {
 
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));
+  check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true })).action, 'revoke_facebook_publication_photo_approval'));
   for (const invalid of [
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid() },
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: false },
@@ -93,6 +96,7 @@ function configurationAndAccessChecks() {
     { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, storagePath: 'private/path.jpg' },
     { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, base64: 'AA==' },
     { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: true, pageId: '123' },
+    { action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true, storagePath: 'private/path.jpg' },
     { action: 'publish_instagram_text', companyId: ids.company },
   ]) {
     if (invalid.action === 'publish_facebook_text' && invalid.explicitApproval !== true) {
@@ -102,6 +106,20 @@ function configurationAndAccessChecks() {
     }
   }
   check(() => assert.throws(() => parsePublishingRequest('x'.repeat(24_001), 24_000), /INVALID_REQUEST/));
+}
+
+function imagePreflightChecks() {
+  check(() => assert.deepEqual(inspectImageHeader(jpegHeader(400, 300)), { mimeType: 'image/jpeg', width: 400, height: 300 }));
+  check(() => assert.deepEqual(inspectImageHeader(pngHeader(320, 240)), { mimeType: 'image/png', width: 320, height: 240 }));
+  for (const invalid of [
+    new Uint8Array([0x47, 0x49, 0x46, 0x38]),
+    new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+    new Uint8Array([0x50, 0x4b, 0x03, 0x04]),
+    pngHeader(100, 100, 'acTL'),
+    jpegHeader(0, 100),
+  ]) {
+    check(() => assert.throws(() => inspectImageHeader(invalid), /META_PUBLICATION_MEDIA_UNSUPPORTED/));
+  }
 }
 
 function multilineContractChecks() {
@@ -271,6 +289,19 @@ async function providerChecks() {
   check(() => assert.equal(photoCalls[0].options.method, 'POST'));
   check(() => assert.equal(photoCalls[0].options.headers.Authorization, `Bearer ${sensitiveToken}`));
   check(() => assert.ok(photoCalls[0].options.body instanceof FormData));
+
+  const missingMediaId = createFacebookPublishingProvider({ config, cryptoApi, fetchImpl: async () => new Response('{}', { status: 200 }) });
+  await checkAsync(() => assert.rejects(
+    missingMediaId.publishSinglePhoto({
+      pageId: '10001',
+      pageAccessToken: sensitiveToken,
+      message: multiline,
+      photoBytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+      mimeType: 'image/jpeg',
+      signal: new AbortController().signal,
+    }),
+    (error) => error.code === 'META_PUBLICATION_FAILED' && error.diagnostic.providerCategory === 'RESPONSE_MISSING_MEDIA_ID',
+  ));
 }
 
 async function serviceChecks() {
@@ -323,7 +354,7 @@ async function serviceChecks() {
     attachmentId: null,
   })))).toString('hex')}`;
   check(() => assert.equal(base.beginInputs[0].publicationIntentSha256, expectedIntent));
-  check(() => assert.deepEqual(base.terminalActors[0], { action: 'complete', actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }));
+  check(() => assert.deepEqual(actorRecordOnly(base.terminalActors[0]), { action: 'complete', actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }));
   await invoke(base, request);
   check(() => assert.equal(base.providerCalls.length, 1));
   await invoke(base, { ...request, idempotencyKey: '00000000-0000-4000-8000-000000008021' });
@@ -412,8 +443,31 @@ async function serviceChecks() {
   check(() => assert.equal(photoBase.beginInputs[0].safeMimeType, 'image/jpeg'));
   check(() => assert.equal(photoBase.beginInputs[0].mediaCount, 1));
   check(() => assert.equal(photoBase.providerCalls[0].photoBytes.includes(0xe1), false));
+  check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.providerCallCount, 1));
+  check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.sanitizer, 'ImageScript'));
+  check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.sanitizerVersion, '1.3.0'));
+  check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.metadataStripped, true));
+  check(() => assert.equal(photoBase.terminalActors[0].publicationAuditMetadata.gpsStripped, true));
+  check(() => assert.match(photoBase.terminalActors[0].publicationAuditMetadata.originalHashPrefix, /^[0-9a-f]{16}$/));
+  check(() => assert.match(photoBase.terminalActors[0].publicationAuditMetadata.sanitizedHashPrefix, /^[0-9a-f]{16}$/));
   await invoke(photoBase, singlePhotoRequest('Verified normal operation.', photoKey));
   check(() => assert.equal(photoBase.providerCalls.length, 1));
+
+  const revokedPhoto = await makeDependencies();
+  revokedPhoto.context.connection.granted_scopes = publishingScopes();
+  const revocation = await invoke(revokedPhoto, { action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true });
+  check(() => assert.equal(revocation.approvalStatus, 'revoked'));
+  await checkAsync(() => assert.rejects(invoke(revokedPhoto, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED/));
+  check(() => assert.equal(revokedPhoto.providerCalls.length, 0));
+
+  const missingMedia = await makeDependencies({ providerError: new MetaPublishingError('META_PUBLICATION_FAILED', undefined, { providerCategory: 'RESPONSE_MISSING_MEDIA_ID' }) });
+  missingMedia.context.connection.granted_scopes = publishingScopes();
+  const missingMediaKey = '00000000-0000-4000-8000-000000008055';
+  await checkAsync(() => assert.rejects(invoke(missingMedia, singlePhotoRequest('Verified normal operation.', missingMediaKey)), /META_PUBLICATION_FAILED/));
+  check(() => assert.equal(missingMedia.publications.get(missingMediaKey).publication_status, 'failed'));
+  check(() => assert.equal(missingMedia.publications.get(missingMediaKey).provider_error_category, 'RESPONSE_MISSING_MEDIA_ID'));
+  await checkAsync(() => assert.rejects(invoke(missingMedia, singlePhotoRequest('Verified normal operation.', missingMediaKey)), /META_PUBLICATION_FAILED/));
+  check(() => assert.equal(missingMedia.providerCalls.length, 1));
 
   const unapprovedPhoto = await makeDependencies({ photoApproved: false });
   unapprovedPhoto.context.connection.granted_scopes = publishingScopes();
@@ -504,6 +558,8 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
   const terminalActors = [];
   const statusCalls = [];
   const telemetryEvents = [];
+  const revokeInputs = [];
+  let photoRevoked = false;
   let clock = Date.parse('2026-08-03T12:00:00.000Z');
   return {
     context,
@@ -530,6 +586,14 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
             published_at: latest.publication_published_at,
             last_error_code: latest.publication_last_error_code,
           } : null,
+          eligiblePhotos: photoApproved && selectedAttachment && !photoRevoked ? [{
+            attachmentId: ids.attachment,
+            approvalStatus: 'approved',
+            analysisStatus: 'completed',
+            privacyReviewStatus: 'passed',
+            checksumMatch: true,
+            eligibleForFacebookPublication: true,
+          }] : [],
         };
       },
       getPublicationContext: async () => context,
@@ -546,10 +610,28 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
         approval_status: 'approved',
         approved_at: input.timestamp,
       }),
+      revokePublicationPhotoApproval: async (input) => {
+        revokeInputs.push(input);
+        photoRevoked = true;
+        return {
+          id: newTestUuid(),
+          company_id: input.companyId,
+          job_id: input.jobId,
+          attachment_id: input.attachmentId,
+          approval_status: 'revoked',
+          revoked_at: input.timestamp,
+        };
+      },
       getPublicationPhotoApproval: async (companyId, jobId, attachmentId, attachmentSha256) => {
-        if (!photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
+        if (photoRevoked || !photoApproved || companyId !== ids.company || jobId !== ids.job || attachmentId !== ids.attachment) return null;
         const expected = `\\x${Buffer.from(await cryptoApi.subtle.digest('SHA-256', jpegWithExifBytes())).toString('hex')}`;
-        return attachmentSha256 === expected ? { approval_status: 'approved', revoked_at: null } : null;
+        return attachmentSha256 === expected ? {
+          id: '00000000-0000-4000-8000-000000008080',
+          analysis_run_id: '00000000-0000-4000-8000-000000008081',
+          approval_status: 'approved',
+          approved_at: '2026-08-03T12:00:00.000Z',
+          revoked_at: null,
+        } : null;
       },
       beginPublication: async (input) => {
         beginInputs.push(input);
@@ -573,7 +655,7 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
         return row;
       },
       completePublication: async (input) => {
-        terminalActors.push(actorRecord('complete', input));
+        terminalActors.push({ ...actorRecord('complete', input), publicationAuditMetadata: input.publicationAuditMetadata ?? {} });
         return updatePublication(publications, input.publicationId, {
           publication_status: 'published', publication_published_at: input.timestamp, publication_last_error_code: null,
         });
@@ -581,7 +663,7 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
       failPublication: async (input) => {
         terminalActors.push(actorRecord('fail', input));
         return updatePublication(publications, input.publicationId, {
-          publication_status: 'failed', publication_published_at: null, publication_last_error_code: input.lastErrorCode,
+          publication_status: 'failed', publication_published_at: null, publication_last_error_code: input.lastErrorCode, provider_error_category: input.diagnostic?.providerCategory ?? 'PROVIDER_REJECTED',
         });
       },
       markUnknown: async (input) => {
@@ -608,7 +690,7 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
     imageProcessor: {
       sanitize: async ({ bytes, mimeType }) => {
         const clean = Uint8Array.from(bytes).filter((byte) => byte !== 0xe1);
-        return { bytes: clean, mimeType, width: 1, height: 1 };
+        return { bytes: clean, mimeType, detectedMimeType: mimeType, width: 1, height: 1, sanitizer: 'ImageScript', sanitizerVersion: '1.3.0' };
       },
     },
     config,
@@ -621,12 +703,43 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
   };
 }
 
+function jpegHeader(width, height) {
+  return new Uint8Array([
+    0xff, 0xd8,
+    0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0,
+    0xff, 0xc0, 0x00, 0x11, 0x08, (height >> 8) & 0xff, height & 0xff, (width >> 8) & 0xff, width & 0xff,
+    0x03, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
+    0xff, 0xda, 0x00, 0x0c,
+  ]);
+}
+
+function pngHeader(width, height, extraChunk = null) {
+  const chunks = [
+    0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52,
+    (width >>> 24) & 0xff, (width >>> 16) & 0xff, (width >>> 8) & 0xff, width & 0xff,
+    (height >>> 24) & 0xff, (height >>> 16) & 0xff, (height >>> 8) & 0xff, height & 0xff,
+    8, 2, 0, 0, 0, 0, 0, 0, 0,
+  ];
+  if (extraChunk) chunks.push(0, 0, 0, 0, ...Buffer.from(extraChunk), 0, 0, 0, 0);
+  chunks.push(0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0, 0, 0, 0);
+  return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...chunks]);
+}
+
 function actorRecord(action, input) {
   return {
     action,
     actorAuthUserId: input.actorAuthUserId,
     actorName: input.actorName,
     actorRole: input.actorRole,
+  };
+}
+
+function actorRecordOnly(value) {
+  return {
+    action: value.action,
+    actorAuthUserId: value.actorAuthUserId,
+    actorName: value.actorName,
+    actorRole: value.actorRole,
   };
 }
 
