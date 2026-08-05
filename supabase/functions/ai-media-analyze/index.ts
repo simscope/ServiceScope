@@ -201,7 +201,26 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         p_timestamp: completedAt,
       });
       if (error || !Array.isArray(data)) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
-      const resultIdByAttachment = new Map(data.map((row: Record<string, unknown>) => [String(row.attachment_id), String(row.attachment_result_id)]));
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const resultIdByAttachment = new Map<string, string>();
+      for (const row of data as Array<Record<string, unknown>>) {
+        const attachmentId = String(row.attachment_id ?? '');
+        const returnedRunId = String(row.analysis_run_id ?? '');
+        const attachmentResultId = String(row.attachment_result_id ?? '');
+        if (
+          !uuidPattern.test(attachmentId)
+          || returnedRunId !== runId
+          || !uuidPattern.test(attachmentResultId)
+          || resultIdByAttachment.has(attachmentId)
+        ) {
+          throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+        }
+        resultIdByAttachment.set(attachmentId, attachmentResultId);
+      }
+      if (resultIdByAttachment.size !== persistenceAttachments.length) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+      for (const payload of persistenceAttachments) {
+        if (!resultIdByAttachment.has(String(payload.attachmentId))) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+      }
       for (const item of (result.attachments as Array<Record<string, unknown>> ?? [])) {
         const attachmentResultId = resultIdByAttachment.get(String(item.id));
         if (!attachmentResultId) continue;
