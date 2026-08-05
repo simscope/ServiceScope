@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleMediaAnalysis, HttpError, statusForCode } from '../_shared/media-analysis/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createMediaProviderFromEnv } from '../_shared/media-analysis/providers/openai.js';
-import { signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
+import { privacyFindingCategories, signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,6 +10,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const guards = createMemoryGuards();
+const privacyFindingCategorySet = new Set(privacyFindingCategories);
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -175,7 +176,7 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         if (!attachment || item.kind !== 'photo') continue;
         const checksum = await attachmentSha256(adminClient, attachment);
         if (!checksum) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
-        const privacyFindings = (item.findings as Array<Record<string, unknown>> ?? []).filter((finding) => String(finding.category ?? '').startsWith('possible_') || String(finding.category ?? '') === 'unknown_privacy_risk');
+        const privacyFindings = (item.findings as Array<Record<string, unknown>> ?? []).filter((finding) => privacyFindingCategorySet.has(String(finding.category ?? '')));
         persistenceAttachments.push({
           attachmentId: String(item.id),
           attachmentSha256: checksum,
