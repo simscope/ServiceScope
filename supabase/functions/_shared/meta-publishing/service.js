@@ -68,6 +68,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         companyId,
         jobId,
         attachmentId,
+        analysisRunId,
+        attachmentResultId,
         attachmentSha256,
         attachmentMimeType: photo.mimeType,
         actorAuthUserId: access.actorAuthUserId,
@@ -95,8 +97,6 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         companyId,
         jobId,
         attachmentId,
-        analysisRunId,
-        attachmentResultId,
         actorAuthUserId: access.actorAuthUserId,
         actorName: access.actorName,
         actorRole: access.actorRole,
@@ -112,6 +112,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       assertExplicitApproval(body.explicitApproval);
       const jobId = requireUuid(body.jobId);
       const attachmentId = requireUuid(body.attachmentId);
+      const analysisRunId = requireUuid(body.analysisRunId);
+      const attachmentResultId = requireUuid(body.attachmentResultId);
       const publicationContext = await deps.repository.getPublicationContext(companyId, jobId);
       if (!publicationContext?.job || String(publicationContext.job.company_id) !== companyId) {
         throw new MetaPublishingError('FORBIDDEN');
@@ -122,6 +124,8 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         companyId,
         jobId,
         attachmentId,
+        analysisRunId,
+        attachmentResultId,
         actorAuthUserId: access.actorAuthUserId,
         actorName: access.actorName,
         actorRole: access.actorRole,

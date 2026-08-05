@@ -21,6 +21,7 @@ const migrationNames = [
   '20260805024500_meta_facebook_single_photo_review_closure.sql',
   '20260805153000_meta_facebook_single_photo_latest_authority.sql',
   '20260805183000_meta_facebook_single_photo_exact_review.sql',
+  '20260805193000_meta_facebook_single_photo_runtime_closure.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -46,6 +47,18 @@ check(() => assert.equal(
     begin: '-- META_FACEBOOK_SINGLE_PHOTO_REVIEW_CLOSURE_BEGIN',
     end: '-- META_FACEBOOK_SINGLE_PHOTO_REVIEW_CLOSURE_END',
     label: 'Meta Facebook single-photo review closure',
+  })),
+));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_SINGLE_PHOTO_RUNTIME_CLOSURE_BEGIN',
+    end: '-- META_FACEBOOK_SINGLE_PHOTO_RUNTIME_CLOSURE_END',
+    label: 'Meta Facebook single-photo runtime closure',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(migrations[11], {
+    begin: '-- META_FACEBOOK_SINGLE_PHOTO_RUNTIME_CLOSURE_BEGIN',
+    end: '-- META_FACEBOOK_SINGLE_PHOTO_RUNTIME_CLOSURE_END',
+    label: 'Meta Facebook single-photo runtime closure',
   })),
 ));
 check(() => assert.equal(
@@ -150,6 +163,7 @@ await db.exec(migrations[7]);
 await db.exec(migrations[8]);
 await db.exec(migrations[9]);
 await db.exec(migrations[10]);
+await db.exec(migrations[11]);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -246,6 +260,7 @@ const rpcNames = [
   'resolve_company_media_analysis_false_positive',
   'list_company_facebook_publication_photo_candidates',
   'meta_facebook_publication_audit_metadata_valid',
+  'record_company_media_analysis_result',
   'begin_company_facebook_publication',
   'complete_company_facebook_publication',
   'fail_company_facebook_publication',
@@ -274,12 +289,13 @@ const rpcShapes = await db.query(`
 `, [rpcNames]);
 const signatureSet = new Set(rpcShapes.rows.map((row) => `${row.proname}/${row.pronargs}`));
 for (const signature of [
-  'approve_company_facebook_publication_photo/11',
+  'approve_company_facebook_publication_photo/13',
   'revoke_company_facebook_publication_photo_approval/8',
   'exclude_company_facebook_publication_photo/10',
   'resolve_company_media_analysis_false_positive/11',
   'list_company_facebook_publication_photo_candidates/3',
   'meta_facebook_publication_audit_metadata_valid/4',
+  'record_company_media_analysis_result/10',
   'begin_company_facebook_publication/17',
   'complete_company_facebook_publication/9',
   'fail_company_facebook_publication/13',
@@ -300,7 +316,8 @@ const legacySignatures = await db.query(`
     to_regprocedure('public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, timestamptz)') as old_complete_7,
     to_regprocedure('public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, timestamptz)') as old_complete_8,
     to_regprocedure('public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz)') as old_exclude,
-    to_regprocedure('public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz)') as old_false_positive
+    to_regprocedure('public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz)') as old_false_positive,
+    to_regprocedure('public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz)') as old_approve
 `);
 check(() => assert.ok(Object.values(legacySignatures.rows[0]).every((value) => value === null)));
 
@@ -364,15 +381,11 @@ await db.query(`insert into public.company_media_analysis_attachment_results (
   id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256, detected_mime_type,
   analysis_status, privacy_review_status, excluded
 ) values ($1,$2,$3,$4,$5,$6::bytea,'image/jpeg','analyzed','passed',false)`, [ids.analysisResult, ids.analysisRun, ids.company, ids.job, ids.attachment, mediaHash]);
-const approval = await db.query(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'SQL approval fixture',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, ids.attachment, mediaHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+const approval = await approvePhoto(ids.attachment, ids.analysisRun, ids.analysisResult, mediaHash, 'SQL approval fixture');
 check(() => assert.equal(approval.rows[0].analysis_run_id, ids.analysisRun));
 check(() => assert.equal(approval.rows[0].approval_status, 'approved'));
 
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Checksum mismatch fixture',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, ids.attachment, new Uint8Array(32).fill(0x12), ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, ids.attachment, ids.analysisRun, ids.analysisResult, new Uint8Array(32).fill(0x12), ids.actor, verifiedActor.name, verifiedActor.role, 'Checksum mismatch fixture']);
 
 const blockedAnalysisRun = '00000000-0000-4000-8000-000000007092';
 const blockedAnalysisResult = '00000000-0000-4000-8000-000000007093';
@@ -391,16 +404,26 @@ await db.query(`insert into public.company_media_analysis_attachment_results (
 await db.query(`insert into public.company_media_analysis_privacy_findings (
   id, analysis_run_id, attachment_result_id, company_id, job_id, attachment_id, finding_id, finding_category, risk_level
 ) values (gen_random_uuid(),$1,$2,$3,$4,$5,'finding-1','possible_license_plate','high')`, [blockedAnalysisRun, blockedAnalysisResult, ids.company, ids.job, blockedAttachment]);
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Blocked privacy fixture',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedAnalysisRun, blockedAnalysisResult, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Blocked privacy fixture']);
+for (const findingIds of [
+  `array['finding-1','finding-1']::text[]`,
+  `array['finding-1','unknown-finding']::text[]`,
+]) {
+  await assertRejectsSql(`select * from public.resolve_company_media_analysis_false_positive(
+    $1,$2,$3,$4,$5,${findingIds},$6,$7,$8,'Partial false positive must reject',now()
+  )`, [ids.company, ids.job, blockedAttachment, blockedAnalysisRun, blockedAnalysisResult, ids.actor, verifiedActor.name, verifiedActor.role]);
+  const partialFindingRollback = await db.query(`select
+    (select count(*)::integer from public.company_media_analysis_privacy_findings where attachment_result_id=$1 and resolved_as_false_positive=false) as unresolved,
+    (select privacy_review_status from public.company_media_analysis_attachment_results where id=$1) as status,
+    (select count(*)::integer from public.audit_events where action='meta_publication_media_false_positive_resolved' and resource_id=$2) as audits
+  `, [blockedAnalysisResult, blockedAttachment]);
+  check(() => assert.deepEqual(partialFindingRollback.rows[0], { unresolved: 1, status: 'blocked', audits: 0 }));
+}
 const falsePositive = await db.query(`select * from public.resolve_company_media_analysis_false_positive(
   $1,$2,$3,$4,$5,array['finding-1']::text[],$6,$7,$8,'False positive SQL fixture',now()
 )`, [ids.company, ids.job, blockedAttachment, blockedAnalysisRun, blockedAnalysisResult, ids.actor, verifiedActor.name, verifiedActor.role]);
 check(() => assert.equal(falsePositive.rows[0].privacy_review_status, 'resolved_false_positive'));
-const resolvedApproval = await db.query(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Resolved false positive approval fixture',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+const resolvedApproval = await approvePhoto(blockedAttachment, blockedAnalysisRun, blockedAnalysisResult, blockedHash, 'Resolved false positive approval fixture');
 check(() => assert.equal(resolvedApproval.rows[0].approval_status, 'approved'));
 const excluded = await db.query(`select * from public.exclude_company_facebook_publication_photo(
   $1,$2,$3,$4,$5,$6,$7,$8,'Exclude SQL fixture',now()
@@ -409,9 +432,7 @@ check(() => assert.equal(excluded.rows[0].excluded, true));
 const excludedApprovalReason = await db.query(`select approval_reason, exclusion_reason from public.company_social_publication_media_approvals where id=$1`, [resolvedApproval.rows[0].id]);
 check(() => assert.equal(excludedApprovalReason.rows[0].approval_reason, 'Resolved false positive approval fixture'));
 check(() => assert.equal(excludedApprovalReason.rows[0].exclusion_reason, 'Exclude SQL fixture'));
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Excluded approval fixture',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, blockedAttachment, blockedAnalysisRun, blockedAnalysisResult, blockedHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Excluded approval fixture']);
 
 await db.exec('savepoint newest_analysis_authority;');
 const newestAttachment = '00000000-0000-4000-8000-000000007120';
@@ -430,9 +451,7 @@ await db.query(`insert into public.company_media_analysis_attachment_results (
   id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256, detected_mime_type,
   analysis_status, privacy_review_status, excluded, created_at
 ) values ($1,$2,$3,$4,$5,$6::bytea,'image/jpeg','analyzed','passed',false,now() - interval '2 minutes')`, [newestOldResult, newestOldRun, ids.company, ids.job, newestAttachment, newestHash]);
-const newestOldApproval = await db.query(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Old approval before new evidence',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+const newestOldApproval = await approvePhoto(newestAttachment, newestOldRun, newestOldResult, newestHash, 'Old approval before new evidence');
 check(() => assert.equal(newestOldApproval.rows[0].approval_status, 'approved'));
 await db.query(`insert into public.company_media_analysis_runs (
   id, company_id, job_id, correlation_id, status, provider, model, analysis_version, completed_at, created_at
@@ -441,22 +460,14 @@ await db.query(`insert into public.company_media_analysis_attachment_results (
   id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256, detected_mime_type,
   analysis_status, privacy_review_status, excluded, created_at
 ) values ($1,$2,$3,$4,$5,$6::bytea,'image/jpeg','analyzed','blocked',false,now())`, [newestNewResult, newestNewRun, ids.company, ids.job, newestAttachment, newestHash]);
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Newest blocked must reject',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestNewRun, newestNewResult, newestHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Newest blocked must reject']);
 await db.query(`update public.company_media_analysis_runs set status='failed' where id=$1`, [newestNewRun]);
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Newest failed must reject',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestNewRun, newestNewResult, newestHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Newest failed must reject']);
 await db.query(`update public.company_media_analysis_runs set status='completed' where id=$1`, [newestNewRun]);
 await db.query(`update public.company_media_analysis_attachment_results set privacy_review_status='passed', excluded=true where id=$1`, [newestNewResult]);
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Newest excluded must reject',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestNewRun, newestNewResult, newestHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Newest excluded must reject']);
 await db.query(`update public.company_media_analysis_attachment_results set excluded=false, attachment_sha256=$2::bytea where id=$1`, [newestNewResult, new Uint8Array(32).fill(0x34)]);
-await assertRejectsSql(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Newest checksum mismatch must reject',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestNewRun, newestNewResult, newestHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Newest checksum mismatch must reject']);
 await db.query(`update public.company_media_analysis_attachment_results set attachment_sha256=$2::bytea, created_at=now() where id=$1`, [newestNewResult, newestHash]);
 await assertRejectsSql(`select * from public.exclude_company_facebook_publication_photo(
   $1,$2,$3,$4,$5,$6,$7,$8,'Stale exclude must reject',now()
@@ -468,9 +479,8 @@ await db.query(`update public.company_social_publication_media_approvals set app
 const newestActiveApprovalBeforeFreshApproval = await db.query(`select count(*)::integer as count from public.company_social_publication_media_approvals
   where company_id=$1 and job_id=$2 and attachment_id=$3 and approval_status='approved' and revoked_at is null`, [ids.company, ids.job, newestAttachment]);
 check(() => assert.equal(newestActiveApprovalBeforeFreshApproval.rows[0].count, 0));
-const newestFreshApproval = await db.query(`select * from public.approve_company_facebook_publication_photo(
-  $1,$2,$3,$4,$5::bytea,'image/jpeg',$6,$7,$8,'Fresh approval for newest result',now()
-)`, [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestHash, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, newestAttachment, newestOldRun, newestOldResult, newestHash, ids.actor, verifiedActor.name, verifiedActor.role, 'Stale displayed approval must reject']);
+const newestFreshApproval = await approvePhoto(newestAttachment, newestNewRun, newestNewResult, newestHash, 'Fresh approval for newest result');
 check(() => assert.equal(newestFreshApproval.rows[0].analysis_run_id, newestNewRun));
 const newestCandidates = await db.query(`select attachment_id, attachment_result_id, analysis_run_id, attachment_sha256
   from public.list_company_facebook_publication_photo_candidates($1,$2,$3)`, [ids.company, ids.job, newestAttachment]);
@@ -491,6 +501,26 @@ check(() => assert.equal(revoked.rows[0].revocation_reason, 'SQL revocation fixt
 await assertRejectsSql(`select * from public.revoke_company_facebook_publication_photo_approval(
   $1,$2,$3,$4,$5,$6,'SQL duplicate revocation fixture',now()
 )`, [ids.company, ids.job, ids.attachment, ids.actor, verifiedActor.name, verifiedActor.role]);
+
+await db.exec('savepoint strict_audit_metadata;');
+const strictAuditPublication = '00000000-0000-4000-8000-000000007057';
+await beginSinglePhotoPublication(strictAuditPublication, ids.company, ids.connection, ids.job, '00000000-0000-4000-8000-000000007058', 'Strict audit metadata fixture.', ids.actor, ids.attachment);
+for (const invalidMetadata of [
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked','false','originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1)`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize','1','sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1)`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-02-31T00:00:00.000Z','revoked',false,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1)`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24.5,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1)`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',0)`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',true,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1)`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1,'extra','nope')`,
+  `jsonb_build_object('attachmentId',$6::text,'analysisRunId',$7::text,'approvalId',$8::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1,'nested',jsonb_build_object('bad',true))`,
+]) {
+  await assertRejectsSql(`select * from public.complete_company_facebook_publication(
+    $1,$2,$3,$4,$5,null,'10001_photo_invalid',${invalidMetadata},now()
+  )`, [strictAuditPublication, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, ids.attachment, ids.analysisRun, approval.rows[0].id], 'invalid publication audit metadata');
+}
+await db.exec('rollback to savepoint strict_audit_metadata;');
+await db.exec('release savepoint strict_audit_metadata;');
 
 const singlePhotoPublication = '00000000-0000-4000-8000-000000007060';
 const singlePhotoKey = '00000000-0000-4000-8000-000000007061';
@@ -555,7 +585,31 @@ check(() => assert.ok(singlePublished.rows[0].published_at));
 
 const mediaIdFailurePublication = '00000000-0000-4000-8000-000000007062';
 await beginSinglePhotoPublication(mediaIdFailurePublication, ids.company, ids.connection, ids.job, '00000000-0000-4000-8000-000000007063', 'Missing media id fixture.', ids.actor, ids.attachment);
-await db.query(`select * from public.fail_company_facebook_publication($1,$2,$3,$4,$5,null,null,null,'RESPONSE_MISSING_MEDIA_ID',null,'META_PUBLICATION_FAILED','{}'::jsonb,now())`, [mediaIdFailurePublication, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
+await db.query(`select * from public.fail_company_facebook_publication(
+  $1,$2,$3,$4,$5,null,null,null,'RESPONSE_MISSING_MEDIA_ID',null,'META_PUBLICATION_FAILED',
+  jsonb_build_object(
+    'attachmentId',$8::text,
+    'analysisRunId',$6::text,
+    'approvalId',$7::text,
+    'approvedAt','2026-08-05T00:00:00.000Z',
+    'revoked',false,
+    'originalMime','image/jpeg',
+    'detectedMime','image/jpeg',
+    'sanitizedMime','image/jpeg',
+    'originalByteSize',24,
+    'sanitizedByteSize',18,
+    'originalHashPrefix','1111111111111111',
+    'sanitizedHashPrefix','2222222222222222',
+    'width',1,
+    'height',1,
+    'metadataStripped',true,
+    'gpsStripped',true,
+    'sanitizer','ImageScript',
+    'sanitizerVersion','1.3.0',
+    'providerCallCount',1
+  ),
+  now()
+)`, [mediaIdFailurePublication, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, ids.analysisRun, approval.rows[0].id, ids.attachment]);
 const mediaIdFailure = await db.query(`select status, attempts, provider_error_category, last_error_code from public.company_social_publications where id=$1`, [mediaIdFailurePublication]);
 check(() => assert.deepEqual(mediaIdFailure.rows[0], {
   status: 'failed',
@@ -679,6 +733,7 @@ await canonicalDb.exec(migrations[7]);
 await canonicalDb.exec(migrations[8]);
 await canonicalDb.exec(migrations[9]);
 await canonicalDb.exec(migrations[10]);
+await canonicalDb.exec(migrations[11]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
@@ -731,6 +786,19 @@ async function beginPublication(publicationId, companyId, connectionId, jobId, k
 async function beginSinglePhotoPublication(publicationId, companyId, connectionId, jobId, key, message, actorId, attachmentId) {
   const result = await db.query(beginSinglePhotoPublicationSql(), [publicationId, companyId, connectionId, jobId, key, message, actorId, attachmentId]);
   return result.rows[0];
+}
+
+async function approvePhoto(attachmentId, analysisRunId, attachmentResultId, attachmentHash, reason) {
+  return db.query(approvePhotoSql(), [
+    crypto.randomUUID(), ids.company, ids.job, attachmentId, analysisRunId, attachmentResultId,
+    attachmentHash, ids.actor, verifiedActor.name, verifiedActor.role, reason,
+  ]);
+}
+
+function approvePhotoSql() {
+  return `select * from public.approve_company_facebook_publication_photo(
+    $1,$2,$3,$4,$5,$6,$7::bytea,'image/jpeg',$8,$9,$10,$11,now()
+  )`;
 }
 
 function beginSinglePhotoPublicationSql() {

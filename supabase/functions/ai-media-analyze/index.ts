@@ -168,60 +168,45 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
       const companyId = String(context.companyId ?? '');
       const jobId = String(context.jobId ?? request.jobId ?? '');
       const completedAt = String(input.completedAt ?? new Date().toISOString());
-      const { error: runError } = await adminClient.from('company_media_analysis_runs').insert({
-        id: runId,
-        company_id: companyId,
-        job_id: jobId,
-        correlation_id: String(request.idempotencyKey ?? runId),
-        status: result?.safety?.ok === false ? 'failed' : 'completed',
-        provider: safeBoundedText(result.provider, 'unknown'),
-        model: typeof result.model === 'string' ? safeBoundedText(result.model, 'unknown') : null,
-        analysis_version: 'media-analysis-v1',
-        completed_at: completedAt,
-        created_at: completedAt,
-        updated_at: completedAt,
-      });
-      if (runError) return;
       const attachmentById = new Map((context.attachments as Array<Record<string, unknown>> ?? []).map((attachment) => [String(attachment.id), attachment]));
+      const persistenceAttachments = [];
       for (const item of (result.attachments as Array<Record<string, unknown>> ?? [])) {
         const attachment = attachmentById.get(String(item.id));
         if (!attachment || item.kind !== 'photo') continue;
         const checksum = await attachmentSha256(adminClient, attachment);
-        if (!checksum) continue;
+        if (!checksum) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
         const privacyFindings = (item.findings as Array<Record<string, unknown>> ?? []).filter((finding) => String(finding.category ?? '').startsWith('possible_') || String(finding.category ?? '') === 'unknown_privacy_risk');
-        const resultId = crypto.randomUUID();
-        const reviewState = privacyFindings.length ? 'blocked' : 'passed';
-        const { error: attachmentError } = await adminClient.from('company_media_analysis_attachment_results').insert({
-          id: resultId,
-          analysis_run_id: runId,
-          company_id: companyId,
-          job_id: jobId,
-          attachment_id: String(item.id),
-          attachment_sha256: checksum,
-          detected_mime_type: String(item.mimeType ?? attachment.mimeType ?? '').toLowerCase(),
-          analysis_status: ['analyzed', 'metadata_only', 'manual_review'].includes(String(item.status)) ? item.status : 'manual_review',
-          privacy_review_status: reviewState,
-          excluded: false,
-          created_at: completedAt,
+        persistenceAttachments.push({
+          attachmentId: String(item.id),
+          attachmentSha256: checksum,
+          detectedMimeType: String(item.mimeType ?? attachment.mimeType ?? '').toLowerCase(),
+          analysisStatus: ['analyzed', 'metadata_only', 'manual_review'].includes(String(item.status)) ? item.status : 'manual_review',
+          privacyFindings: privacyFindings.map((finding) => ({
+            findingId: safeBoundedText(finding.findingId, crypto.randomUUID()),
+            findingCategory: safeFindingCategory(finding.category),
+            riskLevel: ['low', 'medium', 'high'].includes(String(finding.riskLevel)) ? finding.riskLevel : 'high',
+          })),
         });
-        if (attachmentError) continue;
+      }
+      const { data, error } = await adminClient.rpc('record_company_media_analysis_result', {
+        p_run_id: runId,
+        p_company_id: companyId,
+        p_job_id: jobId,
+        p_correlation_id: String(request.idempotencyKey ?? runId),
+        p_status: result?.safety?.ok === false ? 'failed' : 'completed',
+        p_provider: safeBoundedText(result.provider, 'unknown'),
+        p_model: typeof result.model === 'string' ? safeBoundedText(result.model, 'unknown') : null,
+        p_analysis_version: 'media-analysis-v1',
+        p_attachments: persistenceAttachments,
+        p_timestamp: completedAt,
+      });
+      if (error || !Array.isArray(data)) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+      const resultIdByAttachment = new Map(data.map((row: Record<string, unknown>) => [String(row.attachment_id), String(row.attachment_result_id)]));
+      for (const item of (result.attachments as Array<Record<string, unknown>> ?? [])) {
+        const attachmentResultId = resultIdByAttachment.get(String(item.id));
+        if (!attachmentResultId) continue;
         item.analysisRunId = runId;
-        item.attachmentResultId = resultId;
-        for (const finding of privacyFindings) {
-          await adminClient.from('company_media_analysis_privacy_findings').insert({
-            id: crypto.randomUUID(),
-            analysis_run_id: runId,
-            attachment_result_id: resultId,
-            company_id: companyId,
-            job_id: jobId,
-            attachment_id: String(item.id),
-            finding_id: safeBoundedText(finding.findingId, crypto.randomUUID()),
-            finding_category: safeFindingCategory(finding.category),
-            risk_level: ['low', 'medium', 'high'].includes(String(finding.riskLevel)) ? finding.riskLevel : 'high',
-            resolved_as_false_positive: false,
-            created_at: completedAt,
-          });
-        }
+        item.attachmentResultId = attachmentResultId;
       }
     },
   };

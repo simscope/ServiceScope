@@ -339,10 +339,13 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     }
     try {
       if (approval === 'approved') {
+        if (!result.analysisRunId || !result.attachmentResultId) return;
         await approveFacebookPublicationPhoto({
           companyId,
           jobId: selectedJob.id,
           attachmentId,
+          analysisRunId: result.analysisRunId,
+          attachmentResultId: result.attachmentResultId,
           explicitApproval: true,
           approvalReason: 'Approved in AI Assistant media review.',
         });

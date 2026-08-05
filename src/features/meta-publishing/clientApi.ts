@@ -28,6 +28,8 @@ export function approveFacebookPublicationPhoto(input: {
   companyId: string;
   jobId: string;
   attachmentId: string;
+  analysisRunId: string;
+  attachmentResultId: string;
   explicitApproval: true;
   approvalReason?: string;
 }) {

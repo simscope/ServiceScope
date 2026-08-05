@@ -39,6 +39,8 @@ const ids = {
   jobB: '00000000-0000-4000-8000-000000008006',
   connection: '00000000-0000-4000-8000-000000008005',
   attachment: '00000000-0000-4000-8000-000000008007',
+  analysisRun: '00000000-0000-4000-8000-000000008081',
+  analysisResult: '00000000-0000-4000-8000-000000008082',
 };
 const jwt = 'synthetic-header.synthetic-payload.synthetic-signature';
 const encryptionKey = Buffer.alloc(32, 31).toString('base64');
@@ -87,6 +89,7 @@ function configurationAndAccessChecks() {
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true })).action, 'revoke_facebook_publication_photo_approval'));
+  check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'approve_facebook_publication_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, analysisRunId: newTestUuid(), attachmentResultId: newTestUuid(), explicitApproval: true })).action, 'approve_facebook_publication_photo'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'exclude_facebook_publication_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, analysisRunId: newTestUuid(), attachmentResultId: newTestUuid(), explicitApproval: true })).action, 'exclude_facebook_publication_photo'));
   for (const invalid of [
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid() },
@@ -458,6 +461,19 @@ async function serviceChecks() {
   await invoke(photoBase, singlePhotoRequest('Verified normal operation.', photoKey));
   check(() => assert.equal(photoBase.providerCalls.length, 1));
 
+  const reviewActions = await makeDependencies();
+  const approveReview = await invoke(reviewActions, reviewActionRequest('approve_facebook_publication_photo'));
+  check(() => assert.equal(approveReview.approvalStatus, 'approved'));
+  check(() => assert.equal(reviewActions.approveInputs[0].analysisRunId, ids.analysisRun));
+  check(() => assert.equal(reviewActions.approveInputs[0].attachmentResultId, ids.analysisResult));
+  const excludeReview = await invoke(reviewActions, reviewActionRequest('exclude_facebook_publication_photo'));
+  check(() => assert.equal(excludeReview.excluded, true));
+  check(() => assert.equal(reviewActions.excludeInputs[0].analysisRunId, ids.analysisRun));
+  check(() => assert.equal(reviewActions.excludeInputs[0].attachmentResultId, ids.analysisResult));
+  const revokeReview = await invoke(reviewActions, { action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true });
+  check(() => assert.equal(revokeReview.approvalStatus, 'revoked'));
+  check(() => assert.deepEqual(Object.keys(reviewActions.revokeInputs[0]).filter((key) => key.includes('Result') || key.includes('Run')), []));
+
   const latestInvalidPhoto = await makeDependencies({ latestAnalysisInvalid: true });
   latestInvalidPhoto.context.connection.granted_scopes = publishingScopes();
   await checkAsync(() => assert.rejects(invoke(latestInvalidPhoto, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED/));
@@ -573,6 +589,7 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
   const statusCalls = [];
   const telemetryEvents = [];
   const revokeInputs = [];
+  const approveInputs = [];
   const excludeInputs = [];
   const falsePositiveInputs = [];
   let photoRevoked = false;
@@ -587,6 +604,10 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
     terminalActors,
     statusCalls,
     telemetryEvents,
+    approveInputs,
+    revokeInputs,
+    excludeInputs,
+    falsePositiveInputs,
     auth: {
       resolveSession: async () => ({ kind: 'company', role: 'admin', company_id: ids.company }),
       assertCompanyAccess: async () => ({ actorAuthUserId: ids.actor, actorName: 'Publisher', actorRole: 'admin' }),
@@ -627,14 +648,19 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
         return selectedAttachment;
       },
       downloadAttachmentBytes: async () => jpegWithExifBytes(),
-      approvePublicationPhoto: async (input) => ({
-        id: input.approvalId,
-        company_id: input.companyId,
-        job_id: input.jobId,
-        attachment_id: input.attachmentId,
-        approval_status: 'approved',
-        approved_at: input.timestamp,
-      }),
+      approvePublicationPhoto: async (input) => {
+        approveInputs.push(input);
+        return {
+          id: input.approvalId,
+          company_id: input.companyId,
+          job_id: input.jobId,
+          attachment_id: input.attachmentId,
+          analysis_run_id: input.analysisRunId,
+          attachment_result_id: input.attachmentResultId,
+          approval_status: 'approved',
+          approved_at: input.timestamp,
+        };
+      },
       revokePublicationPhotoApproval: async (input) => {
         revokeInputs.push(input);
         photoRevoked = true;
@@ -833,6 +859,19 @@ function publishRequest(message, idempotencyKey) {
 
 function singlePhotoRequest(message, idempotencyKey) {
   return { action: 'publish_facebook_single_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, message, idempotencyKey, explicitApproval: true };
+}
+
+function reviewActionRequest(action) {
+  return {
+    action,
+    companyId: ids.company,
+    jobId: ids.job,
+    attachmentId: ids.attachment,
+    analysisRunId: ids.analysisRun,
+    attachmentResultId: ids.analysisResult,
+    explicitApproval: true,
+    ...(action === 'resolve_facebook_publication_photo_false_positive' ? { findingIds: ['finding-1'] } : {}),
+  };
 }
 
 function jpegWithExifBytes() {

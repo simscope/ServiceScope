@@ -82,7 +82,7 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
   const allowed = value.action === 'status'
     ? ['action', 'companyId', 'jobId']
     : value.action === 'approve_facebook_publication_photo'
-      ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'approvalReason']
+      ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'explicitApproval', 'approvalReason']
       : value.action === 'revoke_facebook_publication_photo_approval'
         ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason']
         : value.action === 'exclude_facebook_publication_photo'

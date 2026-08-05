@@ -19,6 +19,7 @@ const [
   migration,
   reviewMigration,
   exactReviewMigration,
+  runtimeClosureMigration,
   aclMigration,
   schema,
   config,
@@ -38,6 +39,7 @@ const [
   read('supabase/migrations/20260803193000_meta_facebook_publish_foundation.sql'),
   read('supabase/migrations/20260805002000_meta_facebook_single_photo_publish_review_fix.sql'),
   read('supabase/migrations/20260805183000_meta_facebook_single_photo_exact_review.sql'),
+  read('supabase/migrations/20260805193000_meta_facebook_single_photo_runtime_closure.sql'),
   read('supabase/migrations/20260804011000_meta_facebook_publish_service_role_acl_fix.sql'),
   read('supabase/schema.sql'),
   read('supabase/config.toml'),
@@ -47,7 +49,7 @@ const [
 
 const browserSources = `${client}\n${panel}\n${aiPage}`;
 const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${mediaAnalysisEdge}`;
-const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}`;
+const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}\n${runtimeClosureMigration}`;
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 
@@ -157,11 +159,15 @@ check(() => assert.match(denoSanitizerTests, /tEXt/));
 check(() => assert.match(denoSanitizerTests, /providerCalls\.length, 0/));
 
 check(() => assert.match(mediaAnalysisEdge, /recordMediaAnalysisResult/));
-check(() => assert.match(mediaAnalysisEdge, /company_media_analysis_runs/));
-check(() => assert.match(mediaAnalysisEdge, /company_media_analysis_attachment_results/));
-check(() => assert.match(mediaAnalysisEdge, /company_media_analysis_privacy_findings/));
+check(() => assert.match(mediaAnalysisEdge, /record_company_media_analysis_result/));
 check(() => assert.match(mediaAnalysisEdge, /attachmentSha256/));
 check(() => assert.doesNotMatch(mediaAnalysisEdge, /finding\.explanation|signedUrl.*insert|primary_email.*insert/i));
+check(() => assert.match(runtimeClosureMigration, /record_company_media_analysis_result/));
+check(() => assert.match(runtimeClosureMigration, /begin_company_facebook_publication_unvalidated_20260805/));
+check(() => assert.match(runtimeClosureMigration, /meta_facebook_publication_audit_metadata_valid\(p_publication_kind, 'begin'/));
+check(() => assert.match(runtimeClosureMigration, /meta_facebook_publication_audit_metadata_valid\(selected_kind, 'complete'/));
+check(() => assert.match(runtimeClosureMigration, /meta_facebook_publication_audit_metadata_valid\(selected_kind, 'fail'/));
+check(() => assert.match(runtimeClosureMigration, /meta_facebook_publication_audit_metadata_valid\(selected_kind, 'unknown'/));
 
 check(() => assert.match(migration, /alter table public\.company_social_publications enable row level security/));
 check(() => assert.match(migration, /revoke all on public\.company_social_publications from public, anon, authenticated/));
