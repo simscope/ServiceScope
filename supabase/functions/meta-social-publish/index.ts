@@ -11,6 +11,7 @@ import {
   runtimePublishingConfig,
 } from '../_shared/meta-publishing/contracts.js';
 import { createFacebookPublishingProvider } from '../_shared/meta-publishing/provider.js';
+import { createImageScriptProcessor } from '../_shared/meta-publishing/imageProcessor.js';
 import {
   createTimeoutController,
   handleMetaPublishing,
@@ -51,6 +52,7 @@ function makeDependencies() {
     auth: createAuthRepository(supabaseUrl, anonKey),
     repository: createRepository(adminClient),
     provider: createFacebookPublishingProvider({ config }),
+    imageProcessor: createImageScriptProcessor(),
     config,
     cryptoApi: globalThis.crypto,
     maxBodyBytes: 24_000,
@@ -132,7 +134,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       if (jobId) publicationQuery = publicationQuery.eq('job_id', jobId);
       const { data: lastPublication, error: publicationError } = await publicationQuery.maybeSingle();
       if (publicationError) throw new MetaPublishingError('INTERNAL_ERROR');
-      return { connection, lastPublication };
+      const eligiblePhotos = jobId ? await listPhotoEligibility(adminClient, companyId, jobId) : [];
+      return { connection, lastPublication, eligiblePhotos };
     },
 
     async getPublicationContext(companyId: string, jobId: string) {
@@ -171,6 +174,125 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       };
     },
 
+    async getPublicationAttachment(companyId: string, jobId: string, attachmentId: string) {
+      const { data, error } = await adminClient
+        .from('job_attachments')
+        .select('id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path,created_at')
+        .eq('id', attachmentId)
+        .eq('company_id', companyId)
+        .eq('job_id', jobId)
+        .maybeSingle();
+      if (error) throw new MetaPublishingError('INTERNAL_ERROR');
+      return data;
+    },
+
+    async downloadAttachmentBytes(input: Record<string, unknown>) {
+      const bucket = String(input.storageBucket ?? '');
+      const path = String(input.storagePath ?? '');
+      const maxBytes = Number(input.maxBytes) || 0;
+      if (!bucket || !path || maxBytes < 1) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
+      const { data, error } = await adminClient.storage.from(bucket).download(path);
+      if (error || !data) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
+      if (data.size < 1 || data.size > maxBytes) throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
+      return new Uint8Array(await data.arrayBuffer());
+    },
+
+    async approvePublicationPhoto(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'approve_company_facebook_publication_photo', {
+        p_approval_id: input.approvalId,
+        p_company_id: input.companyId,
+        p_job_id: input.jobId,
+        p_attachment_id: input.attachmentId,
+        p_analysis_run_id: input.analysisRunId,
+        p_attachment_result_id: input.attachmentResultId,
+        p_attachment_sha256: input.attachmentSha256,
+        p_attachment_mime_type: input.attachmentMimeType,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_approval_reason: input.approvalReason,
+        p_timestamp: input.timestamp,
+      });
+    },
+
+    async revokePublicationPhotoApproval(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'revoke_company_facebook_publication_photo_approval', {
+        p_company_id: input.companyId,
+        p_job_id: input.jobId,
+        p_attachment_id: input.attachmentId,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_revocation_reason: input.revocationReason,
+        p_timestamp: input.timestamp,
+      });
+    },
+
+    async excludePublicationPhoto(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'exclude_company_facebook_publication_photo', {
+        p_company_id: input.companyId,
+        p_job_id: input.jobId,
+        p_attachment_id: input.attachmentId,
+        p_analysis_run_id: input.analysisRunId,
+        p_attachment_result_id: input.attachmentResultId,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_exclusion_reason: input.exclusionReason,
+        p_timestamp: input.timestamp,
+      });
+    },
+
+    async resolvePublicationPhotoFalsePositive(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'resolve_company_media_analysis_false_positive', {
+        p_company_id: input.companyId,
+        p_job_id: input.jobId,
+        p_attachment_id: input.attachmentId,
+        p_analysis_run_id: input.analysisRunId,
+        p_attachment_result_id: input.attachmentResultId,
+        p_finding_ids: input.findingIds,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_resolution_reason: input.resolutionReason,
+        p_timestamp: input.timestamp,
+      });
+    },
+
+    async getPublicationPhotoApproval(companyId: string, jobId: string, attachmentId: string, attachmentSha256: string) {
+      const { data, error } = await adminClient
+        .from('company_social_publication_media_approvals')
+        .select('id,attachment_id,analysis_run_id,approval_status,approved_at,revoked_at')
+        .eq('company_id', companyId)
+        .eq('job_id', jobId)
+        .eq('attachment_id', attachmentId)
+        .eq('attachment_sha256', attachmentSha256)
+        .eq('approval_status', 'approved')
+        .is('revoked_at', null)
+        .order('approved_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) throw new MetaPublishingError('INTERNAL_ERROR');
+      return data;
+    },
+
+    async revalidatePublicationPhotoEligibility(companyId: string, jobId: string, attachmentId: string, attachmentSha256: string) {
+      const rows = await listPhotoEligibility(adminClient, companyId, jobId, attachmentId, attachmentSha256);
+      const eligible = rows.find((row) => row.attachmentId === attachmentId) ?? null;
+      if (!eligible?.eligibleForFacebookPublication || !eligible.approvalId) return null;
+      return {
+        ...eligible,
+        approval: {
+          id: eligible.approvalId,
+          attachment_id: eligible.attachmentId,
+          analysis_run_id: eligible.analysisRunId,
+          approval_status: eligible.approvalStatus,
+          approved_at: eligible.approvedAt,
+          revoked_at: eligible.revokedAt,
+        },
+      };
+    },
+
     async beginPublication(input: Record<string, unknown>) {
       return oneRpcRow(adminClient, 'begin_company_facebook_publication', {
         p_publication_id: input.publicationId,
@@ -180,9 +302,15 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_idempotency_key: input.idempotencyKey,
         p_approved_message: input.message,
         p_message_sha256: input.messageSha256,
+        p_publication_intent_sha256: input.publicationIntentSha256,
+        p_publication_kind: input.publicationKind,
+        p_attachment_id: input.attachmentId,
+        p_safe_mime_type: input.safeMimeType,
+        p_media_count: input.mediaCount,
         p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
+        p_publication_audit_metadata: input.publicationAuditMetadata ?? {},
         p_timestamp: input.timestamp,
       });
     },
@@ -195,6 +323,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
         p_provider_post_id: input.providerPostId,
+        p_provider_media_id: input.providerMediaId,
+        p_publication_audit_metadata: input.publicationAuditMetadata ?? {},
         p_timestamp: input.timestamp,
       });
     },
@@ -213,6 +343,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_provider_error_category: diagnostic.providerCategory ?? 'PROVIDER_REJECTED',
         p_provider_is_transient: diagnostic.providerIsTransient ?? null,
         p_last_error_code: input.lastErrorCode,
+        p_publication_audit_metadata: input.publicationAuditMetadata ?? {},
         p_timestamp: input.timestamp,
       });
     },
@@ -224,10 +355,72 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
+        p_publication_audit_metadata: input.publicationAuditMetadata ?? {},
         p_timestamp: input.timestamp,
       });
     },
   };
+}
+
+async function listPhotoEligibility(
+  adminClient: ReturnType<typeof createClient>,
+  companyId: string,
+  jobId: string,
+  onlyAttachmentId?: string,
+  knownCurrentSha256?: string,
+) {
+  const { data: candidates, error } = await adminClient.rpc('list_company_facebook_publication_photo_candidates', {
+    p_company_id: companyId,
+    p_job_id: jobId,
+    p_attachment_id: onlyAttachmentId ?? null,
+  });
+  if (error || !Array.isArray(candidates) || candidates.length > 20) return [];
+
+  const rows = [];
+  for (const attachment of candidates) {
+    const attachmentId = String(attachment.attachment_id ?? '');
+    if (!attachmentId) continue;
+    const currentSha256 = onlyAttachmentId && knownCurrentSha256
+      ? knownCurrentSha256
+      : await storageSha256(adminClient, attachment);
+    const expectedSha256 = String(attachment.attachment_sha256 ?? '');
+    const checksumMatch = Boolean(currentSha256 && currentSha256 === expectedSha256);
+    rows.push({
+      attachmentId,
+      displayName: safeDisplayName(attachment.name),
+      previewUrl: null,
+      mimeType: String(attachment.mime_type).toLowerCase() === 'image/png' ? 'image/png' : 'image/jpeg',
+      approvalId: typeof attachment.approval_id === 'string' ? attachment.approval_id : null,
+      approvalStatus: 'approved',
+      approvedAt: typeof attachment.approved_at === 'string' ? attachment.approved_at : null,
+      revokedAt: null,
+      analysisRunId: typeof attachment.analysis_run_id === 'string' ? attachment.analysis_run_id : null,
+      attachmentResultId: typeof attachment.attachment_result_id === 'string' ? attachment.attachment_result_id : null,
+      analysisStatus: 'completed',
+      privacyReviewStatus: attachment.privacy_review_status === 'resolved_false_positive'
+        ? 'resolved_false_positive'
+        : 'passed',
+      checksumMatch,
+      eligibleForFacebookPublication: checksumMatch,
+    });
+  }
+  return rows;
+}
+
+async function storageSha256(adminClient: ReturnType<typeof createClient>, attachment: Record<string, unknown>) {
+  const bucket = String(attachment.storage_bucket ?? '');
+  const path = String(attachment.storage_path ?? '');
+  if (!bucket || !path) return null;
+  const { data, error } = await adminClient.storage.from(bucket).download(path);
+  if (error || !data || data.size < 1 || data.size > 12_000_000) return null;
+  const digest = await crypto.subtle.digest('SHA-256', await data.arrayBuffer());
+  return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function safeDisplayName(value: unknown) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  if (!clean || clean.length > 120 || /[<>\u0000-\u001f]/.test(clean)) return 'Approved photo';
+  return clean;
 }
 
 async function oneRpcRow(client: ReturnType<typeof createClient>, name: string, params: Record<string, unknown>) {

@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleMediaAnalysis, HttpError, statusForCode } from '../_shared/media-analysis/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createMediaProviderFromEnv } from '../_shared/media-analysis/providers/openai.js';
-import { signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
+import { privacyFindingCategories, signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -10,6 +10,7 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
 };
 const guards = createMemoryGuards();
+const privacyFindingCategorySet = new Set(privacyFindingCategories);
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -160,7 +161,95 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
       if (error || !data?.signedUrl) return null;
       return data.signedUrl;
     },
+    async recordMediaAnalysisResult(input: Record<string, unknown>) {
+      const request = input.request as Record<string, unknown>;
+      const context = input.context as Record<string, unknown>;
+      const result = input.result as Record<string, unknown>;
+      const runId = crypto.randomUUID();
+      const companyId = String(context.companyId ?? '');
+      const jobId = String(context.jobId ?? request.jobId ?? '');
+      const completedAt = String(input.completedAt ?? new Date().toISOString());
+      const attachmentById = new Map((context.attachments as Array<Record<string, unknown>> ?? []).map((attachment) => [String(attachment.id), attachment]));
+      const persistenceAttachments = [];
+      for (const item of (result.attachments as Array<Record<string, unknown>> ?? [])) {
+        const attachment = attachmentById.get(String(item.id));
+        if (!attachment || item.kind !== 'photo') continue;
+        const checksum = await attachmentSha256(adminClient, attachment);
+        if (!checksum) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+        const privacyFindings = (item.findings as Array<Record<string, unknown>> ?? []).filter((finding) => privacyFindingCategorySet.has(String(finding.category ?? '')));
+        persistenceAttachments.push({
+          attachmentId: String(item.id),
+          attachmentSha256: checksum,
+          detectedMimeType: String(item.mimeType ?? attachment.mimeType ?? '').toLowerCase(),
+          analysisStatus: ['analyzed', 'metadata_only', 'manual_review'].includes(String(item.status)) ? item.status : 'manual_review',
+          privacyFindings: privacyFindings.map((finding) => ({
+            findingId: safeBoundedText(finding.findingId, crypto.randomUUID()),
+            findingCategory: safeFindingCategory(finding.category),
+            riskLevel: ['low', 'medium', 'high'].includes(String(finding.riskLevel)) ? finding.riskLevel : 'high',
+          })),
+        });
+      }
+      const { data, error } = await adminClient.rpc('record_company_media_analysis_result', {
+        p_run_id: runId,
+        p_company_id: companyId,
+        p_job_id: jobId,
+        p_correlation_id: String(request.idempotencyKey ?? runId),
+        p_status: result?.safety?.ok === false ? 'failed' : 'completed',
+        p_provider: safeBoundedText(result.provider, 'unknown'),
+        p_model: typeof result.model === 'string' ? safeBoundedText(result.model, 'unknown') : null,
+        p_analysis_version: 'media-analysis-v1',
+        p_attachments: persistenceAttachments,
+        p_timestamp: completedAt,
+      });
+      if (error || !Array.isArray(data)) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+      const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const resultIdByAttachment = new Map<string, string>();
+      for (const row of data as Array<Record<string, unknown>>) {
+        const attachmentId = String(row.attachment_id ?? '');
+        const returnedRunId = String(row.analysis_run_id ?? '');
+        const attachmentResultId = String(row.attachment_result_id ?? '');
+        if (
+          !uuidPattern.test(attachmentId)
+          || returnedRunId !== runId
+          || !uuidPattern.test(attachmentResultId)
+          || resultIdByAttachment.has(attachmentId)
+        ) {
+          throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+        }
+        resultIdByAttachment.set(attachmentId, attachmentResultId);
+      }
+      if (resultIdByAttachment.size !== persistenceAttachments.length) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+      for (const payload of persistenceAttachments) {
+        if (!resultIdByAttachment.has(String(payload.attachmentId))) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
+      }
+      for (const item of (result.attachments as Array<Record<string, unknown>> ?? [])) {
+        const attachmentResultId = resultIdByAttachment.get(String(item.id));
+        if (!attachmentResultId) continue;
+        item.analysisRunId = runId;
+        item.attachmentResultId = attachmentResultId;
+      }
+    },
   };
+}
+
+async function attachmentSha256(adminClient: ReturnType<typeof createClient>, attachment: Record<string, unknown>) {
+  const bucket = String(attachment.storageBucket ?? attachment.storage_bucket ?? '');
+  const path = String(attachment.storagePath ?? attachment.storage_path ?? '');
+  if (!bucket || !path) return null;
+  const { data, error } = await adminClient.storage.from(bucket).download(path);
+  if (error || !data || data.size > 12_000_000) return null;
+  const digest = await crypto.subtle.digest('SHA-256', await data.arrayBuffer());
+  return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function safeBoundedText(value: unknown, fallback: string) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  return clean && clean.length <= 120 && !/[<>\u0000-\u001f]/.test(clean) ? clean : fallback;
+}
+
+function safeFindingCategory(value: unknown) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  return /^[a-z0-9_]{2,80}$/.test(clean) ? clean : 'unknown_privacy_risk';
 }
 
 function jsonResponse(body: unknown, status = 200) {

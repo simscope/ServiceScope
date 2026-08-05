@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Facebook, Send, ShieldCheck, X } from 'lucide-react';
-import { loadFacebookPublishingStatus, publishFacebookText } from '../../features/meta-publishing/clientApi';
+import { Facebook, Image, Send, ShieldCheck, X } from 'lucide-react';
+import { loadFacebookPublishingStatus, publishFacebookSinglePhoto, publishFacebookText } from '../../features/meta-publishing/clientApi';
 import {
   FACEBOOK_PUBLISH_ERROR_MESSAGES,
   facebookPublishingCharacterCount,
@@ -25,13 +25,22 @@ type FacebookPublishPanelProps = {
   jobStatus: string;
   message: string;
   selectedMediaCount: number;
+  photoCatalog: Array<{
+    attachmentId: string;
+    displayName: string;
+    previewUrl: string;
+    mimeType: 'image/jpeg' | 'image/png';
+  }>;
+  refreshToken: number;
   privacyStatus: string;
 };
 
-export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, selectedMediaCount, privacyStatus }: FacebookPublishPanelProps) {
+export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, selectedMediaCount, photoCatalog, refreshToken, privacyStatus }: FacebookPublishPanelProps) {
   const [snapshot, setSnapshot] = useState<FacebookPublishingSnapshot | null>(null);
   const [statusError, setStatusError] = useState('');
   const [workspace, setWorkspace] = useState(emptyFacebookPublishWorkspace);
+  const [mode, setMode] = useState<'text_only' | 'single_photo'>('text_only');
+  const [selectedAttachmentId, setSelectedAttachmentId] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -42,11 +51,23 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       .then((value) => { if (active) setSnapshot(value); })
       .catch(() => { if (active) setStatusError('Publishing status is unavailable.'); });
     return () => { active = false; };
-  }, [companyId, jobId]);
+  }, [companyId, jobId, refreshToken]);
 
   useEffect(() => {
-    setWorkspace((current) => invalidateFacebookPublishApproval(current, message));
-  }, [message]);
+    setWorkspace((current) => invalidateFacebookPublishApproval(current, message, mode, mode === 'single_photo' ? selectedAttachmentId || null : null));
+  }, [message, mode, selectedAttachmentId]);
+
+  useEffect(() => {
+    if (!selectedAttachmentId) return;
+    const stillEligible = (snapshot?.eligiblePhotos ?? []).some((photo) => (
+      photo.attachmentId === selectedAttachmentId
+      && photo.eligibleForFacebookPublication
+      && photo.approvalStatus === 'approved'
+      && photo.checksumMatch
+      && photoCatalog.some((catalogPhoto) => catalogPhoto.attachmentId === selectedAttachmentId && catalogPhoto.previewUrl)
+    ));
+    if (!stillEligible) setSelectedAttachmentId('');
+  }, [photoCatalog, snapshot, selectedAttachmentId]);
 
   function openConfirmation() {
     let finalMessage = '';
@@ -58,10 +79,16 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
     if (
       !snapshot?.facebookPublishingEnabled
       || !['Completed', 'Warranty'].includes(jobStatus)
+      || (mode === 'single_photo' && !selectedPhoto?.previewUrl)
       || snapshot.lastPublication?.status === 'publishing'
-      || (snapshot.lastPublication?.status === 'delivery_unknown' && !workspace.pageCheckAcknowledged)
+      || snapshot.lastPublication?.status === 'delivery_unknown'
     ) return;
-    setWorkspace(openFacebookPublishConfirmation(finalMessage, crypto.randomUUID()));
+    setWorkspace(openFacebookPublishConfirmation(
+      finalMessage,
+      crypto.randomUUID(),
+      mode,
+      mode === 'single_photo' ? selectedAttachmentId : null,
+    ));
   }
 
   async function publishNow() {
@@ -69,13 +96,16 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
     setWorkspace(begun.state);
     if (!begun.shouldSubmit || !begun.state.idempotencyKey) return;
     try {
-      const result = await publishFacebookText({
+      const common = {
         companyId,
         jobId,
         message: begun.state.approvedMessage,
         idempotencyKey: begun.state.idempotencyKey,
-        explicitApproval: true,
-      });
+        explicitApproval: true as const,
+      };
+      const result = begun.state.mode === 'single_photo'
+        ? await publishFacebookSinglePhoto({ ...common, attachmentId: begun.state.approvedAttachmentId ?? '' })
+        : await publishFacebookText(common);
       setWorkspace((current) => ({ ...current, confirmationOpen: false, submitting: false, result, error: '' }));
       setSnapshot((current) => current ? { ...current, lastPublication: result } : current);
     } catch (error) {
@@ -108,14 +138,25 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
   const publicationInProgress = facebookPublicationInProgress(durablePublication);
   const deliveryUnknown = !publicationInProgress
     && facebookPublicationNeedsPageCheck(durablePublication, workspace.errorCode);
-  const durableUnknownConfirmed = durablePublication?.status === 'delivery_unknown';
   const unsupportedJob = !['Completed', 'Warranty'].includes(jobStatus);
+  const photoCatalogById = new Map(photoCatalog.map((photo) => [photo.attachmentId, photo]));
+  const serverEligiblePhotos = (snapshot?.eligiblePhotos ?? [])
+    .filter((photo) => photo.eligibleForFacebookPublication && photo.approvalStatus === 'approved' && photo.checksumMatch)
+    .map((photo) => {
+      const localPhoto = photoCatalogById.get(photo.attachmentId);
+      return localPhoto?.previewUrl
+        ? { ...photo, displayName: localPhoto.displayName || photo.displayName, previewUrl: localPhoto.previewUrl, mimeType: localPhoto.mimeType }
+        : { ...photo, previewUrl: null };
+    })
+    .filter((photo) => Boolean(photo.previewUrl));
+  const selectedPhoto = serverEligiblePhotos.find((photo) => photo.attachmentId === selectedAttachmentId) ?? null;
   const publishDisabled = !snapshot?.configured
     || !snapshot.facebookPublishingEnabled
     || !normalizedMessage
     || unsupportedJob
+    || (mode === 'single_photo' && !selectedPhoto?.previewUrl)
     || publicationInProgress
-    || (deliveryUnknown && (!durableUnknownConfirmed || !workspace.pageCheckAcknowledged))
+    || deliveryUnknown
     || workspace.submitting;
 
   return (
@@ -132,7 +173,33 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
         </div>
       </div>
 
-      <p>Text-only - selected photos and videos will not be uploaded in this phase.</p>
+      <div className="facebook-publish-mode" role="group" aria-label="Facebook publish mode">
+        <button type="button" className={mode === 'text_only' ? 'active' : ''} onClick={() => setMode('text_only')}>
+          Text only
+        </button>
+        <button type="button" className={mode === 'single_photo' ? 'active' : ''} onClick={() => setMode('single_photo')}>
+          <Image size={15} aria-hidden="true" />
+          Single photo
+        </button>
+      </div>
+      {mode === 'text_only' ? <p>Text-only - selected photos and videos will not be uploaded.</p> : null}
+      {mode === 'single_photo' ? (
+        <div className="facebook-photo-picker">
+          <p>Exactly one approved selected photo will be uploaded to Facebook Page {pageName}.</p>
+          {serverEligiblePhotos.length ? serverEligiblePhotos.map((photo) => (
+            <label className="facebook-photo-option" key={photo.attachmentId}>
+              <input
+                type="radio"
+                name="facebook-single-photo"
+                checked={selectedAttachmentId === photo.attachmentId}
+                onChange={() => setSelectedAttachmentId(photo.attachmentId)}
+              />
+              <img src={photo.previewUrl ?? ''} alt={photo.displayName} />
+              <span>{photo.displayName || 'Approved photo'}</span>
+            </label>
+          )) : <p className="facebook-publish-result error">Approve one analyzed selected photo and wait for server eligibility before publishing with a photo.</p>}
+        </div>
+      ) : null}
       {unsupportedJob ? (
         <p className="facebook-publish-result error">Facebook publishing is available only for Completed and Warranty jobs.</p>
       ) : null}
@@ -142,15 +209,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       {deliveryUnknown ? (
         <div className="facebook-publish-result error">
           <p>Facebook did not confirm whether the post was published.</p>
-          <p>Check the Facebook Page before creating another publication.</p>
-          {durableUnknownConfirmed ? <label className="facebook-publish-approval">
-            <input
-              type="checkbox"
-              checked={workspace.pageCheckAcknowledged}
-              onChange={(event) => setWorkspace((current) => ({ ...current, pageCheckAcknowledged: event.target.checked }))}
-            />
-            <span>I checked the Facebook Page and understand that continuing will create a new publication.</span>
-          </label> : null}
+          <p>Publishing this exact request is blocked until a reconciliation workflow resolves the unknown delivery state.</p>
         </div>
       ) : null}
       {durablePublication?.status === 'failed' && !workspace.error ? (
@@ -183,11 +242,19 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
               </button>
             </header>
             <div className="facebook-publish-preview">{workspace.approvedMessage}</div>
+            {workspace.mode === 'single_photo' && selectedPhoto?.previewUrl ? (
+              <div className="facebook-publish-photo-review">
+                <img src={selectedPhoto.previewUrl} alt={selectedPhoto.displayName} />
+                <span>{selectedPhoto.displayName || 'Approved photo'}</span>
+              </div>
+            ) : null}
             <div className="facebook-publish-review-status">
               <ShieldCheck size={18} aria-hidden="true" />
               <span>{privacyStatus}</span>
             </div>
-            <p>Text-only - {selectedMediaCount ? `${selectedMediaCount} selected media item${selectedMediaCount === 1 ? '' : 's'} will` : 'selected media will'} not be uploaded.</p>
+            {workspace.mode === 'single_photo'
+              ? <p>Facebook will receive exactly one approved photo with the exact text above.</p>
+              : <p>Text-only - {selectedMediaCount ? `${selectedMediaCount} selected media item${selectedMediaCount === 1 ? '' : 's'} will` : 'selected media will'} not be uploaded.</p>}
             <label className="facebook-publish-approval">
               <input
                 type="checkbox"

@@ -2696,3 +2696,3766 @@ revoke all privileges
 on table public.company_social_publications
 from public, anon, authenticated;
 -- META_FACEBOOK_PUBLISH_ACL_FIX_END
+
+-- META_FACEBOOK_SINGLE_PHOTO_PUBLISH_BEGIN
+alter table public.company_social_publications
+  add column publication_kind text not null default 'text_only',
+  add column attachment_id uuid references public.job_attachments(id) on delete restrict,
+  add column safe_mime_type text,
+  add column provider_media_id text,
+  add column media_count smallint not null default 0;
+
+alter table public.company_social_publications
+  add constraint company_social_publications_kind_check
+  check (publication_kind in ('text_only', 'single_photo')),
+  add constraint company_social_publications_media_count_check
+  check (
+    (publication_kind = 'text_only' and media_count = 0 and attachment_id is null and safe_mime_type is null)
+    or (publication_kind = 'single_photo' and media_count = 1 and attachment_id is not null and safe_mime_type in ('image/jpeg', 'image/png', 'image/webp'))
+  ),
+  add constraint company_social_publications_provider_media_id_check
+  check (provider_media_id is null or (
+    char_length(provider_media_id) between 1 and 200
+    and provider_media_id !~ '[[:cntrl:]]'
+  ));
+
+create index company_social_publications_attachment_idx
+  on public.company_social_publications (company_id, job_id, attachment_id)
+  where attachment_id is not null;
+
+create or replace function public.begin_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_connection_id uuid,
+  p_job_id uuid,
+  p_idempotency_key uuid,
+  p_approved_message text,
+  p_message_sha256 bytea,
+  p_publication_kind text,
+  p_attachment_id uuid,
+  p_safe_mime_type text,
+  p_media_count smallint,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_timestamp timestamptz
+)
+returns table (
+  publication_id uuid,
+  publication_status text,
+  publication_approved_at timestamptz,
+  publication_published_at timestamptz,
+  publication_last_error_code text,
+  publication_provider_http_status integer,
+  publication_provider_error_code integer,
+  publication_provider_error_subcode integer,
+  publication_provider_error_category text,
+  publication_provider_is_transient boolean,
+  should_publish boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  existing_publication public.company_social_publications%rowtype;
+  selected_connection public.company_social_connections%rowtype;
+  selected_attachment public.job_attachments%rowtype;
+  created_publication public.company_social_publications%rowtype;
+begin
+  if p_approved_message is null
+    or p_approved_message <> btrim(p_approved_message)
+    or char_length(p_approved_message) not between 1 and 5000
+    or translate(p_approved_message, E'\n', '') ~ '[[:cntrl:]]'
+    or lower(p_approved_message) like '%[private]%'
+    or octet_length(p_message_sha256) <> 32
+    or p_message_sha256 <> sha256(convert_to(p_approved_message, 'UTF8'))
+    or p_publication_kind not in ('text_only', 'single_photo')
+    or (p_publication_kind = 'text_only' and (p_attachment_id is not null or p_safe_mime_type is not null or p_media_count <> 0))
+    or (p_publication_kind = 'single_photo' and (p_attachment_id is null or p_safe_mime_type not in ('image/jpeg', 'image/png', 'image/webp') or p_media_count <> 1))
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
+    raise exception 'invalid publication request';
+  end if;
+
+  perform 1 from public.companies where id = p_company_id for update;
+  if not found then raise exception 'company not found'; end if;
+
+  select * into existing_publication
+  from public.company_social_publications
+  where company_id = p_company_id and idempotency_key = p_idempotency_key;
+
+  if found then
+    if existing_publication.connection_id <> p_connection_id
+      or existing_publication.job_id <> p_job_id
+      or existing_publication.approved_by <> p_actor_id
+      or existing_publication.approved_message <> p_approved_message
+      or existing_publication.message_sha256 <> p_message_sha256
+      or existing_publication.publication_kind <> p_publication_kind
+      or existing_publication.attachment_id is distinct from p_attachment_id
+      or existing_publication.safe_mime_type is distinct from p_safe_mime_type
+      or existing_publication.media_count <> p_media_count then
+      raise exception 'idempotency payload mismatch';
+    end if;
+    return query select
+      existing_publication.id,
+      existing_publication.status,
+      existing_publication.approved_at,
+      existing_publication.published_at,
+      existing_publication.last_error_code,
+      existing_publication.provider_http_status,
+      existing_publication.provider_error_code,
+      existing_publication.provider_error_subcode,
+      existing_publication.provider_error_category,
+      existing_publication.provider_is_transient,
+      false;
+    return;
+  end if;
+
+  perform 1 from public.jobs
+  where id = p_job_id
+    and company_id = p_company_id
+    and status::text in ('Completed', 'Warranty')
+  for update;
+  if not found then raise exception 'invalid publication job'; end if;
+
+  if p_publication_kind = 'single_photo' then
+    select * into selected_attachment
+    from public.job_attachments
+    where id = p_attachment_id
+      and company_id = p_company_id
+      and job_id = p_job_id
+    for key share;
+    if not found
+      or selected_attachment.kind::text = 'video'
+      or lower(selected_attachment.mime_type) <> p_safe_mime_type
+      or selected_attachment.size_bytes < 1
+      or selected_attachment.size_bytes > 12000000
+      or selected_attachment.storage_bucket is null
+      or selected_attachment.storage_path is null then
+      raise exception 'invalid publication attachment';
+    end if;
+  end if;
+
+  select * into selected_connection
+  from public.company_social_connections
+  where id = p_connection_id
+    and company_id = p_company_id
+    and provider = 'meta-facebook-login'
+  for update;
+
+  if not found
+    or selected_connection.status <> 'connected'
+    or selected_connection.facebook_page_id is null
+    or selected_connection.facebook_page_name is null
+    or selected_connection.token_envelope is null
+    or not ('pages_manage_posts' = any(selected_connection.granted_scopes)) then
+    raise exception 'facebook publishing unavailable';
+  end if;
+
+  insert into public.company_social_publications (
+    id, company_id, connection_id, job_id, provider, channel, status,
+    idempotency_key, approved_message, message_sha256, publication_kind,
+    attachment_id, safe_mime_type, media_count, approved_by,
+    approved_at, created_at, updated_at
+  ) values (
+    p_publication_id, p_company_id, p_connection_id, p_job_id,
+    'meta-facebook-login', 'Facebook', 'publishing', p_idempotency_key,
+    p_approved_message, p_message_sha256, p_publication_kind,
+    p_attachment_id, p_safe_mime_type, p_media_count, p_actor_id,
+    p_timestamp, p_timestamp, p_timestamp
+  )
+  returning * into created_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_started', 'meta_social_publication', 'Facebook publication',
+    created_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'status', 'publishing',
+      'publicationKind', p_publication_kind,
+      'mediaCount', p_media_count,
+      'messageCharacterCount', char_length(p_approved_message),
+      'attempts', 0
+    )
+  );
+
+  return query select
+    created_publication.id,
+    created_publication.status,
+    created_publication.approved_at,
+    created_publication.published_at,
+    created_publication.last_error_code,
+    created_publication.provider_http_status,
+    created_publication.provider_error_code,
+    created_publication.provider_error_subcode,
+    created_publication.provider_error_category,
+    created_publication.provider_is_transient,
+    true;
+end;
+$$;
+
+create or replace function public.complete_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_post_id text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  locked_publication public.company_social_publications%rowtype;
+  updated_publication public.company_social_publications%rowtype;
+begin
+  if p_provider_post_id is null
+    or char_length(btrim(p_provider_post_id)) not between 1 and 200
+    or p_provider_post_id ~ '[[:cntrl:]]'
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
+    raise exception 'invalid provider post id';
+  end if;
+
+  select * into locked_publication
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
+  for update;
+  if not found or locked_publication.status <> 'publishing' then
+    raise exception 'invalid publication transition';
+  end if;
+
+  update public.company_social_publications
+  set status = 'published',
+      provider_post_id = btrim(p_provider_post_id),
+      provider_media_id = case when locked_publication.publication_kind = 'single_photo' then btrim(p_provider_post_id) else null end,
+      attempts = 1,
+      provider_http_status = null, provider_error_code = null,
+      provider_error_subcode = null, provider_error_category = null,
+      provider_is_transient = null, last_error_code = null,
+      published_at = p_timestamp, updated_at = p_timestamp
+  where id = locked_publication.id
+  returning * into updated_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_published', 'meta_social_publication', 'Facebook publication',
+    updated_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    jsonb_build_object(
+      'channel', 'Facebook', 'status', 'published',
+      'publicationKind', updated_publication.publication_kind,
+      'mediaCount', updated_publication.media_count,
+      'messageCharacterCount', char_length(updated_publication.approved_message),
+      'attempts', 1
+    )
+  );
+  return next updated_publication;
+end;
+$$;
+
+revoke all on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz) to service_role;
+
+comment on column public.company_social_publications.publication_kind is
+  'Server-only publication kind: text_only or single_photo.';
+comment on column public.company_social_publications.attachment_id is
+  'Server-only bounded job attachment reference for single-photo publications.';
+comment on column public.company_social_publications.safe_mime_type is
+  'Server-validated MIME type used for single-photo publication.';
+comment on column public.company_social_publications.provider_media_id is
+  'Server-only Meta photo identifier. Never return to browser clients.';
+comment on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz) is
+  'Validates and begins one idempotent Facebook Page publication, including optional single-photo metadata, with an atomic safe audit.';
+-- META_FACEBOOK_SINGLE_PHOTO_PUBLISH_END
+
+-- META_FACEBOOK_SINGLE_PHOTO_PUBLISH_CORRECTIVE_BEGIN
+alter table public.company_social_publications
+  add column if not exists publication_intent_sha256 bytea;
+
+update public.company_social_publications
+set publication_intent_sha256 = sha256(convert_to(concat_ws(E'\n',
+  'facebook_publication_intent_v1',
+  'meta-facebook-login',
+  'Facebook',
+  company_id::text,
+  job_id::text,
+  connection_id::text,
+  approved_by::text,
+  coalesce(publication_kind, 'text_only'),
+  approved_message,
+  case when coalesce(publication_kind, 'text_only') = 'single_photo' then attachment_id::text else '' end
+), 'UTF8'))
+where publication_intent_sha256 is null;
+
+alter table public.company_social_publications
+  alter column publication_intent_sha256 set not null,
+  add constraint company_social_publications_intent_sha256_check
+    check (octet_length(publication_intent_sha256) = 32);
+
+create unique index if not exists company_social_publications_company_intent_unique
+  on public.company_social_publications (company_id, publication_intent_sha256);
+
+alter table public.company_social_publications
+  drop constraint if exists company_social_publications_media_count_check,
+  add constraint company_social_publications_media_count_check
+  check (
+    (publication_kind = 'text_only' and media_count = 0 and attachment_id is null and safe_mime_type is null)
+    or (publication_kind = 'single_photo' and media_count = 1 and attachment_id is not null and safe_mime_type in ('image/jpeg', 'image/png'))
+  );
+
+create table if not exists public.company_social_publication_media_approvals (
+  id uuid primary key,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  attachment_id uuid not null references public.job_attachments(id) on delete restrict,
+  analysis_run_id uuid,
+  approval_status text not null,
+  approved_by uuid not null references auth.users(id),
+  approved_at timestamptz not null,
+  revoked_by uuid references auth.users(id),
+  revoked_at timestamptz,
+  approval_reason text,
+  attachment_sha256 bytea not null,
+  attachment_mime_type text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint company_social_publication_media_approvals_status_check
+    check (approval_status in ('approved', 'revoked')),
+  constraint company_social_publication_media_approvals_sha256_check
+    check (octet_length(attachment_sha256) = 32),
+  constraint company_social_publication_media_approvals_mime_check
+    check (attachment_mime_type in ('image/jpeg', 'image/png')),
+  constraint company_social_publication_media_approvals_reason_check
+    check (approval_reason is null or (char_length(approval_reason) <= 240 and approval_reason !~ '[[:cntrl:]<>]')),
+  constraint company_social_publication_media_approvals_revocation_check
+    check ((approval_status = 'approved' and revoked_by is null and revoked_at is null) or (approval_status = 'revoked' and revoked_by is not null and revoked_at is not null))
+);
+
+alter table public.company_social_publication_media_approvals enable row level security;
+revoke all on public.company_social_publication_media_approvals from public, anon, authenticated;
+grant select, insert, update on public.company_social_publication_media_approvals to service_role;
+
+create unique index if not exists company_social_publication_media_approvals_current_unique
+  on public.company_social_publication_media_approvals (company_id, job_id, attachment_id, attachment_sha256)
+  where approval_status = 'approved' and revoked_at is null;
+
+drop function if exists public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, uuid, text, text, timestamptz);
+drop function if exists public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz);
+drop function if exists public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, timestamptz);
+drop function if exists public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, timestamptz);
+
+create or replace function public.approve_company_facebook_publication_photo(
+  p_approval_id uuid,
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_attachment_sha256 bytea,
+  p_attachment_mime_type text,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_approval_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_attachment public.job_attachments%rowtype;
+  approved_row public.company_social_publication_media_approvals%rowtype;
+begin
+  if octet_length(p_attachment_sha256) <> 32
+    or p_attachment_mime_type not in ('image/jpeg', 'image/png')
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_approval_reason is not null and (char_length(p_approval_reason) > 240 or p_approval_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval request';
+  end if;
+
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id and status::text in ('Completed', 'Warranty') for update;
+  if not found then raise exception 'invalid approval job'; end if;
+
+  select * into selected_attachment
+  from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found
+    or selected_attachment.kind::text = 'video'
+    or lower(selected_attachment.mime_type) <> p_attachment_mime_type
+    or selected_attachment.size_bytes < 1
+    or selected_attachment.size_bytes > 12000000
+    or selected_attachment.storage_bucket is null
+    or selected_attachment.storage_path is null then
+    raise exception 'invalid approval attachment';
+  end if;
+
+  update public.company_social_publication_media_approvals
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp
+  where company_id = p_company_id
+    and job_id = p_job_id
+    and attachment_id = p_attachment_id
+    and approval_status = 'approved'
+    and revoked_at is null
+    and attachment_sha256 <> p_attachment_sha256;
+
+  insert into public.company_social_publication_media_approvals (
+    id, company_id, job_id, attachment_id, approval_status, approved_by, approved_at,
+    approval_reason, attachment_sha256, attachment_mime_type, created_at, updated_at
+  ) values (
+    p_approval_id, p_company_id, p_job_id, p_attachment_id, 'approved', p_actor_id, p_timestamp,
+    p_approval_reason, p_attachment_sha256, p_attachment_mime_type, p_timestamp, p_timestamp
+  )
+  on conflict (company_id, job_id, attachment_id, attachment_sha256)
+  where approval_status = 'approved' and revoked_at is null
+  do update set approved_by = excluded.approved_by,
+                approved_at = excluded.approved_at,
+                approval_reason = excluded.approval_reason,
+                updated_at = excluded.updated_at
+  returning * into approved_row;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approved', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval completed.',
+    jsonb_build_object('channel', 'Facebook', 'publicationKind', 'single_photo', 'mediaCount', 1)
+  );
+  return next approved_row;
+end;
+$$;
+
+create or replace function public.begin_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_connection_id uuid,
+  p_job_id uuid,
+  p_idempotency_key uuid,
+  p_approved_message text,
+  p_message_sha256 bytea,
+  p_publication_intent_sha256 bytea,
+  p_publication_kind text,
+  p_attachment_id uuid,
+  p_safe_mime_type text,
+  p_media_count smallint,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_timestamp timestamptz
+)
+returns table (
+  publication_id uuid,
+  publication_status text,
+  publication_approved_at timestamptz,
+  publication_published_at timestamptz,
+  publication_last_error_code text,
+  publication_provider_http_status integer,
+  publication_provider_error_code integer,
+  publication_provider_error_subcode integer,
+  publication_provider_error_category text,
+  publication_provider_is_transient boolean,
+  should_publish boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  existing_publication public.company_social_publications%rowtype;
+  selected_connection public.company_social_connections%rowtype;
+  selected_attachment public.job_attachments%rowtype;
+  created_publication public.company_social_publications%rowtype;
+  expected_intent bytea;
+begin
+  expected_intent := sha256(convert_to(concat_ws(E'\n',
+    'facebook_publication_intent_v1', 'meta-facebook-login', 'Facebook',
+    p_company_id::text, p_job_id::text, p_connection_id::text, p_actor_id::text,
+    p_publication_kind, p_approved_message,
+    case when p_publication_kind = 'single_photo' then p_attachment_id::text else '' end
+  ), 'UTF8'));
+
+  if p_approved_message is null
+    or p_approved_message <> btrim(p_approved_message)
+    or char_length(p_approved_message) not between 1 and 5000
+    or translate(p_approved_message, E'\n', '') ~ '[[:cntrl:]]'
+    or lower(p_approved_message) like '%[private]%'
+    or octet_length(p_message_sha256) <> 32
+    or p_message_sha256 <> sha256(convert_to(p_approved_message, 'UTF8'))
+    or octet_length(p_publication_intent_sha256) <> 32
+    or p_publication_intent_sha256 <> expected_intent
+    or p_publication_kind not in ('text_only', 'single_photo')
+    or (p_publication_kind = 'text_only' and (p_attachment_id is not null or p_safe_mime_type is not null or p_media_count <> 0))
+    or (p_publication_kind = 'single_photo' and (p_attachment_id is null or p_safe_mime_type not in ('image/jpeg', 'image/png') or p_media_count <> 1))
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
+    raise exception 'invalid publication request';
+  end if;
+
+  perform 1 from public.companies where id = p_company_id for update;
+  if not found then raise exception 'company not found'; end if;
+
+  select * into existing_publication
+  from public.company_social_publications
+  where company_id = p_company_id and publication_intent_sha256 = p_publication_intent_sha256;
+
+  if found then
+    return query select
+      existing_publication.id, existing_publication.status, existing_publication.approved_at,
+      existing_publication.published_at, existing_publication.last_error_code,
+      existing_publication.provider_http_status, existing_publication.provider_error_code,
+      existing_publication.provider_error_subcode, existing_publication.provider_error_category,
+      existing_publication.provider_is_transient, false;
+    return;
+  end if;
+
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id and status::text in ('Completed', 'Warranty') for update;
+  if not found then raise exception 'invalid publication job'; end if;
+
+  if p_publication_kind = 'single_photo' then
+    select * into selected_attachment
+    from public.job_attachments
+    where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+    for key share;
+    if not found
+      or selected_attachment.kind::text = 'video'
+      or lower(selected_attachment.mime_type) <> p_safe_mime_type
+      or selected_attachment.size_bytes < 1
+      or selected_attachment.size_bytes > 12000000
+      or selected_attachment.storage_bucket is null
+      or selected_attachment.storage_path is null then
+      raise exception 'invalid publication attachment';
+    end if;
+  end if;
+
+  select * into selected_connection
+  from public.company_social_connections
+  where id = p_connection_id and company_id = p_company_id and provider = 'meta-facebook-login'
+  for update;
+  if not found
+    or selected_connection.status <> 'connected'
+    or selected_connection.facebook_page_id is null
+    or selected_connection.facebook_page_name is null
+    or selected_connection.token_envelope is null
+    or not ('pages_manage_posts' = any(selected_connection.granted_scopes)) then
+    raise exception 'facebook publishing unavailable';
+  end if;
+
+  insert into public.company_social_publications (
+    id, company_id, connection_id, job_id, provider, channel, status,
+    idempotency_key, publication_intent_sha256, approved_message, message_sha256,
+    publication_kind, attachment_id, safe_mime_type, media_count, approved_by,
+    approved_at, created_at, updated_at
+  ) values (
+    p_publication_id, p_company_id, p_connection_id, p_job_id, 'meta-facebook-login', 'Facebook', 'publishing',
+    p_idempotency_key, p_publication_intent_sha256, p_approved_message, p_message_sha256,
+    p_publication_kind, p_attachment_id, p_safe_mime_type, p_media_count, p_actor_id,
+    p_timestamp, p_timestamp, p_timestamp
+  )
+  returning * into created_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_started', 'meta_social_publication', 'Facebook publication',
+    created_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    jsonb_build_object(
+      'channel', 'Facebook', 'status', 'publishing', 'publicationKind', p_publication_kind,
+      'mediaCount', p_media_count, 'messageCharacterCount', char_length(p_approved_message),
+      'attachmentId', case when p_publication_kind = 'single_photo' then p_attachment_id::text else null end,
+      'intentHashPrefix', encode(substring(p_publication_intent_sha256 from 1 for 8), 'hex'),
+      'requestCorrelationId', p_idempotency_key::text, 'attempts', 0
+    )
+  );
+
+  return query select
+    created_publication.id, created_publication.status, created_publication.approved_at,
+    created_publication.published_at, created_publication.last_error_code,
+    created_publication.provider_http_status, created_publication.provider_error_code,
+    created_publication.provider_error_subcode, created_publication.provider_error_category,
+    created_publication.provider_is_transient, true;
+end;
+$$;
+
+create or replace function public.complete_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_post_id text,
+  p_provider_media_id text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  locked_publication public.company_social_publications%rowtype;
+  updated_publication public.company_social_publications%rowtype;
+begin
+  select * into locked_publication
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
+  for update;
+  if not found or locked_publication.status <> 'publishing' then
+    raise exception 'invalid publication transition';
+  end if;
+
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (locked_publication.publication_kind = 'text_only' and (
+      p_provider_post_id is null or char_length(btrim(p_provider_post_id)) not between 1 and 200 or p_provider_post_id ~ '[[:cntrl:]]' or p_provider_media_id is not null
+    ))
+    or (locked_publication.publication_kind = 'single_photo' and (
+      p_provider_post_id is not null or p_provider_media_id is null or char_length(btrim(p_provider_media_id)) not between 1 and 200 or p_provider_media_id ~ '[[:cntrl:]]'
+    )) then
+    raise exception 'invalid provider ids';
+  end if;
+
+  update public.company_social_publications
+  set status = 'published',
+      provider_post_id = case when locked_publication.publication_kind = 'text_only' then btrim(p_provider_post_id) else null end,
+      provider_media_id = case when locked_publication.publication_kind = 'single_photo' then btrim(p_provider_media_id) else null end,
+      attempts = 1,
+      provider_http_status = null, provider_error_code = null,
+      provider_error_subcode = null, provider_error_category = null,
+      provider_is_transient = null, last_error_code = null,
+      published_at = p_timestamp, updated_at = p_timestamp
+  where id = locked_publication.id
+  returning * into updated_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_published', 'meta_social_publication', 'Facebook publication',
+    updated_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    jsonb_build_object(
+      'channel', 'Facebook', 'status', 'published', 'publicationKind', updated_publication.publication_kind,
+      'mediaCount', updated_publication.media_count,
+      'messageCharacterCount', char_length(updated_publication.approved_message),
+      'attachmentId', case when updated_publication.publication_kind = 'single_photo' then updated_publication.attachment_id::text else null end,
+      'intentHashPrefix', encode(substring(updated_publication.publication_intent_sha256 from 1 for 8), 'hex'),
+      'attempts', 1
+    )
+  );
+  return next updated_publication;
+end;
+$$;
+
+revoke all on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz) to service_role;
+grant execute on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, timestamptz) to service_role;
+
+comment on column public.company_social_publications.publication_intent_sha256 is
+  'Server-derived SHA-256 of the canonical publication intent. Browser UUIDs are correlation only.';
+comment on table public.company_social_publication_media_approvals is
+  'Server-only durable human approval for exact single-photo publication attachments and checksums.';
+-- META_FACEBOOK_SINGLE_PHOTO_PUBLISH_CORRECTIVE_END
+
+-- META_FACEBOOK_SINGLE_PHOTO_PUBLISH_REVIEW_FIX_BEGIN
+alter table public.company_social_publications
+  drop constraint if exists company_social_publications_state_shape_check,
+  drop constraint if exists company_social_publications_error_category_check;
+
+alter table public.company_social_publications
+  add constraint company_social_publications_error_category_check
+  check (provider_error_category is null or provider_error_category in (
+    'INVALID_TOKEN',
+    'MISSING_PERMISSION',
+    'PAGE_UNAVAILABLE',
+    'RATE_LIMITED',
+    'PROVIDER_TEMPORARY_ERROR',
+    'PROVIDER_REJECTED',
+    'DELIVERY_UNKNOWN',
+    'RESPONSE_MISSING_POST_ID',
+    'RESPONSE_MISSING_MEDIA_ID'
+  )),
+  add constraint company_social_publications_state_shape_check
+  check (
+    (status = 'publishing'
+      and attempts = 0
+      and provider_post_id is null
+      and provider_media_id is null
+      and published_at is null
+      and provider_http_status is null
+      and provider_error_code is null
+      and provider_error_subcode is null
+      and provider_error_category is null
+      and provider_is_transient is null
+      and last_error_code is null)
+    or (status = 'published'
+      and attempts = 1
+      and published_at is not null
+      and provider_http_status is null
+      and provider_error_code is null
+      and provider_error_subcode is null
+      and provider_error_category is null
+      and provider_is_transient is null
+      and last_error_code is null
+      and (
+        (publication_kind = 'text_only' and provider_post_id is not null and provider_media_id is null)
+        or (publication_kind = 'single_photo' and provider_post_id is null and provider_media_id is not null)
+      ))
+    or (status = 'failed'
+      and attempts = 1
+      and provider_post_id is null
+      and provider_media_id is null
+      and published_at is null
+      and provider_error_category is not null
+      and last_error_code is not null)
+    or (status = 'delivery_unknown'
+      and attempts = 1
+      and provider_post_id is null
+      and provider_media_id is null
+      and published_at is null
+      and provider_error_category = 'DELIVERY_UNKNOWN'
+      and last_error_code = 'META_PUBLICATION_DELIVERY_UNKNOWN')
+  );
+
+create table if not exists public.company_media_analysis_runs (
+  id uuid primary key,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  correlation_id text not null,
+  status text not null,
+  provider text not null,
+  model text,
+  analysis_version text not null,
+  completed_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint company_media_analysis_runs_status_check
+    check (status in ('completed', 'failed')),
+  constraint company_media_analysis_runs_correlation_check
+    check (char_length(correlation_id) between 8 and 200 and correlation_id !~ '[[:cntrl:]<>]'),
+  constraint company_media_analysis_runs_provider_check
+    check (char_length(provider) between 1 and 120 and provider !~ '[[:cntrl:]<>]')
+);
+
+create table if not exists public.company_media_analysis_attachment_results (
+  id uuid primary key,
+  analysis_run_id uuid not null references public.company_media_analysis_runs(id) on delete cascade,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  attachment_id uuid not null references public.job_attachments(id) on delete cascade,
+  attachment_sha256 bytea not null,
+  detected_mime_type text not null,
+  analysis_status text not null,
+  privacy_review_status text not null,
+  excluded boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint company_media_analysis_attachment_sha256_check
+    check (octet_length(attachment_sha256) = 32),
+  constraint company_media_analysis_attachment_mime_check
+    check (detected_mime_type in ('image/jpeg', 'image/png')),
+  constraint company_media_analysis_attachment_privacy_check
+    check (privacy_review_status in ('passed', 'blocked', 'resolved_false_positive')),
+  constraint company_media_analysis_attachment_status_check
+    check (analysis_status in ('analyzed', 'metadata_only', 'manual_review'))
+);
+
+create index if not exists company_media_analysis_attachment_latest_idx
+  on public.company_media_analysis_attachment_results (company_id, job_id, attachment_id, created_at desc);
+
+create table if not exists public.company_media_analysis_privacy_findings (
+  id uuid primary key,
+  analysis_run_id uuid not null references public.company_media_analysis_runs(id) on delete cascade,
+  attachment_result_id uuid not null references public.company_media_analysis_attachment_results(id) on delete cascade,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  job_id uuid not null references public.jobs(id) on delete cascade,
+  attachment_id uuid not null references public.job_attachments(id) on delete cascade,
+  finding_id text not null,
+  finding_category text not null,
+  risk_level text not null,
+  resolved_as_false_positive boolean not null default false,
+  resolved_by uuid references auth.users(id),
+  resolved_at timestamptz,
+  created_at timestamptz not null default now(),
+  constraint company_media_analysis_privacy_finding_safe_check
+    check (
+      finding_id !~ '[[:cntrl:]<>]'
+      and finding_category ~ '^[a-z0-9_]{2,80}
+
+
+      and risk_level in ('low', 'medium', 'high')
+    ),
+  constraint company_media_analysis_privacy_resolution_check
+    check (
+      (resolved_as_false_positive = false and resolved_by is null and resolved_at is null)
+      or (resolved_as_false_positive = true and resolved_by is not null and resolved_at is not null)
+    )
+);
+
+alter table public.company_media_analysis_runs enable row level security;
+alter table public.company_media_analysis_attachment_results enable row level security;
+alter table public.company_media_analysis_privacy_findings enable row level security;
+revoke all on public.company_media_analysis_runs from public, anon, authenticated;
+revoke all on public.company_media_analysis_attachment_results from public, anon, authenticated;
+revoke all on public.company_media_analysis_privacy_findings from public, anon, authenticated;
+grant select, insert, update on public.company_media_analysis_runs to service_role;
+grant select, insert, update on public.company_media_analysis_attachment_results to service_role;
+grant select, insert, update on public.company_media_analysis_privacy_findings to service_role;
+
+alter table public.company_social_publication_media_approvals
+  add constraint company_social_publication_media_approvals_analysis_run_fk
+    foreign key (analysis_run_id) references public.company_media_analysis_runs(id) on delete restrict;
+
+drop function if exists public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz);
+
+create or replace function public.approve_company_facebook_publication_photo(
+  p_approval_id uuid,
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_attachment_sha256 bytea,
+  p_attachment_mime_type text,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_approval_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  selected_attachment public.job_attachments%rowtype;
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  approved_row public.company_social_publication_media_approvals%rowtype;
+begin
+  if octet_length(p_attachment_sha256) <> 32
+    or p_attachment_mime_type not in ('image/jpeg', 'image/png')
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_approval_reason is not null and (char_length(p_approval_reason) > 240 or p_approval_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval request';
+  end if;
+
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id and status::text in ('Completed', 'Warranty') for update;
+  if not found then raise exception 'invalid approval job'; end if;
+
+  select * into selected_attachment
+  from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found
+    or selected_attachment.kind::text = 'video'
+    or lower(selected_attachment.mime_type) <> p_attachment_mime_type
+    or selected_attachment.size_bytes < 1
+    or selected_attachment.size_bytes > 12000000
+    or selected_attachment.storage_bucket is null
+    or selected_attachment.storage_path is null then
+    raise exception 'invalid approval attachment';
+  end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.attachment_sha256 = p_attachment_sha256
+    and ar.detected_mime_type = p_attachment_mime_type
+    and ar.excluded = false
+    and ar.analysis_status in ('analyzed', 'metadata_only')
+    and ar.privacy_review_status in ('passed', 'resolved_false_positive')
+    and run.status = 'completed'
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+  order by ar.created_at desc
+  limit 1;
+  if not found then raise exception 'media analysis evidence required'; end if;
+
+  if exists (
+    select 1
+    from public.company_media_analysis_privacy_findings finding
+    where finding.attachment_result_id = selected_result.id
+      and finding.resolved_as_false_positive = false
+  ) then
+    raise exception 'unresolved media privacy finding';
+  end if;
+
+  update public.company_social_publication_media_approvals
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp
+  where company_id = p_company_id
+    and job_id = p_job_id
+    and attachment_id = p_attachment_id
+    and approval_status = 'approved'
+    and revoked_at is null;
+
+  insert into public.company_social_publication_media_approvals (
+    id, company_id, job_id, attachment_id, analysis_run_id, approval_status, approved_by, approved_at,
+    approval_reason, attachment_sha256, attachment_mime_type, created_at, updated_at
+  ) values (
+    p_approval_id, p_company_id, p_job_id, p_attachment_id, selected_result.analysis_run_id, 'approved', p_actor_id, p_timestamp,
+    p_approval_reason, p_attachment_sha256, p_attachment_mime_type, p_timestamp, p_timestamp
+  )
+  returning * into approved_row;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approved', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval completed.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'mediaCount', 1,
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'analysisStatus', selected_result.analysis_status,
+      'privacyReviewStatus', selected_result.privacy_review_status,
+      'checksumMatch', true,
+      'approvalId', approved_row.id::text
+    )
+  );
+  return next approved_row;
+end;
+$;
+
+create or replace function public.revoke_company_facebook_publication_photo_approval(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_revocation_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  updated_approval public.company_social_publication_media_approvals%rowtype;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_revocation_reason is not null and (char_length(p_revocation_reason) > 240 or p_revocation_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval revocation request';
+  end if;
+
+  perform 1 from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found then raise exception 'invalid approval attachment'; end if;
+
+  update public.company_social_publication_media_approvals
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp,
+      approval_reason = coalesce(p_revocation_reason, approval_reason)
+  where id = (
+    select id
+    from public.company_social_publication_media_approvals
+    where company_id = p_company_id
+      and job_id = p_job_id
+      and attachment_id = p_attachment_id
+      and approval_status = 'approved'
+      and revoked_at is null
+    order by approved_at desc
+    limit 1
+  )
+  returning * into updated_approval;
+  if not found then raise exception 'active approval not found'; end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approval_revoked', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval revoked.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', updated_approval.analysis_run_id::text,
+      'approvalId', updated_approval.id::text,
+      'revokedAt', p_timestamp
+    )
+  );
+  return next updated_approval;
+end;
+$;
+
+drop function if exists public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, timestamptz);
+drop function if exists public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz);
+
+create or replace function public.complete_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_post_id text,
+  p_provider_media_id text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  locked_publication public.company_social_publications%rowtype;
+  updated_publication public.company_social_publications%rowtype;
+  safe_metadata jsonb := coalesce(p_publication_audit_metadata, '{}'::jsonb);
+begin
+  select * into locked_publication
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
+  for update;
+  if not found or locked_publication.status <> 'publishing' then
+    raise exception 'invalid publication transition';
+  end if;
+
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or jsonb_typeof(safe_metadata) <> 'object'
+    or safe_metadata::text ~* '(token|secret|signed|storage|private@example|coordinates|latitude|longitude)'
+    or (locked_publication.publication_kind = 'single_photo' and not (
+      safe_metadata ?& array[
+        'analysisRunId', 'approvalId', 'approvedAt', 'revoked',
+        'originalMime', 'detectedMime', 'sanitizedMime',
+        'originalByteSize', 'sanitizedByteSize',
+        'originalHashPrefix', 'sanitizedHashPrefix',
+        'width', 'height', 'metadataStripped', 'gpsStripped',
+        'sanitizer', 'sanitizerVersion', 'providerCallCount'
+      ]
+    ))
+    or (locked_publication.publication_kind = 'text_only' and (
+      p_provider_post_id is null or char_length(btrim(p_provider_post_id)) not between 1 and 200 or p_provider_post_id ~ '[[:cntrl:]]' or p_provider_media_id is not null
+    ))
+    or (locked_publication.publication_kind = 'single_photo' and (
+      p_provider_post_id is not null or p_provider_media_id is null or char_length(btrim(p_provider_media_id)) not between 1 and 200 or p_provider_media_id ~ '[[:cntrl:]]'
+    )) then
+    raise exception 'invalid provider ids';
+  end if;
+
+  update public.company_social_publications
+  set status = 'published',
+      provider_post_id = case when locked_publication.publication_kind = 'text_only' then btrim(p_provider_post_id) else null end,
+      provider_media_id = case when locked_publication.publication_kind = 'single_photo' then btrim(p_provider_media_id) else null end,
+      attempts = 1,
+      provider_http_status = null, provider_error_code = null,
+      provider_error_subcode = null, provider_error_category = null,
+      provider_is_transient = null, last_error_code = null,
+      published_at = p_timestamp, updated_at = p_timestamp
+  where id = locked_publication.id
+  returning * into updated_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_published', 'meta_social_publication', 'Facebook publication',
+    updated_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    jsonb_build_object(
+      'channel', 'Facebook', 'status', 'published',
+      'publicationKind', updated_publication.publication_kind,
+      'mediaCount', updated_publication.media_count,
+      'messageCharacterCount', char_length(updated_publication.approved_message),
+      'attachmentId', case when updated_publication.publication_kind = 'single_photo' then updated_publication.attachment_id::text else null end,
+      'providerCallCount', 1,
+      'providerMediaId', case when updated_publication.publication_kind = 'single_photo' then updated_publication.provider_media_id else null end,
+      'providerPostId', case when updated_publication.publication_kind = 'text_only' then updated_publication.provider_post_id else null end,
+      'singlePhotoProviderPostIdNull', updated_publication.publication_kind = 'single_photo' and updated_publication.provider_post_id is null,
+      'intentHashPrefix', encode(substring(updated_publication.publication_intent_sha256 from 1 for 8), 'hex'),
+      'attempts', 1
+    ) || safe_metadata
+  );
+  return next updated_publication;
+end;
+$;
+
+create or replace function public.fail_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_http_status integer,
+  p_provider_error_code integer,
+  p_provider_error_subcode integer,
+  p_provider_error_category text,
+  p_provider_is_transient boolean,
+  p_last_error_code text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $
+declare
+  locked_publication public.company_social_publications%rowtype;
+  updated_publication public.company_social_publications%rowtype;
+begin
+  if p_provider_error_category not in (
+      'INVALID_TOKEN', 'MISSING_PERMISSION', 'PAGE_UNAVAILABLE', 'RATE_LIMITED',
+      'PROVIDER_TEMPORARY_ERROR', 'PROVIDER_REJECTED', 'RESPONSE_MISSING_POST_ID',
+      'RESPONSE_MISSING_MEDIA_ID'
+    )
+    or p_last_error_code is null
+    or p_last_error_code !~ '^[A-Z0-9_]{2,80}
+
+
+    or (p_provider_http_status is not null and p_provider_http_status not between 100 and 599)
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80 then
+    raise exception 'invalid publication failure';
+  end if;
+
+  select * into locked_publication
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
+  for update;
+  if not found or locked_publication.status <> 'publishing' then
+    raise exception 'invalid publication transition';
+  end if;
+
+  update public.company_social_publications
+  set status = 'failed', attempts = 1, provider_post_id = null, provider_media_id = null,
+      provider_http_status = p_provider_http_status,
+      provider_error_code = p_provider_error_code,
+      provider_error_subcode = p_provider_error_subcode,
+      provider_error_category = p_provider_error_category,
+      provider_is_transient = p_provider_is_transient,
+      last_error_code = p_last_error_code,
+      published_at = null, updated_at = p_timestamp
+  where id = locked_publication.id
+  returning * into updated_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_failed', 'meta_social_publication', 'Facebook publication',
+    updated_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    jsonb_build_object(
+      'channel', 'Facebook', 'status', 'failed',
+      'publicationKind', updated_publication.publication_kind,
+      'mediaCount', updated_publication.media_count,
+      'providerCallCount', 1,
+      'providerCategory', p_provider_error_category,
+      'messageCharacterCount', char_length(updated_publication.approved_message),
+      'intentHashPrefix', encode(substring(updated_publication.publication_intent_sha256 from 1 for 8), 'hex'),
+      'attempts', 1
+    )
+  );
+  return next updated_publication;
+end;
+$;
+
+revoke all on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) to service_role;
+grant execute on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, timestamptz) to service_role;
+
+comment on table public.company_media_analysis_runs is
+  'Server-only durable media-analysis run evidence for publication media approval.';
+comment on table public.company_media_analysis_attachment_results is
+  'Server-only durable media-analysis attachment evidence with exact checksum and privacy review state.';
+comment on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) is
+  'Revokes the active server-only Facebook publication photo approval for an exact company/job attachment.';
+comment on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) is
+  'Completes one Facebook publication and writes bounded server-derived publication media audit metadata.';
+-- META_FACEBOOK_SINGLE_PHOTO_PUBLISH_REVIEW_FIX_END
+
+
+-- META_FACEBOOK_SINGLE_PHOTO_REVIEW_CLOSURE_BEGIN
+
+create or replace function public.exclude_company_facebook_publication_photo(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_exclusion_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  excluded boolean,
+  revoked_approval_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  revoked_id uuid;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_exclusion_reason is not null and (char_length(p_exclusion_reason) > 240 or p_exclusion_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media exclusion request';
+  end if;
+
+  perform 1 from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found then raise exception 'invalid media exclusion attachment'; end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+  order by ar.created_at desc
+  limit 1
+  for update of ar;
+  if not found then raise exception 'media analysis evidence required'; end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp,
+      approval_reason = coalesce(p_exclusion_reason, approval.approval_reason)
+  where approval.id = (
+    select candidate.id
+    from public.company_social_publication_media_approvals candidate
+    where candidate.company_id = p_company_id
+      and candidate.job_id = p_job_id
+      and candidate.attachment_id = p_attachment_id
+      and candidate.approval_status = 'approved'
+      and candidate.revoked_at is null
+    order by candidate.approved_at desc
+    limit 1
+  )
+  returning approval.id into revoked_id;
+
+  update public.company_media_analysis_attachment_results
+  set excluded = true,
+      privacy_review_status = 'blocked'
+  where id = selected_result.id;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_excluded', 'job_attachment', 'Facebook publication media exclusion',
+    p_attachment_id::text, 'Facebook photo exclusion',
+    'Meta publication media excluded from Facebook photo publishing.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'revokedApprovalId', case when revoked_id is null then null else revoked_id::text end,
+      'excluded', true
+    )
+  );
+
+  return query select p_attachment_id, true, revoked_id;
+end;
+$$;
+
+create or replace function public.resolve_company_media_analysis_false_positive(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_finding_ids text[],
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_resolution_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  privacy_review_status text,
+  resolved_finding_count integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  resolved_count integer;
+  unresolved_count integer;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or p_finding_ids is null
+    or array_length(p_finding_ids, 1) is null
+    or array_length(p_finding_ids, 1) > 50
+    or exists (select 1 from unnest(p_finding_ids) value where value is null or char_length(value) not between 1 and 120 or value !~ '^[A-Za-z0-9_.:-]+$')
+    or (p_resolution_reason is not null and (char_length(p_resolution_reason) > 240 or p_resolution_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid false positive resolution request';
+  end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.excluded = false
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+    and run.status = 'completed'
+  order by ar.created_at desc
+  limit 1
+  for update of ar;
+  if not found then raise exception 'media analysis evidence required'; end if;
+
+  update public.company_media_analysis_privacy_findings finding
+  set resolved_as_false_positive = true,
+      resolved_by = p_actor_id,
+      resolved_at = p_timestamp
+  where finding.attachment_result_id = selected_result.id
+    and finding.company_id = p_company_id
+    and finding.job_id = p_job_id
+    and finding.attachment_id = p_attachment_id
+    and finding.finding_id = any(p_finding_ids)
+    and finding.resolved_as_false_positive = false;
+
+  get diagnostics resolved_count = row_count;
+  if resolved_count < 1 then raise exception 'privacy finding not found'; end if;
+
+  select count(*)::integer into unresolved_count
+  from public.company_media_analysis_privacy_findings finding
+  where finding.attachment_result_id = selected_result.id
+    and finding.resolved_as_false_positive = false;
+
+  if unresolved_count = 0 then
+    update public.company_media_analysis_attachment_results
+    set privacy_review_status = 'resolved_false_positive'
+    where id = selected_result.id;
+    selected_result.privacy_review_status := 'resolved_false_positive';
+  end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_false_positive_resolved', 'job_attachment', 'Facebook publication media false positive',
+    p_attachment_id::text, 'Facebook photo false positive review',
+    'Meta publication media privacy findings were resolved as false positives.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'resolvedFindingCount', resolved_count,
+      'privacyReviewStatus', selected_result.privacy_review_status
+    )
+  );
+
+  return query select p_attachment_id, selected_result.privacy_review_status, resolved_count;
+end;
+$$;
+
+create or replace function public.fail_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_http_status integer,
+  p_provider_error_code integer,
+  p_provider_error_subcode integer,
+  p_provider_error_category text,
+  p_provider_is_transient boolean,
+  p_last_error_code text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  locked_publication public.company_social_publications%rowtype;
+  updated_publication public.company_social_publications%rowtype;
+  safe_metadata jsonb := coalesce(p_publication_audit_metadata, '{}'::jsonb);
+begin
+  if p_provider_error_category not in (
+      'INVALID_TOKEN', 'MISSING_PERMISSION', 'PAGE_UNAVAILABLE', 'RATE_LIMITED',
+      'PROVIDER_TEMPORARY_ERROR', 'PROVIDER_REJECTED', 'RESPONSE_MISSING_POST_ID',
+      'RESPONSE_MISSING_MEDIA_ID'
+    )
+    or p_last_error_code is null
+    or p_last_error_code !~ '^[A-Z0-9_]{2,80}$'
+    or (p_provider_http_status is not null and p_provider_http_status not between 100 and 599)
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or jsonb_typeof(safe_metadata) <> 'object'
+    or safe_metadata::text ~* '(token|secret|signed|storage|private@example|coordinates|latitude|longitude)' then
+    raise exception 'invalid publication failure';
+  end if;
+
+  select * into locked_publication
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
+  for update;
+  if not found or locked_publication.status <> 'publishing' then
+    raise exception 'invalid publication transition';
+  end if;
+
+  update public.company_social_publications
+  set status = 'failed', attempts = 1, provider_post_id = null, provider_media_id = null,
+      provider_http_status = p_provider_http_status,
+      provider_error_code = p_provider_error_code,
+      provider_error_subcode = p_provider_error_subcode,
+      provider_error_category = p_provider_error_category,
+      provider_is_transient = p_provider_is_transient,
+      last_error_code = p_last_error_code,
+      published_at = null, updated_at = p_timestamp
+  where id = locked_publication.id
+  returning * into updated_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_failed', 'meta_social_publication', 'Facebook publication',
+    updated_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    safe_metadata || jsonb_build_object(
+      'channel', 'Facebook', 'status', 'failed',
+      'publicationKind', updated_publication.publication_kind,
+      'mediaCount', updated_publication.media_count,
+      'attachmentId', case when updated_publication.publication_kind = 'single_photo' then updated_publication.attachment_id::text else null end,
+      'providerCallCount', 1,
+      'providerCategory', p_provider_error_category,
+      'messageCharacterCount', char_length(updated_publication.approved_message),
+      'intentHashPrefix', encode(substring(updated_publication.publication_intent_sha256 from 1 for 8), 'hex'),
+      'attempts', 1
+    )
+  );
+  return next updated_publication;
+end;
+$$;
+
+create or replace function public.mark_company_facebook_publication_unknown(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  locked_publication public.company_social_publications%rowtype;
+  updated_publication public.company_social_publications%rowtype;
+  safe_metadata jsonb := coalesce(p_publication_audit_metadata, '{}'::jsonb);
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or jsonb_typeof(safe_metadata) <> 'object'
+    or safe_metadata::text ~* '(token|secret|signed|storage|private@example|coordinates|latitude|longitude)' then
+    raise exception 'invalid publication actor';
+  end if;
+
+  select * into locked_publication
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id
+  for update;
+  if not found or locked_publication.status <> 'publishing' then
+    raise exception 'invalid publication transition';
+  end if;
+
+  update public.company_social_publications
+  set status = 'delivery_unknown', attempts = 1, provider_post_id = null, provider_media_id = null,
+      provider_http_status = null, provider_error_code = null,
+      provider_error_subcode = null, provider_error_category = 'DELIVERY_UNKNOWN',
+      provider_is_transient = null,
+      last_error_code = 'META_PUBLICATION_DELIVERY_UNKNOWN',
+      published_at = null, updated_at = p_timestamp
+  where id = locked_publication.id
+  returning * into updated_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_delivery_unknown', 'meta_social_publication', 'Facebook publication',
+    updated_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    safe_metadata || jsonb_build_object(
+      'channel', 'Facebook', 'status', 'delivery_unknown',
+      'publicationKind', updated_publication.publication_kind,
+      'mediaCount', updated_publication.media_count,
+      'attachmentId', case when updated_publication.publication_kind = 'single_photo' then updated_publication.attachment_id::text else null end,
+      'providerCallCount', 1,
+      'deliveryUnknown', true,
+      'repeatBlocked', true,
+      'reconciliationRequired', true,
+      'messageCharacterCount', char_length(updated_publication.approved_message),
+      'intentHashPrefix', encode(substring(updated_publication.publication_intent_sha256 from 1 for 8), 'hex'),
+      'attempts', 1
+    )
+  );
+  return next updated_publication;
+end;
+$$;
+
+revoke all on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) to service_role;
+grant execute on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz) to service_role;
+
+comment on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz) is
+  'Durably excludes one analyzed job photo from Facebook publication eligibility and atomically revokes any active approval.';
+comment on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) is
+  'Durably resolves bounded media privacy finding ids as false positives without granting publication approval.';
+
+-- META_FACEBOOK_SINGLE_PHOTO_REVIEW_CLOSURE_END
+
+-- META_FACEBOOK_SINGLE_PHOTO_LATEST_AUTHORITY_BEGIN
+
+drop function if exists public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, uuid, text, text, timestamptz);
+drop function if exists public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz);
+drop function if exists public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, timestamptz);
+drop function if exists public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz);
+drop function if exists public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, timestamptz);
+drop function if exists public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, timestamptz);
+drop function if exists public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, timestamptz);
+drop function if exists public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, timestamptz);
+
+create or replace function public.approve_company_facebook_publication_photo(
+  p_approval_id uuid,
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_attachment_sha256 bytea,
+  p_attachment_mime_type text,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_approval_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_attachment public.job_attachments%rowtype;
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  selected_run public.company_media_analysis_runs%rowtype;
+  approved_row public.company_social_publication_media_approvals%rowtype;
+begin
+  if octet_length(p_attachment_sha256) <> 32
+    or p_attachment_mime_type not in ('image/jpeg', 'image/png')
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_approval_reason is not null and (char_length(p_approval_reason) > 240 or p_approval_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval request';
+  end if;
+
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id and status::text in ('Completed', 'Warranty') for update;
+  if not found then raise exception 'invalid approval job'; end if;
+
+  select * into selected_attachment
+  from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found
+    or selected_attachment.kind::text = 'video'
+    or lower(selected_attachment.mime_type) <> p_attachment_mime_type
+    or selected_attachment.size_bytes < 1
+    or selected_attachment.size_bytes > 12000000
+    or selected_attachment.storage_bucket is null
+    or selected_attachment.storage_path is null then
+    raise exception 'invalid approval attachment';
+  end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  where ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+  order by ar.created_at desc, ar.id desc
+  limit 1
+  for update;
+  if not found then raise exception 'media analysis evidence required'; end if;
+
+  select * into selected_run
+  from public.company_media_analysis_runs run
+  where run.id = selected_result.analysis_run_id
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id;
+  if not found
+    or selected_run.status <> 'completed'
+    or selected_result.attachment_sha256 <> p_attachment_sha256
+    or selected_result.detected_mime_type <> p_attachment_mime_type
+    or selected_result.excluded = true
+    or selected_result.analysis_status not in ('analyzed', 'metadata_only')
+    or selected_result.privacy_review_status not in ('passed', 'resolved_false_positive') then
+    raise exception 'media analysis evidence required';
+  end if;
+
+  if exists (
+    select 1
+    from public.company_media_analysis_privacy_findings finding
+    where finding.attachment_result_id = selected_result.id
+      and finding.company_id = p_company_id
+      and finding.job_id = p_job_id
+      and finding.attachment_id = p_attachment_id
+      and finding.resolved_as_false_positive = false
+  ) then
+    raise exception 'unresolved media privacy finding';
+  end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp
+  where approval.company_id = p_company_id
+    and approval.job_id = p_job_id
+    and approval.attachment_id = p_attachment_id
+    and approval.approval_status = 'approved'
+    and approval.revoked_at is null;
+
+  insert into public.company_social_publication_media_approvals (
+    id, company_id, job_id, attachment_id, analysis_run_id, approval_status, approved_by, approved_at,
+    approval_reason, attachment_sha256, attachment_mime_type, created_at, updated_at
+  ) values (
+    p_approval_id, p_company_id, p_job_id, p_attachment_id, selected_result.analysis_run_id, 'approved', p_actor_id, p_timestamp,
+    p_approval_reason, p_attachment_sha256, p_attachment_mime_type, p_timestamp, p_timestamp
+  )
+  returning * into approved_row;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approved', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval completed.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'mediaCount', 1,
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'analysisStatus', selected_result.analysis_status,
+      'privacyReviewStatus', selected_result.privacy_review_status,
+      'checksumMatch', true,
+      'approvalId', approved_row.id::text,
+      'approvalReason', case when p_approval_reason is null then null else btrim(p_approval_reason) end
+    )
+  );
+  return next approved_row;
+end;
+$$;
+
+create or replace function public.revoke_company_facebook_publication_photo_approval(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_revocation_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  updated_approval public.company_social_publication_media_approvals%rowtype;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_revocation_reason is not null and (char_length(p_revocation_reason) > 240 or p_revocation_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval revocation request';
+  end if;
+
+  perform 1 from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found then raise exception 'invalid approval attachment'; end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp,
+      approval_reason = coalesce(p_revocation_reason, approval.approval_reason)
+  where approval.id = (
+    select candidate.id
+    from public.company_social_publication_media_approvals candidate
+    where candidate.company_id = p_company_id
+      and candidate.job_id = p_job_id
+      and candidate.attachment_id = p_attachment_id
+      and candidate.approval_status = 'approved'
+      and candidate.revoked_at is null
+    order by candidate.approved_at desc, candidate.id desc
+    limit 1
+  )
+  returning * into updated_approval;
+  if not found then raise exception 'active approval not found'; end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approval_revoked', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval revoked.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', updated_approval.analysis_run_id::text,
+      'approvalId', updated_approval.id::text,
+      'revokedAt', p_timestamp,
+      'revocationReason', case when p_revocation_reason is null then null else btrim(p_revocation_reason) end
+    )
+  );
+  return next updated_approval;
+end;
+$$;
+
+create or replace function public.exclude_company_facebook_publication_photo(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_exclusion_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  excluded boolean,
+  revoked_approval_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  revoked_id uuid;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_exclusion_reason is not null and (char_length(p_exclusion_reason) > 240 or p_exclusion_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media exclusion request';
+  end if;
+
+  perform 1 from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found then raise exception 'invalid media exclusion attachment'; end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+  order by ar.created_at desc, ar.id desc
+  limit 1
+  for update of ar;
+  if not found then raise exception 'media analysis evidence required'; end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp,
+      approval_reason = coalesce(p_exclusion_reason, approval.approval_reason)
+  where approval.id = (
+    select candidate.id
+    from public.company_social_publication_media_approvals candidate
+    where candidate.company_id = p_company_id
+      and candidate.job_id = p_job_id
+      and candidate.attachment_id = p_attachment_id
+      and candidate.approval_status = 'approved'
+      and candidate.revoked_at is null
+    order by candidate.approved_at desc, candidate.id desc
+    limit 1
+  )
+  returning approval.id into revoked_id;
+
+  update public.company_media_analysis_attachment_results
+  set excluded = true,
+      privacy_review_status = 'blocked'
+  where id = selected_result.id;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_excluded', 'job_attachment', 'Facebook publication media exclusion',
+    p_attachment_id::text, 'Facebook photo exclusion',
+    'Meta publication media excluded from Facebook photo publishing.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'revokedApprovalId', case when revoked_id is null then null else revoked_id::text end,
+      'excluded', true,
+      'exclusionReason', case when p_exclusion_reason is null then null else btrim(p_exclusion_reason) end
+    )
+  );
+
+  return query select p_attachment_id, true, revoked_id;
+end;
+$$;
+
+create or replace function public.resolve_company_media_analysis_false_positive(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_finding_ids text[],
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_resolution_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  privacy_review_status text,
+  resolved_finding_count integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  resolved_count integer;
+  unresolved_count integer;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or p_finding_ids is null
+    or array_length(p_finding_ids, 1) is null
+    or array_length(p_finding_ids, 1) > 50
+    or exists (select 1 from unnest(p_finding_ids) value where value is null or char_length(value) not between 1 and 120 or value !~ '^[A-Za-z0-9_.:-]+$')
+    or (p_resolution_reason is not null and (char_length(p_resolution_reason) > 240 or p_resolution_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid false positive resolution request';
+  end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.excluded = false
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+    and run.status = 'completed'
+  order by ar.created_at desc, ar.id desc
+  limit 1
+  for update of ar;
+  if not found then raise exception 'media analysis evidence required'; end if;
+
+  update public.company_media_analysis_privacy_findings finding
+  set resolved_as_false_positive = true,
+      resolved_by = p_actor_id,
+      resolved_at = p_timestamp
+  where finding.attachment_result_id = selected_result.id
+    and finding.company_id = p_company_id
+    and finding.job_id = p_job_id
+    and finding.attachment_id = p_attachment_id
+    and finding.finding_id = any(p_finding_ids)
+    and finding.resolved_as_false_positive = false;
+
+  get diagnostics resolved_count = row_count;
+  if resolved_count < 1 then raise exception 'privacy finding not found'; end if;
+
+  select count(*)::integer into unresolved_count
+  from public.company_media_analysis_privacy_findings finding
+  where finding.attachment_result_id = selected_result.id
+    and finding.resolved_as_false_positive = false;
+
+  if unresolved_count = 0 then
+    update public.company_media_analysis_attachment_results
+    set privacy_review_status = 'resolved_false_positive'
+    where id = selected_result.id;
+    selected_result.privacy_review_status := 'resolved_false_positive';
+  end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_false_positive_resolved', 'job_attachment', 'Facebook publication media false positive',
+    p_attachment_id::text, 'Facebook photo false positive review',
+    'Meta publication media privacy findings were resolved as false positives.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'resolvedFindingCount', resolved_count,
+      'privacyReviewStatus', selected_result.privacy_review_status,
+      'resolutionReason', case when p_resolution_reason is null then null else btrim(p_resolution_reason) end
+    )
+  );
+
+  return query select p_attachment_id, selected_result.privacy_review_status, resolved_count;
+end;
+$$;
+
+create or replace function public.begin_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_connection_id uuid,
+  p_job_id uuid,
+  p_idempotency_key uuid,
+  p_approved_message text,
+  p_message_sha256 bytea,
+  p_publication_intent_sha256 bytea,
+  p_publication_kind text,
+  p_attachment_id uuid,
+  p_safe_mime_type text,
+  p_media_count smallint,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns table (
+  publication_id uuid,
+  publication_status text,
+  publication_approved_at timestamptz,
+  publication_published_at timestamptz,
+  publication_last_error_code text,
+  publication_provider_http_status integer,
+  publication_provider_error_code integer,
+  publication_provider_error_subcode integer,
+  publication_provider_error_category text,
+  publication_provider_is_transient boolean,
+  should_publish boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  existing_publication public.company_social_publications%rowtype;
+  selected_connection public.company_social_connections%rowtype;
+  selected_attachment public.job_attachments%rowtype;
+  created_publication public.company_social_publications%rowtype;
+  expected_intent bytea;
+  safe_metadata jsonb := coalesce(p_publication_audit_metadata, '{}'::jsonb);
+begin
+  expected_intent := sha256(convert_to(concat_ws(E'\n',
+    'facebook_publication_intent_v1', 'meta-facebook-login', 'Facebook',
+    p_company_id::text, p_job_id::text, p_connection_id::text, p_actor_id::text,
+    p_publication_kind, p_approved_message,
+    case when p_publication_kind = 'single_photo' then p_attachment_id::text else '' end
+  ), 'UTF8'));
+
+  if p_approved_message is null
+    or p_approved_message <> btrim(p_approved_message)
+    or char_length(p_approved_message) not between 1 and 5000
+    or translate(p_approved_message, E'\n', '') ~ '[[:cntrl:]]'
+    or lower(p_approved_message) like '%[private]%'
+    or octet_length(p_message_sha256) <> 32
+    or p_message_sha256 <> sha256(convert_to(p_approved_message, 'UTF8'))
+    or octet_length(p_publication_intent_sha256) <> 32
+    or p_publication_intent_sha256 <> expected_intent
+    or p_publication_kind not in ('text_only', 'single_photo')
+    or (p_publication_kind = 'text_only' and (p_attachment_id is not null or p_safe_mime_type is not null or p_media_count <> 0 or safe_metadata <> '{}'::jsonb))
+    or (p_publication_kind = 'single_photo' and (p_attachment_id is null or p_safe_mime_type not in ('image/jpeg', 'image/png') or p_media_count <> 1))
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or jsonb_typeof(safe_metadata) <> 'object'
+    or safe_metadata::text ~* '(token|secret|signed|storage|private@example|coordinates|latitude|longitude)'
+    or (p_publication_kind = 'single_photo' and not (
+      safe_metadata ?& array[
+        'analysisRunId', 'approvalId', 'approvedAt', 'revoked',
+        'originalMime', 'detectedMime', 'sanitizedMime',
+        'originalByteSize', 'sanitizedByteSize',
+        'originalHashPrefix', 'sanitizedHashPrefix',
+        'width', 'height', 'metadataStripped', 'gpsStripped',
+        'sanitizer', 'sanitizerVersion'
+      ]
+    )) then
+    raise exception 'invalid publication request';
+  end if;
+
+  perform 1 from public.companies where id = p_company_id for update;
+  if not found then raise exception 'company not found'; end if;
+
+  select * into existing_publication
+  from public.company_social_publications
+  where company_id = p_company_id and publication_intent_sha256 = p_publication_intent_sha256;
+
+  if found then
+    return query select
+      existing_publication.id, existing_publication.status, existing_publication.approved_at,
+      existing_publication.published_at, existing_publication.last_error_code,
+      existing_publication.provider_http_status, existing_publication.provider_error_code,
+      existing_publication.provider_error_subcode, existing_publication.provider_error_category,
+      existing_publication.provider_is_transient, false;
+    return;
+  end if;
+
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id and status::text in ('Completed', 'Warranty') for update;
+  if not found then raise exception 'invalid publication job'; end if;
+
+  if p_publication_kind = 'single_photo' then
+    select * into selected_attachment
+    from public.job_attachments
+    where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+    for key share;
+    if not found
+      or selected_attachment.kind::text = 'video'
+      or lower(selected_attachment.mime_type) <> p_safe_mime_type
+      or selected_attachment.size_bytes < 1
+      or selected_attachment.size_bytes > 12000000
+      or selected_attachment.storage_bucket is null
+      or selected_attachment.storage_path is null then
+      raise exception 'invalid publication attachment';
+    end if;
+  end if;
+
+  select * into selected_connection
+  from public.company_social_connections
+  where id = p_connection_id and company_id = p_company_id and provider = 'meta-facebook-login'
+  for update;
+  if not found
+    or selected_connection.status <> 'connected'
+    or selected_connection.facebook_page_id is null
+    or selected_connection.facebook_page_name is null
+    or selected_connection.token_envelope is null
+    or not ('pages_manage_posts' = any(selected_connection.granted_scopes)) then
+    raise exception 'facebook publishing unavailable';
+  end if;
+
+  insert into public.company_social_publications (
+    id, company_id, connection_id, job_id, provider, channel, status,
+    idempotency_key, publication_intent_sha256, approved_message, message_sha256,
+    publication_kind, attachment_id, safe_mime_type, media_count, approved_by,
+    approved_at, created_at, updated_at
+  ) values (
+    p_publication_id, p_company_id, p_connection_id, p_job_id, 'meta-facebook-login', 'Facebook', 'publishing',
+    p_idempotency_key, p_publication_intent_sha256, p_approved_message, p_message_sha256,
+    p_publication_kind, p_attachment_id, p_safe_mime_type, p_media_count, p_actor_id,
+    p_timestamp, p_timestamp, p_timestamp
+  )
+  returning * into created_publication;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_started', 'meta_social_publication', 'Facebook publication',
+    created_publication.id::text, 'Facebook publication',
+    'Meta publication lifecycle action completed.',
+    safe_metadata || jsonb_build_object(
+      'channel', 'Facebook', 'status', 'publishing', 'publicationKind', p_publication_kind,
+      'mediaCount', p_media_count, 'messageCharacterCount', char_length(p_approved_message),
+      'attachmentId', case when p_publication_kind = 'single_photo' then p_attachment_id::text else null end,
+      'providerCallCount', 0,
+      'intentHashPrefix', encode(substring(p_publication_intent_sha256 from 1 for 8), 'hex'),
+      'requestCorrelationId', p_idempotency_key::text, 'attempts', 0
+    )
+  );
+
+  return query select
+    created_publication.id, created_publication.status, created_publication.approved_at,
+    created_publication.published_at, created_publication.last_error_code,
+    created_publication.provider_http_status, created_publication.provider_error_code,
+    created_publication.provider_error_subcode, created_publication.provider_error_category,
+    created_publication.provider_is_transient, true;
+end;
+$$;
+
+revoke all on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) to service_role;
+grant execute on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) to service_role;
+grant execute on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) to service_role;
+grant execute on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz) to service_role;
+
+comment on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) is
+  'Begins a Facebook publication with sanitized publication audit metadata; latest single-photo media evidence remains authoritative.';
+comment on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) is
+  'Approves only the newest durable media analysis result for Facebook single-photo publication.';
+
+-- META_FACEBOOK_SINGLE_PHOTO_LATEST_AUTHORITY_END
+
+
+-- META_FACEBOOK_SINGLE_PHOTO_EXACT_REVIEW_BEGIN
+
+alter table public.company_social_publication_media_approvals
+  add column if not exists revocation_reason text,
+  add column if not exists exclusion_reason text;
+
+alter table public.company_social_publication_media_approvals
+  drop constraint if exists company_social_publication_media_approvals_reason_details_check;
+
+alter table public.company_social_publication_media_approvals
+  add constraint company_social_publication_media_approvals_reason_details_check
+    check (
+      (revocation_reason is null or (char_length(revocation_reason) <= 240 and revocation_reason !~ '[[:cntrl:]<>]'))
+      and (exclusion_reason is null or (char_length(exclusion_reason) <= 240 and exclusion_reason !~ '[[:cntrl:]<>]'))
+    );
+
+create or replace function public.meta_facebook_publication_audit_metadata_valid(
+  p_publication_kind text,
+  p_stage text,
+  p_metadata jsonb,
+  p_provider_call_count integer
+)
+returns boolean
+language sql
+immutable
+set search_path = ''
+as $$
+  with metadata as (
+    select coalesce(p_metadata, '{}'::jsonb) as value
+  ),
+  keys as (
+    select key
+    from metadata, jsonb_object_keys(metadata.value) key
+  ),
+  bad_value as (
+    select 1
+    from metadata, jsonb_each(metadata.value) item
+    where jsonb_typeof(item.value) in ('array', 'object')
+  )
+  select case
+    when p_publication_kind = 'text_only' then (select value = '{}'::jsonb from metadata)
+    when p_publication_kind <> 'single_photo' then false
+    else
+      p_stage in ('begin', 'complete', 'fail', 'unknown')
+      and p_provider_call_count = case when p_stage = 'begin' then 0 else 1 end
+      and (select jsonb_typeof(value) = 'object' and length(value::text) <= 4000 from metadata)
+      and not exists (select 1 from bad_value)
+      and not exists (
+        select 1 from keys
+        where key <> all(array[
+          'attachmentId','analysisRunId','approvalId','approvedAt','revoked',
+          'originalMime','detectedMime','sanitizedMime','originalByteSize','sanitizedByteSize',
+          'originalHashPrefix','sanitizedHashPrefix','width','height','metadataStripped','gpsStripped',
+          'sanitizer','sanitizerVersion','providerCallCount'
+        ])
+      )
+      and (select value ?& array[
+        'attachmentId','analysisRunId','approvalId','approvedAt','revoked',
+        'originalMime','detectedMime','sanitizedMime','originalByteSize','sanitizedByteSize',
+        'originalHashPrefix','sanitizedHashPrefix','width','height','metadataStripped','gpsStripped',
+        'sanitizer','sanitizerVersion','providerCallCount'
+      ] from metadata)
+      and (select value::text !~* '(token|secret|url|https?://|signed|storage|private@example|coordinates|latitude|longitude)' from metadata)
+      and (select value->>'attachmentId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' from metadata)
+      and (select value->>'analysisRunId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' from metadata)
+      and (select value->>'approvalId' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$' from metadata)
+      and (select value->>'approvedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{3})?Z$' from metadata)
+      and (select (value->>'originalMime') in ('image/jpeg','image/png') and (value->>'detectedMime') in ('image/jpeg','image/png') and (value->>'sanitizedMime') in ('image/jpeg','image/png') from metadata)
+      and (select (value->>'originalByteSize')::bigint between 1 and 12000000 and (value->>'sanitizedByteSize')::bigint between 1 and 12000000 from metadata)
+      and (select value->>'originalHashPrefix' ~ '^[0-9a-f]{16}$' and value->>'sanitizedHashPrefix' ~ '^[0-9a-f]{16}$' from metadata)
+      and (select (value->>'width')::integer between 1 and 10000 and (value->>'height')::integer between 1 and 10000 from metadata)
+      and (select value->>'metadataStripped' = 'true' and value->>'gpsStripped' = 'true' from metadata)
+      and (select value->>'sanitizer' = 'ImageScript' and value->>'sanitizerVersion' = '1.3.0' from metadata)
+      and (select value->>'revoked' in ('true', 'false') and (value->>'providerCallCount')::integer = p_provider_call_count from metadata)
+  end;
+$$;
+
+create or replace function public.revoke_company_facebook_publication_photo_approval(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_revocation_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  updated_approval public.company_social_publication_media_approvals%rowtype;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_revocation_reason is not null and (char_length(p_revocation_reason) > 240 or p_revocation_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval revocation request';
+  end if;
+
+  perform 1 from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found then raise exception 'invalid approval attachment'; end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp,
+      revocation_reason = case when p_revocation_reason is null then null else btrim(p_revocation_reason) end
+  where approval.id = (
+    select candidate.id
+    from public.company_social_publication_media_approvals candidate
+    where candidate.company_id = p_company_id
+      and candidate.job_id = p_job_id
+      and candidate.attachment_id = p_attachment_id
+      and candidate.approval_status = 'approved'
+      and candidate.revoked_at is null
+    order by candidate.approved_at desc, candidate.id desc
+    limit 1
+  )
+  returning * into updated_approval;
+  if not found then raise exception 'active approval not found'; end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approval_revoked', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval revoked.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', updated_approval.analysis_run_id::text,
+      'approvalId', updated_approval.id::text,
+      'approvalReason', updated_approval.approval_reason,
+      'revokedAt', p_timestamp,
+      'revocationReason', case when p_revocation_reason is null then null else btrim(p_revocation_reason) end
+    )
+  );
+  return next updated_approval;
+end;
+$$;
+
+drop function if exists public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, text, text, text, timestamptz);
+drop function if exists public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz);
+
+create or replace function public.exclude_company_facebook_publication_photo(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_analysis_run_id uuid,
+  p_attachment_result_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_exclusion_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  excluded boolean,
+  revoked_approval_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  revoked_id uuid;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_exclusion_reason is not null and (char_length(p_exclusion_reason) > 240 or p_exclusion_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media exclusion request';
+  end if;
+
+  perform 1 from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found then raise exception 'invalid media exclusion attachment'; end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.id = p_attachment_result_id
+    and ar.analysis_run_id = p_analysis_run_id
+    and ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.excluded = false
+    and ar.analysis_status in ('analyzed', 'metadata_only')
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+    and run.status = 'completed'
+    and not exists (
+      select 1
+      from public.company_media_analysis_attachment_results newer
+      where newer.company_id = p_company_id
+        and newer.job_id = p_job_id
+        and newer.attachment_id = p_attachment_id
+        and (newer.created_at, newer.id) > (ar.created_at, ar.id)
+    )
+  for update of ar;
+  if not found then raise exception 'media analysis evidence stale or missing'; end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp,
+      exclusion_reason = case when p_exclusion_reason is null then null else btrim(p_exclusion_reason) end
+  where approval.id = (
+    select candidate.id
+    from public.company_social_publication_media_approvals candidate
+    where candidate.company_id = p_company_id
+      and candidate.job_id = p_job_id
+      and candidate.attachment_id = p_attachment_id
+      and candidate.approval_status = 'approved'
+      and candidate.revoked_at is null
+    order by candidate.approved_at desc, candidate.id desc
+    limit 1
+  )
+  returning approval.id into revoked_id;
+
+  update public.company_media_analysis_attachment_results
+  set excluded = true,
+      privacy_review_status = 'blocked'
+  where id = selected_result.id;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_excluded', 'job_attachment', 'Facebook publication media exclusion',
+    p_attachment_id::text, 'Facebook photo exclusion',
+    'Meta publication media excluded from Facebook photo publishing.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'attachmentResultId', selected_result.id::text,
+      'revokedApprovalId', case when revoked_id is null then null else revoked_id::text end,
+      'excluded', true,
+      'exclusionReason', case when p_exclusion_reason is null then null else btrim(p_exclusion_reason) end
+    )
+  );
+
+  return query select p_attachment_id, true, revoked_id;
+end;
+$$;
+
+create or replace function public.resolve_company_media_analysis_false_positive(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_analysis_run_id uuid,
+  p_attachment_result_id uuid,
+  p_finding_ids text[],
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_resolution_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  privacy_review_status text,
+  resolved_finding_count integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  resolved_count integer;
+  unresolved_count integer;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or p_finding_ids is null
+    or array_length(p_finding_ids, 1) is null
+    or array_length(p_finding_ids, 1) > 50
+    or exists (select 1 from unnest(p_finding_ids) value where value is null or char_length(value) not between 1 and 120 or value !~ '^[A-Za-z0-9_.:-]+$')
+    or (p_resolution_reason is not null and (char_length(p_resolution_reason) > 240 or p_resolution_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid false positive resolution request';
+  end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.id = p_attachment_result_id
+    and ar.analysis_run_id = p_analysis_run_id
+    and ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.excluded = false
+    and ar.analysis_status in ('analyzed', 'metadata_only')
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+    and run.status = 'completed'
+    and not exists (
+      select 1
+      from public.company_media_analysis_attachment_results newer
+      where newer.company_id = p_company_id
+        and newer.job_id = p_job_id
+        and newer.attachment_id = p_attachment_id
+        and (newer.created_at, newer.id) > (ar.created_at, ar.id)
+    )
+  for update of ar;
+  if not found then raise exception 'media analysis evidence stale or missing'; end if;
+
+  update public.company_media_analysis_privacy_findings finding
+  set resolved_as_false_positive = true,
+      resolved_by = p_actor_id,
+      resolved_at = p_timestamp
+  where finding.attachment_result_id = selected_result.id
+    and finding.analysis_run_id = selected_result.analysis_run_id
+    and finding.company_id = p_company_id
+    and finding.job_id = p_job_id
+    and finding.attachment_id = p_attachment_id
+    and finding.finding_id = any(p_finding_ids)
+    and finding.resolved_as_false_positive = false;
+
+  get diagnostics resolved_count = row_count;
+  if resolved_count < 1 then raise exception 'privacy finding not found'; end if;
+
+  select count(*)::integer into unresolved_count
+  from public.company_media_analysis_privacy_findings finding
+  where finding.attachment_result_id = selected_result.id
+    and finding.resolved_as_false_positive = false;
+
+  if unresolved_count = 0 then
+    update public.company_media_analysis_attachment_results
+    set privacy_review_status = 'resolved_false_positive'
+    where id = selected_result.id;
+    selected_result.privacy_review_status := 'resolved_false_positive';
+  end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_false_positive_resolved', 'job_attachment', 'Facebook publication media false positive',
+    p_attachment_id::text, 'Facebook photo false positive review',
+    'Meta publication media privacy findings were resolved as false positives.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'attachmentResultId', selected_result.id::text,
+      'resolvedFindingCount', resolved_count,
+      'privacyReviewStatus', selected_result.privacy_review_status,
+      'resolutionReason', case when p_resolution_reason is null then null else btrim(p_resolution_reason) end
+    )
+  );
+
+  return query select p_attachment_id, selected_result.privacy_review_status, resolved_count;
+end;
+$$;
+
+create or replace function public.list_company_facebook_publication_photo_candidates(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid default null
+)
+returns table (
+  attachment_id uuid,
+  attachment_result_id uuid,
+  analysis_run_id uuid,
+  approval_id uuid,
+  approved_at timestamptz,
+  name text,
+  mime_type text,
+  storage_bucket text,
+  storage_path text,
+  attachment_sha256 text,
+  privacy_review_status text
+)
+language sql
+security definer
+set search_path = ''
+as $$
+  with newest as (
+    select distinct on (ar.attachment_id) ar.*
+    from public.company_media_analysis_attachment_results ar
+    where ar.company_id = p_company_id
+      and ar.job_id = p_job_id
+      and (p_attachment_id is null or ar.attachment_id = p_attachment_id)
+    order by ar.attachment_id, ar.created_at desc, ar.id desc
+  ),
+  candidate as (
+    select
+      ja.id as attachment_id,
+      newest.id as attachment_result_id,
+      newest.analysis_run_id,
+      approval.id as approval_id,
+      approval.approved_at,
+      ja.name,
+      lower(ja.mime_type) as mime_type,
+      ja.storage_bucket,
+      ja.storage_path,
+      ('\x' || encode(newest.attachment_sha256, 'hex')) as attachment_sha256,
+      newest.privacy_review_status
+    from newest
+    join public.company_media_analysis_runs run
+      on run.id = newest.analysis_run_id
+      and run.company_id = p_company_id
+      and run.job_id = p_job_id
+      and run.status = 'completed'
+    join public.job_attachments ja
+      on ja.id = newest.attachment_id
+      and ja.company_id = p_company_id
+      and ja.job_id = p_job_id
+      and ja.kind::text <> 'video'
+      and lower(ja.mime_type) in ('image/jpeg', 'image/png')
+      and ja.size_bytes between 1 and 12000000
+      and ja.storage_bucket is not null
+      and ja.storage_path is not null
+    join public.company_social_publication_media_approvals approval
+      on approval.company_id = p_company_id
+      and approval.job_id = p_job_id
+      and approval.attachment_id = newest.attachment_id
+      and approval.analysis_run_id = newest.analysis_run_id
+      and approval.attachment_sha256 = newest.attachment_sha256
+      and approval.approval_status = 'approved'
+      and approval.revoked_at is null
+    where newest.excluded = false
+      and newest.analysis_status in ('analyzed', 'metadata_only')
+      and newest.privacy_review_status in ('passed', 'resolved_false_positive')
+      and not exists (
+        select 1
+        from public.company_media_analysis_privacy_findings finding
+        where finding.attachment_result_id = newest.id
+          and finding.company_id = p_company_id
+          and finding.job_id = p_job_id
+          and finding.attachment_id = newest.attachment_id
+          and finding.resolved_as_false_positive = false
+      )
+  ),
+  counted as (
+    select candidate.*, count(*) over () as candidate_count
+    from candidate
+  )
+  select
+    attachment_id, attachment_result_id, analysis_run_id, approval_id, approved_at,
+    name, mime_type, storage_bucket, storage_path, attachment_sha256, privacy_review_status
+  from counted
+  where candidate_count <= 20
+  order by approved_at desc, approval_id desc
+  limit 20;
+$$;
+
+revoke all on function public.meta_facebook_publication_audit_metadata_valid(text, text, jsonb, integer) from public, anon, authenticated;
+revoke all on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, uuid, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.list_company_facebook_publication_photo_candidates(uuid, uuid, uuid) from public, anon, authenticated;
+
+grant execute on function public.meta_facebook_publication_audit_metadata_valid(text, text, jsonb, integer) to service_role;
+grant execute on function public.revoke_company_facebook_publication_photo_approval(uuid, uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, uuid, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.list_company_facebook_publication_photo_candidates(uuid, uuid, uuid) to service_role;
+
+comment on function public.exclude_company_facebook_publication_photo(uuid, uuid, uuid, uuid, uuid, uuid, text, text, text, timestamptz) is
+  'Excludes exactly the displayed newest durable media analysis attachment result and rejects stale review actions.';
+comment on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) is
+  'Resolves false-positive findings only for exactly the displayed newest durable media analysis attachment result.';
+comment on function public.list_company_facebook_publication_photo_candidates(uuid, uuid, uuid) is
+  'Returns at most 20 newest-result Facebook photo candidates after SQL authority checks; Edge revalidates only these hashes.';
+
+-- META_FACEBOOK_SINGLE_PHOTO_EXACT_REVIEW_END
+
+
+-- META_FACEBOOK_SINGLE_PHOTO_RUNTIME_CLOSURE_BEGIN
+
+drop function if exists public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz);
+
+create or replace function public.meta_facebook_publication_audit_metadata_valid(
+  p_publication_kind text,
+  p_stage text,
+  p_metadata jsonb,
+  p_provider_call_count integer
+)
+returns boolean
+language plpgsql
+immutable
+set search_path = ''
+as $$
+declare
+  value jsonb := coalesce(p_metadata, '{}'::jsonb);
+  allowed_keys text[] := array[
+    'attachmentId','analysisRunId','approvalId','approvedAt','revoked',
+    'originalMime','detectedMime','sanitizedMime','originalByteSize','sanitizedByteSize',
+    'originalHashPrefix','sanitizedHashPrefix','width','height','metadataStripped','gpsStripped',
+    'sanitizer','sanitizerVersion','providerCallCount'
+  ];
+  key text;
+  timestamp_value timestamptz;
+  expected_call_count integer := case when p_stage = 'begin' then 0 else 1 end;
+begin
+  if p_publication_kind = 'text_only' then
+    return value = '{}'::jsonb and p_provider_call_count = expected_call_count;
+  end if;
+  if p_publication_kind <> 'single_photo'
+    or p_stage not in ('begin', 'complete', 'fail', 'unknown')
+    or p_provider_call_count <> expected_call_count
+    or jsonb_typeof(value) <> 'object'
+    or length(value::text) > 4000
+    or value::text ~* '(token|secret|url|https?://|signed|storage|private@example|coordinates|latitude|longitude)' then
+    return false;
+  end if;
+  for key in select jsonb_object_keys(value) loop
+    if key <> all(allowed_keys) then return false; end if;
+  end loop;
+  if not (value ?& allowed_keys) then return false; end if;
+  if exists (select 1 from jsonb_each(value) item where jsonb_typeof(item.value) in ('array','object','null')) then return false; end if;
+  if jsonb_typeof(value->'attachmentId') <> 'string'
+    or jsonb_typeof(value->'analysisRunId') <> 'string'
+    or jsonb_typeof(value->'approvalId') <> 'string'
+    or jsonb_typeof(value->'approvedAt') <> 'string'
+    or jsonb_typeof(value->'originalMime') <> 'string'
+    or jsonb_typeof(value->'detectedMime') <> 'string'
+    or jsonb_typeof(value->'sanitizedMime') <> 'string'
+    or jsonb_typeof(value->'originalHashPrefix') <> 'string'
+    or jsonb_typeof(value->'sanitizedHashPrefix') <> 'string'
+    or jsonb_typeof(value->'sanitizer') <> 'string'
+    or jsonb_typeof(value->'sanitizerVersion') <> 'string'
+    or jsonb_typeof(value->'originalByteSize') <> 'number'
+    or jsonb_typeof(value->'sanitizedByteSize') <> 'number'
+    or jsonb_typeof(value->'width') <> 'number'
+    or jsonb_typeof(value->'height') <> 'number'
+    or jsonb_typeof(value->'providerCallCount') <> 'number'
+    or jsonb_typeof(value->'revoked') <> 'boolean'
+    or jsonb_typeof(value->'metadataStripped') <> 'boolean'
+    or jsonb_typeof(value->'gpsStripped') <> 'boolean' then
+    return false;
+  end if;
+  if (value->>'attachmentId') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or (value->>'analysisRunId') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or (value->>'approvalId') !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+    or (value->>'originalMime') not in ('image/jpeg','image/png')
+    or (value->>'detectedMime') not in ('image/jpeg','image/png')
+    or (value->>'sanitizedMime') not in ('image/jpeg','image/png')
+    or (value->>'originalHashPrefix') !~ '^[0-9a-f]{16}$'
+    or (value->>'sanitizedHashPrefix') !~ '^[0-9a-f]{16}$'
+    or value->>'sanitizer' <> 'ImageScript'
+    or value->>'sanitizerVersion' <> '1.3.0'
+    or (value->>'revoked')::boolean <> false
+    or (value->>'metadataStripped')::boolean <> true
+    or (value->>'gpsStripped')::boolean <> true then
+    return false;
+  end if;
+  if (value->>'originalByteSize') !~ '^[0-9]+$'
+    or (value->>'sanitizedByteSize') !~ '^[0-9]+$'
+    or (value->>'width') !~ '^[0-9]+$'
+    or (value->>'height') !~ '^[0-9]+$'
+    or (value->>'providerCallCount') !~ '^[0-9]+$' then
+    return false;
+  end if;
+  if (value->>'originalByteSize')::bigint not between 1 and 12000000
+    or (value->>'sanitizedByteSize')::bigint not between 1 and 12000000
+    or (value->>'width')::integer not between 1 and 10000
+    or (value->>'height')::integer not between 1 and 10000
+    or (value->>'providerCallCount')::integer <> p_provider_call_count then
+    return false;
+  end if;
+  begin
+    timestamp_value := (value->>'approvedAt')::timestamptz;
+  exception when others then
+    return false;
+  end;
+  return timestamp_value is not null;
+end;
+$$;
+
+alter function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz)
+  rename to begin_company_facebook_publication_unvalidated_20260805;
+alter function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz)
+  rename to complete_company_facebook_publication_unvalidated_20260805;
+alter function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz)
+  rename to fail_company_facebook_publication_unvalidated_20260805;
+alter function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz)
+  rename to mark_company_facebook_publication_unknown_unvalidated_20260805;
+
+create or replace function public.begin_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_connection_id uuid,
+  p_job_id uuid,
+  p_idempotency_key uuid,
+  p_approved_message text,
+  p_message_sha256 bytea,
+  p_publication_intent_sha256 bytea,
+  p_publication_kind text,
+  p_attachment_id uuid,
+  p_safe_mime_type text,
+  p_media_count smallint,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns table (
+  publication_id uuid,
+  publication_status text,
+  publication_approved_at timestamptz,
+  publication_published_at timestamptz,
+  publication_last_error_code text,
+  publication_provider_http_status integer,
+  publication_provider_error_code integer,
+  publication_provider_error_subcode integer,
+  publication_provider_error_category text,
+  publication_provider_is_transient boolean,
+  should_publish boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.meta_facebook_publication_audit_metadata_valid(p_publication_kind, 'begin', coalesce(p_publication_audit_metadata, '{}'::jsonb), 0) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from public.begin_company_facebook_publication_unvalidated_20260805(
+    p_publication_id, p_company_id, p_connection_id, p_job_id, p_idempotency_key,
+    p_approved_message, p_message_sha256, p_publication_intent_sha256, p_publication_kind,
+    p_attachment_id, p_safe_mime_type, p_media_count, p_actor_id, p_actor_name, p_actor_role,
+    p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.complete_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_post_id text,
+  p_provider_media_id text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_kind text;
+begin
+  select publication_kind into selected_kind
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id;
+
+  if found and not public.meta_facebook_publication_audit_metadata_valid(selected_kind, 'complete', coalesce(p_publication_audit_metadata, '{}'::jsonb), 1) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from public.complete_company_facebook_publication_unvalidated_20260805(
+    p_publication_id, p_company_id, p_actor_id, p_actor_name, p_actor_role,
+    p_provider_post_id, p_provider_media_id, p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.fail_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_http_status integer,
+  p_provider_error_code integer,
+  p_provider_error_subcode integer,
+  p_provider_error_category text,
+  p_provider_is_transient boolean,
+  p_last_error_code text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_kind text;
+begin
+  select publication_kind into selected_kind
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id;
+
+  if found and not public.meta_facebook_publication_audit_metadata_valid(selected_kind, 'fail', coalesce(p_publication_audit_metadata, '{}'::jsonb), 1) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from public.fail_company_facebook_publication_unvalidated_20260805(
+    p_publication_id, p_company_id, p_actor_id, p_actor_name, p_actor_role,
+    p_provider_http_status, p_provider_error_code, p_provider_error_subcode,
+    p_provider_error_category, p_provider_is_transient, p_last_error_code,
+    p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.mark_company_facebook_publication_unknown(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_kind text;
+begin
+  select publication_kind into selected_kind
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id;
+
+  if found and not public.meta_facebook_publication_audit_metadata_valid(selected_kind, 'unknown', coalesce(p_publication_audit_metadata, '{}'::jsonb), 1) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from public.mark_company_facebook_publication_unknown_unvalidated_20260805(
+    p_publication_id, p_company_id, p_actor_id, p_actor_name, p_actor_role,
+    p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.approve_company_facebook_publication_photo(
+  p_approval_id uuid,
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_analysis_run_id uuid,
+  p_attachment_result_id uuid,
+  p_attachment_sha256 bytea,
+  p_attachment_mime_type text,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_approval_reason text,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publication_media_approvals
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_attachment public.job_attachments%rowtype;
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  approved_row public.company_social_publication_media_approvals%rowtype;
+begin
+  if octet_length(p_attachment_sha256) <> 32
+    or p_attachment_mime_type not in ('image/jpeg', 'image/png')
+    or p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or (p_approval_reason is not null and (char_length(p_approval_reason) > 240 or p_approval_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid media approval request';
+  end if;
+
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id and status::text in ('Completed', 'Warranty') for update;
+  if not found then raise exception 'invalid approval job'; end if;
+
+  select * into selected_attachment
+  from public.job_attachments
+  where id = p_attachment_id and company_id = p_company_id and job_id = p_job_id
+  for key share;
+  if not found
+    or selected_attachment.kind::text = 'video'
+    or lower(selected_attachment.mime_type) <> p_attachment_mime_type
+    or selected_attachment.size_bytes < 1
+    or selected_attachment.size_bytes > 12000000
+    or selected_attachment.storage_bucket is null
+    or selected_attachment.storage_path is null then
+    raise exception 'invalid approval attachment';
+  end if;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.id = p_attachment_result_id
+    and ar.analysis_run_id = p_analysis_run_id
+    and ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.attachment_sha256 = p_attachment_sha256
+    and ar.detected_mime_type = p_attachment_mime_type
+    and ar.excluded = false
+    and ar.analysis_status in ('analyzed', 'metadata_only')
+    and ar.privacy_review_status in ('passed', 'resolved_false_positive')
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+    and run.status = 'completed'
+    and not exists (
+      select 1 from public.company_media_analysis_attachment_results newer
+      where newer.company_id = p_company_id
+        and newer.job_id = p_job_id
+        and newer.attachment_id = p_attachment_id
+        and (newer.created_at, newer.id) > (ar.created_at, ar.id)
+    )
+  for update of ar;
+  if not found then raise exception 'media analysis evidence stale or missing'; end if;
+
+  if exists (
+    select 1
+    from public.company_media_analysis_privacy_findings finding
+    where finding.attachment_result_id = selected_result.id
+      and finding.company_id = p_company_id
+      and finding.job_id = p_job_id
+      and finding.attachment_id = p_attachment_id
+      and finding.resolved_as_false_positive = false
+  ) then
+    raise exception 'unresolved media privacy finding';
+  end if;
+
+  update public.company_social_publication_media_approvals approval
+  set approval_status = 'revoked',
+      revoked_by = p_actor_id,
+      revoked_at = p_timestamp,
+      updated_at = p_timestamp
+  where approval.company_id = p_company_id
+    and approval.job_id = p_job_id
+    and approval.attachment_id = p_attachment_id
+    and approval.approval_status = 'approved'
+    and approval.revoked_at is null;
+
+  insert into public.company_social_publication_media_approvals (
+    id, company_id, job_id, attachment_id, analysis_run_id, approval_status, approved_by, approved_at,
+    approval_reason, attachment_sha256, attachment_mime_type, created_at, updated_at
+  ) values (
+    p_approval_id, p_company_id, p_job_id, p_attachment_id, selected_result.analysis_run_id, 'approved', p_actor_id, p_timestamp,
+    p_approval_reason, p_attachment_sha256, p_attachment_mime_type, p_timestamp, p_timestamp
+  )
+  returning * into approved_row;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_approved', 'job_attachment', 'Facebook publication media approval',
+    p_attachment_id::text, 'Facebook photo approval',
+    'Meta publication media approval completed.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'mediaCount', 1,
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'attachmentResultId', selected_result.id::text,
+      'analysisStatus', selected_result.analysis_status,
+      'privacyReviewStatus', selected_result.privacy_review_status,
+      'checksumMatch', true,
+      'approvalId', approved_row.id::text,
+      'approvalReason', case when p_approval_reason is null then null else btrim(p_approval_reason) end
+    )
+  );
+  return next approved_row;
+end;
+$$;
+
+create or replace function public.resolve_company_media_analysis_false_positive(
+  p_company_id uuid,
+  p_job_id uuid,
+  p_attachment_id uuid,
+  p_analysis_run_id uuid,
+  p_attachment_result_id uuid,
+  p_finding_ids text[],
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_resolution_reason text,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  privacy_review_status text,
+  resolved_finding_count integer
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_result public.company_media_analysis_attachment_results%rowtype;
+  unique_finding_count integer;
+  unresolved_count integer;
+begin
+  if p_actor_name is null
+    or char_length(btrim(p_actor_name)) not between 1 and 120
+    or p_actor_role is null
+    or char_length(btrim(p_actor_role)) not between 1 and 80
+    or p_finding_ids is null
+    or array_length(p_finding_ids, 1) is null
+    or array_length(p_finding_ids, 1) > 50
+    or exists (select 1 from unnest(p_finding_ids) value where value is null or char_length(value) not between 1 and 120 or value !~ '^[A-Za-z0-9_.:-]+$')
+    or (select count(*) from unnest(p_finding_ids) value) <> (select count(distinct value) from unnest(p_finding_ids) value)
+    or (p_resolution_reason is not null and (char_length(p_resolution_reason) > 240 or p_resolution_reason ~ '[[:cntrl:]<>]')) then
+    raise exception 'invalid false positive resolution request';
+  end if;
+  select count(distinct value)::integer into unique_finding_count from unnest(p_finding_ids) value;
+
+  select ar.* into selected_result
+  from public.company_media_analysis_attachment_results ar
+  join public.company_media_analysis_runs run on run.id = ar.analysis_run_id
+  where ar.id = p_attachment_result_id
+    and ar.analysis_run_id = p_analysis_run_id
+    and ar.company_id = p_company_id
+    and ar.job_id = p_job_id
+    and ar.attachment_id = p_attachment_id
+    and ar.excluded = false
+    and ar.analysis_status in ('analyzed', 'metadata_only')
+    and run.company_id = p_company_id
+    and run.job_id = p_job_id
+    and run.status = 'completed'
+    and not exists (
+      select 1
+      from public.company_media_analysis_attachment_results newer
+      where newer.company_id = p_company_id
+        and newer.job_id = p_job_id
+        and newer.attachment_id = p_attachment_id
+        and (newer.created_at, newer.id) > (ar.created_at, ar.id)
+    )
+  for update of ar;
+  if not found then raise exception 'media analysis evidence stale or missing'; end if;
+
+  if (
+    select count(*)::integer
+    from public.company_media_analysis_privacy_findings finding
+    where finding.attachment_result_id = selected_result.id
+      and finding.analysis_run_id = selected_result.analysis_run_id
+      and finding.company_id = p_company_id
+      and finding.job_id = p_job_id
+      and finding.attachment_id = p_attachment_id
+      and finding.finding_id = any(p_finding_ids)
+      and finding.resolved_as_false_positive = false
+  ) <> unique_finding_count then
+    raise exception 'privacy finding set mismatch';
+  end if;
+
+  update public.company_media_analysis_privacy_findings finding
+  set resolved_as_false_positive = true,
+      resolved_by = p_actor_id,
+      resolved_at = p_timestamp
+  where finding.attachment_result_id = selected_result.id
+    and finding.analysis_run_id = selected_result.analysis_run_id
+    and finding.company_id = p_company_id
+    and finding.job_id = p_job_id
+    and finding.attachment_id = p_attachment_id
+    and finding.finding_id = any(p_finding_ids)
+    and finding.resolved_as_false_positive = false;
+
+  get diagnostics resolved_finding_count = row_count;
+  if resolved_finding_count <> unique_finding_count then
+    raise exception 'privacy finding set mismatch';
+  end if;
+
+  select count(*)::integer into unresolved_count
+  from public.company_media_analysis_privacy_findings finding
+  where finding.attachment_result_id = selected_result.id
+    and finding.resolved_as_false_positive = false;
+
+  if unresolved_count = 0 then
+    update public.company_media_analysis_attachment_results
+    set privacy_review_status = 'resolved_false_positive'
+    where id = selected_result.id;
+    selected_result.privacy_review_status := 'resolved_false_positive';
+  end if;
+
+  insert into public.audit_events (
+    company_id, actor_user_id, actor_name, actor_role, category, action,
+    resource_type, resource, resource_id, resource_label, details, metadata
+  ) values (
+    p_company_id, p_actor_id, btrim(p_actor_name), btrim(p_actor_role), 'access',
+    'meta_publication_media_false_positive_resolved', 'job_attachment', 'Facebook publication media false positive',
+    p_attachment_id::text, 'Facebook photo false positive review',
+    'Meta publication media privacy findings were resolved as false positives.',
+    jsonb_build_object(
+      'channel', 'Facebook',
+      'publicationKind', 'single_photo',
+      'attachmentId', p_attachment_id::text,
+      'analysisRunId', selected_result.analysis_run_id::text,
+      'attachmentResultId', selected_result.id::text,
+      'resolvedFindingCount', resolved_finding_count,
+      'privacyReviewStatus', selected_result.privacy_review_status,
+      'resolutionReason', case when p_resolution_reason is null then null else btrim(p_resolution_reason) end
+    )
+  );
+
+  return query select p_attachment_id, selected_result.privacy_review_status, resolved_finding_count;
+end;
+$$;
+
+create or replace function public.record_company_media_analysis_result(
+  p_run_id uuid,
+  p_company_id uuid,
+  p_job_id uuid,
+  p_correlation_id text,
+  p_status text,
+  p_provider text,
+  p_model text,
+  p_analysis_version text,
+  p_attachments jsonb,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  analysis_run_id uuid,
+  attachment_result_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  item jsonb;
+  finding jsonb;
+  result_id uuid;
+  attachment_row public.job_attachments%rowtype;
+  privacy_count integer;
+begin
+  if p_status not in ('completed','failed')
+    or p_correlation_id is null or char_length(p_correlation_id) not between 1 and 160
+    or p_provider is null or char_length(p_provider) not between 1 and 80
+    or p_analysis_version <> 'media-analysis-v1'
+    or jsonb_typeof(p_attachments) <> 'array'
+    or jsonb_array_length(p_attachments) > 15 then
+    raise exception 'invalid media analysis persistence request';
+  end if;
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id for key share;
+  if not found then raise exception 'invalid media analysis job'; end if;
+
+  insert into public.company_media_analysis_runs (
+    id, company_id, job_id, correlation_id, status, provider, model, analysis_version,
+    completed_at, created_at, updated_at
+  ) values (
+    p_run_id, p_company_id, p_job_id, p_correlation_id, p_status, p_provider, p_model, p_analysis_version,
+    p_timestamp, p_timestamp, p_timestamp
+  );
+
+  for item in select value from jsonb_array_elements(p_attachments) value loop
+    if jsonb_typeof(item) <> 'object'
+      or jsonb_typeof(item->'attachmentId') <> 'string'
+      or jsonb_typeof(item->'attachmentSha256') <> 'string'
+      or jsonb_typeof(item->'detectedMimeType') <> 'string'
+      or jsonb_typeof(item->'analysisStatus') <> 'string'
+      or jsonb_typeof(item->'privacyFindings') <> 'array'
+      or jsonb_array_length(item->'privacyFindings') > 50
+      or (item->>'attachmentSha256') !~ '^\\x[0-9a-f]{64}$'
+      or (item->>'detectedMimeType') not in ('image/jpeg','image/png','image/webp')
+      or (item->>'analysisStatus') not in ('analyzed','metadata_only','manual_review') then
+      raise exception 'invalid media analysis attachment payload';
+    end if;
+    select * into attachment_row
+    from public.job_attachments
+    where id = (item->>'attachmentId')::uuid
+      and company_id = p_company_id
+      and job_id = p_job_id
+    for key share;
+    if not found then raise exception 'invalid media analysis attachment'; end if;
+
+    result_id := gen_random_uuid();
+    privacy_count := jsonb_array_length(item->'privacyFindings');
+    insert into public.company_media_analysis_attachment_results (
+      id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256,
+      detected_mime_type, analysis_status, privacy_review_status, excluded, created_at
+    ) values (
+      result_id, p_run_id, p_company_id, p_job_id, attachment_row.id,
+      decode(substring(item->>'attachmentSha256' from 3), 'hex'),
+      item->>'detectedMimeType', item->>'analysisStatus',
+      case when privacy_count > 0 then 'blocked' else 'passed' end,
+      false, p_timestamp
+    );
+
+    for finding in select value from jsonb_array_elements(item->'privacyFindings') value loop
+      if jsonb_typeof(finding) <> 'object'
+        or jsonb_typeof(finding->'findingId') <> 'string'
+        or jsonb_typeof(finding->'findingCategory') <> 'string'
+        or jsonb_typeof(finding->'riskLevel') <> 'string'
+        or char_length(finding->>'findingId') not between 1 and 120
+        or (finding->>'findingId') !~ '^[A-Za-z0-9_.:-]+$'
+        or (finding->>'findingCategory') not in ('possible_license_plate','possible_address','possible_email','possible_phone','possible_face','unknown_privacy_risk')
+        or (finding->>'riskLevel') not in ('low','medium','high') then
+        raise exception 'invalid media analysis finding payload';
+      end if;
+      insert into public.company_media_analysis_privacy_findings (
+        id, analysis_run_id, attachment_result_id, company_id, job_id, attachment_id,
+        finding_id, finding_category, risk_level, resolved_as_false_positive, created_at
+      ) values (
+        gen_random_uuid(), p_run_id, result_id, p_company_id, p_job_id, attachment_row.id,
+        finding->>'findingId', finding->>'findingCategory', finding->>'riskLevel', false, p_timestamp
+      );
+    end loop;
+
+    attachment_id := attachment_row.id;
+    analysis_run_id := p_run_id;
+    attachment_result_id := result_id;
+    return next;
+  end loop;
+end;
+$$;
+
+revoke all on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) from public, anon, authenticated;
+revoke all on function public.record_company_media_analysis_result(uuid, uuid, uuid, text, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.meta_facebook_publication_audit_metadata_valid(text, text, jsonb, integer) from public, anon, authenticated;
+revoke all on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.begin_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.complete_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) from public, anon, authenticated;
+revoke all on function public.mark_company_facebook_publication_unknown_unvalidated_20260805(uuid, uuid, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.resolve_company_media_analysis_false_positive(uuid, uuid, uuid, uuid, uuid, text[], uuid, text, text, text, timestamptz) to service_role;
+grant execute on function public.record_company_media_analysis_result(uuid, uuid, uuid, text, text, text, text, text, jsonb, timestamptz) to service_role;
+grant execute on function public.meta_facebook_publication_audit_metadata_valid(text, text, jsonb, integer) to service_role;
+grant execute on function public.begin_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) to service_role;
+grant execute on function public.complete_company_facebook_publication(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) to service_role;
+grant execute on function public.fail_company_facebook_publication(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) to service_role;
+grant execute on function public.mark_company_facebook_publication_unknown(uuid, uuid, uuid, text, text, jsonb, timestamptz) to service_role;
+
+comment on function public.approve_company_facebook_publication_photo(uuid, uuid, uuid, uuid, uuid, uuid, bytea, text, uuid, text, text, text, timestamptz) is
+  'Approves only the exact displayed newest durable media-analysis attachment result.';
+comment on function public.record_company_media_analysis_result(uuid, uuid, uuid, text, text, text, text, text, jsonb, timestamptz) is
+  'Atomically records one media-analysis run, attachment results, and privacy findings, returning durable result ids.';
+
+-- META_FACEBOOK_SINGLE_PHOTO_RUNTIME_CLOSURE_END
+
+
+
+-- META_FACEBOOK_SINGLE_PHOTO_PERSISTENCE_CLOSURE_BEGIN
+
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated, service_role;
+
+alter function public.begin_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz)
+  set schema private;
+alter function public.complete_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz)
+  set schema private;
+alter function public.fail_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz)
+  set schema private;
+alter function public.mark_company_facebook_publication_unknown_unvalidated_20260805(uuid, uuid, uuid, text, text, jsonb, timestamptz)
+  set schema private;
+
+revoke all on function private.begin_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, uuid, uuid, text, bytea, bytea, text, uuid, text, smallint, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated, service_role;
+revoke all on function private.complete_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated, service_role;
+revoke all on function private.fail_company_facebook_publication_unvalidated_20260805(uuid, uuid, uuid, text, text, integer, integer, integer, text, boolean, text, jsonb, timestamptz) from public, anon, authenticated, service_role;
+revoke all on function private.mark_company_facebook_publication_unknown_unvalidated_20260805(uuid, uuid, uuid, text, text, jsonb, timestamptz) from public, anon, authenticated, service_role;
+
+create or replace function public.begin_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_connection_id uuid,
+  p_job_id uuid,
+  p_idempotency_key uuid,
+  p_approved_message text,
+  p_message_sha256 bytea,
+  p_publication_intent_sha256 bytea,
+  p_publication_kind text,
+  p_attachment_id uuid,
+  p_safe_mime_type text,
+  p_media_count smallint,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns table (
+  publication_id uuid,
+  publication_status text,
+  publication_approved_at timestamptz,
+  publication_published_at timestamptz,
+  publication_last_error_code text,
+  publication_provider_http_status integer,
+  publication_provider_error_code integer,
+  publication_provider_error_subcode integer,
+  publication_provider_error_category text,
+  publication_provider_is_transient boolean,
+  should_publish boolean
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if not public.meta_facebook_publication_audit_metadata_valid(p_publication_kind, 'begin', coalesce(p_publication_audit_metadata, '{}'::jsonb), 0) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from private.begin_company_facebook_publication_unvalidated_20260805(
+    p_publication_id, p_company_id, p_connection_id, p_job_id, p_idempotency_key,
+    p_approved_message, p_message_sha256, p_publication_intent_sha256, p_publication_kind,
+    p_attachment_id, p_safe_mime_type, p_media_count, p_actor_id, p_actor_name, p_actor_role,
+    p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.complete_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_post_id text,
+  p_provider_media_id text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_kind text;
+begin
+  select publication_kind into selected_kind
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id;
+
+  if found and not public.meta_facebook_publication_audit_metadata_valid(selected_kind, 'complete', coalesce(p_publication_audit_metadata, '{}'::jsonb), 1) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from private.complete_company_facebook_publication_unvalidated_20260805(
+    p_publication_id, p_company_id, p_actor_id, p_actor_name, p_actor_role,
+    p_provider_post_id, p_provider_media_id, p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.fail_company_facebook_publication(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_provider_http_status integer,
+  p_provider_error_code integer,
+  p_provider_error_subcode integer,
+  p_provider_error_category text,
+  p_provider_is_transient boolean,
+  p_last_error_code text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_kind text;
+begin
+  select publication_kind into selected_kind
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id;
+
+  if found and not public.meta_facebook_publication_audit_metadata_valid(selected_kind, 'fail', coalesce(p_publication_audit_metadata, '{}'::jsonb), 1) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from private.fail_company_facebook_publication_unvalidated_20260805(
+    p_publication_id, p_company_id, p_actor_id, p_actor_name, p_actor_role,
+    p_provider_http_status, p_provider_error_code, p_provider_error_subcode,
+    p_provider_error_category, p_provider_is_transient, p_last_error_code,
+    p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+create or replace function public.mark_company_facebook_publication_unknown(
+  p_publication_id uuid,
+  p_company_id uuid,
+  p_actor_id uuid,
+  p_actor_name text,
+  p_actor_role text,
+  p_publication_audit_metadata jsonb,
+  p_timestamp timestamptz
+)
+returns setof public.company_social_publications
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  selected_kind text;
+begin
+  select publication_kind into selected_kind
+  from public.company_social_publications
+  where id = p_publication_id and company_id = p_company_id and approved_by = p_actor_id;
+
+  if found and not public.meta_facebook_publication_audit_metadata_valid(selected_kind, 'unknown', coalesce(p_publication_audit_metadata, '{}'::jsonb), 1) then
+    raise exception 'invalid publication audit metadata';
+  end if;
+
+  return query select * from private.mark_company_facebook_publication_unknown_unvalidated_20260805(
+    p_publication_id, p_company_id, p_actor_id, p_actor_name, p_actor_role,
+    p_publication_audit_metadata, p_timestamp
+  );
+end;
+$$;
+
+alter table public.company_media_analysis_attachment_results
+  drop constraint if exists company_media_analysis_attachment_mime_check;
+alter table public.company_media_analysis_attachment_results
+  add constraint company_media_analysis_attachment_mime_check
+    check (detected_mime_type in ('image/jpeg', 'image/png', 'image/webp'));
+
+do $$
+begin
+  if exists (
+    select 1
+    from public.company_media_analysis_attachment_results
+    group by analysis_run_id, attachment_id
+    having count(*) > 1
+  ) then
+    raise exception 'duplicate media analysis attachment results exist';
+  end if;
+  if exists (
+    select 1
+    from public.company_media_analysis_privacy_findings
+    group by attachment_result_id, finding_id
+    having count(*) > 1
+  ) then
+    raise exception 'duplicate media analysis privacy findings exist';
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'company_media_analysis_attachment_results_run_attachment_unique'
+      and conrelid = 'public.company_media_analysis_attachment_results'::regclass
+  ) then
+    alter table public.company_media_analysis_attachment_results
+      add constraint company_media_analysis_attachment_results_run_attachment_unique
+      unique (analysis_run_id, attachment_id);
+  end if;
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'company_media_analysis_privacy_findings_result_finding_unique'
+      and conrelid = 'public.company_media_analysis_privacy_findings'::regclass
+  ) then
+    alter table public.company_media_analysis_privacy_findings
+      add constraint company_media_analysis_privacy_findings_result_finding_unique
+      unique (attachment_result_id, finding_id);
+  end if;
+end;
+$$;
+
+create or replace function public.record_company_media_analysis_result(
+  p_run_id uuid,
+  p_company_id uuid,
+  p_job_id uuid,
+  p_correlation_id text,
+  p_status text,
+  p_provider text,
+  p_model text,
+  p_analysis_version text,
+  p_attachments jsonb,
+  p_timestamp timestamptz
+)
+returns table (
+  attachment_id uuid,
+  analysis_run_id uuid,
+  attachment_result_id uuid
+)
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  item jsonb;
+  finding jsonb;
+  result_id uuid;
+  attachment_row public.job_attachments%rowtype;
+  privacy_count integer;
+  total_privacy_count integer := 0;
+  seen_attachment_ids text[] := array[]::text[];
+  seen_finding_ids text[];
+  item_keys text[];
+  finding_keys text[];
+  attachment_id_text text;
+  checksum_text text;
+  detected_mime text;
+begin
+  if p_status not in ('completed','failed')
+    or p_correlation_id is null or char_length(p_correlation_id) not between 8 and 160 or p_correlation_id ~ '[[:cntrl:]<>]'
+    or p_provider is null or char_length(p_provider) not between 1 and 120 or p_provider ~ '[[:cntrl:]<>]'
+    or (p_model is not null and (char_length(p_model) > 120 or p_model ~ '[[:cntrl:]<>]'))
+    or p_analysis_version <> 'media-analysis-v1'
+    or p_timestamp is null
+    or jsonb_typeof(p_attachments) <> 'array'
+    or jsonb_array_length(p_attachments) > 4 then
+    raise exception 'invalid media analysis persistence request';
+  end if;
+  perform 1 from public.jobs where id = p_job_id and company_id = p_company_id for key share;
+  if not found then raise exception 'invalid media analysis job'; end if;
+
+  insert into public.company_media_analysis_runs (
+    id, company_id, job_id, correlation_id, status, provider, model, analysis_version,
+    completed_at, created_at, updated_at
+  ) values (
+    p_run_id, p_company_id, p_job_id, p_correlation_id, p_status, p_provider, p_model, p_analysis_version,
+    p_timestamp, p_timestamp, p_timestamp
+  );
+
+  for item in select value from jsonb_array_elements(p_attachments) value loop
+    select coalesce(array_agg(key order by key), array[]::text[]) into item_keys from jsonb_object_keys(item) key;
+    attachment_id_text := item->>'attachmentId';
+    checksum_text := item->>'attachmentSha256';
+    detected_mime := lower(item->>'detectedMimeType');
+
+    if jsonb_typeof(item) <> 'object'
+      or item_keys <> array['analysisStatus','attachmentId','attachmentSha256','detectedMimeType','privacyFindings']
+      or jsonb_typeof(item->'attachmentId') <> 'string'
+      or attachment_id_text !~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+      or attachment_id_text = any(seen_attachment_ids)
+      or jsonb_typeof(item->'attachmentSha256') <> 'string'
+      or checksum_text !~ '^\\x[0-9a-f]{64}$'
+      or jsonb_typeof(item->'detectedMimeType') <> 'string'
+      or detected_mime not in ('image/jpeg','image/png','image/webp')
+      or jsonb_typeof(item->'analysisStatus') <> 'string'
+      or (item->>'analysisStatus') not in ('analyzed','metadata_only','manual_review')
+      or jsonb_typeof(item->'privacyFindings') <> 'array'
+      or jsonb_array_length(item->'privacyFindings') > 6 then
+      raise exception 'invalid media analysis attachment payload';
+    end if;
+
+    select * into attachment_row
+    from public.job_attachments
+    where id = attachment_id_text::uuid
+      and company_id = p_company_id
+      and job_id = p_job_id
+    for key share;
+    if not found
+      or attachment_row.kind::text <> 'photo'
+      or lower(attachment_row.mime_type) <> detected_mime
+      or attachment_row.size_bytes not between 1 and 12000000
+      or attachment_row.storage_bucket is null
+      or attachment_row.storage_path is null then
+      raise exception 'invalid media analysis attachment';
+    end if;
+
+    seen_attachment_ids := array_append(seen_attachment_ids, attachment_id_text);
+    result_id := gen_random_uuid();
+    privacy_count := jsonb_array_length(item->'privacyFindings');
+    total_privacy_count := total_privacy_count + privacy_count;
+    if total_privacy_count > 24 then
+      raise exception 'invalid media analysis finding payload';
+    end if;
+
+    insert into public.company_media_analysis_attachment_results (
+      id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256,
+      detected_mime_type, analysis_status, privacy_review_status, excluded, created_at
+    ) values (
+      result_id, p_run_id, p_company_id, p_job_id, attachment_row.id,
+      decode(substring(checksum_text from 3), 'hex'),
+      detected_mime, item->>'analysisStatus',
+      case when privacy_count > 0 then 'blocked' else 'passed' end,
+      false, p_timestamp
+    );
+
+    seen_finding_ids := array[]::text[];
+    for finding in select value from jsonb_array_elements(item->'privacyFindings') value loop
+      select coalesce(array_agg(key order by key), array[]::text[]) into finding_keys from jsonb_object_keys(finding) key;
+      if jsonb_typeof(finding) <> 'object'
+        or finding_keys <> array['findingCategory','findingId','riskLevel']
+        or jsonb_typeof(finding->'findingId') <> 'string'
+        or jsonb_typeof(finding->'findingCategory') <> 'string'
+        or jsonb_typeof(finding->'riskLevel') <> 'string'
+        or char_length(finding->>'findingId') not between 1 and 120
+        or (finding->>'findingId') !~ '^[A-Za-z0-9_.:-]+$'
+        or (finding->>'findingId') = any(seen_finding_ids)
+        or (finding->>'findingCategory') not in (
+          'possible_face','possible_address','possible_phone_or_email','possible_license_plate',
+          'possible_customer_document','possible_screen','possible_barcode',
+          'possible_serial_or_nameplate','possible_personal_identifier','unknown_privacy_risk'
+        )
+        or (finding->>'riskLevel') not in ('low','medium','high') then
+        raise exception 'invalid media analysis finding payload';
+      end if;
+      seen_finding_ids := array_append(seen_finding_ids, finding->>'findingId');
+      insert into public.company_media_analysis_privacy_findings (
+        id, analysis_run_id, attachment_result_id, company_id, job_id, attachment_id,
+        finding_id, finding_category, risk_level, resolved_as_false_positive, created_at
+      ) values (
+        gen_random_uuid(), p_run_id, result_id, p_company_id, p_job_id, attachment_row.id,
+        finding->>'findingId', finding->>'findingCategory', finding->>'riskLevel', false, p_timestamp
+      );
+    end loop;
+
+    attachment_id := attachment_row.id;
+    analysis_run_id := p_run_id;
+    attachment_result_id := result_id;
+    return next;
+  end loop;
+end;
+$$;
+
+revoke all on function public.record_company_media_analysis_result(uuid, uuid, uuid, text, text, text, text, text, jsonb, timestamptz) from public, anon, authenticated;
+grant execute on function public.record_company_media_analysis_result(uuid, uuid, uuid, text, text, text, text, text, jsonb, timestamptz) to service_role;
+
+comment on function public.record_company_media_analysis_result(uuid, uuid, uuid, text, text, text, text, text, jsonb, timestamptz) is
+  'Atomically records bounded media-analysis photo results with exact attachment validation, WebP persistence, canonical privacy categories, and durable id mapping.';
+
+-- META_FACEBOOK_SINGLE_PHOTO_PERSISTENCE_CLOSURE_END
+

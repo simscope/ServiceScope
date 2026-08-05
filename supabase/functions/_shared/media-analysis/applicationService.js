@@ -48,6 +48,7 @@ export async function handleMediaAnalysis({ rawBody, authorization, auth, reposi
 
   assertNoPrivateValues(mediaResultPrivacySurface(result), context.privateValues);
   validateMediaAnalysisResultShape(result);
+  await repository.recordMediaAnalysisResult?.({ request, context, result, completedAt: new Date(clock.now()).toISOString() });
   emitTelemetry(telemetry, {
     correlationId: request.idempotencyKey,
     provider: result.provider,

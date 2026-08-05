@@ -21,6 +21,10 @@ import {
 } from '../supabase/functions/_shared/media-analysis/providers/openai.js';
 import { createMemoryGuards } from '../supabase/functions/_shared/content-engine/rateLimit.js';
 import {
+  contentFindingCategories,
+  privacyFindingCategories,
+} from '../supabase/functions/_shared/media-analysis/contracts.js';
+import {
   assertNoPrivateValues,
   buildKnownPrivateValues,
   collectPrivacyDiagnostics,
@@ -78,6 +82,9 @@ const [mediaClientApi, mediaClientContracts, mediaWorkspaceState] = await Promis
 ]);
 
 assert.match(edgeIndex, /handleMediaAnalysis/);
+assert.match(edgeIndex, /privacyFindingCategories/);
+assert.match(edgeIndex, /privacyFindingCategorySet\.has/);
+assert.doesNotMatch(edgeIndex, /startsWith\('possible_'\)/);
 assert.match(edgeIndex, /createMediaProviderFromEnv/);
 assert.match(edgeIndex, /createSignedUrl\(attachment\.storagePath, signedUrlTtlSeconds\)/);
 assert.match(edgeIndex, /safeTopLevelFailureEvent/);
@@ -704,6 +711,77 @@ assert.equal(providerResult.attachments[0].findings[0].requiresUserApproval, tru
 assert.equal(providerResult.attachments[1].status, 'video_analysis_not_supported_v1');
 assert.doesNotMatch(JSON.stringify(providerResult), /signed\.example|token=secret|photo\.jpg|Jane Customer|123 Market|JOB-74|Gate code/);
 
+const contentClassificationCapture = createDurableClassificationCapture();
+const contentClassification = await handleMediaAnalysis(makeDependencies({
+  payload: { ...basePayload, attachmentIds: ['photo-1', 'photo-2'] },
+  attachments: [attachment({ id: 'photo-1' }), attachment({ id: 'photo-2' })],
+  repositoryOverrides: contentClassificationCapture.repositoryOverrides,
+  provider: {
+    id: 'mock-media-provider',
+    async analyze() {
+      return providerRawResult(providerPayload({
+        attachments: [
+          { attachmentId: 'photo-1', findings: contentFindingCategories.slice(0, 4).map(classificationFinding) },
+          { attachmentId: 'photo-2', findings: contentFindingCategories.slice(4).map(classificationFinding) },
+        ],
+      }));
+    },
+  },
+}));
+assert.equal(contentClassification.attachments[0].analysisRunId, '00000000-0000-4000-8000-000000008900');
+assert.ok(/^[0-9a-f-]{36}$/i.test(contentClassification.attachments[0].attachmentResultId));
+assert.ok(/^[0-9a-f-]{36}$/i.test(contentClassification.attachments[1].attachmentResultId));
+assert.equal(contentClassificationCapture.attachmentResults.length, 2);
+assert.ok(contentClassificationCapture.attachmentResults.every((row) => row.privacy_review_status === 'passed'));
+assert.equal(contentClassificationCapture.privacyFindings.length, 0);
+assert.equal(contentClassification.attachments.flatMap((item) => item.findings).some((finding) => finding.category === 'possible_problem_detail'), true);
+assert.equal(contentClassificationCapture.persisted, true);
+
+const privacyClassificationCapture = createDurableClassificationCapture('00000000-0000-4000-8000-000000008901');
+await handleMediaAnalysis(makeDependencies({
+  payload: { ...basePayload, attachmentIds: ['photo-1', 'photo-2'] },
+  attachments: [attachment({ id: 'photo-1' }), attachment({ id: 'photo-2' })],
+  repositoryOverrides: privacyClassificationCapture.repositoryOverrides,
+  provider: {
+    id: 'mock-media-provider',
+    async analyze() {
+      return providerRawResult(providerPayload({
+        attachments: [
+          { attachmentId: 'photo-1', findings: privacyFindingCategories.slice(0, 5).map(classificationFinding) },
+          { attachmentId: 'photo-2', findings: privacyFindingCategories.slice(5).map(classificationFinding) },
+        ],
+      }));
+    },
+  },
+}));
+assert.deepEqual(privacyClassificationCapture.privacyFindings.map((row) => row.finding_category).sort(), [...privacyFindingCategories].sort());
+assert.ok(privacyClassificationCapture.attachmentResults.every((row) => row.privacy_review_status === 'blocked'));
+
+const mixedClassificationCapture = createDurableClassificationCapture('00000000-0000-4000-8000-000000008902');
+const mixedClassification = await handleMediaAnalysis(makeDependencies({
+  payload: { ...basePayload, attachmentIds: ['photo-1'] },
+  attachments: [attachment({ id: 'photo-1' })],
+  repositoryOverrides: mixedClassificationCapture.repositoryOverrides,
+  provider: {
+    id: 'mock-media-provider',
+    async analyze() {
+      return providerRawResult(providerPayload({
+        attachments: [{
+          attachmentId: 'photo-1',
+          findings: [
+            classificationFinding('possible_problem_detail'),
+            classificationFinding('possible_face'),
+          ],
+        }],
+      }));
+    },
+  },
+}));
+assert.equal(mixedClassification.attachments[0].analysisRunId, '00000000-0000-4000-8000-000000008902');
+assert.deepEqual(mixedClassificationCapture.privacyFindings.map((row) => row.finding_category), ['possible_face']);
+assert.equal(mixedClassificationCapture.privacyFindings.some((row) => row.finding_category === 'possible_problem_detail'), false);
+assert.equal(mixedClassificationCapture.privacyFindings.some((row) => row.finding_category === 'unknown_privacy_risk'), false);
+
 const parsed = parseProviderMediaResult(providerPayload(), {
   request: validated,
   context,
@@ -1134,6 +1212,50 @@ function mediaAnalysisResultFixture() {
     safety: { ok: true, privacy: 'passed', grounding: 'passed', blockedReasons: [] },
     telemetry: { correlationId: 'request-1', attempts: 1, latencyMs: 1 },
   };
+}
+
+function classificationFinding(category) {
+  return {
+    category,
+    confidence: 0.52,
+    explanation: 'May require manual review before use.',
+    riskLevel: privacyFindingCategories.includes(category) ? 'high' : 'low',
+  };
+}
+
+function createDurableClassificationCapture(runId = '00000000-0000-4000-8000-000000008900') {
+  const privacyCategorySet = new Set(privacyFindingCategories);
+  const capture = {
+    persisted: false,
+    attachmentResults: [],
+    privacyFindings: [],
+    repositoryOverrides: {
+      async recordMediaAnalysisResult({ result }) {
+        capture.persisted = true;
+        for (const [index, item] of result.attachments.entries()) {
+          if (item.kind !== 'photo') continue;
+          const attachmentResultId = `00000000-0000-4000-8000-${String(8901 + index).padStart(12, '0')}`;
+          const privacyFindings = (item.findings ?? []).filter((finding) => privacyCategorySet.has(finding.category));
+          capture.attachmentResults.push({
+            attachment_id: item.id,
+            analysis_run_id: runId,
+            attachment_result_id: attachmentResultId,
+            privacy_review_status: privacyFindings.length ? 'blocked' : 'passed',
+          });
+          for (const finding of privacyFindings) {
+            capture.privacyFindings.push({
+              attachment_id: item.id,
+              finding_id: finding.findingId,
+              finding_category: finding.category,
+            });
+          }
+          item.analysisRunId = runId;
+          item.attachmentResultId = attachmentResultId;
+        }
+      },
+    },
+  };
+  return capture;
 }
 
 function mockResponse(status, body = {}) {

@@ -5,7 +5,15 @@ import {
   validEncryptionKey,
 } from '../meta-connection/contracts.js';
 
-export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze(['status', 'publish_facebook_text']);
+export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze([
+  'status',
+  'approve_facebook_publication_photo',
+  'revoke_facebook_publication_photo_approval',
+  'exclude_facebook_publication_photo',
+  'resolve_facebook_publication_photo_false_positive',
+  'publish_facebook_text',
+  'publish_facebook_single_photo',
+]);
 export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'authorize',
   'validate_request',
@@ -24,6 +32,7 @@ export const FACEBOOK_PROVIDER_CATEGORIES = Object.freeze([
   'PROVIDER_REJECTED',
   'DELIVERY_UNKNOWN',
   'RESPONSE_MISSING_POST_ID',
+  'RESPONSE_MISSING_MEDIA_ID',
 ]);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -40,6 +49,10 @@ const SAFE_CODES = new Set([
   'META_PUBLICATION_FAILED',
   'META_PUBLICATION_DELIVERY_UNKNOWN',
   'META_PUBLICATION_PROVIDER_REJECTED',
+  'META_PUBLICATION_MEDIA_REQUIRED',
+  'META_PUBLICATION_MEDIA_UNSUPPORTED',
+  'META_PUBLICATION_MEDIA_TOO_LARGE',
+  'META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED',
   'INTERNAL_ERROR',
 ]);
 
@@ -68,7 +81,17 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
   }
   const allowed = value.action === 'status'
     ? ['action', 'companyId', 'jobId']
-    : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
+    : value.action === 'approve_facebook_publication_photo'
+      ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'explicitApproval', 'approvalReason']
+      : value.action === 'revoke_facebook_publication_photo_approval'
+        ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason']
+        : value.action === 'exclude_facebook_publication_photo'
+          ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'explicitApproval', 'exclusionReason']
+          : value.action === 'resolve_facebook_publication_photo_false_positive'
+            ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'findingIds', 'explicitApproval', 'resolutionReason']
+            : value.action === 'publish_facebook_single_photo'
+              ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
+              : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new MetaPublishingError('INVALID_REQUEST');
   return value;
 }
@@ -110,6 +133,52 @@ export function facebookPublishingEnabled(connection) {
   );
 }
 
+export const supportedFacebookPhotoMimeTypes = new Set(['image/jpeg', 'image/png']);
+export const maxFacebookPhotoBytes = 12_000_000;
+
+export function normalizeApprovalReason(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  if (!clean) return null;
+  if (clean.length > 240 || /[<>\u0000-\u001f]/.test(clean)) throw new MetaPublishingError('INVALID_REQUEST');
+  return clean;
+}
+
+export function normalizeFindingIds(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 50) throw new MetaPublishingError('INVALID_REQUEST');
+  const ids = value.map((item) => (typeof item === 'string' ? item.trim() : ''));
+  if (ids.some((item) => !item || item.length > 120 || !/^[A-Za-z0-9_.:-]+$/.test(item))) {
+    throw new MetaPublishingError('INVALID_REQUEST');
+  }
+  return [...new Set(ids)];
+}
+
+export function publicationIntentSource({
+  companyId,
+  jobId,
+  connectionId,
+  actorAuthUserId,
+  publicationKind,
+  approvedMessage,
+  attachmentId,
+}) {
+  return [
+    'facebook_publication_intent_v1',
+    'meta-facebook-login',
+    'Facebook',
+    companyId,
+    jobId,
+    connectionId,
+    actorAuthUserId,
+    publicationKind,
+    approvedMessage,
+    publicationKind === 'single_photo' ? attachmentId : '',
+  ].join('\n');
+}
+
+export function publicationKindForAction(action) {
+  return action === 'publish_facebook_single_photo' ? 'single_photo' : 'text_only';
+}
+
 export function runtimePublishingConfig(getEnv) {
   const graphApiVersion = cleanEnv(getEnv('META_GRAPH_API_VERSION'));
   const appSecret = cleanEnv(getEnv('META_APP_SECRET'));
@@ -123,7 +192,7 @@ export function runtimePublishingConfig(getEnv) {
   };
 }
 
-export function safePublishingStatus({ config, connection, lastPublication }) {
+export function safePublishingStatus({ config, connection, lastPublication, eligiblePhotos = [] }) {
   const enabled = facebookPublishingEnabled(connection);
   return {
     ok: true,
@@ -138,6 +207,7 @@ export function safePublishingStatus({ config, connection, lastPublication }) {
       publishedAt: safeTimestamp(lastPublication.published_at),
       errorCode: safeCode(lastPublication.last_error_code),
     } : null,
+    eligiblePhotos: Array.isArray(eligiblePhotos) ? eligiblePhotos.map(safeEligiblePhoto).filter(Boolean) : [],
   };
 }
 
@@ -200,6 +270,37 @@ function safeCode(value) {
 function safeLabel(value, maxLength) {
   const clean = typeof value === 'string' ? value.trim() : '';
   return clean && clean.length <= maxLength && !/[<>\u0000-\u001f]/.test(clean) ? clean : null;
+}
+
+function safeUrl(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  if (!clean || clean.length > 2048 || /[\u0000-\u001f<>]/.test(clean)) return null;
+  try {
+    const url = new URL(clean);
+    return url.protocol === 'https:' ? clean : null;
+  } catch {
+    return null;
+  }
+}
+
+function safeEligiblePhoto(value) {
+  const attachmentId = typeof value?.attachmentId === 'string' && UUID_PATTERN.test(value.attachmentId) ? value.attachmentId : null;
+  if (!attachmentId) return null;
+  return {
+    attachmentId,
+    displayName: safeLabel(value?.displayName, 120) ?? 'Approved photo',
+    previewUrl: safeUrl(value?.previewUrl),
+    mimeType: supportedFacebookPhotoMimeTypes.has(value?.mimeType) ? value.mimeType : 'image/jpeg',
+    approvalStatus: ['approved', 'revoked', 'pending'].includes(value?.approvalStatus) ? value.approvalStatus : 'pending',
+    approvedAt: safeTimestamp(value?.approvedAt),
+    revokedAt: safeTimestamp(value?.revokedAt),
+    analysisRunId: typeof value?.analysisRunId === 'string' && UUID_PATTERN.test(value.analysisRunId) ? value.analysisRunId : null,
+    attachmentResultId: typeof value?.attachmentResultId === 'string' && UUID_PATTERN.test(value.attachmentResultId) ? value.attachmentResultId : null,
+    analysisStatus: ['completed', 'missing', 'failed'].includes(value?.analysisStatus) ? value.analysisStatus : 'missing',
+    privacyReviewStatus: ['passed', 'blocked', 'resolved_false_positive'].includes(value?.privacyReviewStatus) ? value.privacyReviewStatus : 'blocked',
+    checksumMatch: value?.checksumMatch === true,
+    eligibleForFacebookPublication: value?.eligibleForFacebookPublication === true,
+  };
 }
 
 function cleanEnv(value) {
