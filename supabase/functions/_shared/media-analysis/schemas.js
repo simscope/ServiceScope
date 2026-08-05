@@ -100,6 +100,8 @@ export function parseProviderMediaResult(rawJson, { request, context, provider, 
     });
     return {
       id: attachment.id,
+      analysisRunId: typeof attachment.analysisRunId === 'string' ? attachment.analysisRunId : undefined,
+      attachmentResultId: typeof attachment.attachmentResultId === 'string' ? attachment.attachmentResultId : undefined,
       kind: 'photo',
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,

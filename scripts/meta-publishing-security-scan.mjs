@@ -18,6 +18,7 @@ const [
   aiPage,
   migration,
   reviewMigration,
+  exactReviewMigration,
   aclMigration,
   schema,
   config,
@@ -36,6 +37,7 @@ const [
   read('src/components/portal/AiAssistantPage.tsx'),
   read('supabase/migrations/20260803193000_meta_facebook_publish_foundation.sql'),
   read('supabase/migrations/20260805002000_meta_facebook_single_photo_publish_review_fix.sql'),
+  read('supabase/migrations/20260805183000_meta_facebook_single_photo_exact_review.sql'),
   read('supabase/migrations/20260804011000_meta_facebook_publish_service_role_acl_fix.sql'),
   read('supabase/schema.sql'),
   read('supabase/config.toml'),
@@ -45,7 +47,7 @@ const [
 
 const browserSources = `${client}\n${panel}\n${aiPage}`;
 const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${mediaAnalysisEdge}`;
-const combinedMigrations = `${migration}\n${reviewMigration}`;
+const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}`;
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 
@@ -101,7 +103,7 @@ check(() => assert.match(service, /beginPublication/));
 check(() => assert.match(service, /publicationIntentSha256/));
 check(() => assert.match(service, /revalidatePublicationPhotoEligibility/));
 check(() => assert.match(edge, /p_publication_audit_metadata: input\.publicationAuditMetadata/));
-check(() => assert.match(edge, /\.order\('created_at', \{ ascending: false \}\)\s+\.order\('id', \{ ascending: false \}\)/s));
+check(() => assert.match(edge, /list_company_facebook_publication_photo_candidates/));
 check(() => assert.match(service, /revokePublicationPhotoApproval/));
 check(() => assert.match(service, /deps\.imageProcessor/));
 check(() => assert.match(service, /processor\.sanitize/));
@@ -116,6 +118,7 @@ check(() => assert.match(contracts, /\[\\u0000-\\u0009\\u000b\\u000c\\u000e-\\u0
 check(() => assert.match(contracts, /value !== true/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason'\]/));
+check(() => assert.match(contracts, /analysisRunId', 'attachmentResultId/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
 check(() => assert.doesNotMatch(contracts, /scheduled|instagram|mediaIds|mediaUrl|storagePath|base64/));
 check(() => assert.doesNotMatch(contracts.match(/const allowed[\s\S]*?;/)?.[0] ?? '', /pageId|connectionId/));

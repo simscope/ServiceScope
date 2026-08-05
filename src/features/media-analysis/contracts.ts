@@ -57,6 +57,8 @@ export type MediaAnalysisFinding = {
 
 export type MediaAnalysisAttachmentResult = {
   id: string;
+  analysisRunId?: string;
+  attachmentResultId?: string;
   kind: 'photo' | 'video';
   mimeType: string;
   sizeBytes: number;

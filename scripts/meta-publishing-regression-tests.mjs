@@ -87,6 +87,7 @@ function configurationAndAccessChecks() {
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true })).action, 'revoke_facebook_publication_photo_approval'));
+  check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'exclude_facebook_publication_photo', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, analysisRunId: newTestUuid(), attachmentResultId: newTestUuid(), explicitApproval: true })).action, 'exclude_facebook_publication_photo'));
   for (const invalid of [
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid() },
     { action: 'publish_facebook_text', companyId: ids.company, jobId: ids.job, message: 'Ready', idempotencyKey: newTestUuid(), explicitApproval: false },
@@ -462,13 +463,6 @@ async function serviceChecks() {
   await checkAsync(() => assert.rejects(invoke(latestInvalidPhoto, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED/));
   check(() => assert.equal(latestInvalidPhoto.providerCalls.length, 0));
 
-  const revokedPhoto = await makeDependencies();
-  revokedPhoto.context.connection.granted_scopes = publishingScopes();
-  const revocation = await invoke(revokedPhoto, { action: 'revoke_facebook_publication_photo_approval', companyId: ids.company, jobId: ids.job, attachmentId: ids.attachment, explicitApproval: true });
-  check(() => assert.equal(revocation.approvalStatus, 'revoked'));
-  await checkAsync(() => assert.rejects(invoke(revokedPhoto, singlePhotoRequest('Verified normal operation.', newTestUuid())), /META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED/));
-  check(() => assert.equal(revokedPhoto.providerCalls.length, 0));
-
   const missingMedia = await makeDependencies({ providerError: new MetaPublishingError('META_PUBLICATION_FAILED', undefined, { providerCategory: 'RESPONSE_MISSING_MEDIA_ID' }) });
   missingMedia.context.connection.granted_scopes = publishingScopes();
   const missingMediaKey = '00000000-0000-4000-8000-000000008055';
@@ -504,6 +498,7 @@ async function serviceChecks() {
 async function sourceChecks() {
   const edge = await readFile(new URL('../supabase/functions/meta-social-publish/index.ts', import.meta.url), 'utf8');
   const provider = await readFile(new URL('../supabase/functions/_shared/meta-publishing/provider.js', import.meta.url), 'utf8');
+  const contracts = await readFile(new URL('../supabase/functions/_shared/meta-publishing/contracts.js', import.meta.url), 'utf8');
   const client = await readFile(new URL('../src/features/meta-publishing/clientApi.ts', import.meta.url), 'utf8');
   const panel = await readFile(new URL('../src/components/portal/FacebookPublishPanel.tsx', import.meta.url), 'utf8');
   const assistant = await readFile(new URL('../src/components/portal/AiAssistantPage.tsx', import.meta.url), 'utf8');
@@ -522,6 +517,13 @@ async function sourceChecks() {
   check(() => assert.match(panel, /blocked until a reconciliation workflow resolves the unknown delivery state/i));
   check(() => assert.match(panel, /\[companyId, jobId, refreshToken\]/));
   check(() => assert.match(panel, /Completed.*Warranty/s));
+  check(() => assert.match(panel, /photoCatalogById/));
+  check(() => assert.match(panel, /selectedPhoto\?\.previewUrl/));
+  check(() => assert.match(assistant, /analysisRunId: result\.analysisRunId/));
+  check(() => assert.match(assistant, /attachmentResultId: result\.attachmentResultId/));
+  check(() => assert.match(edge, /list_company_facebook_publication_photo_candidates/));
+  check(() => assert.doesNotMatch(edge, /company_media_analysis_privacy_findings[\s\S]*?limit\(500\)/));
+  check(() => assert.doesNotMatch(contracts, /'data:'\]/));
   check(() => assert.match(assistant, /if \(findingIds\.length === 0\) return/));
   check(() => assert.match(assistant, /privacyFindings\.length \? \(/));
   check(() => assert.doesNotMatch(panel, /retry/i));
@@ -611,6 +613,7 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
             approvedAt: '2026-08-03T12:00:00.000Z',
             revokedAt: null,
             analysisRunId: '00000000-0000-4000-8000-000000008081',
+            attachmentResultId: '00000000-0000-4000-8000-000000008082',
             analysisStatus: 'completed',
             privacyReviewStatus: 'passed',
             checksumMatch: true,

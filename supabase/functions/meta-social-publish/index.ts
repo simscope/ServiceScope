@@ -218,6 +218,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_company_id: input.companyId,
         p_job_id: input.jobId,
         p_attachment_id: input.attachmentId,
+        p_analysis_run_id: input.analysisRunId,
+        p_attachment_result_id: input.attachmentResultId,
         p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
         p_actor_role: input.actorRole,
@@ -244,6 +246,8 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         p_company_id: input.companyId,
         p_job_id: input.jobId,
         p_attachment_id: input.attachmentId,
+        p_analysis_run_id: input.analysisRunId,
+        p_attachment_result_id: input.attachmentResultId,
         p_finding_ids: input.findingIds,
         p_actor_id: input.actorAuthUserId,
         p_actor_name: input.actorName,
@@ -363,130 +367,39 @@ async function listPhotoEligibility(
   onlyAttachmentId?: string,
   knownCurrentSha256?: string,
 ) {
-  let attachmentQuery = adminClient
-    .from('job_attachments')
-    .select('id,name,mime_type,size_bytes,kind,storage_bucket,storage_path')
-    .eq('company_id', companyId)
-    .eq('job_id', jobId)
-    .neq('kind', 'video')
-    .in('mime_type', ['image/jpeg', 'image/png'])
-    .limit(100);
-  if (onlyAttachmentId) attachmentQuery = attachmentQuery.eq('id', onlyAttachmentId);
-  const { data: attachments, error: attachmentError } = await attachmentQuery;
-  if (attachmentError) throw new MetaPublishingError('INTERNAL_ERROR');
-  if (!attachments?.length) return [];
-
-  const attachmentIds = attachments.map((attachment) => String(attachment.id));
-  const { data: results, error: resultError } = await adminClient
-    .from('company_media_analysis_attachment_results')
-    .select('id,analysis_run_id,attachment_id,attachment_sha256,detected_mime_type,analysis_status,privacy_review_status,excluded,created_at')
-    .eq('company_id', companyId)
-    .eq('job_id', jobId)
-    .in('attachment_id', attachmentIds)
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: false })
-    .limit(200);
-  if (resultError) throw new MetaPublishingError('INTERNAL_ERROR');
-  const runIds = [...new Set((results ?? []).map((row) => String(row.analysis_run_id ?? '')).filter(Boolean))];
-  const { data: runs, error: runError } = runIds.length
-    ? await adminClient
-      .from('company_media_analysis_runs')
-      .select('id,status,company_id,job_id')
-      .eq('company_id', companyId)
-      .eq('job_id', jobId)
-      .in('id', runIds)
-      .limit(200)
-    : { data: [], error: null };
-  if (runError) throw new MetaPublishingError('INTERNAL_ERROR');
-  const runById = new Map((runs ?? []).map((row) => [String(row.id), row]));
-
-  const resultIds = (results ?? []).map((row) => String(row.id)).filter(Boolean);
-  const { data: findings, error: findingError } = resultIds.length
-    ? await adminClient
-      .from('company_media_analysis_privacy_findings')
-      .select('attachment_result_id,resolved_as_false_positive')
-      .eq('company_id', companyId)
-      .eq('job_id', jobId)
-      .in('attachment_result_id', resultIds)
-      .limit(500)
-    : { data: [], error: null };
-  if (findingError) throw new MetaPublishingError('INTERNAL_ERROR');
-  const unresolvedByResult = new Map<string, number>();
-  for (const finding of findings ?? []) {
-    if (finding.resolved_as_false_positive !== true) {
-      const key = String(finding.attachment_result_id);
-      unresolvedByResult.set(key, (unresolvedByResult.get(key) ?? 0) + 1);
-    }
-  }
-
-  const { data: approvals, error: approvalError } = await adminClient
-    .from('company_social_publication_media_approvals')
-    .select('id,attachment_id,analysis_run_id,attachment_sha256,approval_status,approved_at,revoked_at')
-    .eq('company_id', companyId)
-    .eq('job_id', jobId)
-    .in('attachment_id', attachmentIds)
-    .order('approved_at', { ascending: false })
-    .limit(200);
-  if (approvalError) throw new MetaPublishingError('INTERNAL_ERROR');
-  const approvalByAttachment = new Map<string, Record<string, unknown>>();
-  for (const approval of approvals ?? []) {
-    const id = String(approval.attachment_id ?? '');
-    if (id && !approvalByAttachment.has(id)) approvalByAttachment.set(id, approval);
-  }
-
-  const resultsByAttachment = new Map<string, Record<string, unknown>[]>();
-  for (const result of results ?? []) {
-    const id = String(result.attachment_id ?? '');
-    if (!id) continue;
-    resultsByAttachment.set(id, [...(resultsByAttachment.get(id) ?? []), result]);
-  }
+  const { data: candidates, error } = await adminClient.rpc('list_company_facebook_publication_photo_candidates', {
+    p_company_id: companyId,
+    p_job_id: jobId,
+    p_attachment_id: onlyAttachmentId ?? null,
+  });
+  if (error || !Array.isArray(candidates) || candidates.length > 20) return [];
 
   const rows = [];
-  for (const attachment of attachments) {
-    const attachmentId = String(attachment.id);
+  for (const attachment of candidates) {
+    const attachmentId = String(attachment.attachment_id ?? '');
+    if (!attachmentId) continue;
     const currentSha256 = onlyAttachmentId && knownCurrentSha256
       ? knownCurrentSha256
       : await storageSha256(adminClient, attachment);
-    const approval = approvalByAttachment.get(attachmentId) ?? null;
-    const approved = approval?.approval_status === 'approved' && !approval.revoked_at;
-    const selectedResult = (resultsByAttachment.get(attachmentId) ?? [])[0] ?? null;
-    const selectedRun = selectedResult ? runById.get(String(selectedResult.analysis_run_id ?? '')) : null;
-    const resultValid = Boolean(
-      selectedResult
-        && selectedRun?.status === 'completed'
-        && selectedRun.company_id === companyId
-        && selectedRun.job_id === jobId
-        && selectedResult.attachment_id === attachmentId
-        && selectedResult.excluded !== true
-        && ['analyzed', 'metadata_only'].includes(String(selectedResult.analysis_status))
-        && ['passed', 'resolved_false_positive'].includes(String(selectedResult.privacy_review_status))
-        && unresolvedByResult.get(String(selectedResult.id)) === undefined
-        && currentSha256 === selectedResult.attachment_sha256
-        && approval?.analysis_run_id === selectedResult.analysis_run_id,
-    );
-    const checksumMatch = Boolean(
-      currentSha256
-        && selectedResult
-        && approval
-        && currentSha256 === approval.attachment_sha256
-        && currentSha256 === selectedResult.attachment_sha256,
-    );
+    const expectedSha256 = String(attachment.attachment_sha256 ?? '');
+    const checksumMatch = Boolean(currentSha256 && currentSha256 === expectedSha256);
     rows.push({
       attachmentId,
       displayName: safeDisplayName(attachment.name),
       previewUrl: null,
       mimeType: String(attachment.mime_type).toLowerCase() === 'image/png' ? 'image/png' : 'image/jpeg',
-      approvalId: typeof approval?.id === 'string' ? approval.id : null,
-      approvalStatus: approved ? 'approved' : approval ? 'revoked' : 'pending',
-      approvedAt: typeof approval?.approved_at === 'string' ? approval.approved_at : null,
-      revokedAt: typeof approval?.revoked_at === 'string' ? approval.revoked_at : null,
-      analysisRunId: resultValid && typeof selectedResult?.analysis_run_id === 'string' ? selectedResult.analysis_run_id : null,
-      analysisStatus: selectedResult ? String(selectedRun?.status ?? 'missing') : 'missing',
-      privacyReviewStatus: resultValid && selectedResult?.privacy_review_status === 'resolved_false_positive'
+      approvalId: typeof attachment.approval_id === 'string' ? attachment.approval_id : null,
+      approvalStatus: 'approved',
+      approvedAt: typeof attachment.approved_at === 'string' ? attachment.approved_at : null,
+      revokedAt: null,
+      analysisRunId: typeof attachment.analysis_run_id === 'string' ? attachment.analysis_run_id : null,
+      attachmentResultId: typeof attachment.attachment_result_id === 'string' ? attachment.attachment_result_id : null,
+      analysisStatus: 'completed',
+      privacyReviewStatus: attachment.privacy_review_status === 'resolved_false_positive'
         ? 'resolved_false_positive'
-        : resultValid ? 'passed' : 'blocked',
+        : 'passed',
       checksumMatch,
-      eligibleForFacebookPublication: Boolean(approved && resultValid && checksumMatch),
+      eligibleForFacebookPublication: checksumMatch,
     });
   }
   return rows;

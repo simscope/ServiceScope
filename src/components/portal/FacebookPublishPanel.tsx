@@ -25,11 +25,17 @@ type FacebookPublishPanelProps = {
   jobStatus: string;
   message: string;
   selectedMediaCount: number;
+  photoCatalog: Array<{
+    attachmentId: string;
+    displayName: string;
+    previewUrl: string;
+    mimeType: 'image/jpeg' | 'image/png';
+  }>;
   refreshToken: number;
   privacyStatus: string;
 };
 
-export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, selectedMediaCount, refreshToken, privacyStatus }: FacebookPublishPanelProps) {
+export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, selectedMediaCount, photoCatalog, refreshToken, privacyStatus }: FacebookPublishPanelProps) {
   const [snapshot, setSnapshot] = useState<FacebookPublishingSnapshot | null>(null);
   const [statusError, setStatusError] = useState('');
   const [workspace, setWorkspace] = useState(emptyFacebookPublishWorkspace);
@@ -58,9 +64,10 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       && photo.eligibleForFacebookPublication
       && photo.approvalStatus === 'approved'
       && photo.checksumMatch
+      && photoCatalog.some((catalogPhoto) => catalogPhoto.attachmentId === selectedAttachmentId && catalogPhoto.previewUrl)
     ));
     if (!stillEligible) setSelectedAttachmentId('');
-  }, [snapshot, selectedAttachmentId]);
+  }, [photoCatalog, snapshot, selectedAttachmentId]);
 
   function openConfirmation() {
     let finalMessage = '';
@@ -72,7 +79,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
     if (
       !snapshot?.facebookPublishingEnabled
       || !['Completed', 'Warranty'].includes(jobStatus)
-      || (mode === 'single_photo' && !selectedAttachmentId)
+      || (mode === 'single_photo' && !selectedPhoto?.previewUrl)
       || snapshot.lastPublication?.status === 'publishing'
       || snapshot.lastPublication?.status === 'delivery_unknown'
     ) return;
@@ -132,14 +139,22 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
   const deliveryUnknown = !publicationInProgress
     && facebookPublicationNeedsPageCheck(durablePublication, workspace.errorCode);
   const unsupportedJob = !['Completed', 'Warranty'].includes(jobStatus);
+  const photoCatalogById = new Map(photoCatalog.map((photo) => [photo.attachmentId, photo]));
   const serverEligiblePhotos = (snapshot?.eligiblePhotos ?? [])
-    .filter((photo) => photo.eligibleForFacebookPublication && photo.approvalStatus === 'approved' && photo.checksumMatch);
+    .filter((photo) => photo.eligibleForFacebookPublication && photo.approvalStatus === 'approved' && photo.checksumMatch)
+    .map((photo) => {
+      const localPhoto = photoCatalogById.get(photo.attachmentId);
+      return localPhoto?.previewUrl
+        ? { ...photo, displayName: localPhoto.displayName || photo.displayName, previewUrl: localPhoto.previewUrl, mimeType: localPhoto.mimeType }
+        : { ...photo, previewUrl: null };
+    })
+    .filter((photo) => Boolean(photo.previewUrl));
   const selectedPhoto = serverEligiblePhotos.find((photo) => photo.attachmentId === selectedAttachmentId) ?? null;
   const publishDisabled = !snapshot?.configured
     || !snapshot.facebookPublishingEnabled
     || !normalizedMessage
     || unsupportedJob
-    || (mode === 'single_photo' && !selectedPhoto)
+    || (mode === 'single_photo' && !selectedPhoto?.previewUrl)
     || publicationInProgress
     || deliveryUnknown
     || workspace.submitting;
@@ -179,7 +194,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
                 checked={selectedAttachmentId === photo.attachmentId}
                 onChange={() => setSelectedAttachmentId(photo.attachmentId)}
               />
-              {photo.previewUrl ? <img src={photo.previewUrl} alt={photo.displayName} /> : <span className="facebook-photo-thumb">Photo</span>}
+              <img src={photo.previewUrl ?? ''} alt={photo.displayName} />
               <span>{photo.displayName || 'Approved photo'}</span>
             </label>
           )) : <p className="facebook-publish-result error">Approve one analyzed selected photo and wait for server eligibility before publishing with a photo.</p>}
@@ -227,9 +242,9 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
               </button>
             </header>
             <div className="facebook-publish-preview">{workspace.approvedMessage}</div>
-            {workspace.mode === 'single_photo' && selectedPhoto ? (
+            {workspace.mode === 'single_photo' && selectedPhoto?.previewUrl ? (
               <div className="facebook-publish-photo-review">
-                {selectedPhoto.previewUrl ? <img src={selectedPhoto.previewUrl} alt={selectedPhoto.displayName} /> : null}
+                <img src={selectedPhoto.previewUrl} alt={selectedPhoto.displayName} />
                 <span>{selectedPhoto.displayName || 'Approved photo'}</span>
               </div>
             ) : null}

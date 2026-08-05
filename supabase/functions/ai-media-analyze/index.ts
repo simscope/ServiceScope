@@ -205,6 +205,8 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
           created_at: completedAt,
         });
         if (attachmentError) continue;
+        item.analysisRunId = runId;
+        item.attachmentResultId = resultId;
         for (const finding of privacyFindings) {
           await adminClient.from('company_media_analysis_privacy_findings').insert({
             id: crypto.randomUUID(),

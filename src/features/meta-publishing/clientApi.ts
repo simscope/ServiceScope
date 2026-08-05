@@ -54,6 +54,8 @@ export function excludeFacebookPublicationPhoto(input: {
   companyId: string;
   jobId: string;
   attachmentId: string;
+  analysisRunId: string;
+  attachmentResultId: string;
   explicitApproval: true;
   exclusionReason?: string;
 }) {
@@ -67,6 +69,8 @@ export function resolveFacebookPublicationPhotoFalsePositive(input: {
   companyId: string;
   jobId: string;
   attachmentId: string;
+  analysisRunId: string;
+  attachmentResultId: string;
   findingIds: string[];
   explicitApproval: true;
   resolutionReason?: string;

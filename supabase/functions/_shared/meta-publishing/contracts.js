@@ -86,9 +86,9 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
       : value.action === 'revoke_facebook_publication_photo_approval'
         ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason']
         : value.action === 'exclude_facebook_publication_photo'
-          ? ['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'exclusionReason']
+          ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'explicitApproval', 'exclusionReason']
           : value.action === 'resolve_facebook_publication_photo_false_positive'
-            ? ['action', 'companyId', 'jobId', 'attachmentId', 'findingIds', 'explicitApproval', 'resolutionReason']
+            ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'findingIds', 'explicitApproval', 'resolutionReason']
             : value.action === 'publish_facebook_single_photo'
               ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
               : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
@@ -277,7 +277,7 @@ function safeUrl(value) {
   if (!clean || clean.length > 2048 || /[\u0000-\u001f<>]/.test(clean)) return null;
   try {
     const url = new URL(clean);
-    return ['https:', 'data:'].includes(url.protocol) ? clean : null;
+    return url.protocol === 'https:' ? clean : null;
   } catch {
     return null;
   }
@@ -295,6 +295,7 @@ function safeEligiblePhoto(value) {
     approvedAt: safeTimestamp(value?.approvedAt),
     revokedAt: safeTimestamp(value?.revokedAt),
     analysisRunId: typeof value?.analysisRunId === 'string' && UUID_PATTERN.test(value.analysisRunId) ? value.analysisRunId : null,
+    attachmentResultId: typeof value?.attachmentResultId === 'string' && UUID_PATTERN.test(value.attachmentResultId) ? value.attachmentResultId : null,
     analysisStatus: ['completed', 'missing', 'failed'].includes(value?.analysisStatus) ? value.analysisStatus : 'missing',
     privacyReviewStatus: ['passed', 'blocked', 'resolved_false_positive'].includes(value?.privacyReviewStatus) ? value.privacyReviewStatus : 'blocked',
     checksumMatch: value?.checksumMatch === true,

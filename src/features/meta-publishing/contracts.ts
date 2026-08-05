@@ -24,6 +24,7 @@ export type FacebookPublishingSnapshot = {
     approvedAt: string | null;
     revokedAt: string | null;
     analysisRunId: string | null;
+    attachmentResultId: string | null;
     analysisStatus: 'completed' | 'missing' | 'failed';
     privacyReviewStatus: 'passed' | 'blocked' | 'resolved_false_positive';
     checksumMatch: boolean;

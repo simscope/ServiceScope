@@ -145,6 +145,15 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
   const selectedMediaAttachments = (selectedJob?.attachments ?? []).filter((attachment) => selectedMediaIds.has(attachment.id));
   const selectedMediaCount = selectedMediaIds.size;
   const selectedPhotoCount = assistantContext?.publicSafe.media.filter((item) => item.selected && item.kind === 'photo').length ?? 0;
+  const facebookPhotoCatalog = selectedMediaAttachments
+    .filter((attachment) => attachment.kind === 'photo' && ['image/jpeg', 'image/png'].includes(attachment.mimeType.toLowerCase()))
+    .map((attachment) => ({
+      attachmentId: attachment.id,
+      displayName: attachment.name,
+      previewUrl: attachmentUrl(attachment),
+      mimeType: attachment.mimeType.toLowerCase() === 'image/png' ? 'image/png' as const : 'image/jpeg' as const,
+    }))
+    .filter((attachment) => attachment.previewUrl);
   const attachmentById = useMemo(
     () => new Map((selectedJob?.attachments ?? []).map((attachment) => [attachment.id, attachment])),
     [selectedJob],
@@ -338,20 +347,26 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
           approvalReason: 'Approved in AI Assistant media review.',
         });
       } else if (approval === 'excluded') {
+        if (!result.analysisRunId || !result.attachmentResultId) return;
         await excludeFacebookPublicationPhoto({
           companyId,
           jobId: selectedJob.id,
           attachmentId,
+          analysisRunId: result.analysisRunId,
+          attachmentResultId: result.attachmentResultId,
           explicitApproval: true,
           exclusionReason: 'Excluded in AI Assistant media review.',
         });
       } else if (approval === 'false_positive') {
+        if (!result.analysisRunId || !result.attachmentResultId) return;
         const findingIds = result.findings.filter((finding) => isPrivacyFinding(finding.category)).map((finding) => finding.findingId);
         if (findingIds.length === 0) return;
         await resolveFacebookPublicationPhotoFalsePositive({
           companyId,
           jobId: selectedJob.id,
           attachmentId,
+          analysisRunId: result.analysisRunId,
+          attachmentResultId: result.attachmentResultId,
           findingIds,
           explicitApproval: true,
           resolutionReason: 'Marked false positive in AI Assistant media review.',
@@ -660,6 +675,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                     jobStatus={selectedJob.status}
                     message={draftWorkspace.drafts[draft.channel] ?? draft.body}
                     selectedMediaCount={selectedMediaCount}
+                    photoCatalog={facebookPhotoCatalog}
                     refreshToken={facebookStatusRefreshToken}
                     privacyStatus="Server privacy validation will run again before publishing."
                   />
