@@ -21,6 +21,7 @@ const [
   exactReviewMigration,
   runtimeClosureMigration,
   persistenceClosureMigration,
+  providerIdRedactionMigration,
   aclMigration,
   schema,
   config,
@@ -42,6 +43,7 @@ const [
   read('supabase/migrations/20260805183000_meta_facebook_single_photo_exact_review.sql'),
   read('supabase/migrations/20260805193000_meta_facebook_single_photo_runtime_closure.sql'),
   read('supabase/migrations/20260805203000_meta_facebook_single_photo_persistence_closure.sql'),
+  read('supabase/migrations/20260805213000_meta_publication_audit_provider_id_redaction.sql'),
   read('supabase/migrations/20260804011000_meta_facebook_publish_service_role_acl_fix.sql'),
   read('supabase/schema.sql'),
   read('supabase/config.toml'),
@@ -51,7 +53,8 @@ const [
 
 const browserSources = `${client}\n${panel}\n${aiPage}`;
 const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${mediaAnalysisEdge}`;
-const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}\n${runtimeClosureMigration}\n${persistenceClosureMigration}`;
+const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}\n${runtimeClosureMigration}\n${persistenceClosureMigration}\n${providerIdRedactionMigration}`;
+const providerIdRedactionFunction = providerIdRedactionMigration.match(/create or replace function private\.complete_company_facebook_publication_unvalidated_20260805[\s\S]+?revoke all on function private\.complete_company_facebook_publication_unvalidated_20260805/)?.[0] ?? '';
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 
@@ -212,6 +215,13 @@ check(() => assert.match(reviewMigration, /singlePhotoProviderPostIdNull/));
 check(() => assert.match(reviewMigration, /metadataStripped/));
 check(() => assert.match(reviewMigration, /gpsStripped/));
 check(() => assert.match(reviewMigration, /sanitizerVersion/));
+check(() => assert.match(providerIdRedactionMigration, /META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_BEGIN/));
+check(() => assert.match(providerIdRedactionMigration, /metadata = metadata - 'providerMediaId' - 'providerPostId'/));
+check(() => assert.match(providerIdRedactionMigration, /where action = 'meta_publication_published'\s+and metadata \?\| array\['providerMediaId', 'providerPostId'\]/));
+check(() => assert.match(providerIdRedactionMigration, /raise exception 'meta publication published audit provider ids remain'/));
+check(() => assert.match(providerIdRedactionFunction, /provider_post_id = case when locked_publication\.publication_kind = 'text_only' then btrim\(p_provider_post_id\) else null end/));
+check(() => assert.match(providerIdRedactionFunction, /provider_media_id = case when locked_publication\.publication_kind = 'single_photo' then btrim\(p_provider_media_id\) else null end/));
+check(() => assert.doesNotMatch(providerIdRedactionFunction, /'providerMediaId'|'providerPostId'/));
 check(() => assert.match(reviewMigration, /if exists \(\s*select 1\s+from public\.company_media_analysis_privacy_findings/s));
 check(() => assert.doesNotMatch(migration, /'Authenticated user', 'publisher'/));
 check(() => assert.match(combinedMigrations, /p_actor_id, btrim\(p_actor_name\), btrim\(p_actor_role\)/));
