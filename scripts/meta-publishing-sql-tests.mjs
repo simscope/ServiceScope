@@ -24,6 +24,7 @@ const migrationNames = [
   '20260805193000_meta_facebook_single_photo_runtime_closure.sql',
   '20260805203000_meta_facebook_single_photo_persistence_closure.sql',
   '20260805213000_meta_publication_audit_provider_id_redaction.sql',
+  '20260805223000_meta_facebook_scheduled_publication_foundation.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -85,6 +86,18 @@ check(() => assert.equal(
     begin: '-- META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_BEGIN',
     end: '-- META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_END',
     label: 'Meta publication audit provider ID redaction',
+  })),
+));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_BEGIN',
+    end: '-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_END',
+    label: 'Meta Facebook scheduled publication foundation',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(migrations[14], {
+    begin: '-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_BEGIN',
+    end: '-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_END',
+    label: 'Meta Facebook scheduled publication foundation',
   })),
 ));
 check(() => assert.equal(
@@ -231,6 +244,7 @@ check(() => assert.deepEqual(providerIdCleanup.rows[0], {
   unrelated_rows_preserved: 1,
 }));
 await db.exec(`delete from public.audit_events where actor_name = 'Legacy Publisher'`);
+await db.exec(migrations[14]);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -332,6 +346,12 @@ const rpcNames = [
   'complete_company_facebook_publication',
   'fail_company_facebook_publication',
   'mark_company_facebook_publication_unknown',
+  'schedule_company_facebook_publication',
+  'cancel_scheduled_company_facebook_publication',
+  'claim_due_company_facebook_publications',
+  'release_scheduled_company_facebook_publication_claim',
+  'fail_scheduled_company_facebook_publication_preflight',
+  'start_scheduled_company_facebook_publication',
 ];
 const rpcGrants = await db.query(`
   select p.proname,
@@ -367,6 +387,12 @@ for (const signature of [
   'complete_company_facebook_publication/9',
   'fail_company_facebook_publication/13',
   'mark_company_facebook_publication_unknown/7',
+  'schedule_company_facebook_publication/18',
+  'cancel_scheduled_company_facebook_publication/6',
+  'claim_due_company_facebook_publications/3',
+  'release_scheduled_company_facebook_publication_claim/5',
+  'fail_scheduled_company_facebook_publication_preflight/6',
+  'start_scheduled_company_facebook_publication/4',
 ]) {
   check(() => assert.equal(signatureSet.has(signature), true));
 }
@@ -552,6 +578,149 @@ await db.query(`insert into public.company_media_analysis_attachment_results (
 const approval = await approvePhoto(ids.attachment, ids.analysisRun, ids.analysisResult, mediaHash, 'SQL approval fixture');
 check(() => assert.equal(approval.rows[0].analysis_run_id, ids.analysisRun));
 check(() => assert.equal(approval.rows[0].approval_status, 'approved'));
+
+const scheduleNow = new Date('2026-08-07T12:00:00.000Z');
+const scheduleFuture = new Date('2026-08-08T12:00:00.000Z');
+const scheduleDue = new Date('2026-08-07T12:30:00.000Z');
+const textScheduleId = '00000000-0000-4000-8000-000000007200';
+const textScheduleKey = '00000000-0000-4000-8000-000000007201';
+const textSchedule = await scheduleTextPublication(textScheduleId, textScheduleKey, 'Scheduled text-only fixture.', scheduleFuture, 'America/New_York', scheduleNow);
+check(() => assert.equal(textSchedule.should_schedule, true));
+check(() => assert.equal(textSchedule.publication_status, 'scheduled'));
+const duplicateTextSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007202', '00000000-0000-4000-8000-000000007203', 'Scheduled text-only fixture.', scheduleFuture, 'America/New_York', scheduleNow);
+check(() => assert.equal(duplicateTextSchedule.should_schedule, false));
+check(() => assert.equal(duplicateTextSchedule.publication_id, textScheduleId));
+const textScheduleRow = await db.query(`select status,attempts,execution_attempts,scheduled_for,scheduled_timezone,scheduled_facebook_page_id,scheduled_by_name,scheduled_by_role,publication_intent_sha256,attachment_id from public.company_social_publications where id=$1`, [textScheduleId]);
+check(() => assert.equal(textScheduleRow.rows[0].status, 'scheduled'));
+check(() => assert.equal(textScheduleRow.rows[0].attempts, 0));
+check(() => assert.equal(textScheduleRow.rows[0].execution_attempts, 0));
+check(() => assert.equal(textScheduleRow.rows[0].scheduled_timezone, 'America/New_York'));
+check(() => assert.equal(textScheduleRow.rows[0].scheduled_facebook_page_id, '10001'));
+check(() => assert.equal(textScheduleRow.rows[0].scheduled_by_name, verifiedActor.name));
+check(() => assert.equal(textScheduleRow.rows[0].scheduled_by_role, verifiedActor.role));
+check(() => assert.equal(textScheduleRow.rows[0].attachment_id, null));
+const immediateIntentSource = [
+  'facebook_publication_intent_v1', 'meta-facebook-login', 'Facebook', ids.company, ids.job, ids.connection, ids.actor,
+  'text_only', 'Scheduled text-only fixture.', '',
+].join('\n');
+const immediateIntentBytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(immediateIntentSource));
+const immediateIntent = Buffer.from(immediateIntentBytes).toString('hex');
+check(() => assert.notEqual(Buffer.from(textScheduleRow.rows[0].publication_intent_sha256).toString('hex'), immediateIntent));
+
+const photoScheduleId = '00000000-0000-4000-8000-000000007204';
+const photoSchedule = await schedulePhotoPublication(photoScheduleId, '00000000-0000-4000-8000-000000007205', 'Scheduled single-photo fixture.', scheduleFuture, 'America/New_York', scheduleNow, ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+check(() => assert.equal(photoSchedule.should_schedule, true));
+const photoScheduleRow = await db.query(`select status,attempts,media_count,safe_mime_type,scheduled_attachment_sha256,scheduled_analysis_run_id,scheduled_attachment_result_id,scheduled_approval_id,scheduled_facebook_page_id from public.company_social_publications where id=$1`, [photoScheduleId]);
+check(() => assert.deepEqual({
+  status: photoScheduleRow.rows[0].status,
+  attempts: photoScheduleRow.rows[0].attempts,
+  media_count: photoScheduleRow.rows[0].media_count,
+  safe_mime_type: photoScheduleRow.rows[0].safe_mime_type,
+  scheduled_analysis_run_id: photoScheduleRow.rows[0].scheduled_analysis_run_id,
+  scheduled_attachment_result_id: photoScheduleRow.rows[0].scheduled_attachment_result_id,
+  scheduled_approval_id: photoScheduleRow.rows[0].scheduled_approval_id,
+  scheduled_facebook_page_id: photoScheduleRow.rows[0].scheduled_facebook_page_id,
+}, {
+  status: 'scheduled',
+  attempts: 0,
+  media_count: 1,
+  safe_mime_type: 'image/jpeg',
+  scheduled_analysis_run_id: ids.analysisRun,
+  scheduled_attachment_result_id: ids.analysisResult,
+  scheduled_approval_id: approval.rows[0].id,
+  scheduled_facebook_page_id: '10001',
+}));
+check(() => assert.equal(Buffer.from(photoScheduleRow.rows[0].scheduled_attachment_sha256).toString('hex'), Buffer.from(mediaHash).toString('hex')));
+
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007206', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Past schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, new Date('2026-08-07T11:59:59.000Z'), 'America/New_York', scheduleNow]);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007207', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Horizon schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, new Date('2027-08-09T12:00:00.000Z'), 'America/New_York', scheduleNow]);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007208', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Timezone schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'Not/A_Real_Zone', scheduleNow]);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007209', ids.otherCompany, ids.threeScopeConnection, ids.otherJob, crypto.randomUUID(), 'Missing permission schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York', scheduleNow]);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007210', ids.company, ids.connection, ids.otherJob, crypto.randomUUID(), 'Wrong tenant schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York', scheduleNow]);
+await assertRejectsSql(schedulePhotoSql(), ['00000000-0000-4000-8000-000000007211', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Bad SHA schedule fixture.', 'single_photo', ids.attachment, new Uint8Array(32).fill(0x12), ids.analysisRun, ids.analysisResult, approval.rows[0].id, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York', scheduleNow]);
+
+const dueScheduleA = await scheduleTextPublication('00000000-0000-4000-8000-000000007212', '00000000-0000-4000-8000-000000007213', 'Due schedule A.', new Date('2026-08-07T12:05:00.000Z'), 'America/New_York', scheduleNow);
+const dueScheduleB = await scheduleTextPublication('00000000-0000-4000-8000-000000007214', '00000000-0000-4000-8000-000000007215', 'Due schedule B.', new Date('2026-08-07T12:06:00.000Z'), 'America/New_York', scheduleNow);
+check(() => assert.equal(dueScheduleA.should_schedule, true));
+check(() => assert.equal(dueScheduleB.should_schedule, true));
+const firstClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+check(() => assert.equal(firstClaim.rows.length, 1));
+check(() => assert.equal(firstClaim.rows[0].publication_id, dueScheduleA.publication_id));
+check(() => assert.equal(firstClaim.rows[0].execution_attempts, 1));
+const activeLeaseClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+check(() => assert.equal(activeLeaseClaim.rows.length, 1));
+check(() => assert.equal(activeLeaseClaim.rows[0].publication_id, dueScheduleB.publication_id));
+await db.query(`select * from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,$4,$5)`, [dueScheduleB.publication_id, ids.company, activeLeaseClaim.rows[0].claim_token, new Date('2026-08-07T13:00:00.000Z'), scheduleDue]);
+const releaseClaim = await db.query(`select status,attempts,execution_attempts,next_attempt_at from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,$4,$5)`, [dueScheduleA.publication_id, ids.company, firstClaim.rows[0].claim_token, new Date('2026-08-07T12:40:00.000Z'), scheduleDue]);
+check(() => assert.equal(releaseClaim.rows[0].status, 'scheduled'));
+check(() => assert.equal(releaseClaim.rows[0].attempts, 0));
+check(() => assert.equal(releaseClaim.rows[0].execution_attempts, 1));
+const notYetClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,10)`, [new Date('2026-08-07T12:39:59.000Z')]);
+check(() => assert.equal(notYetClaim.rows.length, 0));
+const reclaimed = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,10)`, [new Date('2026-08-07T12:40:00.000Z')]);
+check(() => assert.equal(reclaimed.rows.length, 1));
+check(() => assert.equal(reclaimed.rows[0].publication_id, dueScheduleA.publication_id));
+check(() => assert.equal(reclaimed.rows[0].execution_attempts, 2));
+
+const preflightSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007216', '00000000-0000-4000-8000-000000007217', 'Preflight failure fixture.', new Date('2026-08-07T12:10:00.000Z'), 'America/New_York', scheduleNow);
+const preflightClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+check(() => assert.equal(preflightClaim.rows[0].publication_id, preflightSchedule.publication_id));
+const preflightFailed = await db.query(`select status,attempts,last_error_code,last_scheduler_error_code from public.fail_scheduled_company_facebook_publication_preflight($1,$2,$3,$4,$5,$6)`, [preflightSchedule.publication_id, ids.company, preflightClaim.rows[0].claim_token, verifiedActor.name, verifiedActor.role, scheduleDue]);
+check(() => assert.deepEqual(preflightFailed.rows[0], {
+  status: 'failed',
+  attempts: 0,
+  last_error_code: 'META_SCHEDULE_REVALIDATION_FAILED',
+  last_scheduler_error_code: 'META_SCHEDULE_REVALIDATION_FAILED',
+}));
+
+const startTextSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007218', '00000000-0000-4000-8000-000000007219', 'Start text schedule fixture.', new Date('2026-08-07T12:15:00.000Z'), 'America/New_York', scheduleNow);
+const startTextClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+const startedText = await db.query(`select status,attempts,claim_token,next_attempt_at from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [startTextSchedule.publication_id, ids.company, startTextClaim.rows[0].claim_token, scheduleDue]);
+check(() => assert.deepEqual(startedText.rows[0], { status: 'publishing', attempts: 0, claim_token: null, next_attempt_at: null }));
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [startTextSchedule.publication_id, ids.company, startTextClaim.rows[0].claim_token, scheduleDue]);
+await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_77777',null,'{}'::jsonb,$6)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleDue]);
+const completedStartedText = await db.query(`select status,attempts,provider_post_id from public.company_social_publications where id=$1`, [startTextSchedule.publication_id]);
+check(() => assert.deepEqual(completedStartedText.rows[0], { status: 'published', attempts: 1, provider_post_id: '10001_77777' }));
+
+const startPhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007220', '00000000-0000-4000-8000-000000007221', 'Start photo schedule fixture.', new Date('2026-08-07T12:20:00.000Z'), 'America/New_York', scheduleNow, ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+const startPhotoClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+await db.query(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [startPhotoSchedule.publication_id, ids.company, startPhotoClaim.rows[0].claim_token, scheduleDue]);
+await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,null,'10001_photo_77778',jsonb_build_object(
+  'attachmentId',$7::text,'analysisRunId',$8::text,'approvalId',$9::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,
+  'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,
+  'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,
+  'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1
+),$6)`, [startPhotoSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleDue, ids.attachment, ids.analysisRun, approval.rows[0].id]);
+const completedStartedPhoto = await db.query(`select status,attempts,provider_post_id,provider_media_id from public.company_social_publications where id=$1`, [startPhotoSchedule.publication_id]);
+check(() => assert.deepEqual(completedStartedPhoto.rows[0], { status: 'published', attempts: 1, provider_post_id: null, provider_media_id: '10001_photo_77778' }));
+
+const cancelSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007222', '00000000-0000-4000-8000-000000007223', 'Cancel schedule fixture.', scheduleFuture, 'America/New_York', scheduleNow);
+const cancelled = await db.query(`select status,attempts,cancelled_by,next_attempt_at from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5,$6)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleNow]);
+check(() => assert.deepEqual(cancelled.rows[0], { status: 'cancelled', attempts: 0, cancelled_by: ids.actor, next_attempt_at: null }));
+const cancelledAgain = await db.query(`select status from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5,$6)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleNow]);
+check(() => assert.equal(cancelledAgain.rows[0].status, 'cancelled'));
+await assertRejectsSql(`select * from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5,$6)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleNow]);
+
+const stalePhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007224', '00000000-0000-4000-8000-000000007225', 'Stale photo schedule fixture.', new Date('2026-08-07T12:25:00.000Z'), 'America/New_York', scheduleNow, ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+const newerEvidenceTimestamp = new Date('2026-08-08T12:30:00.000Z');
+await db.query(`insert into public.company_media_analysis_runs (
+  id, company_id, job_id, correlation_id, status, provider, model, analysis_version, completed_at, created_at, updated_at
+) values ('00000000-0000-4000-8000-000000007226',$1,$2,'newer-scheduled-evidence','completed','deterministic-fallback','fixture','media-analysis-v1',$3,$3,$3)`, [ids.company, ids.job, newerEvidenceTimestamp]);
+await db.query(`insert into public.company_media_analysis_attachment_results (
+  id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256, detected_mime_type,
+  analysis_status, privacy_review_status, excluded, created_at
+) values ('00000000-0000-4000-8000-000000007227','00000000-0000-4000-8000-000000007226',$1,$2,$3,$4::bytea,'image/jpeg','analyzed','passed',false,$5)`, [ids.company, ids.job, ids.attachment, mediaHash, newerEvidenceTimestamp]);
+const staleClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+check(() => assert.equal(staleClaim.rows[0].publication_id, stalePhotoSchedule.publication_id));
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [stalePhotoSchedule.publication_id, ids.company, staleClaim.rows[0].claim_token, scheduleDue]);
+
+const scheduledAudits = await db.query(`select action,metadata from public.audit_events where action in ('meta_publication_scheduled','meta_publication_schedule_cancelled','meta_publication_schedule_failed') order by created_at,id`);
+check(() => assert.ok(scheduledAudits.rows.length >= 4));
+for (const audit of scheduledAudits.rows) {
+  const serialized = JSON.stringify(audit.metadata);
+  check(() => assert.doesNotMatch(serialized, /Scheduled text-only fixture|Start photo schedule fixture|providerPostId|providerMediaId|facebook_page_id|10001|token|ciphertext|storage|11111111111111111111111111111111/i));
+  check(() => assert.equal(audit.metadata.providerCallCount, 0));
+}
 
 await assertRejectsSql(approvePhotoSql(), [crypto.randomUUID(), ids.company, ids.job, ids.attachment, ids.analysisRun, ids.analysisResult, new Uint8Array(32).fill(0x12), ids.actor, verifiedActor.name, verifiedActor.role, 'Checksum mismatch fixture']);
 
@@ -786,7 +955,7 @@ check(() => assert.deepEqual(mediaIdFailure.rows[0], {
   last_error_code: 'META_PUBLICATION_FAILED',
 }));
 
-const transitions = await db.query(`select status,attempts,provider_post_id,provider_error_category,last_error_code from public.company_social_publications order by id`);
+const transitions = await db.query(`select status,attempts,provider_post_id,provider_error_category,last_error_code from public.company_social_publications where scheduled_for is null order by id`);
 check(() => assert.deepEqual(transitions.rows.map((row) => row.status), ['published', 'failed', 'delivery_unknown', 'published', 'failed']));
 check(() => assert.ok(transitions.rows.every((row) => row.attempts === 1)));
 check(() => assert.equal(transitions.rows[0].provider_post_id, '10001_20002'));
@@ -796,7 +965,8 @@ check(() => assert.equal(transitions.rows[4].provider_error_category, 'RESPONSE_
 
 const audits = await db.query(`select action,actor_user_id,actor_name,actor_role,metadata from public.audit_events where action like 'meta_publication_%' order by created_at,id`);
 check(() => assert.deepEqual([...new Set(audits.rows.map((row) => row.action))].sort(), [
-  'meta_publication_delivery_unknown', 'meta_publication_failed', 'meta_publication_media_approval_revoked', 'meta_publication_media_approved', 'meta_publication_media_excluded', 'meta_publication_media_false_positive_resolved', 'meta_publication_published', 'meta_publication_started',
+  'meta_publication_delivery_unknown', 'meta_publication_failed', 'meta_publication_media_approval_revoked', 'meta_publication_media_approved', 'meta_publication_media_excluded', 'meta_publication_media_false_positive_resolved', 'meta_publication_published',
+  'meta_publication_schedule_cancelled', 'meta_publication_schedule_failed', 'meta_publication_scheduled', 'meta_publication_started',
 ]));
 for (const audit of audits.rows) {
   check(() => assert.equal(audit.actor_user_id, ids.actor));
@@ -907,6 +1077,8 @@ await canonicalDb.exec(migrations[9]);
 await canonicalDb.exec(migrations[10]);
 await canonicalDb.exec(migrations[11]);
 await canonicalDb.exec(migrations[12]);
+await canonicalDb.exec(migrations[13]);
+await canonicalDb.exec(migrations[14]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
@@ -966,6 +1138,35 @@ async function approvePhoto(attachmentId, analysisRunId, attachmentResultId, att
     crypto.randomUUID(), ids.company, ids.job, attachmentId, analysisRunId, attachmentResultId,
     attachmentHash, ids.actor, verifiedActor.name, verifiedActor.role, reason,
   ]);
+}
+
+async function scheduleTextPublication(publicationId, key, message, scheduledFor, timezone, timestamp) {
+  const result = await db.query(scheduleTextSql(), [
+    publicationId, ids.company, ids.connection, ids.job, key, message, 'text_only',
+    null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role,
+    scheduledFor, timezone, timestamp,
+  ]);
+  return result.rows[0];
+}
+
+async function schedulePhotoPublication(publicationId, key, message, scheduledFor, timezone, timestamp, attachmentId, attachmentHash, analysisRunId, attachmentResultId, approvalId) {
+  const result = await db.query(schedulePhotoSql(), [
+    publicationId, ids.company, ids.connection, ids.job, key, message, 'single_photo',
+    attachmentId, attachmentHash, analysisRunId, attachmentResultId, approvalId,
+    ids.actor, verifiedActor.name, verifiedActor.role, scheduledFor, timezone, timestamp,
+  ]);
+  return result.rows[0];
+}
+
+function scheduleTextSql() {
+  return `select * from public.schedule_company_facebook_publication(
+    $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::text,$7::text,
+    $8::uuid,$9::bytea,$10::uuid,$11::uuid,$12::uuid,$13::uuid,$14::text,$15::text,$16::timestamptz,$17::text,$18::timestamptz
+  )`;
+}
+
+function schedulePhotoSql() {
+  return scheduleTextSql();
 }
 
 function approvePhotoSql() {
