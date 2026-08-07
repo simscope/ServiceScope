@@ -260,6 +260,23 @@ check(() => assert.doesNotMatch(scheduledRpcDefinitions[4], /\bp_actor_name\b|\b
 check(() => assert.match(scheduledRpcDefinitions[4], /locked_publication\.approved_by, locked_publication\.scheduled_by_name,\s+locked_publication\.scheduled_by_role/));
 check(() => assert.match(scheduledRpcDefinitions[5], /claim_expires_at > database_now/));
 check(() => assert.match(scheduledRpcDefinitions[5], /scheduled_for <= database_now/));
+check(() => assert.doesNotMatch(scheduledRpcDefinitions[5], /for key share/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.jobs[\s\S]*?for update;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.company_social_connections[\s\S]*?for update;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.job_attachments[\s\S]*?for update;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.company_media_analysis_attachment_results ar[\s\S]*?for update of ar;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.company_social_publication_media_approvals approval[\s\S]*?for update;/i));
+const scheduledStartLockOrder = [
+  'from public.company_social_publications',
+  'from public.jobs',
+  'from public.company_social_connections',
+  'from public.job_attachments',
+  'from public.company_media_analysis_attachment_results ar',
+  'from public.company_social_publication_media_approvals approval',
+  'from public.company_media_analysis_privacy_findings finding',
+].map((fragment) => scheduledRpcDefinitions[5].indexOf(fragment));
+check(() => assert.equal(scheduledStartLockOrder.every((position) => position >= 0), true));
+check(() => assert.equal(scheduledStartLockOrder.every((position, index) => index === 0 || position > scheduledStartLockOrder[index - 1]), true));
 check(() => assert.match(scheduledFoundationMigration, /meta_publication_scheduled/));
 check(() => assert.match(scheduledFoundationMigration, /meta_publication_schedule_cancelled/));
 check(() => assert.match(scheduledFoundationMigration, /meta_publication_schedule_failed/));

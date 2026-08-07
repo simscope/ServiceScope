@@ -88,6 +88,26 @@ check(() => assert.equal(
     label: 'Meta publication audit provider ID redaction',
   })),
 ));
+const scheduledStartDefinition = migrations[14].match(/create or replace function public\.start_scheduled_company_facebook_publication\([\s\S]*?\n\$\$;/)?.[0] ?? '';
+check(() => assert.ok(scheduledStartDefinition));
+check(() => assert.doesNotMatch(scheduledStartDefinition, /for key share/i));
+check(() => assert.match(scheduledStartDefinition, /from public\.company_social_publications[\s\S]*?for update;/i));
+check(() => assert.match(scheduledStartDefinition, /from public\.jobs[\s\S]*?for update;/i));
+check(() => assert.match(scheduledStartDefinition, /from public\.company_social_connections[\s\S]*?for update;/i));
+check(() => assert.match(scheduledStartDefinition, /from public\.job_attachments[\s\S]*?for update;/i));
+check(() => assert.match(scheduledStartDefinition, /from public\.company_media_analysis_attachment_results ar[\s\S]*?for update of ar;/i));
+check(() => assert.match(scheduledStartDefinition, /from public\.company_social_publication_media_approvals approval[\s\S]*?for update;/i));
+const scheduledStartLockOrder = [
+  'from public.company_social_publications',
+  'from public.jobs',
+  'from public.company_social_connections',
+  'from public.job_attachments',
+  'from public.company_media_analysis_attachment_results ar',
+  'from public.company_social_publication_media_approvals approval',
+  'from public.company_media_analysis_privacy_findings finding',
+].map((fragment) => scheduledStartDefinition.indexOf(fragment));
+check(() => assert.equal(scheduledStartLockOrder.every((position) => position >= 0), true));
+check(() => assert.equal(scheduledStartLockOrder.every((position, index) => index === 0 || position > scheduledStartLockOrder[index - 1]), true));
 check(() => assert.equal(
   normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
     begin: '-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_BEGIN',
@@ -762,6 +782,50 @@ check(() => assert.deepEqual(cancelled.rows[0], { status: 'cancelled', attempts:
 const cancelledAgain = await db.query(`select status from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 check(() => assert.equal(cancelledAgain.rows[0].status, 'cancelled'));
 await assertRejectsSql(`select * from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
+
+await db.exec('savepoint scheduled_revoke_wins;');
+const revokedBeforeStartSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007235', '00000000-0000-4000-8000-000000007236', 'Revoked before scheduled start.', new Date(scheduleClockAfter.getTime() + 7 * 60 * 60 * 1000), 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [revokedBeforeStartSchedule.publication_id]);
+const revokedBeforeStartClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+await db.query(`select * from public.revoke_company_facebook_publication_photo_approval(
+  $1,$2,$3,$4,$5,$6,'Scheduled start revoke-wins fixture',clock_timestamp()
+)`, [ids.company, ids.job, ids.attachment, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [revokedBeforeStartSchedule.publication_id, ids.company, revokedBeforeStartClaim.rows[0].claim_token]);
+const revokedBeforeStartState = await db.query(`select status from public.company_social_publications where id=$1`, [revokedBeforeStartSchedule.publication_id]);
+check(() => assert.equal(revokedBeforeStartState.rows[0].status, 'scheduled'));
+await db.exec('rollback to savepoint scheduled_revoke_wins;');
+await db.exec('release savepoint scheduled_revoke_wins;');
+
+await db.exec('savepoint scheduled_exclusion_wins;');
+const excludedBeforeStartSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007237', '00000000-0000-4000-8000-000000007238', 'Excluded before scheduled start.', new Date(scheduleClockAfter.getTime() + 8 * 60 * 60 * 1000), 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [excludedBeforeStartSchedule.publication_id]);
+const excludedBeforeStartClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+await db.query(`select * from public.exclude_company_facebook_publication_photo(
+  $1,$2,$3,$4,$5,$6,$7,$8,'Scheduled start exclusion-wins fixture',clock_timestamp()
+)`, [ids.company, ids.job, ids.attachment, ids.analysisRun, ids.analysisResult, ids.actor, verifiedActor.name, verifiedActor.role]);
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [excludedBeforeStartSchedule.publication_id, ids.company, excludedBeforeStartClaim.rows[0].claim_token]);
+const excludedBeforeStartState = await db.query(`select status from public.company_social_publications where id=$1`, [excludedBeforeStartSchedule.publication_id]);
+check(() => assert.equal(excludedBeforeStartState.rows[0].status, 'scheduled'));
+await db.exec('rollback to savepoint scheduled_exclusion_wins;');
+await db.exec('release savepoint scheduled_exclusion_wins;');
+
+await db.exec('savepoint scheduled_start_wins;');
+const startWinsSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007239', '00000000-0000-4000-8000-000000007240', 'Scheduled start wins serialization.', new Date(scheduleClockAfter.getTime() + 9 * 60 * 60 * 1000), 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [startWinsSchedule.publication_id]);
+const startWinsClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+await db.query(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [startWinsSchedule.publication_id, ids.company, startWinsClaim.rows[0].claim_token]);
+const revokeAfterStart = await db.query(`select * from public.revoke_company_facebook_publication_photo_approval(
+  $1,$2,$3,$4,$5,$6,'Scheduled start already won fixture',clock_timestamp()
+)`, [ids.company, ids.job, ids.attachment, ids.actor, verifiedActor.name, verifiedActor.role]);
+check(() => assert.equal(revokeAfterStart.rows[0].approval_status, 'revoked'));
+const excludeAfterStart = await db.query(`select * from public.exclude_company_facebook_publication_photo(
+  $1,$2,$3,$4,$5,$6,$7,$8,'Scheduled start already won exclusion fixture',clock_timestamp()
+)`, [ids.company, ids.job, ids.attachment, ids.analysisRun, ids.analysisResult, ids.actor, verifiedActor.name, verifiedActor.role]);
+check(() => assert.equal(excludeAfterStart.rows[0].excluded, true));
+const startWinsState = await db.query(`select status from public.company_social_publications where id=$1`, [startWinsSchedule.publication_id]);
+check(() => assert.equal(startWinsState.rows[0].status, 'publishing'));
+await db.exec('rollback to savepoint scheduled_start_wins;');
+await db.exec('release savepoint scheduled_start_wins;');
 
 const stalePhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007224', '00000000-0000-4000-8000-000000007225', 'Stale photo schedule fixture.', new Date(scheduleClockAfter.getTime() + 7 * 60 * 60 * 1000), 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
 const newerEvidenceTimestamp = new Date(scheduleClockAfter.getTime() + 8 * 60 * 60 * 1000);

@@ -776,6 +776,7 @@ declare
 begin
   database_now := clock_timestamp();
 
+  -- Lock order: publication, job, connection, attachment, analysis result, approval, privacy read.
   select * into locked_publication
   from public.company_social_publications
   where id = p_publication_id
@@ -792,7 +793,7 @@ begin
   where id = locked_publication.job_id
     and company_id = locked_publication.company_id
     and status::text in ('Completed', 'Warranty')
-  for key share;
+  for update;
   if not found then raise exception 'scheduled publication job unavailable'; end if;
 
   select * into selected_connection
@@ -800,7 +801,7 @@ begin
   where id = locked_publication.connection_id
     and company_id = locked_publication.company_id
     and provider = 'meta-facebook-login'
-  for key share;
+  for update;
   if not found
     or selected_connection.status <> 'connected'
     or selected_connection.facebook_page_id <> locked_publication.scheduled_facebook_page_id
@@ -815,7 +816,7 @@ begin
     where id = locked_publication.attachment_id
       and company_id = locked_publication.company_id
       and job_id = locked_publication.job_id
-    for key share;
+    for update;
     if not found
       or selected_attachment.kind::text = 'video'
       or lower(selected_attachment.mime_type) <> locked_publication.safe_mime_type
@@ -850,7 +851,7 @@ begin
           and newer.attachment_id = locked_publication.attachment_id
           and (newer.created_at, newer.id) > (ar.created_at, ar.id)
       )
-    for key share;
+    for update of ar;
     if not found then raise exception 'scheduled publication media evidence unavailable'; end if;
 
     select * into selected_approval
@@ -864,7 +865,7 @@ begin
       and approval.attachment_mime_type = locked_publication.safe_mime_type
       and approval.approval_status = 'approved'
       and approval.revoked_at is null
-    for key share;
+    for update;
     if not found then raise exception 'scheduled publication approval unavailable'; end if;
 
     if exists (
