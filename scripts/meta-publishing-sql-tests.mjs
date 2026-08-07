@@ -23,6 +23,7 @@ const migrationNames = [
   '20260805183000_meta_facebook_single_photo_exact_review.sql',
   '20260805193000_meta_facebook_single_photo_runtime_closure.sql',
   '20260805203000_meta_facebook_single_photo_persistence_closure.sql',
+  '20260805213000_meta_publication_audit_provider_id_redaction.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -72,6 +73,18 @@ check(() => assert.equal(
     begin: '-- META_FACEBOOK_SINGLE_PHOTO_PERSISTENCE_CLOSURE_BEGIN',
     end: '-- META_FACEBOOK_SINGLE_PHOTO_PERSISTENCE_CLOSURE_END',
     label: 'Meta Facebook single-photo persistence closure',
+  })),
+));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_BEGIN',
+    end: '-- META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_END',
+    label: 'Meta publication audit provider ID redaction',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(migrations[13], {
+    begin: '-- META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_BEGIN',
+    end: '-- META_PUBLICATION_AUDIT_PROVIDER_ID_REDACTION_END',
+    label: 'Meta publication audit provider ID redaction',
   })),
 ));
 check(() => assert.equal(
@@ -190,6 +203,34 @@ await db.exec(migrations[9]);
 await db.exec(migrations[10]);
 await db.exec(migrations[11]);
 await db.exec(migrations[12]);
+await db.exec(`
+  insert into public.audit_events (
+    actor_name, actor_role, category, action, resource_type, resource, resource_id, resource_label, details, metadata
+  ) values
+    ('Legacy Publisher','admin','access','meta_publication_published','meta_social_publication','Facebook publication','legacy-provider-media','Facebook publication','Legacy published audit.',
+      jsonb_build_object('providerMediaId','legacy-media-id','legacySafeKey','keep-media')),
+    ('Legacy Publisher','admin','access','meta_publication_published','meta_social_publication','Facebook publication','legacy-provider-post','Facebook publication','Legacy published audit.',
+      jsonb_build_object('providerPostId','legacy-post-id','legacySafeKey','keep-post')),
+    ('Legacy Publisher','admin','access','meta_publication_published','meta_social_publication','Facebook publication','legacy-both-provider-ids','Facebook publication','Legacy published audit.',
+      jsonb_build_object('providerMediaId','legacy-media-id','providerPostId',null,'legacySafeKey','keep-both')),
+    ('Legacy Publisher','admin','access','meta_publication_started','meta_social_publication','Facebook publication','unrelated-provider-id-metadata','Facebook publication','Unrelated audit.',
+      jsonb_build_object('providerMediaId','unrelated-media-id','providerPostId','unrelated-post-id','legacySafeKey','keep-unrelated'))
+`);
+await db.exec(migrations[13]);
+await db.exec(migrations[13]);
+const providerIdCleanup = await db.query(`
+  select
+    count(*) filter (where action='meta_publication_published' and metadata ?| array['providerMediaId','providerPostId'])::integer as published_provider_id_rows,
+    count(*) filter (where action='meta_publication_published' and metadata->>'legacySafeKey' in ('keep-media','keep-post','keep-both'))::integer as preserved_published_metadata_rows,
+    count(*) filter (where action='meta_publication_started' and metadata ?& array['providerMediaId','providerPostId'] and metadata->>'legacySafeKey'='keep-unrelated')::integer as unrelated_rows_preserved
+  from public.audit_events
+`);
+check(() => assert.deepEqual(providerIdCleanup.rows[0], {
+  published_provider_id_rows: 0,
+  preserved_published_metadata_rows: 3,
+  unrelated_rows_preserved: 1,
+}));
+await db.exec(`delete from public.audit_events where actor_name = 'Legacy Publisher'`);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -766,14 +807,18 @@ for (const audit of audits.rows) {
 }
 const singlePhotoPublishedAudit = audits.rows.find((row) => row.action === 'meta_publication_published' && row.metadata.publicationKind === 'single_photo');
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.providerCallCount, 1));
-check(() => assert.equal(singlePhotoPublishedAudit.metadata.providerMediaId, '10001_photo_30003'));
-check(() => assert.equal(singlePhotoPublishedAudit.metadata.providerPostId, null));
+check(() => assert.equal(Object.hasOwn(singlePhotoPublishedAudit.metadata, 'providerMediaId'), false));
+check(() => assert.equal(Object.hasOwn(singlePhotoPublishedAudit.metadata, 'providerPostId'), false));
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.singlePhotoProviderPostIdNull, true));
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.analysisRunId, ids.analysisRun));
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.metadataStripped, true));
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.gpsStripped, true));
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.sanitizer, 'ImageScript'));
 check(() => assert.equal(singlePhotoPublishedAudit.metadata.sanitizerVersion, '1.3.0'));
+const textOnlyPublishedAudit = audits.rows.find((row) => row.action === 'meta_publication_published' && row.metadata.publicationKind === 'text_only');
+check(() => assert.equal(textOnlyPublishedAudit.metadata.providerCallCount, 1));
+check(() => assert.equal(Object.hasOwn(textOnlyPublishedAudit.metadata, 'providerPostId'), false));
+check(() => assert.equal(Object.hasOwn(textOnlyPublishedAudit.metadata, 'providerMediaId'), false));
 const excludedAudit = audits.rows.find((row) => row.action === 'meta_publication_media_excluded');
 check(() => assert.equal(excludedAudit.metadata.exclusionReason, 'Exclude SQL fixture'));
 const falsePositiveAudit = audits.rows.find((row) => row.action === 'meta_publication_media_false_positive_resolved');
