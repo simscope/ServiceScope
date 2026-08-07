@@ -387,17 +387,43 @@ for (const signature of [
   'complete_company_facebook_publication/9',
   'fail_company_facebook_publication/13',
   'mark_company_facebook_publication_unknown/7',
-  'schedule_company_facebook_publication/18',
-  'cancel_scheduled_company_facebook_publication/6',
-  'claim_due_company_facebook_publications/3',
-  'release_scheduled_company_facebook_publication_claim/5',
-  'fail_scheduled_company_facebook_publication_preflight/6',
-  'start_scheduled_company_facebook_publication/4',
+  'schedule_company_facebook_publication/17',
+  'cancel_scheduled_company_facebook_publication/5',
+  'claim_due_company_facebook_publications/2',
+  'release_scheduled_company_facebook_publication_claim/4',
+  'fail_scheduled_company_facebook_publication_preflight/3',
+  'start_scheduled_company_facebook_publication/3',
 ]) {
   check(() => assert.equal(signatureSet.has(signature), true));
 }
 for (const name of rpcNames) {
   check(() => assert.equal(rpcShapes.rows.filter((row) => row.proname === name).length, 1));
+}
+const scheduledRpcParameterSafety = await db.query(`
+  select proname,
+    not ('p_now' = any(coalesce(proargnames, '{}'::text[]))) as no_caller_now,
+    not ('p_timestamp' = any(coalesce(proargnames, '{}'::text[]))) as no_caller_timestamp,
+    case when proname = 'fail_scheduled_company_facebook_publication_preflight'
+      then not ('p_actor_name' = any(coalesce(proargnames, '{}'::text[])))
+        and not ('p_actor_role' = any(coalesce(proargnames, '{}'::text[])))
+      else true
+    end as immutable_failure_actor
+  from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public'
+    and p.proname = any($1::text[])
+`, [[
+  'schedule_company_facebook_publication',
+  'cancel_scheduled_company_facebook_publication',
+  'claim_due_company_facebook_publications',
+  'release_scheduled_company_facebook_publication_claim',
+  'fail_scheduled_company_facebook_publication_preflight',
+  'start_scheduled_company_facebook_publication',
+]]);
+check(() => assert.equal(scheduledRpcParameterSafety.rows.length, 6));
+for (const row of scheduledRpcParameterSafety.rows) {
+  check(() => assert.equal(row.no_caller_now, true));
+  check(() => assert.equal(row.no_caller_timestamp, true));
+  check(() => assert.equal(row.immutable_failure_actor, true));
 }
 const legacySignatures = await db.query(`
   select
@@ -579,18 +605,18 @@ const approval = await approvePhoto(ids.attachment, ids.analysisRun, ids.analysi
 check(() => assert.equal(approval.rows[0].analysis_run_id, ids.analysisRun));
 check(() => assert.equal(approval.rows[0].approval_status, 'approved'));
 
-const scheduleNow = new Date('2026-08-07T12:00:00.000Z');
-const scheduleFuture = new Date('2026-08-08T12:00:00.000Z');
-const scheduleDue = new Date('2026-08-07T12:30:00.000Z');
+const scheduleClockBefore = (await db.query(`select clock_timestamp() as database_now`)).rows[0].database_now;
+const scheduleFuture = new Date(scheduleClockBefore.getTime() + 24 * 60 * 60 * 1000);
 const textScheduleId = '00000000-0000-4000-8000-000000007200';
 const textScheduleKey = '00000000-0000-4000-8000-000000007201';
-const textSchedule = await scheduleTextPublication(textScheduleId, textScheduleKey, 'Scheduled text-only fixture.', scheduleFuture, 'America/New_York', scheduleNow);
+const textSchedule = await scheduleTextPublication(textScheduleId, textScheduleKey, 'Scheduled text-only fixture.', scheduleFuture, 'America/New_York');
+const scheduleClockAfter = (await db.query(`select clock_timestamp() as database_now`)).rows[0].database_now;
 check(() => assert.equal(textSchedule.should_schedule, true));
 check(() => assert.equal(textSchedule.publication_status, 'scheduled'));
-const duplicateTextSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007202', '00000000-0000-4000-8000-000000007203', 'Scheduled text-only fixture.', scheduleFuture, 'America/New_York', scheduleNow);
+const duplicateTextSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007202', '00000000-0000-4000-8000-000000007203', 'Scheduled text-only fixture.', scheduleFuture, 'America/New_York');
 check(() => assert.equal(duplicateTextSchedule.should_schedule, false));
 check(() => assert.equal(duplicateTextSchedule.publication_id, textScheduleId));
-const textScheduleRow = await db.query(`select status,attempts,execution_attempts,scheduled_for,scheduled_timezone,scheduled_facebook_page_id,scheduled_by_name,scheduled_by_role,publication_intent_sha256,attachment_id from public.company_social_publications where id=$1`, [textScheduleId]);
+const textScheduleRow = await db.query(`select status,attempts,execution_attempts,scheduled_for,scheduled_timezone,scheduled_facebook_page_id,scheduled_by_name,scheduled_by_role,publication_intent_sha256,attachment_id,approved_at,created_at,updated_at from public.company_social_publications where id=$1`, [textScheduleId]);
 check(() => assert.equal(textScheduleRow.rows[0].status, 'scheduled'));
 check(() => assert.equal(textScheduleRow.rows[0].attempts, 0));
 check(() => assert.equal(textScheduleRow.rows[0].execution_attempts, 0));
@@ -599,6 +625,9 @@ check(() => assert.equal(textScheduleRow.rows[0].scheduled_facebook_page_id, '10
 check(() => assert.equal(textScheduleRow.rows[0].scheduled_by_name, verifiedActor.name));
 check(() => assert.equal(textScheduleRow.rows[0].scheduled_by_role, verifiedActor.role));
 check(() => assert.equal(textScheduleRow.rows[0].attachment_id, null));
+for (const timestamp of [textScheduleRow.rows[0].approved_at, textScheduleRow.rows[0].created_at, textScheduleRow.rows[0].updated_at]) {
+  check(() => assert.ok(timestamp >= scheduleClockBefore && timestamp <= scheduleClockAfter));
+}
 const immediateIntentSource = [
   'facebook_publication_intent_v1', 'meta-facebook-login', 'Facebook', ids.company, ids.job, ids.connection, ids.actor,
   'text_only', 'Scheduled text-only fixture.', '',
@@ -608,7 +637,7 @@ const immediateIntent = Buffer.from(immediateIntentBytes).toString('hex');
 check(() => assert.notEqual(Buffer.from(textScheduleRow.rows[0].publication_intent_sha256).toString('hex'), immediateIntent));
 
 const photoScheduleId = '00000000-0000-4000-8000-000000007204';
-const photoSchedule = await schedulePhotoPublication(photoScheduleId, '00000000-0000-4000-8000-000000007205', 'Scheduled single-photo fixture.', scheduleFuture, 'America/New_York', scheduleNow, ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+const photoSchedule = await schedulePhotoPublication(photoScheduleId, '00000000-0000-4000-8000-000000007205', 'Scheduled single-photo fixture.', scheduleFuture, 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
 check(() => assert.equal(photoSchedule.should_schedule, true));
 const photoScheduleRow = await db.query(`select status,attempts,media_count,safe_mime_type,scheduled_attachment_sha256,scheduled_analysis_run_id,scheduled_attachment_result_id,scheduled_approval_id,scheduled_facebook_page_id from public.company_social_publications where id=$1`, [photoScheduleId]);
 check(() => assert.deepEqual({
@@ -632,77 +661,110 @@ check(() => assert.deepEqual({
 }));
 check(() => assert.equal(Buffer.from(photoScheduleRow.rows[0].scheduled_attachment_sha256).toString('hex'), Buffer.from(mediaHash).toString('hex')));
 
-await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007206', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Past schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, new Date('2026-08-07T11:59:59.000Z'), 'America/New_York', scheduleNow]);
-await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007207', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Horizon schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, new Date('2027-08-09T12:00:00.000Z'), 'America/New_York', scheduleNow]);
-await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007208', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Timezone schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'Not/A_Real_Zone', scheduleNow]);
-await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007209', ids.otherCompany, ids.threeScopeConnection, ids.otherJob, crypto.randomUUID(), 'Missing permission schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York', scheduleNow]);
-await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007210', ids.company, ids.connection, ids.otherJob, crypto.randomUUID(), 'Wrong tenant schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York', scheduleNow]);
-await assertRejectsSql(schedulePhotoSql(), ['00000000-0000-4000-8000-000000007211', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Bad SHA schedule fixture.', 'single_photo', ids.attachment, new Uint8Array(32).fill(0x12), ids.analysisRun, ids.analysisResult, approval.rows[0].id, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York', scheduleNow]);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007206', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Past schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, new Date(scheduleClockAfter.getTime() - 1000), 'America/New_York']);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007207', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Horizon schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, new Date(scheduleClockAfter.getTime() + 367 * 24 * 60 * 60 * 1000), 'America/New_York']);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007208', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Timezone schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'Not/A_Real_Zone']);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007209', ids.otherCompany, ids.threeScopeConnection, ids.otherJob, crypto.randomUUID(), 'Missing permission schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York']);
+await assertRejectsSql(scheduleTextSql(), ['00000000-0000-4000-8000-000000007210', ids.company, ids.connection, ids.otherJob, crypto.randomUUID(), 'Wrong tenant schedule fixture.', 'text_only', null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York']);
+await assertRejectsSql(schedulePhotoSql(), ['00000000-0000-4000-8000-000000007211', ids.company, ids.connection, ids.job, crypto.randomUUID(), 'Bad SHA schedule fixture.', 'single_photo', ids.attachment, new Uint8Array(32).fill(0x12), ids.analysisRun, ids.analysisResult, approval.rows[0].id, ids.actor, verifiedActor.name, verifiedActor.role, scheduleFuture, 'America/New_York']);
 
-const dueScheduleA = await scheduleTextPublication('00000000-0000-4000-8000-000000007212', '00000000-0000-4000-8000-000000007213', 'Due schedule A.', new Date('2026-08-07T12:05:00.000Z'), 'America/New_York', scheduleNow);
-const dueScheduleB = await scheduleTextPublication('00000000-0000-4000-8000-000000007214', '00000000-0000-4000-8000-000000007215', 'Due schedule B.', new Date('2026-08-07T12:06:00.000Z'), 'America/New_York', scheduleNow);
+const earlySchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007228', '00000000-0000-4000-8000-000000007229', 'Future schedule gate fixture.', new Date(scheduleClockAfter.getTime() + 60 * 60 * 1000), 'America/New_York');
+const earlyClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,50)`);
+check(() => assert.equal(earlyClaim.rows.some((row) => row.publication_id === earlySchedule.publication_id), false));
+const syntheticEarlyClaimToken = '00000000-0000-4000-8000-000000007230';
+await db.query(`update public.company_social_publications
+  set claim_token=$2,claimed_at=clock_timestamp(),claim_expires_at=clock_timestamp()+interval '1 minute'
+  where id=$1`, [earlySchedule.publication_id, syntheticEarlyClaimToken]);
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [earlySchedule.publication_id, ids.company, syntheticEarlyClaimToken]);
+await db.query(`update public.company_social_publications set claim_token=null,claimed_at=null,claim_expires_at=null where id=$1`, [earlySchedule.publication_id]);
+
+const dueScheduleA = await scheduleTextPublication('00000000-0000-4000-8000-000000007212', '00000000-0000-4000-8000-000000007213', 'Due schedule A.', new Date(scheduleClockAfter.getTime() + 2 * 60 * 60 * 1000), 'America/New_York');
+const dueScheduleB = await scheduleTextPublication('00000000-0000-4000-8000-000000007214', '00000000-0000-4000-8000-000000007215', 'Due schedule B.', new Date(scheduleClockAfter.getTime() + 3 * 60 * 60 * 1000), 'America/New_York');
 check(() => assert.equal(dueScheduleA.should_schedule, true));
 check(() => assert.equal(dueScheduleB.should_schedule, true));
-const firstClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+await db.query(`update public.company_social_publications
+  set scheduled_for=clock_timestamp()-interval '2 minutes',next_attempt_at=clock_timestamp()-interval '2 minutes'
+  where id=$1`, [dueScheduleA.publication_id]);
+await db.query(`update public.company_social_publications
+  set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute'
+  where id=$1`, [dueScheduleB.publication_id]);
+const firstClaimClockBefore = (await db.query(`select clock_timestamp() as database_now`)).rows[0].database_now;
+const firstClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+const firstClaimClockAfter = (await db.query(`select clock_timestamp() as database_now`)).rows[0].database_now;
 check(() => assert.equal(firstClaim.rows.length, 1));
 check(() => assert.equal(firstClaim.rows[0].publication_id, dueScheduleA.publication_id));
 check(() => assert.equal(firstClaim.rows[0].execution_attempts, 1));
-const activeLeaseClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+const firstClaimLease = await db.query(`select claimed_at,claim_expires_at from public.company_social_publications where id=$1`, [dueScheduleA.publication_id]);
+check(() => assert.ok(firstClaimLease.rows[0].claimed_at >= firstClaimClockBefore && firstClaimLease.rows[0].claimed_at <= firstClaimClockAfter));
+check(() => assert.equal(firstClaimLease.rows[0].claim_expires_at.getTime() - firstClaimLease.rows[0].claimed_at.getTime(), 60 * 1000));
+const activeLeaseClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
 check(() => assert.equal(activeLeaseClaim.rows.length, 1));
 check(() => assert.equal(activeLeaseClaim.rows[0].publication_id, dueScheduleB.publication_id));
-await db.query(`select * from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,$4,$5)`, [dueScheduleB.publication_id, ids.company, activeLeaseClaim.rows[0].claim_token, new Date('2026-08-07T13:00:00.000Z'), scheduleDue]);
-const releaseClaim = await db.query(`select status,attempts,execution_attempts,next_attempt_at from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,$4,$5)`, [dueScheduleA.publication_id, ids.company, firstClaim.rows[0].claim_token, new Date('2026-08-07T12:40:00.000Z'), scheduleDue]);
+await assertRejectsSql(`select * from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,clock_timestamp()-interval '1 second')`, [dueScheduleB.publication_id, ids.company, activeLeaseClaim.rows[0].claim_token]);
+await assertRejectsSql(`select * from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,clock_timestamp()+interval '25 hours')`, [dueScheduleB.publication_id, ids.company, activeLeaseClaim.rows[0].claim_token]);
+await db.query(`select * from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,clock_timestamp()+interval '10 minutes')`, [dueScheduleB.publication_id, ids.company, activeLeaseClaim.rows[0].claim_token]);
+const releaseClaim = await db.query(`select status,attempts,execution_attempts,next_attempt_at from public.release_scheduled_company_facebook_publication_claim($1,$2,$3,clock_timestamp()+interval '5 minutes')`, [dueScheduleA.publication_id, ids.company, firstClaim.rows[0].claim_token]);
 check(() => assert.equal(releaseClaim.rows[0].status, 'scheduled'));
 check(() => assert.equal(releaseClaim.rows[0].attempts, 0));
 check(() => assert.equal(releaseClaim.rows[0].execution_attempts, 1));
-const notYetClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,10)`, [new Date('2026-08-07T12:39:59.000Z')]);
+const notYetClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,10)`);
 check(() => assert.equal(notYetClaim.rows.length, 0));
-const reclaimed = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,10)`, [new Date('2026-08-07T12:40:00.000Z')]);
+await db.query(`update public.company_social_publications set next_attempt_at=clock_timestamp()-interval '1 second' where id=$1`, [dueScheduleA.publication_id]);
+const reclaimed = await db.query(`select * from public.claim_due_company_facebook_publications(60,10)`);
 check(() => assert.equal(reclaimed.rows.length, 1));
 check(() => assert.equal(reclaimed.rows[0].publication_id, dueScheduleA.publication_id));
 check(() => assert.equal(reclaimed.rows[0].execution_attempts, 2));
 
-const preflightSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007216', '00000000-0000-4000-8000-000000007217', 'Preflight failure fixture.', new Date('2026-08-07T12:10:00.000Z'), 'America/New_York', scheduleNow);
-const preflightClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+const preflightSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007216', '00000000-0000-4000-8000-000000007217', 'Preflight failure fixture.', new Date(scheduleClockAfter.getTime() + 4 * 60 * 60 * 1000), 'America/New_York');
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [preflightSchedule.publication_id]);
+const preflightClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
 check(() => assert.equal(preflightClaim.rows[0].publication_id, preflightSchedule.publication_id));
-const preflightFailed = await db.query(`select status,attempts,last_error_code,last_scheduler_error_code from public.fail_scheduled_company_facebook_publication_preflight($1,$2,$3,$4,$5,$6)`, [preflightSchedule.publication_id, ids.company, preflightClaim.rows[0].claim_token, verifiedActor.name, verifiedActor.role, scheduleDue]);
+const preflightFailed = await db.query(`select status,attempts,last_error_code,last_scheduler_error_code from public.fail_scheduled_company_facebook_publication_preflight($1,$2,$3)`, [preflightSchedule.publication_id, ids.company, preflightClaim.rows[0].claim_token]);
 check(() => assert.deepEqual(preflightFailed.rows[0], {
   status: 'failed',
   attempts: 0,
   last_error_code: 'META_SCHEDULE_REVALIDATION_FAILED',
   last_scheduler_error_code: 'META_SCHEDULE_REVALIDATION_FAILED',
 }));
+const preflightFailureAudit = await db.query(`select actor_user_id,actor_name,actor_role from public.audit_events where action='meta_publication_schedule_failed' and resource_id=$1`, [preflightSchedule.publication_id]);
+check(() => assert.deepEqual(preflightFailureAudit.rows[0], {
+  actor_user_id: ids.actor,
+  actor_name: verifiedActor.name,
+  actor_role: verifiedActor.role,
+}));
 
-const startTextSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007218', '00000000-0000-4000-8000-000000007219', 'Start text schedule fixture.', new Date('2026-08-07T12:15:00.000Z'), 'America/New_York', scheduleNow);
-const startTextClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
-const startedText = await db.query(`select status,attempts,claim_token,next_attempt_at from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [startTextSchedule.publication_id, ids.company, startTextClaim.rows[0].claim_token, scheduleDue]);
+const startTextSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007218', '00000000-0000-4000-8000-000000007219', 'Start text schedule fixture.', new Date(scheduleClockAfter.getTime() + 5 * 60 * 60 * 1000), 'America/New_York');
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [startTextSchedule.publication_id]);
+const startTextClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+const startedText = await db.query(`select status,attempts,claim_token,next_attempt_at from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [startTextSchedule.publication_id, ids.company, startTextClaim.rows[0].claim_token]);
 check(() => assert.deepEqual(startedText.rows[0], { status: 'publishing', attempts: 0, claim_token: null, next_attempt_at: null }));
-await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [startTextSchedule.publication_id, ids.company, startTextClaim.rows[0].claim_token, scheduleDue]);
-await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_77777',null,'{}'::jsonb,$6)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleDue]);
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [startTextSchedule.publication_id, ids.company, startTextClaim.rows[0].claim_token]);
+await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,'10001_77777',null,'{}'::jsonb,$6)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleClockAfter]);
 const completedStartedText = await db.query(`select status,attempts,provider_post_id from public.company_social_publications where id=$1`, [startTextSchedule.publication_id]);
 check(() => assert.deepEqual(completedStartedText.rows[0], { status: 'published', attempts: 1, provider_post_id: '10001_77777' }));
 
-const startPhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007220', '00000000-0000-4000-8000-000000007221', 'Start photo schedule fixture.', new Date('2026-08-07T12:20:00.000Z'), 'America/New_York', scheduleNow, ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
-const startPhotoClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
-await db.query(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [startPhotoSchedule.publication_id, ids.company, startPhotoClaim.rows[0].claim_token, scheduleDue]);
+const startPhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007220', '00000000-0000-4000-8000-000000007221', 'Start photo schedule fixture.', new Date(scheduleClockAfter.getTime() + 6 * 60 * 60 * 1000), 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [startPhotoSchedule.publication_id]);
+const startPhotoClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+await db.query(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [startPhotoSchedule.publication_id, ids.company, startPhotoClaim.rows[0].claim_token]);
 await db.query(`select * from public.complete_company_facebook_publication($1,$2,$3,$4,$5,null,'10001_photo_77778',jsonb_build_object(
   'attachmentId',$7::text,'analysisRunId',$8::text,'approvalId',$9::text,'approvedAt','2026-08-05T00:00:00.000Z','revoked',false,
   'originalMime','image/jpeg','detectedMime','image/jpeg','sanitizedMime','image/jpeg','originalByteSize',24,'sanitizedByteSize',18,
   'originalHashPrefix','1111111111111111','sanitizedHashPrefix','2222222222222222','width',1,'height',1,
   'metadataStripped',true,'gpsStripped',true,'sanitizer','ImageScript','sanitizerVersion','1.3.0','providerCallCount',1
-),$6)`, [startPhotoSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleDue, ids.attachment, ids.analysisRun, approval.rows[0].id]);
+),$6)`, [startPhotoSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleClockAfter, ids.attachment, ids.analysisRun, approval.rows[0].id]);
 const completedStartedPhoto = await db.query(`select status,attempts,provider_post_id,provider_media_id from public.company_social_publications where id=$1`, [startPhotoSchedule.publication_id]);
 check(() => assert.deepEqual(completedStartedPhoto.rows[0], { status: 'published', attempts: 1, provider_post_id: null, provider_media_id: '10001_photo_77778' }));
 
-const cancelSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007222', '00000000-0000-4000-8000-000000007223', 'Cancel schedule fixture.', scheduleFuture, 'America/New_York', scheduleNow);
-const cancelled = await db.query(`select status,attempts,cancelled_by,next_attempt_at from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5,$6)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleNow]);
+const cancelSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007222', '00000000-0000-4000-8000-000000007223', 'Cancel schedule fixture.', scheduleFuture, 'America/New_York');
+const cancelled = await db.query(`select status,attempts,cancelled_by,next_attempt_at from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 check(() => assert.deepEqual(cancelled.rows[0], { status: 'cancelled', attempts: 0, cancelled_by: ids.actor, next_attempt_at: null }));
-const cancelledAgain = await db.query(`select status from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5,$6)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleNow]);
+const cancelledAgain = await db.query(`select status from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 check(() => assert.equal(cancelledAgain.rows[0].status, 'cancelled'));
-await assertRejectsSql(`select * from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5,$6)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleNow]);
+await assertRejectsSql(`select * from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [startTextSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
 
-const stalePhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007224', '00000000-0000-4000-8000-000000007225', 'Stale photo schedule fixture.', new Date('2026-08-07T12:25:00.000Z'), 'America/New_York', scheduleNow, ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
-const newerEvidenceTimestamp = new Date('2026-08-08T12:30:00.000Z');
+const stalePhotoSchedule = await schedulePhotoPublication('00000000-0000-4000-8000-000000007224', '00000000-0000-4000-8000-000000007225', 'Stale photo schedule fixture.', new Date(scheduleClockAfter.getTime() + 7 * 60 * 60 * 1000), 'America/New_York', ids.attachment, mediaHash, ids.analysisRun, ids.analysisResult, approval.rows[0].id);
+const newerEvidenceTimestamp = new Date(scheduleClockAfter.getTime() + 8 * 60 * 60 * 1000);
 await db.query(`insert into public.company_media_analysis_runs (
   id, company_id, job_id, correlation_id, status, provider, model, analysis_version, completed_at, created_at, updated_at
 ) values ('00000000-0000-4000-8000-000000007226',$1,$2,'newer-scheduled-evidence','completed','deterministic-fallback','fixture','media-analysis-v1',$3,$3,$3)`, [ids.company, ids.job, newerEvidenceTimestamp]);
@@ -710,9 +772,24 @@ await db.query(`insert into public.company_media_analysis_attachment_results (
   id, analysis_run_id, company_id, job_id, attachment_id, attachment_sha256, detected_mime_type,
   analysis_status, privacy_review_status, excluded, created_at
 ) values ('00000000-0000-4000-8000-000000007227','00000000-0000-4000-8000-000000007226',$1,$2,$3,$4::bytea,'image/jpeg','analyzed','passed',false,$5)`, [ids.company, ids.job, ids.attachment, mediaHash, newerEvidenceTimestamp]);
-const staleClaim = await db.query(`select * from public.claim_due_company_facebook_publications($1,60,1)`, [scheduleDue]);
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [stalePhotoSchedule.publication_id]);
+const staleClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
 check(() => assert.equal(staleClaim.rows[0].publication_id, stalePhotoSchedule.publication_id));
-await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3,$4)`, [stalePhotoSchedule.publication_id, ids.company, staleClaim.rows[0].claim_token, scheduleDue]);
+await assertRejectsSql(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [stalePhotoSchedule.publication_id, ids.company, staleClaim.rows[0].claim_token]);
+
+const highAttemptSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007231', '00000000-0000-4000-8000-000000007232', 'High execution attempt fixture.', new Date(scheduleClockAfter.getTime() + 9 * 60 * 60 * 1000), 'America/New_York');
+const batchPeerSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007233', '00000000-0000-4000-8000-000000007234', 'High execution attempt peer.', new Date(scheduleClockAfter.getTime() + 10 * 60 * 60 * 1000), 'America/New_York');
+await db.query(`update public.company_social_publications
+  set scheduled_for=clock_timestamp()-interval '2 minutes',next_attempt_at=clock_timestamp()-interval '2 minutes',execution_attempts=100
+  where id=$1`, [highAttemptSchedule.publication_id]);
+await db.query(`update public.company_social_publications
+  set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute',execution_attempts=7
+  where id=$1`, [batchPeerSchedule.publication_id]);
+const highAttemptBatch = await db.query(`select * from public.claim_due_company_facebook_publications(60,50)`);
+const highAttemptClaim = highAttemptBatch.rows.find((row) => row.publication_id === highAttemptSchedule.publication_id);
+const batchPeerClaim = highAttemptBatch.rows.find((row) => row.publication_id === batchPeerSchedule.publication_id);
+check(() => assert.equal(highAttemptClaim?.execution_attempts, 101));
+check(() => assert.equal(batchPeerClaim?.execution_attempts, 8));
 
 const scheduledAudits = await db.query(`select action,metadata from public.audit_events where action in ('meta_publication_scheduled','meta_publication_schedule_cancelled','meta_publication_schedule_failed') order by created_at,id`);
 check(() => assert.ok(scheduledAudits.rows.length >= 4));
@@ -1140,20 +1217,20 @@ async function approvePhoto(attachmentId, analysisRunId, attachmentResultId, att
   ]);
 }
 
-async function scheduleTextPublication(publicationId, key, message, scheduledFor, timezone, timestamp) {
+async function scheduleTextPublication(publicationId, key, message, scheduledFor, timezone) {
   const result = await db.query(scheduleTextSql(), [
     publicationId, ids.company, ids.connection, ids.job, key, message, 'text_only',
     null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role,
-    scheduledFor, timezone, timestamp,
+    scheduledFor, timezone,
   ]);
   return result.rows[0];
 }
 
-async function schedulePhotoPublication(publicationId, key, message, scheduledFor, timezone, timestamp, attachmentId, attachmentHash, analysisRunId, attachmentResultId, approvalId) {
+async function schedulePhotoPublication(publicationId, key, message, scheduledFor, timezone, attachmentId, attachmentHash, analysisRunId, attachmentResultId, approvalId) {
   const result = await db.query(schedulePhotoSql(), [
     publicationId, ids.company, ids.connection, ids.job, key, message, 'single_photo',
     attachmentId, attachmentHash, analysisRunId, attachmentResultId, approvalId,
-    ids.actor, verifiedActor.name, verifiedActor.role, scheduledFor, timezone, timestamp,
+    ids.actor, verifiedActor.name, verifiedActor.role, scheduledFor, timezone,
   ]);
   return result.rows[0];
 }
@@ -1161,7 +1238,7 @@ async function schedulePhotoPublication(publicationId, key, message, scheduledFo
 function scheduleTextSql() {
   return `select * from public.schedule_company_facebook_publication(
     $1::uuid,$2::uuid,$3::uuid,$4::uuid,$5::uuid,$6::text,$7::text,
-    $8::uuid,$9::bytea,$10::uuid,$11::uuid,$12::uuid,$13::uuid,$14::text,$15::text,$16::timestamptz,$17::text,$18::timestamptz
+    $8::uuid,$9::bytea,$10::uuid,$11::uuid,$12::uuid,$13::uuid,$14::text,$15::text,$16::timestamptz,$17::text
   )`;
 }
 

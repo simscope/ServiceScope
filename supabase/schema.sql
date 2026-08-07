@@ -6645,7 +6645,7 @@ alter table public.company_social_publications
       )
     ),
   add constraint company_social_publications_execution_attempts_check
-    check (execution_attempts between 0 and 100),
+    check (execution_attempts >= 0),
   add constraint company_social_publications_scheduler_error_check
     check (
       last_scheduler_error_code is null
@@ -6816,8 +6816,7 @@ create or replace function public.schedule_company_facebook_publication(
   p_actor_name text,
   p_actor_role text,
   p_scheduled_for timestamptz,
-  p_scheduled_timezone text,
-  p_timestamp timestamptz
+  p_scheduled_timezone text
 )
 returns table (
   publication_id uuid,
@@ -6841,11 +6840,13 @@ declare
   computed_intent_sha256 bytea;
   computed_safe_mime_type text;
   computed_media_count smallint;
+  database_now timestamptz;
 begin
-  if p_timestamp is null
-    or p_scheduled_for is null
-    or p_scheduled_for <= p_timestamp
-    or p_scheduled_for > p_timestamp + interval '366 days'
+  database_now := clock_timestamp();
+
+  if p_scheduled_for is null
+    or p_scheduled_for <= database_now
+    or p_scheduled_for > database_now + interval '366 days'
     or p_scheduled_timezone is null
     or char_length(p_scheduled_timezone) not between 1 and 80
     or p_scheduled_timezone !~ '^[A-Za-z][A-Za-z0-9_./+-]{0,79}$'
@@ -7028,10 +7029,10 @@ begin
     p_publication_id, p_company_id, p_connection_id, p_job_id, 'meta-facebook-login', 'Facebook', 'scheduled',
     p_idempotency_key, computed_intent_sha256, p_approved_message, computed_message_sha256,
     p_publication_kind, p_attachment_id, computed_safe_mime_type, computed_media_count, p_actor_id,
-    p_timestamp, p_scheduled_for, p_scheduled_timezone, p_attachment_sha256,
+    database_now, p_scheduled_for, p_scheduled_timezone, p_attachment_sha256,
     p_analysis_run_id, p_attachment_result_id, p_approval_id,
     selected_connection.facebook_page_id, btrim(p_actor_name), btrim(p_actor_role),
-    p_scheduled_for, 0, p_timestamp, p_timestamp
+    p_scheduled_for, 0, database_now, database_now
   )
   returning * into created_publication;
 
@@ -7066,8 +7067,7 @@ create or replace function public.cancel_scheduled_company_facebook_publication(
   p_company_id uuid,
   p_actor_id uuid,
   p_actor_name text,
-  p_actor_role text,
-  p_timestamp timestamptz
+  p_actor_role text
 )
 returns setof public.company_social_publications
 language plpgsql
@@ -7077,14 +7077,16 @@ as $$
 declare
   selected_publication public.company_social_publications%rowtype;
   updated_publication public.company_social_publications%rowtype;
+  database_now timestamptz;
 begin
+  database_now := clock_timestamp();
+
   if p_actor_name is null
     or char_length(btrim(p_actor_name)) not between 1 and 120
     or p_actor_name ~ '[[:cntrl:]<>]'
     or p_actor_role is null
     or char_length(btrim(p_actor_role)) not between 1 and 80
-    or p_actor_role ~ '[[:cntrl:]<>]'
-    or p_timestamp is null then
+    or p_actor_role ~ '[[:cntrl:]<>]' then
     raise exception 'invalid schedule cancellation request';
   end if;
 
@@ -7105,13 +7107,13 @@ begin
 
   update public.company_social_publications
   set status = 'cancelled',
-      cancelled_at = p_timestamp,
+      cancelled_at = database_now,
       cancelled_by = p_actor_id,
       claim_token = null,
       claimed_at = null,
       claim_expires_at = null,
       next_attempt_at = null,
-      updated_at = p_timestamp
+      updated_at = database_now
   where id = selected_publication.id
   returning * into updated_publication;
 
@@ -7141,7 +7143,6 @@ end;
 $$;
 
 create or replace function public.claim_due_company_facebook_publications(
-  p_now timestamptz,
   p_lease_seconds integer default 120,
   p_limit integer default 10
 )
@@ -7162,9 +7163,12 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  database_now timestamptz;
 begin
-  if p_now is null
-    or p_lease_seconds not between 30 and 900
+  database_now := clock_timestamp();
+
+  if p_lease_seconds not between 30 and 900
     or p_limit not between 1 and 50 then
     raise exception 'invalid scheduled publication claim request';
   end if;
@@ -7174,9 +7178,9 @@ begin
     select publication.id
     from public.company_social_publications publication
     where publication.status = 'scheduled'
-      and publication.scheduled_for <= p_now
-      and publication.next_attempt_at <= p_now
-      and (publication.claim_token is null or publication.claim_expires_at <= p_now)
+      and publication.scheduled_for <= database_now
+      and publication.next_attempt_at <= database_now
+      and (publication.claim_token is null or publication.claim_expires_at <= database_now)
     order by publication.scheduled_for asc, publication.created_at asc, publication.id asc
     limit p_limit
     for update skip locked
@@ -7184,10 +7188,10 @@ begin
   claimed as (
     update public.company_social_publications publication
     set claim_token = gen_random_uuid(),
-        claimed_at = p_now,
-        claim_expires_at = p_now + make_interval(secs => p_lease_seconds),
+        claimed_at = database_now,
+        claim_expires_at = database_now + make_interval(secs => p_lease_seconds),
         execution_attempts = publication.execution_attempts + 1,
-        updated_at = p_now
+        updated_at = database_now
     from due
     where publication.id = due.id
     returning publication.*
@@ -7213,8 +7217,7 @@ create or replace function public.release_scheduled_company_facebook_publication
   p_publication_id uuid,
   p_company_id uuid,
   p_claim_token uuid,
-  p_next_attempt_at timestamptz,
-  p_now timestamptz
+  p_next_attempt_at timestamptz
 )
 returns setof public.company_social_publications
 language plpgsql
@@ -7223,11 +7226,13 @@ set search_path = ''
 as $$
 declare
   updated_publication public.company_social_publications%rowtype;
+  database_now timestamptz;
 begin
-  if p_now is null
-    or p_next_attempt_at is null
-    or p_next_attempt_at <= p_now
-    or p_next_attempt_at > p_now + interval '1 day' then
+  database_now := clock_timestamp();
+
+  if p_next_attempt_at is null
+    or p_next_attempt_at <= database_now
+    or p_next_attempt_at > database_now + interval '1 day' then
     raise exception 'invalid scheduled publication release request';
   end if;
 
@@ -7236,12 +7241,12 @@ begin
       claimed_at = null,
       claim_expires_at = null,
       next_attempt_at = p_next_attempt_at,
-      updated_at = p_now
+      updated_at = database_now
   where id = p_publication_id
     and company_id = p_company_id
     and status = 'scheduled'
     and claim_token = p_claim_token
-    and claim_expires_at > p_now
+    and claim_expires_at > database_now
   returning * into updated_publication;
   if not found then raise exception 'invalid scheduled publication claim release'; end if;
 
@@ -7252,10 +7257,7 @@ $$;
 create or replace function public.fail_scheduled_company_facebook_publication_preflight(
   p_publication_id uuid,
   p_company_id uuid,
-  p_claim_token uuid,
-  p_actor_name text,
-  p_actor_role text,
-  p_now timestamptz
+  p_claim_token uuid
 )
 returns setof public.company_social_publications
 language plpgsql
@@ -7265,8 +7267,9 @@ as $$
 declare
   locked_publication public.company_social_publications%rowtype;
   updated_publication public.company_social_publications%rowtype;
+  database_now timestamptz;
 begin
-  if p_now is null then raise exception 'invalid scheduled publication preflight failure request'; end if;
+  database_now := clock_timestamp();
 
   select * into locked_publication
   from public.company_social_publications
@@ -7274,7 +7277,7 @@ begin
     and company_id = p_company_id
     and status = 'scheduled'
     and claim_token = p_claim_token
-    and claim_expires_at > p_now
+    and claim_expires_at > database_now
   for update;
   if not found then raise exception 'invalid scheduled publication preflight failure'; end if;
 
@@ -7295,7 +7298,7 @@ begin
       claim_expires_at = null,
       next_attempt_at = null,
       published_at = null,
-      updated_at = p_now
+      updated_at = database_now
   where id = locked_publication.id
   returning * into updated_publication;
 
@@ -7303,8 +7306,8 @@ begin
     company_id, actor_user_id, actor_name, actor_role, category, action,
     resource_type, resource, resource_id, resource_label, details, metadata
   ) values (
-    p_company_id, locked_publication.approved_by, btrim(coalesce(nullif(p_actor_name, ''), locked_publication.scheduled_by_name)),
-    btrim(coalesce(nullif(p_actor_role, ''), locked_publication.scheduled_by_role)), 'access',
+    p_company_id, locked_publication.approved_by, locked_publication.scheduled_by_name,
+    locked_publication.scheduled_by_role, 'access',
     'meta_publication_schedule_failed', 'meta_social_publication', 'Facebook publication',
     updated_publication.id::text, 'Facebook publication',
     'Meta scheduled publication failed before provider call.',
@@ -7330,8 +7333,7 @@ $$;
 create or replace function public.start_scheduled_company_facebook_publication(
   p_publication_id uuid,
   p_company_id uuid,
-  p_claim_token uuid,
-  p_now timestamptz
+  p_claim_token uuid
 )
 returns setof public.company_social_publications
 language plpgsql
@@ -7345,8 +7347,9 @@ declare
   selected_result public.company_media_analysis_attachment_results%rowtype;
   selected_approval public.company_social_publication_media_approvals%rowtype;
   updated_publication public.company_social_publications%rowtype;
+  database_now timestamptz;
 begin
-  if p_now is null then raise exception 'invalid scheduled publication start request'; end if;
+  database_now := clock_timestamp();
 
   select * into locked_publication
   from public.company_social_publications
@@ -7354,8 +7357,8 @@ begin
     and company_id = p_company_id
     and status = 'scheduled'
     and claim_token = p_claim_token
-    and claim_expires_at > p_now
-    and scheduled_for <= p_now
+    and claim_expires_at > database_now
+    and scheduled_for <= database_now
   for update;
   if not found then raise exception 'invalid scheduled publication start'; end if;
 
@@ -7458,7 +7461,7 @@ begin
       claimed_at = null,
       claim_expires_at = null,
       next_attempt_at = null,
-      updated_at = p_now
+      updated_at = database_now
   where id = locked_publication.id
   returning * into updated_publication;
 
@@ -7466,25 +7469,25 @@ begin
 end;
 $$;
 
-revoke all on function public.schedule_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, text, uuid, bytea, uuid, uuid, uuid, uuid, text, text, timestamptz, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.cancel_scheduled_company_facebook_publication(uuid, uuid, uuid, text, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.claim_due_company_facebook_publications(timestamptz, integer, integer) from public, anon, authenticated;
-revoke all on function public.release_scheduled_company_facebook_publication_claim(uuid, uuid, uuid, timestamptz, timestamptz) from public, anon, authenticated;
-revoke all on function public.fail_scheduled_company_facebook_publication_preflight(uuid, uuid, uuid, text, text, timestamptz) from public, anon, authenticated;
-revoke all on function public.start_scheduled_company_facebook_publication(uuid, uuid, uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.schedule_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, text, uuid, bytea, uuid, uuid, uuid, uuid, text, text, timestamptz, text) from public, anon, authenticated;
+revoke all on function public.cancel_scheduled_company_facebook_publication(uuid, uuid, uuid, text, text) from public, anon, authenticated;
+revoke all on function public.claim_due_company_facebook_publications(integer, integer) from public, anon, authenticated;
+revoke all on function public.release_scheduled_company_facebook_publication_claim(uuid, uuid, uuid, timestamptz) from public, anon, authenticated;
+revoke all on function public.fail_scheduled_company_facebook_publication_preflight(uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.start_scheduled_company_facebook_publication(uuid, uuid, uuid) from public, anon, authenticated;
 
-grant execute on function public.schedule_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, text, uuid, bytea, uuid, uuid, uuid, uuid, text, text, timestamptz, text, timestamptz) to service_role;
-grant execute on function public.cancel_scheduled_company_facebook_publication(uuid, uuid, uuid, text, text, timestamptz) to service_role;
-grant execute on function public.claim_due_company_facebook_publications(timestamptz, integer, integer) to service_role;
-grant execute on function public.release_scheduled_company_facebook_publication_claim(uuid, uuid, uuid, timestamptz, timestamptz) to service_role;
-grant execute on function public.fail_scheduled_company_facebook_publication_preflight(uuid, uuid, uuid, text, text, timestamptz) to service_role;
-grant execute on function public.start_scheduled_company_facebook_publication(uuid, uuid, uuid, timestamptz) to service_role;
+grant execute on function public.schedule_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, text, uuid, bytea, uuid, uuid, uuid, uuid, text, text, timestamptz, text) to service_role;
+grant execute on function public.cancel_scheduled_company_facebook_publication(uuid, uuid, uuid, text, text) to service_role;
+grant execute on function public.claim_due_company_facebook_publications(integer, integer) to service_role;
+grant execute on function public.release_scheduled_company_facebook_publication_claim(uuid, uuid, uuid, timestamptz) to service_role;
+grant execute on function public.fail_scheduled_company_facebook_publication_preflight(uuid, uuid, uuid) to service_role;
+grant execute on function public.start_scheduled_company_facebook_publication(uuid, uuid, uuid) to service_role;
 
-comment on function public.schedule_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, text, uuid, bytea, uuid, uuid, uuid, uuid, text, text, timestamptz, text, timestamptz) is
+comment on function public.schedule_company_facebook_publication(uuid, uuid, uuid, uuid, uuid, text, text, uuid, bytea, uuid, uuid, uuid, uuid, text, text, timestamptz, text) is
   'Creates an idempotent server-derived scheduled Facebook publication intent without calling Meta.';
-comment on function public.claim_due_company_facebook_publications(timestamptz, integer, integer) is
+comment on function public.claim_due_company_facebook_publications(integer, integer) is
   'Claims due scheduled Facebook publications with FOR UPDATE SKIP LOCKED while preserving provider attempts.';
-comment on function public.start_scheduled_company_facebook_publication(uuid, uuid, uuid, timestamptz) is
+comment on function public.start_scheduled_company_facebook_publication(uuid, uuid, uuid) is
   'Performs the final DB-only gate from scheduled to publishing immediately before a future provider call.';
 
 -- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_END

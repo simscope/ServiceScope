@@ -229,13 +229,37 @@ check(() => assert.match(scheduledFoundationMigration, /facebook_scheduled_publi
 check(() => assert.doesNotMatch(scheduledFoundationMigration, /facebook_publication_intent_v1/));
 check(() => assert.match(scheduledFoundationMigration, /FOR UPDATE SKIP LOCKED/i));
 check(() => assert.match(scheduledFoundationMigration, /execution_attempts = publication\.execution_attempts \+ 1/));
+check(() => assert.match(scheduledFoundationMigration, /company_social_publications_execution_attempts_check\s+check \(execution_attempts >= 0\)/));
+check(() => assert.doesNotMatch(scheduledFoundationMigration, /execution_attempts between 0 and 100/));
 check(() => assert.match(scheduledFoundationMigration, /last_scheduler_error_code = 'META_SCHEDULE_REVALIDATION_FAILED'/));
 check(() => assert.match(scheduledFoundationMigration, /attempts = 0/));
 check(() => assert.match(scheduledFoundationMigration, /scheduled_facebook_page_id/));
 check(() => assert.match(scheduledFoundationMigration, /selected_connection\.facebook_page_id <> locked_publication\.scheduled_facebook_page_id/));
-check(() => assert.match(scheduledFoundationMigration, /revoke all on function public\.claim_due_company_facebook_publications\(timestamptz, integer, integer\) from public, anon, authenticated/));
-check(() => assert.match(scheduledFoundationMigration, /grant execute on function public\.claim_due_company_facebook_publications\(timestamptz, integer, integer\) to service_role/));
+check(() => assert.match(scheduledFoundationMigration, /revoke all on function public\.claim_due_company_facebook_publications\(integer, integer\) from public, anon, authenticated/));
+check(() => assert.match(scheduledFoundationMigration, /grant execute on function public\.claim_due_company_facebook_publications\(integer, integer\) to service_role/));
 check(() => assert.doesNotMatch(scheduledFoundationMigration, /grant execute on function public\.(?:schedule_company_facebook_publication|cancel_scheduled_company_facebook_publication|claim_due_company_facebook_publications|release_scheduled_company_facebook_publication_claim|fail_scheduled_company_facebook_publication_preflight|start_scheduled_company_facebook_publication)[\s\S]*?to\s+(?:anon|authenticated|public)/i));
+const scheduledRpcDefinitions = [
+  'schedule_company_facebook_publication',
+  'cancel_scheduled_company_facebook_publication',
+  'claim_due_company_facebook_publications',
+  'release_scheduled_company_facebook_publication_claim',
+  'fail_scheduled_company_facebook_publication_preflight',
+  'start_scheduled_company_facebook_publication',
+].map((name) => scheduledFoundationMigration.match(new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?\\n\\$\\$;`))?.[0] ?? '');
+check(() => assert.equal(scheduledRpcDefinitions.every(Boolean), true));
+check(() => assert.doesNotMatch(scheduledRpcDefinitions.join('\n'), /\bp_now\b|\bp_timestamp\b/));
+check(() => assert.ok((scheduledFoundationMigration.match(/database_now := clock_timestamp\(\)/g) ?? []).length >= 6));
+check(() => assert.match(scheduledRpcDefinitions[0], /p_scheduled_for <= database_now/));
+check(() => assert.match(scheduledRpcDefinitions[0], /p_scheduled_for > database_now \+ interval '366 days'/));
+check(() => assert.match(scheduledRpcDefinitions[2], /publication\.scheduled_for <= database_now/));
+check(() => assert.match(scheduledRpcDefinitions[2], /claimed_at = database_now/));
+check(() => assert.match(scheduledRpcDefinitions[2], /claim_expires_at = database_now \+ make_interval/));
+check(() => assert.match(scheduledRpcDefinitions[3], /p_next_attempt_at <= database_now/));
+check(() => assert.match(scheduledRpcDefinitions[3], /p_next_attempt_at > database_now \+ interval '1 day'/));
+check(() => assert.doesNotMatch(scheduledRpcDefinitions[4], /\bp_actor_name\b|\bp_actor_role\b/));
+check(() => assert.match(scheduledRpcDefinitions[4], /locked_publication\.approved_by, locked_publication\.scheduled_by_name,\s+locked_publication\.scheduled_by_role/));
+check(() => assert.match(scheduledRpcDefinitions[5], /claim_expires_at > database_now/));
+check(() => assert.match(scheduledRpcDefinitions[5], /scheduled_for <= database_now/));
 check(() => assert.match(scheduledFoundationMigration, /meta_publication_scheduled/));
 check(() => assert.match(scheduledFoundationMigration, /meta_publication_schedule_cancelled/));
 check(() => assert.match(scheduledFoundationMigration, /meta_publication_schedule_failed/));
