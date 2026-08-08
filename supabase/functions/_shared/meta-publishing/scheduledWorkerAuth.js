@@ -1,4 +1,4 @@
-export const SCHEDULED_WORKER_SECRET_NAME = 'meta-scheduled-publisher';
+export const SCHEDULED_WORKER_SECRET_NAME = 'meta_scheduled_publisher';
 
 export class ScheduledWorkerRequestError extends Error {
   constructor(code, status) {

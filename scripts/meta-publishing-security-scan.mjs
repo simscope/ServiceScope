@@ -306,7 +306,11 @@ check(() => assert.match(scheduledWorkerEdge, /request\.headers\.get\('apikey'\)
 check(() => assert.match(scheduledWorkerEdge, /SUPABASE_SERVICE_ROLE_KEY/));
 check(() => assert.match(scheduledWorkerEdge, /createClient\(supabaseUrl, serviceRoleKey/));
 check(() => assert.doesNotMatch(scheduledWorkerEdge, /createClient\(supabaseUrl, workerSecretKey/));
-check(() => assert.match(scheduledWorkerAuth, /SCHEDULED_WORKER_SECRET_NAME = 'meta-scheduled-publisher'/));
+check(() => assert.match(scheduledWorkerAuth, /SCHEDULED_WORKER_SECRET_NAME = 'meta_scheduled_publisher'/));
+check(() => assert.doesNotMatch(
+  `${scheduledWorkerAuth}\n${denoScheduledWorkerTests}`,
+  new RegExp(['meta', 'scheduled', 'publisher'].join('-')),
+));
 check(() => assert.match(scheduledWorkerEdge, /SUPABASE_SECRET_KEYS/));
 check(() => assert.match(scheduledWorkerAuth, /sb_secret_/));
 check(() => assert.match(scheduledWorkerAuth, /authorization[\s\S]*AUTH_REQUIRED/));

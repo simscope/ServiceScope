@@ -12,6 +12,7 @@ import {
   scheduledRetryDelayMs,
 } from '../supabase/functions/_shared/meta-publishing/scheduledWorker.js';
 import {
+  SCHEDULED_WORKER_SECRET_NAME,
   authorizeScheduledWorkerRequest,
   handleScheduledWorkerRequest,
 } from '../supabase/functions/_shared/meta-publishing/scheduledWorkerAuth.js';
@@ -47,9 +48,10 @@ async function authChecks() {
     rawBody: '{}',
     apiKey: workerSecret,
     authorization: '',
-    secretKeysJson: JSON.stringify({ 'meta-scheduled-publisher': workerSecret }),
+    secretKeysJson: JSON.stringify({ [SCHEDULED_WORKER_SECRET_NAME]: workerSecret }),
     cryptoApi,
   };
+  check(() => assert.equal(SCHEDULED_WORKER_SECRET_NAME, 'meta_scheduled_publisher'));
   for (const patch of [
     { apiKey: '' },
     { apiKey: `sb_secret_${'b'.repeat(48)}` },
@@ -60,6 +62,10 @@ async function authChecks() {
     await checkAsync(() => assert.rejects(authorizeScheduledWorkerRequest({ ...base, ...patch }), /AUTH_REQUIRED/));
   }
   await checkAsync(() => assert.rejects(authorizeScheduledWorkerRequest({ ...base, rawBody: '{"companyId":"x"}' }), /INVALID_REQUEST/));
+  await checkAsync(() => assert.rejects(authorizeScheduledWorkerRequest({
+    ...base,
+    secretKeysJson: JSON.stringify({ meta_scheduled_publishers: workerSecret }),
+  }), /WORKER_NOT_CONFIGURED/));
   await checkAsync(() => assert.rejects(authorizeScheduledWorkerRequest({ ...base, secretKeysJson: '{}' }), /WORKER_NOT_CONFIGURED/));
   await checkAsync(async () => {
     const auth = await authorizeScheduledWorkerRequest({ ...base, rawBody: '' });
@@ -230,7 +236,8 @@ async function sourceChecks() {
   check(() => assert.match(edge, /createClient\(supabaseUrl, serviceRoleKey/));
   check(() => assert.doesNotMatch(edge, /createClient\(supabaseUrl, workerSecretKey/));
   check(() => assert.match(edge, /SUPABASE_SECRET_KEYS/));
-  check(() => assert.match(auth, /meta-scheduled-publisher|sb_secret_/));
+  check(() => assert.match(auth, /meta_scheduled_publisher|sb_secret_/));
+  check(() => assert.doesNotMatch(auth, new RegExp(['meta', 'scheduled', 'publisher'].join('-'))));
   check(() => assert.doesNotMatch(`${edge}\n${worker}\n${repository}`, /handleMetaPublishing|begin_company_facebook_publication|beginPublication/));
   check(() => assert.match(repository, /\.eq\('id', input\.connectionId\)/));
   check(() => assert.doesNotMatch(repository, /order\('updated_at'.*connection/s));
