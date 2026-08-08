@@ -87,6 +87,9 @@ jobs:
       - name: Real ImageScript sanitizer fixtures
         run: deno test --allow-import --allow-net=deno.land scripts/meta-image-sanitizer-deno-tests.ts
 
+      - name: Check scheduled worker Edge entrypoint
+        run: deno check supabase/functions/meta-social-publish-scheduled-worker/index.ts
+
       - name: Scheduled worker secret auth
         run: deno test --allow-import --allow-net=deno.land scripts/meta-scheduled-worker-deno-tests.ts
 
