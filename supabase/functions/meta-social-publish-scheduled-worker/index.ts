@@ -35,7 +35,7 @@ function createDependencies(workerSecretKey: string) {
   if (!supabaseUrl || !workerSecretKey || !serviceRoleKey) {
     throw new ScheduledWorkerRequestError('WORKER_NOT_CONFIGURED', 500);
   }
-  const config = runtimePublishingConfig((key) => Deno.env.get(key));
+  const config = runtimePublishingConfig((key: string) => Deno.env.get(key));
   const adminClient = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
   return {
     repository: createScheduledPublishingRepository(adminClient),
