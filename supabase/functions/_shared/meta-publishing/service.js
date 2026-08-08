@@ -15,9 +15,13 @@ import {
   safePublicationResult,
   safePublishingStatus,
   safePublishingTelemetry,
-  supportedFacebookPhotoMimeTypes,
 } from './contracts.js';
 import { assertPublicationPrivacy } from './privacy.js';
+import {
+  prepareFacebookPublicationPhoto,
+  sha256Hex,
+  validateFacebookPublicationPhotoAttachment,
+} from './photoPreparation.js';
 
 export async function handleMetaPublishing({ rawBody, authorization, deps }) {
   const startedAt = deps.now();
@@ -56,7 +60,7 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       }
       const privateValues = buildPrivateValues(publicationContext);
       let photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
-      photo = await validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues });
+      photo = validateFacebookPublicationPhotoAttachment({ photo, companyId, jobId, privateValues });
       const originalBytes = await deps.repository.downloadAttachmentBytes({
         storageBucket: String(photo.storage_bucket),
         storagePath: String(photo.storage_path),
@@ -202,7 +206,19 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
     let photo = null;
     if (publicationKind === 'single_photo') {
       photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
-      photo = await validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValues, deps });
+      photo = await prepareFacebookPublicationPhoto({
+        photo,
+        companyId,
+        jobId,
+        privateValues,
+        deps,
+        revalidateEligibility: (originalSha256) => deps.repository.revalidatePublicationPhotoEligibility(
+          companyId,
+          jobId,
+          photo.id,
+          originalSha256,
+        ),
+      });
     }
 
     stage = 'decrypt_connection';
@@ -363,85 +379,6 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
   }
 }
 
-async function validateAndLoadSinglePhoto({ photo, companyId, jobId, privateValues, deps }) {
-  photo = await validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues });
-  const originalBytes = await deps.repository.downloadAttachmentBytes({
-    storageBucket: String(photo.storage_bucket),
-    storagePath: String(photo.storage_path),
-    maxBytes: maxFacebookPhotoBytes,
-  });
-  const originalSha256 = await sha256Hex(originalBytes, deps.cryptoApi);
-  const eligibility = await deps.repository.revalidatePublicationPhotoEligibility(companyId, jobId, photo.id, originalSha256);
-  if (!eligibility?.eligibleForFacebookPublication || !eligibility.approval) {
-    throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
-  }
-  const approval = eligibility.approval;
-  const processor = deps.imageProcessor;
-  if (!processor?.sanitize) throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  const sanitized = await processor.sanitize({
-    bytes: originalBytes,
-    mimeType: photo.mimeType,
-    maxBytes: maxFacebookPhotoBytes,
-    maxPixels: 40_000_000,
-    maxWidth: 10_000,
-    maxHeight: 10_000,
-  });
-  if (!sanitized || !supportedFacebookPhotoMimeTypes.has(sanitized.mimeType) || sanitized.bytes?.byteLength < 1) {
-    throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  }
-  if (sanitized.bytes.byteLength > maxFacebookPhotoBytes) throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
-  const sanitizedSha256 = await sha256Hex(sanitized.bytes, deps.cryptoApi);
-  return {
-    attachmentId: String(photo.id),
-    mimeType: sanitized.mimeType,
-    bytes: sanitized.bytes,
-    approval,
-    auditMetadata: {
-      attachmentId: String(photo.id),
-      analysisRunId: safeAuditString(approval.analysis_run_id),
-      approvalId: safeAuditString(approval.id),
-      approvedAt: safeAuditString(approval.approved_at),
-      revoked: false,
-      originalMime: photo.mimeType,
-      detectedMime: sanitized.detectedMimeType ?? sanitized.mimeType,
-      sanitizedMime: sanitized.mimeType,
-      originalByteSize: originalBytes.byteLength,
-      sanitizedByteSize: sanitized.bytes.byteLength,
-      originalHashPrefix: hexPrefix(originalSha256),
-      sanitizedHashPrefix: hexPrefix(sanitizedSha256),
-      width: Number(sanitized.width) || null,
-      height: Number(sanitized.height) || null,
-      metadataStripped: true,
-      gpsStripped: true,
-      sanitizer: sanitized.sanitizer ?? 'ImageScript',
-      sanitizerVersion: sanitized.sanitizerVersion ?? '1.3.0',
-      providerCallCount: 0,
-    },
-  };
-}
-
-async function validatePublicationPhotoAttachment({ photo, companyId, jobId, privateValues }) {
-  if (!photo) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
-  if (String(photo.company_id) !== companyId || String(photo.job_id) !== jobId) {
-    throw new MetaPublishingError('FORBIDDEN');
-  }
-  const mimeType = String(photo.mime_type ?? '').trim().toLowerCase();
-  const sizeBytes = Math.max(0, Number(photo.size_bytes) || 0);
-  if (String(photo.kind ?? '').toLowerCase() === 'video' || !supportedFacebookPhotoMimeTypes.has(mimeType)) {
-    throw new MetaPublishingError('META_PUBLICATION_MEDIA_UNSUPPORTED');
-  }
-  if (sizeBytes < 1 || sizeBytes > maxFacebookPhotoBytes) {
-    throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
-  }
-  if (!photo.storage_bucket || !photo.storage_path) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
-  try {
-    assertPublicationPrivacy(String(photo.name ?? ''), privateValues);
-  } catch {
-    throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
-  }
-  return { ...photo, mimeType };
-}
-
 export function normalizePublishingError(error) {
   return error instanceof MetaPublishingError ? error : new MetaPublishingError('INTERNAL_ERROR');
 }
@@ -470,20 +407,6 @@ function requirePageToken(value) {
     throw new MetaPublishingError('META_CONNECTION_NEEDS_REAUTHORIZATION');
   }
   return value;
-}
-
-async function sha256Hex(value, cryptoApi) {
-  const bytes = value instanceof Uint8Array ? value : new TextEncoder().encode(String(value));
-  const digest = await cryptoApi.subtle.digest('SHA-256', bytes);
-  return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
-}
-
-function hexPrefix(byteaHex, length = 16) {
-  return typeof byteaHex === 'string' && byteaHex.startsWith('\\x') ? byteaHex.slice(2, 2 + length) : null;
-}
-
-function safeAuditString(value) {
-  return typeof value === 'string' && value.length <= 200 ? value : null;
 }
 
 async function markDeliveryUnknownBestEffort(repository, input) {

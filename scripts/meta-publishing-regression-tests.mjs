@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID, webcrypto } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { buildPrivateValues } from '../supabase/functions/_shared/content-engine/context.js';
 import { assertMetaAccessRole } from '../supabase/functions/_shared/meta-connection/contracts.js';
 import { connectionEnvelopeContext, encryptTokenBundle } from '../supabase/functions/_shared/meta-connection/crypto.js';
@@ -17,17 +19,19 @@ import { assertPublicationPrivacy } from '../supabase/functions/_shared/meta-pub
 import { createFacebookPublishingProvider } from '../supabase/functions/_shared/meta-publishing/provider.js';
 import { inspectImageHeader } from '../supabase/functions/_shared/meta-publishing/imageProcessor.js';
 import { handleMetaPublishing } from '../supabase/functions/_shared/meta-publishing/service.js';
-import {
+const compiledRoot = process.env.META_PUBLISHING_COMPILED_ROOT;
+if (!compiledRoot) throw new Error('META_PUBLISHING_COMPILED_ROOT is required');
+const {
   beginFacebookPublishSubmission,
   facebookPublicationInProgress,
   facebookPublicationNeedsPageCheck,
   invalidateFacebookPublishApproval,
   openFacebookPublishConfirmation,
   resetFacebookPublishWorkspace,
-} from '../.tmp/meta-publishing-tests/workspaceState.js';
-import {
+} = await import(pathToFileURL(join(compiledRoot, 'workspaceState.js')).href);
+const {
   normalizeFacebookPublishingMessage,
-} from '../.tmp/meta-publishing-tests/contracts.js';
+} = await import(pathToFileURL(join(compiledRoot, 'contracts.js')).href);
 
 const cryptoApi = globalThis.crypto ?? webcrypto;
 const newTestUuid = () => randomUUID();
