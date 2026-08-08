@@ -13,6 +13,9 @@ export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze([
   'resolve_facebook_publication_photo_false_positive',
   'publish_facebook_text',
   'publish_facebook_single_photo',
+  'schedule_facebook_text',
+  'schedule_facebook_single_photo',
+  'cancel_facebook_scheduled_publication',
 ]);
 export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'authorize',
@@ -22,6 +25,8 @@ export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'decrypt_connection',
   'facebook_publish',
   'persist_result',
+  'schedule_persist',
+  'cancel_schedule',
 ]);
 export const FACEBOOK_PROVIDER_CATEGORIES = Object.freeze([
   'INVALID_TOKEN',
@@ -53,6 +58,7 @@ const SAFE_CODES = new Set([
   'META_PUBLICATION_MEDIA_UNSUPPORTED',
   'META_PUBLICATION_MEDIA_TOO_LARGE',
   'META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED',
+  'META_SCHEDULE_CANCELLATION_UNAVAILABLE',
   'INTERNAL_ERROR',
 ]);
 
@@ -89,9 +95,15 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
           ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'explicitApproval', 'exclusionReason']
           : value.action === 'resolve_facebook_publication_photo_false_positive'
             ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'findingIds', 'explicitApproval', 'resolutionReason']
-            : value.action === 'publish_facebook_single_photo'
+            : value.action === 'cancel_facebook_scheduled_publication'
+              ? ['action', 'companyId', 'publicationId', 'explicitApproval']
+              : value.action === 'publish_facebook_single_photo'
               ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
-              : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
+              : value.action === 'schedule_facebook_single_photo'
+                ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval', 'scheduledFor', 'scheduledTimezone']
+                : value.action === 'schedule_facebook_text'
+                  ? ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval', 'scheduledFor', 'scheduledTimezone']
+                  : ['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'];
   if (Object.keys(value).some((key) => !allowed.includes(key))) throw new MetaPublishingError('INVALID_REQUEST');
   return value;
 }
@@ -123,6 +135,34 @@ export function normalizeApprovedMessage(value) {
 
 export function assertExplicitApproval(value) {
   if (value !== true) throw new MetaPublishingError('INVALID_REQUEST');
+}
+
+export function normalizeScheduledPublicationTime(value, timezone, nowMs) {
+  const rawScheduledFor = typeof value === 'string' ? value : '';
+  const rawScheduledTimezone = typeof timezone === 'string' ? timezone : '';
+  const scheduledFor = rawScheduledFor.trim();
+  const scheduledTimezone = rawScheduledTimezone.trim();
+  if (
+    rawScheduledFor !== scheduledFor
+    || rawScheduledTimezone !== scheduledTimezone
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(scheduledFor)
+    || !Number.isFinite(nowMs)
+    || !/^[A-Za-z][A-Za-z0-9_./+-]{0,79}$/.test(scheduledTimezone)
+    || scheduledTimezone.includes('..')
+    || /[\u0000-\u001f\u007f]/.test(scheduledTimezone)
+  ) {
+    throw new MetaPublishingError('INVALID_REQUEST');
+  }
+  const scheduledMs = Date.parse(scheduledFor);
+  if (!Number.isFinite(scheduledMs) || scheduledMs <= nowMs || scheduledMs > nowMs + 366 * 24 * 60 * 60 * 1000) {
+    throw new MetaPublishingError('INVALID_REQUEST');
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: scheduledTimezone }).format(new Date(scheduledMs));
+  } catch {
+    throw new MetaPublishingError('INVALID_REQUEST');
+  }
+  return { scheduledFor: new Date(scheduledMs).toISOString(), scheduledTimezone };
 }
 
 export function facebookPublishingEnabled(connection) {
@@ -176,7 +216,7 @@ export function publicationIntentSource({
 }
 
 export function publicationKindForAction(action) {
-  return action === 'publish_facebook_single_photo' ? 'single_photo' : 'text_only';
+  return ['publish_facebook_single_photo', 'schedule_facebook_single_photo'].includes(action) ? 'single_photo' : 'text_only';
 }
 
 export function runtimePublishingConfig(getEnv) {
@@ -201,13 +241,22 @@ export function safePublishingStatus({ config, connection, lastPublication, elig
     facebookPageName: safeLabel(connection?.facebook_page_name, 120),
     facebookPublishingEnabled: enabled,
     missingPermissions: enabled ? [] : [META_FACEBOOK_PUBLISHING_SCOPE],
-    lastPublication: lastPublication ? {
-      status: safePublicationStatus(lastPublication.status),
-      approvedAt: safeTimestamp(lastPublication.approved_at),
-      publishedAt: safeTimestamp(lastPublication.published_at),
-      errorCode: safeCode(lastPublication.last_error_code),
-    } : null,
+    lastPublication: lastPublication ? safePublicationSummary(lastPublication) : null,
     eligiblePhotos: Array.isArray(eligiblePhotos) ? eligiblePhotos.map(safeEligiblePhoto).filter(Boolean) : [],
+  };
+}
+
+export function safeScheduledPublicationResult(row, publicationKind = row?.publication_kind) {
+  const status = safePublicationStatus(row?.publication_status ?? row?.status);
+  const publicationId = safeUuid(row?.publication_id ?? row?.id);
+  return {
+    ok: true,
+    status,
+    publicationId: status === 'scheduled' ? publicationId : null,
+    scheduledFor: safeTimestamp(row?.publication_scheduled_for ?? row?.scheduled_for),
+    scheduledTimezone: safeTimezone(row?.scheduled_timezone),
+    publicationKind: safePublicationKind(publicationKind),
+    errorCode: safeCode(row?.publication_last_error_code ?? row?.last_error_code),
   };
 }
 
@@ -255,8 +304,22 @@ export function statusForCode(code) {
 
 export { META_PROVIDER, PINNED_GRAPH_API_VERSION };
 
+function safePublicationSummary(value) {
+  const status = safePublicationStatus(value?.status);
+  return {
+    status,
+    approvedAt: safeTimestamp(value?.approved_at),
+    publishedAt: safeTimestamp(value?.published_at),
+    errorCode: safeCode(value?.last_error_code),
+    publicationId: status === 'scheduled' ? safeUuid(value?.id) : null,
+    scheduledFor: safeTimestamp(value?.scheduled_for),
+    scheduledTimezone: safeTimezone(value?.scheduled_timezone),
+    publicationKind: safePublicationKind(value?.publication_kind),
+  };
+}
+
 function safePublicationStatus(value) {
-  return ['publishing', 'published', 'failed', 'delivery_unknown'].includes(value) ? value : 'failed';
+  return ['scheduled', 'publishing', 'published', 'failed', 'delivery_unknown', 'cancelled'].includes(value) ? value : 'failed';
 }
 
 function safeTimestamp(value) {
@@ -265,6 +328,19 @@ function safeTimestamp(value) {
 
 function safeCode(value) {
   return typeof value === 'string' && /^[A-Z0-9_]{2,80}$/.test(value) ? value : null;
+}
+
+function safeUuid(value) {
+  return typeof value === 'string' && UUID_PATTERN.test(value) ? value : null;
+}
+
+function safeTimezone(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  return /^[A-Za-z][A-Za-z0-9_./+-]{0,79}$/.test(clean) && !clean.includes('..') ? clean : null;
+}
+
+function safePublicationKind(value) {
+  return ['text_only', 'single_photo'].includes(value) ? value : null;
 }
 
 function safeLabel(value, maxLength) {

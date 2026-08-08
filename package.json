@@ -20,6 +20,7 @@
     "test:meta-connection-sql": "node scripts/meta-connection-sql-tests.mjs",
     "test:meta-connection-scan": "node scripts/meta-connection-security-scan.mjs",
     "test:meta-publishing": "node scripts/run-meta-publishing-tests.mjs",
+    "test:meta-scheduled-ui": "node scripts/run-meta-publishing-tests.mjs",
     "test:meta-publishing-sql": "node scripts/meta-publishing-sql-tests.mjs",
     "test:meta-publishing-scan": "node scripts/meta-publishing-security-scan.mjs",
     "test:media-analysis": "node scripts/media-analysis-regression-tests.mjs",

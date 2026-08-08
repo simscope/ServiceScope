@@ -1,5 +1,5 @@
 import { supabaseFunction } from '../../services/supabaseRest';
-import type { FacebookPublishingSnapshot, FacebookPublishResult } from './contracts';
+import type { FacebookPublishingSnapshot, FacebookPublishResult, FacebookScheduledPublicationResult } from './contracts';
 
 const functionName = 'meta-social-publish';
 
@@ -93,6 +93,48 @@ export function publishFacebookSinglePhoto(input: {
 }) {
   return supabaseFunction<FacebookPublishResult>(functionName, {
     action: 'publish_facebook_single_photo',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
+export function scheduleFacebookText(input: {
+  companyId: string;
+  jobId: string;
+  message: string;
+  idempotencyKey: string;
+  explicitApproval: true;
+  scheduledFor: string;
+  scheduledTimezone: string;
+}) {
+  return supabaseFunction<FacebookScheduledPublicationResult>(functionName, {
+    action: 'schedule_facebook_text',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
+export function scheduleFacebookSinglePhoto(input: {
+  companyId: string;
+  jobId: string;
+  attachmentId: string;
+  message: string;
+  idempotencyKey: string;
+  explicitApproval: true;
+  scheduledFor: string;
+  scheduledTimezone: string;
+}) {
+  return supabaseFunction<FacebookScheduledPublicationResult>(functionName, {
+    action: 'schedule_facebook_single_photo',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
+export function cancelFacebookScheduledPublication(input: {
+  companyId: string;
+  publicationId: string;
+  explicitApproval: true;
+}) {
+  return supabaseFunction<FacebookScheduledPublicationResult>(functionName, {
+    action: 'cancel_facebook_scheduled_publication',
     ...input,
   }, { timeoutMs: 20_000 });
 }

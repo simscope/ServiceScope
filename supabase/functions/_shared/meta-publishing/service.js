@@ -8,16 +8,19 @@ import {
   normalizeApprovalReason,
   normalizeApprovedMessage,
   normalizeFindingIds,
+  normalizeScheduledPublicationTime,
   parsePublishingRequest,
   publicationIntentSource,
   publicationKindForAction,
   requireUuid,
   safePublicationResult,
+  safeScheduledPublicationResult,
   safePublishingStatus,
   safePublishingTelemetry,
 } from './contracts.js';
 import { assertPublicationPrivacy } from './privacy.js';
 import {
+  deriveFacebookPublicationPhotoScheduleEvidence,
   prepareFacebookPublicationPhoto,
   sha256Hex,
   validateFacebookPublicationPhotoAttachment,
@@ -40,6 +43,22 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
       const jobId = body.jobId === undefined ? undefined : requireUuid(body.jobId);
       const snapshot = await deps.repository.getStatus(companyId, jobId);
       const result = safePublishingStatus({ config: deps.config, ...snapshot });
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return result;
+    }
+
+    if (action === 'cancel_facebook_scheduled_publication') {
+      stage = 'cancel_schedule';
+      assertExplicitApproval(body.explicitApproval);
+      const publicationId = requireUuid(body.publicationId);
+      const cancelled = await deps.repository.cancelScheduledPublication({
+        publicationId,
+        companyId,
+        actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
+      });
+      const result = safeScheduledPublicationResult(cancelled);
       deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
       return result;
     }
@@ -186,9 +205,13 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
     assertExplicitApproval(body.explicitApproval);
     const jobId = requireUuid(body.jobId);
     const publicationKind = publicationKindForAction(action);
-    const attachmentId = action === 'publish_facebook_single_photo' ? requireUuid(body.attachmentId) : null;
+    const scheduledAction = ['schedule_facebook_text', 'schedule_facebook_single_photo'].includes(action);
+    const attachmentId = publicationKind === 'single_photo' ? requireUuid(body.attachmentId) : null;
     const idempotencyKey = requireUuid(body.idempotencyKey);
     const message = normalizeApprovedMessage(body.message);
+    const schedule = scheduledAction
+      ? normalizeScheduledPublicationTime(body.scheduledFor, body.scheduledTimezone, deps.now())
+      : null;
     const publicationContext = await deps.repository.getPublicationContext(companyId, jobId);
     if (!publicationContext?.job || String(publicationContext.job.company_id) !== companyId) {
       throw new MetaPublishingError('FORBIDDEN');
@@ -204,21 +227,61 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
     const privateValues = buildPrivateValues(publicationContext);
     assertPublicationPrivacy(message, privateValues);
     let photo = null;
+    let schedulePhotoEvidence = null;
     if (publicationKind === 'single_photo') {
       photo = await deps.repository.getPublicationAttachment(companyId, jobId, attachmentId);
-      photo = await prepareFacebookPublicationPhoto({
-        photo,
-        companyId,
-        jobId,
-        privateValues,
-        deps,
-        revalidateEligibility: (originalSha256) => deps.repository.revalidatePublicationPhotoEligibility(
+      if (scheduledAction) {
+        schedulePhotoEvidence = await deriveFacebookPublicationPhotoScheduleEvidence({
+          photo,
           companyId,
           jobId,
-          photo.id,
-          originalSha256,
-        ),
+          privateValues,
+          deps,
+        });
+      } else {
+        photo = await prepareFacebookPublicationPhoto({
+          photo,
+          companyId,
+          jobId,
+          privateValues,
+          deps,
+          revalidateEligibility: (originalSha256) => deps.repository.revalidatePublicationPhotoEligibility(
+            companyId,
+            jobId,
+            photo.id,
+            originalSha256,
+          ),
+        });
+      }
+    }
+
+    if (scheduledAction) {
+      stage = 'schedule_persist';
+      const scheduled = await deps.repository.schedulePublication({
+        publicationId: deps.newUuid(),
+        companyId,
+        connectionId: String(connection.id),
+        jobId,
+        idempotencyKey,
+        message,
+        publicationKind,
+        attachmentId: schedulePhotoEvidence?.attachmentId ?? null,
+        attachmentSha256: schedulePhotoEvidence?.attachmentSha256 ?? null,
+        analysisRunId: schedulePhotoEvidence?.analysisRunId ?? null,
+        attachmentResultId: schedulePhotoEvidence?.attachmentResultId ?? null,
+        approvalId: schedulePhotoEvidence?.approvalId ?? null,
+        actorAuthUserId: access.actorAuthUserId,
+        actorName: access.actorName,
+        actorRole: access.actorRole,
+        scheduledFor: schedule.scheduledFor,
+        scheduledTimezone: schedule.scheduledTimezone,
       });
+      const result = safeScheduledPublicationResult({
+        ...scheduled,
+        scheduled_timezone: schedule.scheduledTimezone,
+      }, publicationKind);
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return result;
     }
 
     stage = 'decrypt_connection';

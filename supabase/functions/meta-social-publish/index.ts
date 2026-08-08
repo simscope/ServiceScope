@@ -127,7 +127,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       if (connectionError) throw new MetaPublishingError('INTERNAL_ERROR');
       let publicationQuery = adminClient
         .from('company_social_publications')
-        .select('status,approved_at,published_at,last_error_code')
+        .select('id,status,approved_at,published_at,last_error_code,scheduled_for,scheduled_timezone,publication_kind')
         .eq('company_id', companyId)
         .order('created_at', { ascending: false })
         .limit(1);
@@ -293,6 +293,38 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       };
     },
 
+    async schedulePublication(input: Record<string, unknown>) {
+      return scheduledRpcRow(adminClient, 'schedule_company_facebook_publication', {
+        p_publication_id: input.publicationId,
+        p_company_id: input.companyId,
+        p_connection_id: input.connectionId,
+        p_job_id: input.jobId,
+        p_idempotency_key: input.idempotencyKey,
+        p_approved_message: input.message,
+        p_publication_kind: input.publicationKind,
+        p_attachment_id: input.attachmentId,
+        p_attachment_sha256: input.attachmentSha256,
+        p_analysis_run_id: input.analysisRunId,
+        p_attachment_result_id: input.attachmentResultId,
+        p_approval_id: input.approvalId,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_scheduled_for: input.scheduledFor,
+        p_scheduled_timezone: input.scheduledTimezone,
+      });
+    },
+
+    async cancelScheduledPublication(input: Record<string, unknown>) {
+      return scheduledRpcRow(adminClient, 'cancel_scheduled_company_facebook_publication', {
+        p_publication_id: input.publicationId,
+        p_company_id: input.companyId,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+      });
+    },
+
     async beginPublication(input: Record<string, unknown>) {
       return oneRpcRow(adminClient, 'begin_company_facebook_publication', {
         p_publication_id: input.publicationId,
@@ -428,6 +460,22 @@ async function oneRpcRow(client: ReturnType<typeof createClient>, name: string, 
   const row = Array.isArray(data) ? data[0] : null;
   if (error || !row) throw new MetaPublishingError('INTERNAL_ERROR');
   return row;
+}
+
+async function scheduledRpcRow(client: ReturnType<typeof createClient>, name: string, params: Record<string, unknown>) {
+  const { data, error } = await client.rpc(name, params);
+  const row = Array.isArray(data) ? data[0] : null;
+  if (!error && row) return row;
+  const message = String(error?.message ?? '').toLowerCase();
+  if (name === 'cancel_scheduled_company_facebook_publication') {
+    if (message.includes('not found')) throw new MetaPublishingError('FORBIDDEN');
+    throw new MetaPublishingError('META_SCHEDULE_CANCELLATION_UNAVAILABLE', 409);
+  }
+  if (message.includes('privacy') || message.includes('approval') || message.includes('analysis evidence')) {
+    throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
+  }
+  if (message.includes('invalid')) throw new MetaPublishingError('INVALID_REQUEST');
+  throw new MetaPublishingError('INTERNAL_ERROR');
 }
 
 function corsHeaders(request: Request) {

@@ -863,6 +863,13 @@ button {
   gap: 8px;
 }
 
+.facebook-publish-control-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #526158;
+  font-size: 0.82rem;
+}
+
 .facebook-publish-mode button {
   display: inline-flex;
   align-items: center;
@@ -878,6 +885,33 @@ button {
   border-color: #2367ad;
   background: #eef5ff;
   color: #164b80;
+}
+
+.facebook-schedule-fields {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+  gap: 10px 14px;
+  max-width: 620px;
+}
+
+.facebook-schedule-fields label {
+  display: grid;
+  gap: 5px;
+  color: #526158;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.facebook-schedule-fields input {
+  min-width: 0;
+  width: 100%;
+}
+
+.facebook-schedule-fields p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.86rem;
 }
 
 .facebook-photo-picker {
@@ -933,6 +967,25 @@ button {
   color: #a12d27;
 }
 
+.facebook-scheduled-status {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  padding: 12px 0;
+  border-block: 1px solid var(--border-color);
+}
+
+.facebook-scheduled-status > div {
+  display: grid;
+  gap: 3px;
+}
+
+.facebook-scheduled-status span {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
 .facebook-publish-modal-backdrop {
   position: fixed;
   inset: 0;
@@ -980,6 +1033,24 @@ button {
   margin-bottom: 12px;
 }
 
+.facebook-schedule-confirmation {
+  display: grid;
+  gap: 4px;
+  margin: 16px 0;
+  padding-block: 12px;
+  border-block: 1px solid var(--border-color);
+}
+
+.facebook-schedule-confirmation span {
+  color: var(--text-muted);
+  font-size: 0.86rem;
+}
+
+.facebook-publish-modal .primary-button.danger {
+  background: #a12d27;
+  border-color: #a12d27;
+}
+
 .facebook-publish-approval {
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
@@ -996,6 +1067,25 @@ button {
 
 .facebook-publish-modal footer {
   justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .facebook-schedule-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .facebook-schedule-fields p {
+    grid-column: auto;
+  }
+
+  .facebook-scheduled-status {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .facebook-scheduled-status > button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
 }
 
 .ai-assistant-media-browser {
