@@ -25,6 +25,7 @@ const migrationNames = [
   '20260805203000_meta_facebook_single_photo_persistence_closure.sql',
   '20260805213000_meta_publication_audit_provider_id_redaction.sql',
   '20260805223000_meta_facebook_scheduled_publication_foundation.sql',
+  '20260807010000_meta_facebook_scheduled_worker_reconciliation.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -50,6 +51,18 @@ check(() => assert.equal(
     begin: '-- META_FACEBOOK_SINGLE_PHOTO_REVIEW_CLOSURE_BEGIN',
     end: '-- META_FACEBOOK_SINGLE_PHOTO_REVIEW_CLOSURE_END',
     label: 'Meta Facebook single-photo review closure',
+  })),
+));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_SCHEDULED_WORKER_RECONCILIATION_BEGIN',
+    end: '-- META_FACEBOOK_SCHEDULED_WORKER_RECONCILIATION_END',
+    label: 'Meta Facebook scheduled worker reconciliation',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(migrations[15], {
+    begin: '-- META_FACEBOOK_SCHEDULED_WORKER_RECONCILIATION_BEGIN',
+    end: '-- META_FACEBOOK_SCHEDULED_WORKER_RECONCILIATION_END',
+    label: 'Meta Facebook scheduled worker reconciliation',
   })),
 ));
 check(() => assert.equal(
@@ -265,6 +278,7 @@ check(() => assert.deepEqual(providerIdCleanup.rows[0], {
 }));
 await db.exec(`delete from public.audit_events where actor_name = 'Legacy Publisher'`);
 await db.exec(migrations[14]);
+await db.exec(migrations[15]);
 await db.exec('begin;');
 
 await db.query(`insert into auth.users (id, email) values ($1, 'publisher@example.test'), ($2, 'other@example.test')`, [ids.actor, ids.otherActor]);
@@ -372,6 +386,7 @@ const rpcNames = [
   'release_scheduled_company_facebook_publication_claim',
   'fail_scheduled_company_facebook_publication_preflight',
   'start_scheduled_company_facebook_publication',
+  'reconcile_stale_scheduled_company_facebook_publications',
 ];
 const rpcGrants = await db.query(`
   select p.proname,
@@ -413,6 +428,7 @@ for (const signature of [
   'release_scheduled_company_facebook_publication_claim/4',
   'fail_scheduled_company_facebook_publication_preflight/3',
   'start_scheduled_company_facebook_publication/3',
+  'reconcile_stale_scheduled_company_facebook_publications/1',
 ]) {
   check(() => assert.equal(signatureSet.has(signature), true));
 }
@@ -438,8 +454,9 @@ const scheduledRpcParameterSafety = await db.query(`
   'release_scheduled_company_facebook_publication_claim',
   'fail_scheduled_company_facebook_publication_preflight',
   'start_scheduled_company_facebook_publication',
+  'reconcile_stale_scheduled_company_facebook_publications',
 ]]);
-check(() => assert.equal(scheduledRpcParameterSafety.rows.length, 6));
+check(() => assert.equal(scheduledRpcParameterSafety.rows.length, 7));
 for (const row of scheduledRpcParameterSafety.rows) {
   check(() => assert.equal(row.no_caller_now, true));
   check(() => assert.equal(row.no_caller_timestamp, true));
@@ -775,6 +792,76 @@ await db.query(`select * from public.complete_company_facebook_publication($1,$2
 ),$6)`, [startPhotoSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role, scheduleClockAfter, ids.attachment, ids.analysisRun, approval.rows[0].id]);
 const completedStartedPhoto = await db.query(`select status,attempts,provider_post_id,provider_media_id from public.company_social_publications where id=$1`, [startPhotoSchedule.publication_id]);
 check(() => assert.deepEqual(completedStartedPhoto.rows[0], { status: 'published', attempts: 1, provider_post_id: null, provider_media_id: '10001_photo_77778' }));
+
+await db.exec('savepoint scheduled_worker_reconciliation;');
+const reconciliationSchedule = await scheduleTextPublication(
+  '00000000-0000-4000-8000-000000007241',
+  '00000000-0000-4000-8000-000000007242',
+  'Scheduled reconciliation fixture.',
+  new Date(scheduleClockAfter.getTime() + 11 * 60 * 60 * 1000),
+  'America/New_York',
+);
+await db.query(`update public.company_social_publications set scheduled_for=clock_timestamp()-interval '1 minute',next_attempt_at=clock_timestamp()-interval '1 minute' where id=$1`, [reconciliationSchedule.publication_id]);
+const reconciliationClaim = await db.query(`select * from public.claim_due_company_facebook_publications(60,1)`);
+check(() => assert.equal(reconciliationClaim.rows[0].publication_id, reconciliationSchedule.publication_id));
+await db.query(`select * from public.start_scheduled_company_facebook_publication($1,$2,$3)`, [reconciliationSchedule.publication_id, ids.company, reconciliationClaim.rows[0].claim_token]);
+
+const immediateReconciliationId = '00000000-0000-4000-8000-000000007243';
+await beginPublication(
+  immediateReconciliationId,
+  ids.company,
+  ids.connection,
+  ids.job,
+  '00000000-0000-4000-8000-000000007244',
+  'Immediate reconciliation exclusion fixture.',
+  ids.actor,
+);
+await db.query(`update public.company_social_publications set updated_at=clock_timestamp()-interval '11 minutes' where id = any($1::uuid[])`, [[reconciliationSchedule.publication_id, immediateReconciliationId]]);
+const reconciledScheduled = await db.query(`select public.reconcile_stale_scheduled_company_facebook_publications(20) as count`);
+check(() => assert.equal(reconciledScheduled.rows[0].count, 1));
+const reconciliationStates = await db.query(`select id,status,attempts,provider_error_category,last_error_code from public.company_social_publications where id = any($1::uuid[]) order by id`, [[reconciliationSchedule.publication_id, immediateReconciliationId]]);
+const scheduledRecoveryState = reconciliationStates.rows.find((row) => row.id === reconciliationSchedule.publication_id);
+const immediateRecoveryState = reconciliationStates.rows.find((row) => row.id === immediateReconciliationId);
+check(() => assert.deepEqual(scheduledRecoveryState, {
+  id: reconciliationSchedule.publication_id,
+  status: 'delivery_unknown',
+  attempts: 1,
+  provider_error_category: 'DELIVERY_UNKNOWN',
+  last_error_code: 'META_PUBLICATION_DELIVERY_UNKNOWN',
+}));
+check(() => assert.deepEqual(immediateRecoveryState, {
+  id: immediateReconciliationId,
+  status: 'publishing',
+  attempts: 0,
+  provider_error_category: null,
+  last_error_code: null,
+}));
+const reconciliationAudit = await db.query(`select actor_user_id,actor_name,actor_role,metadata from public.audit_events where action='meta_publication_delivery_unknown' and resource_id=$1`, [reconciliationSchedule.publication_id]);
+check(() => assert.equal(reconciliationAudit.rows.length, 1));
+check(() => assert.deepEqual({
+  actor_user_id: reconciliationAudit.rows[0].actor_user_id,
+  actor_name: reconciliationAudit.rows[0].actor_name,
+  actor_role: reconciliationAudit.rows[0].actor_role,
+}, { actor_user_id: ids.actor, actor_name: verifiedActor.name, actor_role: verifiedActor.role }));
+check(() => assert.deepEqual(reconciliationAudit.rows[0].metadata, {
+  channel: 'Facebook',
+  status: 'delivery_unknown',
+  publicationKind: 'text_only',
+  mediaCount: 0,
+  attachmentId: null,
+  providerCallCount: 1,
+  deliveryUnknown: true,
+  repeatBlocked: true,
+  reconciliationRequired: true,
+  schedulerRecovery: true,
+  intentHashPrefix: reconciliationAudit.rows[0].metadata.intentHashPrefix,
+  attempts: 1,
+}));
+check(() => assert.match(reconciliationAudit.rows[0].metadata.intentHashPrefix, /^[0-9a-f]{16}$/));
+check(() => assert.doesNotMatch(JSON.stringify(reconciliationAudit.rows[0].metadata), /10001|providerPostId|providerMediaId|token|storage|Scheduled reconciliation fixture/i));
+await assertRejectsSql(`select public.reconcile_stale_scheduled_company_facebook_publications(21)`);
+await db.exec('rollback to savepoint scheduled_worker_reconciliation;');
+await db.exec('release savepoint scheduled_worker_reconciliation;');
 
 const cancelSchedule = await scheduleTextPublication('00000000-0000-4000-8000-000000007222', '00000000-0000-4000-8000-000000007223', 'Cancel schedule fixture.', scheduleFuture, 'America/New_York');
 const cancelled = await db.query(`select status,attempts,cancelled_by,next_attempt_at from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [cancelSchedule.publication_id, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
@@ -1220,6 +1307,7 @@ await canonicalDb.exec(migrations[11]);
 await canonicalDb.exec(migrations[12]);
 await canonicalDb.exec(migrations[13]);
 await canonicalDb.exec(migrations[14]);
+await canonicalDb.exec(migrations[15]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');

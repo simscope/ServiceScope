@@ -14,6 +14,7 @@ on:
       - 'supabase/functions/_shared/media-analysis/**'
       - 'supabase/functions/ai-media-analyze/**'
       - 'supabase/functions/meta-social-publish/**'
+      - 'supabase/functions/meta-social-publish-scheduled-worker/**'
       - 'supabase/migrations/**meta_facebook**.sql'
       - 'supabase/schema.sql'
   push:
@@ -85,6 +86,9 @@ jobs:
 
       - name: Real ImageScript sanitizer fixtures
         run: deno test --allow-import --allow-net=deno.land scripts/meta-image-sanitizer-deno-tests.ts
+
+      - name: Scheduled worker secret auth
+        run: deno test --allow-import --allow-net=deno.land scripts/meta-scheduled-worker-deno-tests.ts
 
   full-build:
     runs-on: ubuntu-latest

@@ -11,6 +11,7 @@ const [
   provider,
   contracts,
   imageProcessor,
+  photoPreparation,
   privacy,
   mediaAnalysisEdge,
   client,
@@ -23,17 +24,24 @@ const [
   persistenceClosureMigration,
   providerIdRedactionMigration,
   scheduledFoundationMigration,
+  scheduledWorkerMigration,
+  scheduledWorkerEdge,
+  scheduledWorker,
+  scheduledRepository,
+  scheduledWorkerAuth,
   aclMigration,
   schema,
   config,
   ciWorkflow,
   denoSanitizerTests,
+  denoScheduledWorkerTests,
 ] = await Promise.all([
   read('supabase/functions/meta-social-publish/index.ts'),
   read('supabase/functions/_shared/meta-publishing/service.js'),
   read('supabase/functions/_shared/meta-publishing/provider.js'),
   read('supabase/functions/_shared/meta-publishing/contracts.js'),
   read('supabase/functions/_shared/meta-publishing/imageProcessor.js'),
+  read('supabase/functions/_shared/meta-publishing/photoPreparation.js'),
   read('supabase/functions/_shared/meta-publishing/privacy.js'),
   read('supabase/functions/ai-media-analyze/index.ts'),
   read('src/features/meta-publishing/clientApi.ts'),
@@ -46,15 +54,21 @@ const [
   read('supabase/migrations/20260805203000_meta_facebook_single_photo_persistence_closure.sql'),
   read('supabase/migrations/20260805213000_meta_publication_audit_provider_id_redaction.sql'),
   read('supabase/migrations/20260805223000_meta_facebook_scheduled_publication_foundation.sql'),
+  read('supabase/migrations/20260807010000_meta_facebook_scheduled_worker_reconciliation.sql'),
+  read('supabase/functions/meta-social-publish-scheduled-worker/index.ts'),
+  read('supabase/functions/_shared/meta-publishing/scheduledWorker.js'),
+  read('supabase/functions/_shared/meta-publishing/scheduledRepository.js'),
+  read('supabase/functions/_shared/meta-publishing/scheduledWorkerAuth.js'),
   read('supabase/migrations/20260804011000_meta_facebook_publish_service_role_acl_fix.sql'),
   read('supabase/schema.sql'),
   read('supabase/config.toml'),
   read('.github/workflows/ci.yml'),
   read('scripts/meta-image-sanitizer-deno-tests.ts'),
+  read('scripts/meta-scheduled-worker-deno-tests.ts'),
 ]);
 
 const browserSources = `${client}\n${panel}\n${aiPage}`;
-const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${mediaAnalysisEdge}`;
+const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${photoPreparation}\n${mediaAnalysisEdge}\n${scheduledWorkerEdge}\n${scheduledWorker}\n${scheduledRepository}\n${scheduledWorkerAuth}`;
 const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}\n${runtimeClosureMigration}\n${persistenceClosureMigration}\n${providerIdRedactionMigration}`;
 const providerIdRedactionFunction = providerIdRedactionMigration.match(/create or replace function private\.complete_company_facebook_publication_unvalidated_20260805[\s\S]+?revoke all on function private\.complete_company_facebook_publication_unvalidated_20260805/)?.[0] ?? '';
 let checks = 0;
@@ -114,8 +128,8 @@ check(() => assert.match(service, /revalidatePublicationPhotoEligibility/));
 check(() => assert.match(edge, /p_publication_audit_metadata: input\.publicationAuditMetadata/));
 check(() => assert.match(edge, /list_company_facebook_publication_photo_candidates/));
 check(() => assert.match(service, /revokePublicationPhotoApproval/));
-check(() => assert.match(service, /deps\.imageProcessor/));
-check(() => assert.match(service, /processor\.sanitize/));
+check(() => assert.match(photoPreparation, /deps\.imageProcessor/));
+check(() => assert.match(photoPreparation, /processor\.sanitize/));
 check(() => assert.match(service, /if \(!beginning\.should_publish\)/));
 check(() => assert.match(service, /markUnknown/));
 check(() => assert.match(service, /META_PUBLICATION_DELIVERY_UNKNOWN/));
@@ -286,6 +300,50 @@ const scheduledCancelAuditSection = scheduledFoundationMigration.match(/meta_pub
 check(() => assert.doesNotMatch(scheduledCancelAuditSection, /scheduled_facebook_page_id|facebook_page_id|providerPostId|providerMediaId|storage_bucket|storage_path|token_envelope|ciphertext|'approvedMessage'|'message'/i));
 const scheduledFailureAuditSection = scheduledFoundationMigration.match(/meta_publication_schedule_failed[\s\S]*?return next updated_publication/)?.[0] ?? '';
 check(() => assert.doesNotMatch(scheduledFailureAuditSection, /scheduled_facebook_page_id|facebook_page_id|providerPostId|providerMediaId|storage_bucket|storage_path|token_envelope|ciphertext|'approvedMessage'|'message'/i));
+check(() => assert.match(config, /\[functions\.meta-social-publish-scheduled-worker\]\s+verify_jwt = false/));
+check(() => assert.doesNotMatch(scheduledWorkerEdge, /Access-Control-Allow-Origin|corsHeaders|OPTIONS/));
+check(() => assert.match(scheduledWorkerEdge, /request\.headers\.get\('apikey'\)/));
+check(() => assert.match(scheduledWorkerEdge, /SUPABASE_SERVICE_ROLE_KEY/));
+check(() => assert.match(scheduledWorkerEdge, /createClient\(supabaseUrl, serviceRoleKey/));
+check(() => assert.doesNotMatch(scheduledWorkerEdge, /createClient\(supabaseUrl, workerSecretKey/));
+check(() => assert.match(scheduledWorkerAuth, /SCHEDULED_WORKER_SECRET_NAME = 'meta-scheduled-publisher'/));
+check(() => assert.match(scheduledWorkerEdge, /SUPABASE_SECRET_KEYS/));
+check(() => assert.match(scheduledWorkerAuth, /sb_secret_/));
+check(() => assert.match(scheduledWorkerAuth, /authorization[\s\S]*AUTH_REQUIRED/));
+check(() => assert.match(scheduledWorkerAuth, /Object\.keys\(value\)\.length !== 0/));
+check(() => assert.doesNotMatch(`${scheduledWorkerEdge}\n${scheduledWorker}\n${scheduledRepository}`, /handleMetaPublishing|begin_company_facebook_publication|beginPublication/));
+check(() => assert.doesNotMatch(`${scheduledWorkerEdge}\n${scheduledWorker}\n${scheduledRepository}`, /console\.|logger\.|telemetry/));
+check(() => assert.match(scheduledWorker, /SCHEDULED_CLAIM_BATCH_SIZE = 3/));
+check(() => assert.match(scheduledWorker, /SCHEDULED_CLAIM_LEASE_SECONDS = 300/));
+check(() => assert.match(scheduledWorker, /for \(const claim of claims\) await processClaim/));
+check(() => assert.match(scheduledWorker, /reconcileStale\(SCHEDULED_RECONCILIATION_BATCH_SIZE\)[\s\S]*claimDue/));
+check(() => assert.match(scheduledWorker, /getExactConnection/));
+check(() => assert.match(scheduledWorker, /scheduled_facebook_page_id/));
+check(() => assert.match(scheduledWorker, /assertPublicationPrivacy\(message, privateValues\)/));
+check(() => assert.match(scheduledWorker, /expectedOriginalSha256: publication\.scheduled_attachment_sha256/));
+check(() => assert.match(scheduledWorker, /startScheduled[\s\S]*publishSinglePhoto|startScheduled[\s\S]*publishText/));
+check(() => assert.match(scheduledWorker, /scheduledRetryDelayMs/));
+check(() => assert.doesNotMatch(scheduledWorker, /setInterval|while\s*\(|for\s*\([^)]*attempt/i));
+check(() => assert.match(scheduledRepository, /\.eq\('id', input\.connectionId\)/));
+check(() => assert.doesNotMatch(scheduledRepository, /company_social_connections[\s\S]{0,300}order\('updated_at'/));
+check(() => assert.match(scheduledWorkerMigration, /create or replace function public\.reconcile_stale_scheduled_company_facebook_publications/));
+check(() => assert.match(scheduledWorkerMigration, /database_now := clock_timestamp\(\)/));
+check(() => assert.match(scheduledWorkerMigration, /for update skip locked/i));
+check(() => assert.match(scheduledWorkerMigration, /scheduled_for is not null/));
+check(() => assert.match(scheduledWorkerMigration, /publication\.status = 'publishing'/));
+check(() => assert.match(scheduledWorkerMigration, /publication\.attempts = 0/));
+check(() => assert.match(scheduledWorkerMigration, /updated_at < database_now - interval '10 minutes'/));
+check(() => assert.match(scheduledWorkerMigration, /status = 'delivery_unknown'/));
+check(() => assert.match(scheduledWorkerMigration, /revoke all on function public\.reconcile_stale_scheduled_company_facebook_publications\(integer\)[\s\S]*from public, anon, authenticated, service_role/));
+check(() => assert.match(scheduledWorkerMigration, /grant execute on function public\.reconcile_stale_scheduled_company_facebook_publications\(integer\)[\s\S]*to service_role/));
+check(() => assert.doesNotMatch(scheduledWorkerMigration, /\bp_now\b|\bp_timestamp\b/));
+const reconciliationAuditSection = scheduledWorkerMigration.match(/insert into public\.audit_events[\s\S]*?reconciled_count :=/)?.[0] ?? '';
+check(() => assert.match(reconciliationAuditSection, /updated_publication\.approved_by[\s\S]*updated_publication\.scheduled_by_name[\s\S]*updated_publication\.scheduled_by_role/));
+check(() => assert.match(reconciliationAuditSection, /'schedulerRecovery', true/));
+check(() => assert.doesNotMatch(reconciliationAuditSection, /facebook_page_id|providerPostId|providerMediaId|token_envelope|storage_path|'message'/i));
+check(() => assert.match(ciWorkflow, /meta-social-publish-scheduled-worker/));
+check(() => assert.match(ciWorkflow, /meta-scheduled-worker-deno-tests\.ts/));
+check(() => assert.match(denoScheduledWorkerTests, /dependencyCalls, 0/));
 check(() => assert.match(reviewMigration, /if exists \(\s*select 1\s+from public\.company_media_analysis_privacy_findings/s));
 check(() => assert.doesNotMatch(migration, /'Authenticated user', 'publisher'/));
 check(() => assert.match(combinedMigrations, /p_actor_id, btrim\(p_actor_name\), btrim\(p_actor_role\)/));
