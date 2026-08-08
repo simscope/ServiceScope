@@ -22,6 +22,7 @@ const [
   runtimeClosureMigration,
   persistenceClosureMigration,
   providerIdRedactionMigration,
+  scheduledFoundationMigration,
   aclMigration,
   schema,
   config,
@@ -44,6 +45,7 @@ const [
   read('supabase/migrations/20260805193000_meta_facebook_single_photo_runtime_closure.sql'),
   read('supabase/migrations/20260805203000_meta_facebook_single_photo_persistence_closure.sql'),
   read('supabase/migrations/20260805213000_meta_publication_audit_provider_id_redaction.sql'),
+  read('supabase/migrations/20260805223000_meta_facebook_scheduled_publication_foundation.sql'),
   read('supabase/migrations/20260804011000_meta_facebook_publish_service_role_acl_fix.sql'),
   read('supabase/schema.sql'),
   read('supabase/config.toml'),
@@ -222,6 +224,68 @@ check(() => assert.match(providerIdRedactionMigration, /raise exception 'meta pu
 check(() => assert.match(providerIdRedactionFunction, /provider_post_id = case when locked_publication\.publication_kind = 'text_only' then btrim\(p_provider_post_id\) else null end/));
 check(() => assert.match(providerIdRedactionFunction, /provider_media_id = case when locked_publication\.publication_kind = 'single_photo' then btrim\(p_provider_media_id\) else null end/));
 check(() => assert.doesNotMatch(providerIdRedactionFunction, /'providerMediaId'|'providerPostId'/));
+check(() => assert.match(`${service}\n${contracts}`, /facebook_publication_intent_v1/));
+check(() => assert.match(scheduledFoundationMigration, /facebook_scheduled_publication_intent_v1/));
+check(() => assert.doesNotMatch(scheduledFoundationMigration, /facebook_publication_intent_v1/));
+check(() => assert.match(scheduledFoundationMigration, /FOR UPDATE SKIP LOCKED/i));
+check(() => assert.match(scheduledFoundationMigration, /execution_attempts = publication\.execution_attempts \+ 1/));
+check(() => assert.match(scheduledFoundationMigration, /company_social_publications_execution_attempts_check\s+check \(execution_attempts >= 0\)/));
+check(() => assert.doesNotMatch(scheduledFoundationMigration, /execution_attempts between 0 and 100/));
+check(() => assert.match(scheduledFoundationMigration, /last_scheduler_error_code = 'META_SCHEDULE_REVALIDATION_FAILED'/));
+check(() => assert.match(scheduledFoundationMigration, /attempts = 0/));
+check(() => assert.match(scheduledFoundationMigration, /scheduled_facebook_page_id/));
+check(() => assert.match(scheduledFoundationMigration, /selected_connection\.facebook_page_id <> locked_publication\.scheduled_facebook_page_id/));
+check(() => assert.match(scheduledFoundationMigration, /revoke all on function public\.claim_due_company_facebook_publications\(integer, integer\) from public, anon, authenticated/));
+check(() => assert.match(scheduledFoundationMigration, /grant execute on function public\.claim_due_company_facebook_publications\(integer, integer\) to service_role/));
+check(() => assert.doesNotMatch(scheduledFoundationMigration, /grant execute on function public\.(?:schedule_company_facebook_publication|cancel_scheduled_company_facebook_publication|claim_due_company_facebook_publications|release_scheduled_company_facebook_publication_claim|fail_scheduled_company_facebook_publication_preflight|start_scheduled_company_facebook_publication)[\s\S]*?to\s+(?:anon|authenticated|public)/i));
+const scheduledRpcDefinitions = [
+  'schedule_company_facebook_publication',
+  'cancel_scheduled_company_facebook_publication',
+  'claim_due_company_facebook_publications',
+  'release_scheduled_company_facebook_publication_claim',
+  'fail_scheduled_company_facebook_publication_preflight',
+  'start_scheduled_company_facebook_publication',
+].map((name) => scheduledFoundationMigration.match(new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?\\n\\$\\$;`))?.[0] ?? '');
+check(() => assert.equal(scheduledRpcDefinitions.every(Boolean), true));
+check(() => assert.doesNotMatch(scheduledRpcDefinitions.join('\n'), /\bp_now\b|\bp_timestamp\b/));
+check(() => assert.ok((scheduledFoundationMigration.match(/database_now := clock_timestamp\(\)/g) ?? []).length >= 6));
+check(() => assert.match(scheduledRpcDefinitions[0], /p_scheduled_for <= database_now/));
+check(() => assert.match(scheduledRpcDefinitions[0], /p_scheduled_for > database_now \+ interval '366 days'/));
+check(() => assert.match(scheduledRpcDefinitions[2], /publication\.scheduled_for <= database_now/));
+check(() => assert.match(scheduledRpcDefinitions[2], /claimed_at = database_now/));
+check(() => assert.match(scheduledRpcDefinitions[2], /claim_expires_at = database_now \+ make_interval/));
+check(() => assert.match(scheduledRpcDefinitions[3], /p_next_attempt_at <= database_now/));
+check(() => assert.match(scheduledRpcDefinitions[3], /p_next_attempt_at > database_now \+ interval '1 day'/));
+check(() => assert.doesNotMatch(scheduledRpcDefinitions[4], /\bp_actor_name\b|\bp_actor_role\b/));
+check(() => assert.match(scheduledRpcDefinitions[4], /locked_publication\.approved_by, locked_publication\.scheduled_by_name,\s+locked_publication\.scheduled_by_role/));
+check(() => assert.match(scheduledRpcDefinitions[5], /claim_expires_at > database_now/));
+check(() => assert.match(scheduledRpcDefinitions[5], /scheduled_for <= database_now/));
+check(() => assert.doesNotMatch(scheduledRpcDefinitions[5], /for key share/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.jobs[\s\S]*?for update;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.company_social_connections[\s\S]*?for update;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.job_attachments[\s\S]*?for update;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.company_media_analysis_attachment_results ar[\s\S]*?for update of ar;/i));
+check(() => assert.match(scheduledRpcDefinitions[5], /from public\.company_social_publication_media_approvals approval[\s\S]*?for update;/i));
+const scheduledStartLockOrder = [
+  'from public.company_social_publications',
+  'from public.jobs',
+  'from public.company_social_connections',
+  'from public.job_attachments',
+  'from public.company_media_analysis_attachment_results ar',
+  'from public.company_social_publication_media_approvals approval',
+  'from public.company_media_analysis_privacy_findings finding',
+].map((fragment) => scheduledRpcDefinitions[5].indexOf(fragment));
+check(() => assert.equal(scheduledStartLockOrder.every((position) => position >= 0), true));
+check(() => assert.equal(scheduledStartLockOrder.every((position, index) => index === 0 || position > scheduledStartLockOrder[index - 1]), true));
+check(() => assert.match(scheduledFoundationMigration, /meta_publication_scheduled/));
+check(() => assert.match(scheduledFoundationMigration, /meta_publication_schedule_cancelled/));
+check(() => assert.match(scheduledFoundationMigration, /meta_publication_schedule_failed/));
+const scheduledAuditSection = scheduledFoundationMigration.match(/meta_publication_scheduled[\s\S]*?return query select created_publication/)?.[0] ?? '';
+check(() => assert.doesNotMatch(scheduledAuditSection, /scheduled_facebook_page_id|facebook_page_id|providerPostId|providerMediaId|storage_bucket|storage_path|token_envelope|ciphertext|'approvedMessage'|'message'/i));
+const scheduledCancelAuditSection = scheduledFoundationMigration.match(/meta_publication_schedule_cancelled[\s\S]*?return next updated_publication/)?.[0] ?? '';
+check(() => assert.doesNotMatch(scheduledCancelAuditSection, /scheduled_facebook_page_id|facebook_page_id|providerPostId|providerMediaId|storage_bucket|storage_path|token_envelope|ciphertext|'approvedMessage'|'message'/i));
+const scheduledFailureAuditSection = scheduledFoundationMigration.match(/meta_publication_schedule_failed[\s\S]*?return next updated_publication/)?.[0] ?? '';
+check(() => assert.doesNotMatch(scheduledFailureAuditSection, /scheduled_facebook_page_id|facebook_page_id|providerPostId|providerMediaId|storage_bucket|storage_path|token_envelope|ciphertext|'approvedMessage'|'message'/i));
 check(() => assert.match(reviewMigration, /if exists \(\s*select 1\s+from public\.company_media_analysis_privacy_findings/s));
 check(() => assert.doesNotMatch(migration, /'Authenticated user', 'publisher'/));
 check(() => assert.match(combinedMigrations, /p_actor_id, btrim\(p_actor_name\), btrim\(p_actor_role\)/));
@@ -249,6 +313,8 @@ check(() => assert.match(schema, /publication_intent_sha256 bytea/));
 check(() => assert.match(schema, /company_social_publication_media_approvals/));
 check(() => assert.match(schema, /company_social_publications_company_intent_unique/));
 check(() => assert.match(schema, /company_media_analysis_runs/));
+check(() => assert.match(schema, /-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_BEGIN/));
+check(() => assert.match(schema, /-- META_FACEBOOK_SCHEDULED_PUBLICATION_FOUNDATION_END/));
 
 check(() => assert.match(ciWorkflow, /permissions:\s+contents: read/s));
 check(() => assert.match(ciWorkflow, /meta-publishing-node:/));
