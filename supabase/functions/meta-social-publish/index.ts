@@ -130,12 +130,26 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
         .select('id,status,approved_at,published_at,last_error_code,scheduled_for,scheduled_timezone,publication_kind')
         .eq('company_id', companyId)
         .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
         .limit(1);
       if (jobId) publicationQuery = publicationQuery.eq('job_id', jobId);
       const { data: lastPublication, error: publicationError } = await publicationQuery.maybeSingle();
       if (publicationError) throw new MetaPublishingError('INTERNAL_ERROR');
+
+      let activeScheduleQuery = adminClient
+        .from('company_social_publications')
+        .select('id,status,last_error_code,scheduled_for,scheduled_timezone,publication_kind')
+        .eq('company_id', companyId)
+        .eq('status', 'scheduled')
+        .order('scheduled_for', { ascending: true })
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(1);
+      if (jobId) activeScheduleQuery = activeScheduleQuery.eq('job_id', jobId);
+      const { data: activeScheduledPublication, error: activeScheduleError } = await activeScheduleQuery.maybeSingle();
+      if (activeScheduleError) throw new MetaPublishingError('INTERNAL_ERROR');
       const eligiblePhotos = jobId ? await listPhotoEligibility(adminClient, companyId, jobId) : [];
-      return { connection, lastPublication, eligiblePhotos };
+      return { connection, lastPublication, activeScheduledPublication, eligiblePhotos };
     },
 
     async getPublicationContext(companyId: string, jobId: string) {

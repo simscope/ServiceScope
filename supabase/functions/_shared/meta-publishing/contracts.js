@@ -232,7 +232,7 @@ export function runtimePublishingConfig(getEnv) {
   };
 }
 
-export function safePublishingStatus({ config, connection, lastPublication, eligiblePhotos = [] }) {
+export function safePublishingStatus({ config, connection, lastPublication, activeScheduledPublication, eligiblePhotos = [] }) {
   const enabled = facebookPublishingEnabled(connection);
   return {
     ok: true,
@@ -242,6 +242,7 @@ export function safePublishingStatus({ config, connection, lastPublication, elig
     facebookPublishingEnabled: enabled,
     missingPermissions: enabled ? [] : [META_FACEBOOK_PUBLISHING_SCOPE],
     lastPublication: lastPublication ? safePublicationSummary(lastPublication) : null,
+    activeScheduledPublication: safeActiveScheduledPublication(activeScheduledPublication),
     eligiblePhotos: Array.isArray(eligiblePhotos) ? eligiblePhotos.map(safeEligiblePhoto).filter(Boolean) : [],
   };
 }
@@ -315,6 +316,19 @@ function safePublicationSummary(value) {
     scheduledFor: safeTimestamp(value?.scheduled_for),
     scheduledTimezone: safeTimezone(value?.scheduled_timezone),
     publicationKind: safePublicationKind(value?.publication_kind),
+  };
+}
+
+function safeActiveScheduledPublication(value) {
+  if (value?.status !== 'scheduled') return null;
+  const summary = safePublicationSummary(value);
+  return {
+    status: summary.status,
+    publicationId: summary.publicationId,
+    scheduledFor: summary.scheduledFor,
+    scheduledTimezone: summary.scheduledTimezone,
+    publicationKind: summary.publicationKind,
+    errorCode: summary.errorCode,
   };
 }
 

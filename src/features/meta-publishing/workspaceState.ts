@@ -1,4 +1,9 @@
-import { normalizeFacebookPublishingMessage, type FacebookPublicationSummary } from './contracts.js';
+import {
+  normalizeFacebookPublishingMessage,
+  type FacebookActiveScheduledPublication,
+  type FacebookPublicationSummary,
+  type FacebookPublishingSnapshot,
+} from './contracts.js';
 
 export type FacebookPublishWorkspaceState = {
   confirmationOpen: boolean;
@@ -49,6 +54,36 @@ export function facebookPublicationNeedsPageCheck(
   errorCode = '',
 ) {
   return lastPublication?.status === 'delivery_unknown' || errorCode === 'META_PUBLICATION_DELIVERY_UNKNOWN';
+}
+
+export function currentFacebookPublication(
+  state: FacebookPublishWorkspaceState,
+  snapshot: FacebookPublishingSnapshot | null,
+) {
+  return state.result ?? snapshot?.lastPublication ?? null;
+}
+
+export function currentFacebookActiveSchedule(
+  state: FacebookPublishWorkspaceState,
+  snapshot: FacebookPublishingSnapshot | null,
+): FacebookActiveScheduledPublication | FacebookPublicationSummary | null {
+  return state.result?.status === 'scheduled'
+    ? state.result
+    : snapshot?.activeScheduledPublication ?? null;
+}
+
+export function reconcileFacebookPublishWorkspaceFromStatus(
+  state: FacebookPublishWorkspaceState,
+  snapshot: FacebookPublishingSnapshot,
+): FacebookPublishWorkspaceState {
+  const activeSchedule = snapshot.activeScheduledPublication?.status === 'scheduled';
+  return {
+    ...state,
+    result: null,
+    cancelConfirmationOpen: activeSchedule ? state.cancelConfirmationOpen : false,
+    cancelling: activeSchedule ? state.cancelling : false,
+    approved: state.cancelConfirmationOpen && !activeSchedule ? false : state.approved,
+  };
 }
 
 export function openFacebookPublishConfirmation(

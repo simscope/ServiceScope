@@ -120,6 +120,28 @@ function workspaceChecks() {
   check(() => assert.equal(cancellation.cancelConfirmationOpen, true));
   check(() => assert.equal(workspace.beginFacebookScheduleCancellation(cancellation).shouldSubmit, false));
   check(() => assert.equal(workspace.beginFacebookScheduleCancellation({ ...cancellation, approved: true }).shouldSubmit, true));
+
+  const optimisticSchedule = {
+    ...workspace.resetFacebookPublishWorkspace(),
+    result: scheduledSummary(),
+    cancelConfirmationOpen: true,
+    approved: true,
+  };
+  check(() => assert.equal(workspace.currentFacebookActiveSchedule(optimisticSchedule, publishingSnapshot(null, null))?.status, 'scheduled'));
+  for (const status of ['published', 'failed', 'delivery_unknown']) {
+    const terminal = {
+      status,
+      approvedAt: new Date(nowMs).toISOString(),
+      publishedAt: status === 'published' ? new Date(nowMs + 60_000).toISOString() : null,
+      errorCode: status === 'failed' ? 'META_PUBLICATION_FAILED' : status === 'delivery_unknown' ? 'META_PUBLICATION_DELIVERY_UNKNOWN' : null,
+    };
+    const refreshedSnapshot = publishingSnapshot(terminal, null);
+    const reconciled = workspace.reconcileFacebookPublishWorkspaceFromStatus(optimisticSchedule, refreshedSnapshot);
+    check(() => assert.equal(reconciled.result, null));
+    check(() => assert.equal(workspace.currentFacebookPublication(reconciled, refreshedSnapshot)?.status, status));
+    check(() => assert.equal(workspace.currentFacebookActiveSchedule(reconciled, refreshedSnapshot), null));
+    check(() => assert.equal(reconciled.cancelConfirmationOpen, false));
+  }
 }
 
 async function scheduleServiceChecks() {
@@ -202,6 +224,12 @@ async function cancellationAndStatusChecks() {
   const scheduled = await invoke(deps, scheduleTextRequest());
   const status = await invoke(deps, { action: 'status', companyId: ids.company, jobId: ids.job });
   check(() => assert.equal(status.lastPublication.status, 'scheduled'));
+  check(() => assert.equal(status.activeScheduledPublication.status, 'scheduled'));
+  check(() => assert.equal(status.activeScheduledPublication.publicationId, scheduled.publicationId));
+  check(() => assert.deepEqual(
+    Object.keys(status.activeScheduledPublication).sort(),
+    ['errorCode', 'publicationId', 'publicationKind', 'scheduledFor', 'scheduledTimezone', 'status'].sort(),
+  ));
   check(() => assert.equal(status.lastPublication.publicationId, scheduled.publicationId));
   check(() => assert.equal(status.lastPublication.scheduledFor, scheduledFor));
   check(() => assert.equal(status.lastPublication.scheduledTimezone, timezone));
@@ -214,6 +242,26 @@ async function cancellationAndStatusChecks() {
   const cancelledStatus = await invoke(deps, { action: 'status', companyId: ids.company, jobId: ids.job });
   check(() => assert.equal(cancelledStatus.lastPublication.status, 'cancelled'));
   check(() => assert.equal(cancelledStatus.lastPublication.publicationId, null));
+  check(() => assert.equal(cancelledStatus.activeScheduledPublication, null));
+
+  const newerTerminal = await makeDependencies();
+  const stillActive = await invoke(newerTerminal, scheduleTextRequest());
+  newerTerminal.scheduledRows.push({
+    ...newerTerminal.scheduledRows[0],
+    id: ids.otherJob,
+    publication_id: ids.otherJob,
+    status: 'published',
+    scheduled_for: null,
+    scheduled_timezone: null,
+    published_at: new Date(nowMs + 120_000).toISOString(),
+    provider_post_id: 'must-not-leak',
+    token_envelope: 'must-not-leak',
+  });
+  const mixedStatus = await invoke(newerTerminal, { action: 'status', companyId: ids.company, jobId: ids.job });
+  check(() => assert.equal(mixedStatus.lastPublication.status, 'published'));
+  check(() => assert.equal(mixedStatus.activeScheduledPublication.status, 'scheduled'));
+  check(() => assert.equal(mixedStatus.activeScheduledPublication.publicationId, stillActive.publicationId));
+  check(() => assert.doesNotMatch(JSON.stringify(mixedStatus.activeScheduledPublication), /page|connection|analysis|result|approval|sha|claim|token|provider/i));
 
   const changed = await makeDependencies();
   const changedSchedule = await invoke(changed, scheduleTextRequest());
@@ -230,11 +278,13 @@ async function cancellationAndStatusChecks() {
 }
 
 async function sourceChecks() {
-  const [service, edge, client, panel] = await Promise.all([
+  const [service, edge, client, panel, workspaceSource, sharedContracts] = await Promise.all([
     readFile(new URL('../supabase/functions/_shared/meta-publishing/service.js', import.meta.url), 'utf8'),
     readFile(new URL('../supabase/functions/meta-social-publish/index.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/features/meta-publishing/clientApi.ts', import.meta.url), 'utf8'),
     readFile(new URL('../src/components/portal/FacebookPublishPanel.tsx', import.meta.url), 'utf8'),
+    readFile(new URL('../src/features/meta-publishing/workspaceState.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../supabase/functions/_shared/meta-publishing/contracts.js', import.meta.url), 'utf8'),
   ]);
   const scheduleClient = client.slice(client.indexOf('export function scheduleFacebookText'));
   check(() => assert.match(scheduleClient, /action: 'schedule_facebook_text'/));
@@ -248,6 +298,11 @@ async function sourceChecks() {
   check(() => assert.doesNotMatch(scheduleBranch, /publishText|publishSinglePhoto|beginPublication|decryptTokenBundle/));
   check(() => assert.match(edge, /schedule_company_facebook_publication/));
   check(() => assert.match(edge, /cancel_scheduled_company_facebook_publication/));
+  check(() => assert.match(edge, /activeScheduledPublication/));
+  check(() => assert.match(edge, /\.eq\('company_id', companyId\)[\s\S]*\.eq\('status', 'scheduled'\)/));
+  check(() => assert.match(edge, /activeScheduleQuery = activeScheduleQuery\.eq\('job_id', jobId\)/));
+  check(() => assert.match(sharedContracts, /activeScheduledPublication: safeActiveScheduledPublication/));
+  check(() => assert.match(sharedContracts, /function safeActiveScheduledPublication/));
   check(() => assert.doesNotMatch(panel, /providerPostId|providerMediaId|facebookPageId|connectionId|analysisRunId|attachmentResultId|approvalId|sha256|token_envelope/));
   check(() => assert.match(panel, /Publish now/));
   check(() => assert.match(panel, /Schedule for later/));
@@ -255,6 +310,18 @@ async function sourceChecks() {
   check(() => assert.match(panel, /Scheduling\.\.\./));
   check(() => assert.match(panel, /I reviewed the exact final text, media and scheduled time and approve scheduling this Facebook publication\./));
   check(() => assert.match(panel, /Cancel scheduled publication/));
+  check(() => assert.match(panel, /FACEBOOK_STATUS_REFRESH_MS = 45_000/));
+  check(() => assert.match(panel, /window\.setTimeout\(refreshStatus, FACEBOOK_STATUS_REFRESH_MS\)/));
+  check(() => assert.match(panel, /window\.clearTimeout\(timeoutId\)/));
+  check(() => assert.match(panel, /reconcileFacebookPublishWorkspaceFromStatus/));
+  check(() => assert.match(workspaceSource, /result: null/));
+  const pollingSource = panel.slice(panel.indexOf('const refreshStatus = async'), panel.indexOf('function openConfirmation'));
+  check(() => assert.equal((pollingSource.match(/loadFacebookPublishingStatus/g) ?? []).length, 1));
+  check(() => assert.doesNotMatch(pollingSource, /scheduleFacebook|cancelFacebook|publishFacebook|provider|decrypt/i));
+  const cancelSource = panel.slice(panel.indexOf('async function cancelScheduledPublication'), panel.indexOf('const durableScheduledTime'));
+  check(() => assert.equal((cancelSource.match(/cancelFacebookScheduledPublication/g) ?? []).length, 1));
+  check(() => assert.match(cancelSource, /catch \(error\)[\s\S]*loadFacebookPublishingStatus/));
+  check(() => assert.doesNotMatch(cancelSource, /while\s*\(|setTimeout|setInterval/));
 }
 
 async function makeDependencies(options = {}) {
@@ -382,7 +449,10 @@ async function makeDependencies(options = {}) {
       getStatus: async (companyId, jobId) => {
         if (companyId !== ids.company || (jobId && jobId !== ids.job)) throw new MetaPublishingError('FORBIDDEN');
         const lastPublication = [...scheduledRows].reverse().find((row) => !jobId || row.job_id === jobId) ?? null;
-        return { connection, lastPublication, eligiblePhotos: [] };
+        const activeScheduledPublication = scheduledRows.find((row) => (
+          row.status === 'scheduled' && (!jobId || row.job_id === jobId)
+        )) ?? null;
+        return { connection, lastPublication, activeScheduledPublication, eligiblePhotos: [] };
       },
       beginPublication: async () => { beginCalls += 1; throw new Error('immediate path must not run'); },
     },
@@ -446,4 +516,31 @@ function attachmentBytes() {
 
 function actorOnly(value) {
   return { actorAuthUserId: value.actorAuthUserId, actorName: value.actorName, actorRole: value.actorRole };
+}
+
+function scheduledSummary() {
+  return {
+    status: 'scheduled',
+    publicationId: ids.approval,
+    scheduledFor,
+    scheduledTimezone: timezone,
+    publicationKind: 'text_only',
+    approvedAt: new Date(nowMs).toISOString(),
+    publishedAt: null,
+    errorCode: null,
+  };
+}
+
+function publishingSnapshot(lastPublication, activeScheduledPublication) {
+  return {
+    ok: true,
+    configured: true,
+    connected: true,
+    facebookPageName: 'ServiceScope',
+    facebookPublishingEnabled: true,
+    missingPermissions: [],
+    lastPublication,
+    activeScheduledPublication,
+    eligiblePhotos: [],
+  };
 }

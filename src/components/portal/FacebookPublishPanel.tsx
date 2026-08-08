@@ -22,12 +22,15 @@ import {
 import {
   beginFacebookPublishSubmission,
   beginFacebookScheduleCancellation,
+  currentFacebookActiveSchedule,
+  currentFacebookPublication,
   emptyFacebookPublishWorkspace,
   facebookPublicationInProgress,
   facebookPublicationNeedsPageCheck,
   invalidateFacebookPublishApproval,
   openFacebookPublishConfirmation,
   openFacebookScheduleCancellation,
+  reconcileFacebookPublishWorkspaceFromStatus,
   resetFacebookPublishWorkspace,
 } from '../../features/meta-publishing/workspaceState';
 
@@ -49,6 +52,7 @@ type FacebookPublishPanelProps = {
 
 type ContentMode = 'text_only' | 'single_photo';
 type DeliveryMode = 'now' | 'scheduled';
+const FACEBOOK_STATUS_REFRESH_MS = 45_000;
 
 export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, selectedMediaCount, photoCatalog, refreshToken, privacyStatus }: FacebookPublishPanelProps) {
   const [snapshot, setSnapshot] = useState<FacebookPublishingSnapshot | null>(null);
@@ -71,7 +75,11 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
     setSelectedAttachmentId('');
     setScheduledLocal(defaultScheduledLocalValue());
     loadFacebookPublishingStatus(companyId, jobId)
-      .then((value) => { if (active) setSnapshot(value); })
+      .then((value) => {
+        if (!active) return;
+        setSnapshot(value);
+        setWorkspace((current) => reconcileFacebookPublishWorkspaceFromStatus(current, value));
+      })
       .catch(() => { if (active) setStatusError('Publishing status is unavailable.'); });
     return () => { active = false; };
   }, [companyId, jobId, refreshToken]);
@@ -105,9 +113,10 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
   try {
     normalizedMessage = normalizeFacebookPublishingMessage(message);
   } catch {}
-  const durablePublication = workspace.result ?? snapshot?.lastPublication ?? null;
+  const durablePublication = currentFacebookPublication(workspace, snapshot);
+  const activeScheduledPublication = currentFacebookActiveSchedule(workspace, snapshot);
   const publicationInProgress = facebookPublicationInProgress(durablePublication);
-  const activeScheduledPublication = durablePublication?.status === 'scheduled';
+  const hasActiveScheduledPublication = activeScheduledPublication?.status === 'scheduled';
   const deliveryUnknown = !publicationInProgress
     && facebookPublicationNeedsPageCheck(durablePublication, workspace.errorCode);
   const unsupportedJob = !['Completed', 'Warranty'].includes(jobStatus);
@@ -129,11 +138,36 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
     || unsupportedJob
     || (mode === 'single_photo' && !selectedPhoto?.previewUrl)
     || publicationInProgress
-    || activeScheduledPublication
+    || hasActiveScheduledPublication
     || deliveryUnknown
     || !scheduleTimeValid
     || workspace.submitting
     || workspace.cancelling;
+
+  useEffect(() => {
+    if ((!hasActiveScheduledPublication && !publicationInProgress) || workspace.submitting || workspace.cancelling) return undefined;
+    let active = true;
+    let timeoutId: number | undefined;
+
+    const refreshStatus = async () => {
+      try {
+        const refreshed = await loadFacebookPublishingStatus(companyId, jobId);
+        if (!active) return;
+        setSnapshot(refreshed);
+        setWorkspace((current) => reconcileFacebookPublishWorkspaceFromStatus(current, refreshed));
+        setStatusError('');
+      } catch {
+        if (active) setStatusError('Publishing status refresh is unavailable.');
+      }
+      if (active) timeoutId = window.setTimeout(refreshStatus, FACEBOOK_STATUS_REFRESH_MS);
+    };
+
+    timeoutId = window.setTimeout(refreshStatus, FACEBOOK_STATUS_REFRESH_MS);
+    return () => {
+      active = false;
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    };
+  }, [companyId, hasActiveScheduledPublication, jobId, publicationInProgress, workspace.cancelling, workspace.submitting]);
 
   function openConfirmation() {
     if (publishDisabled) return;
@@ -177,13 +211,25 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
           ? await publishFacebookSinglePhoto({ ...common, attachmentId: begun.state.approvedAttachmentId ?? '' })
           : await publishFacebookText(common);
       setWorkspace((current) => ({ ...current, confirmationOpen: false, submitting: false, result, error: '', errorCode: '' }));
-      setSnapshot((current) => current ? { ...current, lastPublication: result } : current);
+      setSnapshot((current) => current ? {
+        ...current,
+        lastPublication: result,
+        activeScheduledPublication: result.status === 'scheduled' ? {
+          status: 'scheduled',
+          publicationId: result.publicationId,
+          scheduledFor: result.scheduledFor,
+          scheduledTimezone: result.scheduledTimezone,
+          publicationKind: result.publicationKind,
+          errorCode: result.errorCode,
+        } : current.activeScheduledPublication,
+      } : current);
     } catch (error) {
       const errorCode = publishingErrorCode(error);
       if (errorCode === 'META_PUBLICATION_DELIVERY_UNKNOWN') {
         try {
           const refreshed = await loadFacebookPublishingStatus(companyId, jobId);
           setSnapshot(refreshed);
+          setWorkspace((current) => reconcileFacebookPublishWorkspaceFromStatus(current, refreshed));
         } catch {
           // Keep the action blocked unless a durable state can be confirmed.
         }
@@ -202,27 +248,39 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
   async function cancelScheduledPublication() {
     const begun = beginFacebookScheduleCancellation(workspace);
     setWorkspace(begun.state);
-    const publicationId = durablePublication?.status === 'scheduled' ? durablePublication.publicationId : null;
+    const publicationId = activeScheduledPublication?.status === 'scheduled' ? activeScheduledPublication.publicationId : null;
     if (!begun.shouldSubmit || !publicationId) return;
     try {
       await cancelFacebookScheduledPublication({ companyId, publicationId, explicitApproval: true });
       const refreshed = await loadFacebookPublishingStatus(companyId, jobId);
       setSnapshot(refreshed);
-      setWorkspace({ ...resetFacebookPublishWorkspace(), result: refreshed.lastPublication });
+      setWorkspace(reconcileFacebookPublishWorkspaceFromStatus(resetFacebookPublishWorkspace(), refreshed));
     } catch (error) {
-      setWorkspace((current) => ({
-        ...current,
-        cancelConfirmationOpen: false,
-        cancelling: false,
-        approved: false,
-        error: normalizePublishingError(error),
-        errorCode: publishingErrorCode(error),
-      }));
+      let refreshed: FacebookPublishingSnapshot | null = null;
+      try {
+        refreshed = await loadFacebookPublishingStatus(companyId, jobId);
+        setSnapshot(refreshed);
+      } catch {
+        // Keep the last known state when the authoritative status cannot be loaded.
+      }
+      setWorkspace((current) => {
+        const reconciled = refreshed
+          ? reconcileFacebookPublishWorkspaceFromStatus(current, refreshed)
+          : current;
+        return {
+          ...reconciled,
+          cancelConfirmationOpen: false,
+          cancelling: false,
+          approved: false,
+          error: normalizePublishingError(error),
+          errorCode: publishingErrorCode(error),
+        };
+      });
     }
   }
 
-  const durableScheduledTime = durablePublication?.scheduledFor && durablePublication.scheduledTimezone
-    ? formatFacebookScheduledTime(durablePublication.scheduledFor, durablePublication.scheduledTimezone)
+  const durableScheduledTime = activeScheduledPublication?.scheduledFor && activeScheduledPublication.scheduledTimezone
+    ? formatFacebookScheduledTime(activeScheduledPublication.scheduledFor, activeScheduledPublication.scheduledTimezone)
     : '';
   const confirmationScheduledTime = workspace.approvedScheduledFor && workspace.approvedScheduledTimezone
     ? formatFacebookScheduledTime(workspace.approvedScheduledFor, workspace.approvedScheduledTimezone)
@@ -313,13 +371,13 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
           <p>Publishing this exact request is blocked until a reconciliation workflow resolves the unknown delivery state.</p>
         </div>
       ) : null}
-      {activeScheduledPublication ? (
+      {hasActiveScheduledPublication ? (
         <div className="facebook-scheduled-status">
           <CalendarClock size={18} aria-hidden="true" />
           <div>
             <strong>Facebook publication scheduled</strong>
-            <span>{durableScheduledTime} ({durablePublication.scheduledTimezone})</span>
-            <span>{durablePublication.publicationKind === 'single_photo' ? 'Single photo' : 'Text only'} · Facebook Page {pageName}</span>
+            <span>{durableScheduledTime} ({activeScheduledPublication.scheduledTimezone})</span>
+            <span>{activeScheduledPublication.publicationKind === 'single_photo' ? 'Single photo' : 'Text only'} · Facebook Page {pageName}</span>
           </div>
           <button className="secondary-button" type="button" onClick={() => setWorkspace((current) => openFacebookScheduleCancellation(current))} disabled={workspace.submitting || workspace.cancelling}>
             <CalendarX2 size={16} aria-hidden="true" />
@@ -402,7 +460,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
         </div>
       ) : null}
 
-      {workspace.cancelConfirmationOpen && activeScheduledPublication ? (
+      {workspace.cancelConfirmationOpen && hasActiveScheduledPublication ? (
         <div className="facebook-publish-modal-backdrop" role="presentation">
           <section className="facebook-publish-modal" role="dialog" aria-modal="true" aria-labelledby="facebook-cancel-schedule-title">
             <header>
@@ -416,8 +474,8 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
             </header>
             <div className="facebook-schedule-confirmation">
               <strong>{durableScheduledTime}</strong>
-              <span>Timezone: {durablePublication.scheduledTimezone}</span>
-              <span>{durablePublication.publicationKind === 'single_photo' ? 'Single photo' : 'Text only'}</span>
+              <span>Timezone: {activeScheduledPublication.scheduledTimezone}</span>
+              <span>{activeScheduledPublication.publicationKind === 'single_photo' ? 'Single photo' : 'Text only'}</span>
             </div>
             <label className="facebook-publish-approval">
               <input

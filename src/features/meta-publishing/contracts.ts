@@ -12,6 +12,15 @@ export type FacebookPublicationSummary = {
   publicationKind?: FacebookPublicationKind | null;
 };
 
+export type FacebookActiveScheduledPublication = {
+  status: 'scheduled';
+  publicationId: string | null;
+  scheduledFor: string | null;
+  scheduledTimezone: string | null;
+  publicationKind: FacebookPublicationKind | null;
+  errorCode: string | null;
+};
+
 export type FacebookPublishingSnapshot = {
   ok: true;
   configured: boolean;
@@ -20,6 +29,7 @@ export type FacebookPublishingSnapshot = {
   facebookPublishingEnabled: boolean;
   missingPermissions: string[];
   lastPublication: FacebookPublicationSummary | null;
+  activeScheduledPublication: FacebookActiveScheduledPublication | null;
   eligiblePhotos: Array<{
     attachmentId: string;
     displayName: string;
