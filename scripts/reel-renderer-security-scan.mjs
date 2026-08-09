@@ -11,6 +11,7 @@ const rendererFiles = [
   'server/reel-renderer/probe.js',
   'server/reel-renderer/process.js',
   'server/reel-renderer/renderer.js',
+  'server/reel-renderer/textLayout.js',
 ];
 const browserFiles = [
   'src/components/portal/ReelPreview.tsx',
@@ -25,6 +26,8 @@ const manifest = await readFile('server/reel-renderer/manifest.js', 'utf8');
 const processSource = await readFile('server/reel-renderer/process.js', 'utf8');
 const rendererSource = await readFile('server/reel-renderer/renderer.js', 'utf8');
 const overlays = await readFile('server/reel-renderer/overlays.js', 'utf8');
+const textLayout = await readFile('server/reel-renderer/textLayout.js', 'utf8');
+const errors = await readFile('server/reel-renderer/errors.js', 'utf8');
 const packageJson = await readFile('package.json', 'utf8');
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
@@ -41,10 +44,16 @@ check(() => assert.match(rendererSource, /finally\s*\{[\s\S]*rm\(workDir/));
 check(() => assert.doesNotMatch(manifest, /customerName|customerEmail|customerPhone|streetAddress|jobNumber|storagePath|signedUrl|token|credential/i));
 check(() => assert.doesNotMatch(manifest, /https?:\/\//i));
 check(() => assert.doesNotMatch(rendererSource, /scene\.overlayText|scene\.secondaryText|brand\.displayName|brand\.cta/));
-check(() => assert.match(overlays, /https\?:\|xlink:href\|url/));
-check(() => assert.match(overlays, /<script\|<foreignObject\|xlink:href\|url/));
-check(() => assert.match(overlays, /replaceAll\('&', '&amp;'\)/));
-check(() => assert.match(overlays, /replaceAll\('<', '&lt;'\)/));
+check(() => assert.match(textLayout, /https\?:\|href\\s\*=/));
+check(() => assert.match(overlays, /<script\|<foreignObject\|<image\|href/));
+check(() => assert.match(textLayout, /replaceAll\('&', '&amp;'\)/));
+check(() => assert.match(textLayout, /replaceAll\('<', '&lt;'\)/));
+check(() => assert.match(textLayout, /sharp\(Buffer\.from\(svg\)/));
+check(() => assert.match(textLayout, /trim\(\{ background:/));
+check(() => assert.doesNotMatch(`${overlays}\n${textLayout}`, /maxCharacters|word\.length\s*>|wrapText\(/));
+check(() => assert.match(errors, /REEL_RENDER_AUDIO_UNSUPPORTED/));
+check(() => assert.match(errors, /REEL_RENDER_TEXT_OVERFLOW/));
+check(() => assert.match(manifest, /parsed\.voiceover\.enabled[\s\S]*REEL_RENDER_AUDIO_UNSUPPORTED/));
 check(() => assert.doesNotMatch(`${manifest}\n${overlays}`, /sceneRoleLabel|reel-preview-role|Overview|Detail|Process|Part|Result|Context/));
 check(() => assert.doesNotMatch(packageJson, /ffmpeg-static|shotstack|remotion|creatomate|canva|runway|kling|sora/i));
 check(() => assert.match(rendererSource, /'-an'/));
@@ -54,11 +63,11 @@ check(() => assert.doesNotMatch(renderer, /outputPath\s*[:=].*input|destinationD
 
 const trackedRendererMedia = execFileSync('git', ['ls-files', 'server', 'shared', 'scripts'], { encoding: 'utf8' })
   .split(/\r?\n/)
-  .filter((file) => /(?:fixture-reel\.mp4|fixture-cover\.jpg|fixture-(?:hook|middle|brand)-frame\.jpg)$/i.test(file));
+  .filter((file) => /(?:fixture-reel\.mp4|fixture-cover\.jpg|fixture-(?:hook|middle|brand|long|russian|spanish).*\.jpg)$/i.test(file));
 check(() => assert.deepEqual(trackedRendererMedia, []));
 
 const dist = await readDistJavaScript();
-check(() => assert.doesNotMatch(dist, /server\/reel-renderer|node:child_process|REEL_RENDER_(?:FAILED|TIMEOUT|OUTPUT_INVALID)|FFMPEG_BIN|FFPROBE_BIN|libx264|reel-render-manifest-v1/i));
+check(() => assert.doesNotMatch(dist, /server\/reel-renderer|node:child_process|REEL_RENDER_(?:FAILED|TIMEOUT|OUTPUT_INVALID|AUDIO_UNSUPPORTED|TEXT_OVERFLOW)|FFMPEG_BIN|FFPROBE_BIN|libx264|reel-render-manifest-v1/i));
 
 console.log(`Reel renderer security scan passed (${checks}/${checks}).`);
 

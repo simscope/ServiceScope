@@ -64,7 +64,10 @@ function canonicalRenderPlan(plan) {
     const { revision, ...providerPlan } = plan;
     const parsed = { ...parseReelPlanShape(providerPlan), revision };
     if (parsed.decision !== 'create_reel' || !parsed.safety.ok || parsed.safety.privacy !== 'passed'
-      || parsed.safety.grounding !== 'passed' || parsed.safety.quality !== 'passed' || parsed.audio.musicMode !== 'none') fail();
+      || parsed.safety.grounding !== 'passed' || parsed.safety.quality !== 'passed') fail();
+    if (parsed.audio.musicMode !== 'none' || parsed.voiceover.enabled || parsed.voiceover.script !== '') {
+      fail('REEL_RENDER_AUDIO_UNSUPPORTED');
+    }
     if (parsed.scenes.length < 2 || parsed.scenes[0].overlayText.toLocaleLowerCase() !== parsed.hook.text.toLocaleLowerCase()) fail();
     if (!parsed.cover.attachmentId) fail();
     const ids = parsed.scenes.map((scene) => scene.attachmentId);

@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSafeZonePixels } from '../src/features/reel-director/presentationSpec.js';
-import { buildFfmpegArgs, buildReelRenderManifest, escapeXml, renderReel } from '../server/reel-renderer/index.js';
-import { renderSceneOverlay } from '../server/reel-renderer/overlays.js';
+import { buildFfmpegArgs, buildReelRenderManifest, escapeXml, layoutReelText, measureTextPixels, renderReel } from '../server/reel-renderer/index.js';
+import { renderBrandCard, renderCover, renderSceneOverlay } from '../server/reel-renderer/overlays.js';
 import { runBinary } from '../server/reel-renderer/process.js';
 
 let checks = 0;
@@ -40,6 +40,8 @@ const stagedAssets = [
   { attachmentId: 'photo-b', path: 'photo-b.png' },
   { attachmentId: 'photo-c', path: 'photo-c.webp' },
 ];
+const russianPrimary = '\u041a\u041e\u041d\u0414\u0418\u0426\u0418\u041e\u041d\u0415\u0420 \u041d\u0415 \u041e\u0425\u041b\u0410\u0416\u0414\u0410\u0415\u0422?';
+const spanishPrimary = '\u00bfEL AIRE NO EST\u00c1 ENFRIANDO?';
 
 const { manifest } = buildReelRenderManifest(validPlan, stagedAssets);
 check(() => assert.equal(manifest.schemaVersion, 'reel-render-manifest-v1'));
@@ -59,10 +61,22 @@ for (const mutate of [
   (plan) => { plan.scenes[0].cropStrategy = 'face_track'; },
   (plan) => { plan.scenes[0].transitionOut = 'wipe'; },
   (plan) => { plan.scenes[0].overlayText = 'Different first scene'; },
-  (plan) => { plan.audio.musicMode = 'future_library'; },
 ]) {
   check(() => assert.throws(() => buildReelRenderManifest(mutatedPlan(mutate), stagedAssets), /REEL_RENDER_INVALID_PLAN/));
 }
+check(() => assert.doesNotThrow(() => buildReelRenderManifest(validPlan, stagedAssets)));
+check(() => assert.throws(
+  () => buildReelRenderManifest(mutatedPlan((plan) => { plan.voiceover = { enabled: true, script: 'Approved narration', evidenceIds: ['diagnosis'] }; }), stagedAssets),
+  /REEL_RENDER_AUDIO_UNSUPPORTED/,
+));
+check(() => assert.throws(
+  () => buildReelRenderManifest(mutatedPlan((plan) => { plan.voiceover = { enabled: false, script: 'Contradictory narration', evidenceIds: [] }; }), stagedAssets),
+  /REEL_RENDER_INVALID_PLAN/,
+));
+check(() => assert.throws(
+  () => buildReelRenderManifest(mutatedPlan((plan) => { plan.audio.musicMode = 'future_library'; }), stagedAssets),
+  /REEL_RENDER_AUDIO_UNSUPPORTED/,
+));
 check(() => assert.throws(() => buildReelRenderManifest(validPlan, stagedAssets.slice(0, 2)), /REEL_RENDER_MEDIA_MISSING|REEL_RENDER_MEDIA_INVALID/));
 check(() => assert.throws(() => buildReelRenderManifest(validPlan, [...stagedAssets, { attachmentId: 'extra', path: 'extra.jpg' }]), /REEL_RENDER_MEDIA_INVALID/));
 check(() => assert.throws(() => buildReelRenderManifest(validPlan, [stagedAssets[0], stagedAssets[0], stagedAssets[2]]), /REEL_RENDER_MEDIA_INVALID/));
@@ -80,6 +94,10 @@ check(() => assert.ok(reelMotionFrame('slow_zoom_in', 'cover_center', 1).scale >
 check(() => assert.ok(reelMotionFrame('pan_left', 'cover_center', 1).x < reelMotionFrame('pan_left', 'cover_center', 0).x));
 check(() => assert.equal(reelMotionFrame('static', 'cover_center', 0.5).scale, 1));
 check(() => assert.equal(reelPresentationSpec.textFadeMs, 180));
+check(() => assert.deepEqual(
+  [reelPresentationSpec.text.scenePrimary.minFontSize, reelPresentationSpec.text.scenePrimary.maxFontSize, reelPresentationSpec.text.scenePrimary.maxLines],
+  [44, 68, 3],
+));
 
 const fakeNormalized = new Map(manifest.scenes.map((item) => [item.sourceKey, `/staged/${item.sourceKey}.jpg`]));
 const ffmpeg = buildFfmpegArgs({ manifest, normalized: fakeNormalized, overlays: manifest.scenes.map((_, index) => `/work/overlay-${index}.png`), brandPath: '/work/brand.png', videoPath: '/output/reel.mp4' });
@@ -93,21 +111,64 @@ check(() => assert.match(ffmpeg.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.035
 check(() => assert.doesNotMatch(ffmpeg.filterGraph, /See this|Northstar|drawtext|photo-[abc]|Overview|Detail|Process|Part|Result|Context/));
 check(() => assert.equal(escapeXml(`A&B <tag> "quote" 'single'`), 'A&amp;B &lt;tag&gt; &quot;quote&quot; &apos;single&apos;'));
 check(() => assert.doesNotMatch(escapeXml('<script>alert(1)</script>'), /<script>/i));
+check(() => assert.doesNotMatch(escapeXml('</text><script>alert(1)</script>'), /<script>/i));
+const wideMetrics = await measureTextPixels('WWWWWWWW', { fontSize: 68, fontWeight: 800 });
+const narrowMetrics = await measureTextPixels('iiiiiiii', { fontSize: 68, fontWeight: 800 });
+check(() => assert.ok(wideMetrics.width > narrowMetrics.width * 2));
+const longWordLayout = await layoutReelText('ELECTROMECHANICAL-SERVICE READY', 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
+check(() => assert.ok(longWordLayout.lines[0].length > 22));
+check(() => assert.ok(longWordLayout.fontSize >= reelPresentationSpec.text.scenePrimary.minFontSize));
+check(() => assert.ok(longWordLayout.fontSize < reelPresentationSpec.text.scenePrimary.maxFontSize));
+check(() => assert.ok(longWordLayout.width <= longWordLayout.maxWidth && longWordLayout.height <= longWordLayout.maxHeight));
+for (const text of ['AIR-CONDITIONING NOT COOLING?', russianPrimary, spanishPrimary]) {
+  const unicodeLayout = await layoutReelText(text, 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
+  check(() => assert.ok(unicodeLayout.width > 0 && unicodeLayout.height > 0 && !text.includes('\ufffd')));
+}
+for (const maliciousText of ['</text><script>alert(1)</script>', '<foreignObject>plain text</foreignObject>']) {
+  const escapedLayout = await layoutReelText(maliciousText, 'sceneSecondary', { maxWidth: 704, maxHeight: 180, fontWeight: 700 });
+  check(() => assert.ok(escapedLayout.width <= escapedLayout.maxWidth && !/<(?:script|foreignObject)/i.test(escapeXml(maliciousText))));
+}
+await checkAsync(() => assert.rejects(
+  layoutReelText('W'.repeat(45), 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 }),
+  /REEL_RENDER_TEXT_OVERFLOW/,
+));
 await checkAsync(() => assert.rejects(
   renderSceneOverlay({ overlayText: 'Approved text', secondaryText: 'https://example.com/private' }, join(tmpdir(), 'servicescope-reel-url-rejected.png')),
-  /REEL_RENDER_INVALID_PLAN/,
+ /REEL_RENDER_INVALID_PLAN/,
 ));
+for (const malicious of ['<image href="https://example.com/x">', 'url(https://example.com/x)']) {
+  await checkAsync(() => assert.rejects(
+    renderSceneOverlay({ overlayText: 'Approved text', secondaryText: malicious }, join(tmpdir(), 'servicescope-reel-remote-ref-rejected.png')),
+    /REEL_RENDER_INVALID_PLAN/,
+  ));
+}
 await checkAsync(() => assert.rejects(runBinary(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeoutMs: 30 }), /REEL_RENDER_TIMEOUT/));
 
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-'));
 let rendered;
 try {
   await createSyntheticImages(fixtureRoot);
+  const stressFixtures = await createStressFixtures(fixtureRoot);
+  for (const { layout, bounds, zone } of stressFixtures.layoutChecks) {
+    check(() => assertLayoutInside(layout, bounds, zone));
+  }
   const overlayFixture = join(fixtureRoot, 'scene-overlay.png');
-  await renderSceneOverlay(manifest.scenes[0], overlayFixture);
+  const normalOverlayLayout = await renderSceneOverlay(manifest.scenes[0], overlayFixture);
+  check(() => assertLayoutInside(normalOverlayLayout.primary, normalOverlayLayout.primaryBounds, normalOverlayLayout.zone));
+  check(() => assertLayoutInside(normalOverlayLayout.secondary, normalOverlayLayout.secondaryBounds, normalOverlayLayout.zone));
   const overlayMetadata = await sharp(overlayFixture).metadata();
   check(() => assert.deepEqual([overlayMetadata.format, overlayMetadata.width, overlayMetadata.height], ['png', 1080, 1920]));
   const tempBeforeFailures = await rendererTempEntries();
+  await checkAsync(() => assert.rejects(
+    renderReel({
+      plan: mutatedPlan((plan) => { plan.voiceover = { enabled: true, script: 'Approved narration', evidenceIds: ['diagnosis'] }; }),
+      stagedAssets,
+      stagingRoot: 'normalization-must-not-run',
+      ffmpegBin: 'ffmpeg-must-not-run',
+    }),
+    /REEL_RENDER_AUDIO_UNSUPPORTED/,
+  ));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), tempBeforeFailures));
   await checkAsync(() => assert.rejects(
     renderReel({ plan: validPlan, stagedAssets: stagedAssets.map((item) => ({ ...item, path: '../outside.jpg' })), stagingRoot: fixtureRoot, ffmpegBin: 'missing-ffmpeg' }),
     /REEL_RENDER_MEDIA_MISSING|REEL_RENDER_MEDIA_INVALID/,
@@ -132,7 +193,7 @@ try {
     rendered = await renderReel({ plan: validPlan, stagedAssets, stagingRoot: fixtureRoot, ffmpegBin, ffprobeBin });
     await verifyRealRender(rendered);
     checks += 12;
-    if (process.env.REEL_RENDER_ARTIFACT_DIR) await publishArtifacts(rendered, process.env.REEL_RENDER_ARTIFACT_DIR, ffmpegBin);
+    if (process.env.REEL_RENDER_ARTIFACT_DIR) await publishArtifacts(rendered, process.env.REEL_RENDER_ARTIFACT_DIR, ffmpegBin, stressFixtures.artifactFiles);
     console.log(`Real Reel fixture rendered (${rendered.fileSize} MP4 bytes, ${rendered.durationMs}ms).`);
   } else {
     console.log('Real Reel fixture skipped locally: ffmpeg/ffprobe unavailable; CI requires it.');
@@ -178,6 +239,82 @@ async function createSyntheticImages(root) {
   await sharp({ create: { width: 13_000, height: 2, channels: 3, background: '#ffffff' } }).png().toFile(join(root, 'too-wide.png'));
 }
 
+async function createStressFixtures(root) {
+  const artifactFiles = [];
+  const layoutChecks = [];
+  const overlayCases = [
+    {
+      name: 'fixture-long-text-frame.jpg',
+      primary: 'AIR-CONDITIONING SYSTEM TROUBLESHOOTING',
+      secondary: 'ELECTROMECHANICAL REFRIGERATION TROUBLESHOOTING WITH VERIFIED SERVICE STEPS',
+    },
+    {
+      name: 'fixture-russian-frame.jpg',
+      primary: russianPrimary,
+      secondary: '\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410 \u0421\u0418\u0421\u0422\u0415\u041c\u042b \u0412\u042b\u041f\u041e\u041b\u041d\u0415\u041d\u0410',
+    },
+    {
+      name: 'fixture-spanish-frame.jpg',
+      primary: spanishPrimary,
+      secondary: '\u00bfNECESITA SERVICIO DE REFRIGERACI\u00d3N?',
+    },
+  ];
+  for (const [index, fixture] of overlayCases.entries()) {
+    const overlayPath = join(root, `stress-overlay-${index}.png`);
+    const report = await renderSceneOverlay({ overlayText: fixture.primary, secondaryText: fixture.secondary }, overlayPath);
+    const framePath = join(root, fixture.name);
+    await composeOverlayFrame(join(root, 'photo-a.jpg'), overlayPath, framePath);
+    artifactFiles.push({ name: fixture.name, path: framePath });
+    layoutChecks.push(
+      { layout: report.primary, bounds: report.primaryBounds, zone: report.zone },
+      { layout: report.secondary, bounds: report.secondaryBounds, zone: report.zone },
+    );
+  }
+
+  const coverPath = join(root, 'fixture-long-cover.jpg');
+  const coverReport = await renderCover(join(root, 'photo-b.png'), 'REFRIGERATION TROUBLESHOOTING SERVICE', coverPath);
+  artifactFiles.push({ name: 'fixture-long-cover.jpg', path: coverPath });
+  layoutChecks.push({ layout: coverReport.layout, bounds: coverReport.textBounds, zone: coverReport.zone });
+
+  const brandPng = join(root, 'stress-brand.png');
+  const brandReport = await renderBrandCard({
+    displayName: 'International Electromechanical Refrigeration Services',
+    cta: 'Schedule AIR-CONDITIONING and REFRIGERATION TROUBLESHOOTING with our service team',
+  }, brandPng);
+  const brandPath = join(root, 'fixture-long-brand-frame.jpg');
+  await sharp(brandPng).jpeg({ quality: 92 }).toFile(brandPath);
+  artifactFiles.push({ name: 'fixture-long-brand-frame.jpg', path: brandPath });
+  layoutChecks.push(
+    { layout: brandReport.displayName, bounds: brandReport.displayBounds, zone: brandReport.zone },
+    { layout: brandReport.cta, bounds: brandReport.ctaBounds, zone: brandReport.zone },
+  );
+
+  for (const { path } of artifactFiles) {
+    const metadata = await sharp(path).metadata();
+    check(() => assert.deepEqual([metadata.width, metadata.height], [1080, 1920]));
+  }
+  return { artifactFiles, layoutChecks };
+}
+
+async function composeOverlayFrame(sourcePath, overlayPath, outputPath) {
+  await sharp(sourcePath)
+    .resize(reelPresentationSpec.width, reelPresentationSpec.height, { fit: 'cover', position: 'centre' })
+    .composite([{ input: overlayPath, top: 0, left: 0 }])
+    .jpeg({ quality: 92 })
+    .toFile(outputPath);
+}
+
+function assertLayoutInside(layout, bounds, zone) {
+  assert.ok(layout && bounds && zone);
+  const style = reelPresentationSpec.text[layout.styleName];
+  assert.ok(layout.fontSize >= style.minFontSize && layout.fontSize <= style.maxFontSize);
+  assert.ok(layout.lines.length > 0 && layout.lines.length <= style.maxLines);
+  assert.ok(layout.width <= layout.maxWidth && layout.height <= layout.maxHeight);
+  assert.ok(bounds.left >= zone.left && bounds.right <= zone.right);
+  assert.ok(bounds.top >= zone.top && bounds.bottom <= zone.bottom);
+  assert.ok(bounds.left >= 0 && bounds.top >= 0 && bounds.width > 0 && bounds.height > 0);
+}
+
 async function verifyRealRender(result) {
   assert.equal(result.videoCodec, 'h264');
   assert.equal(result.width, 1080);
@@ -194,7 +331,7 @@ async function verifyRealRender(result) {
   assert.doesNotMatch((await readFile(result.videoPath)).subarray(0, 512).toString('latin1'), /ftyp.{0,64}mdat.{0,64}moov/s);
 }
 
-async function publishArtifacts(result, artifactDir, ffmpegBin) {
+async function publishArtifacts(result, artifactDir, ffmpegBin, stressFiles) {
   await mkdir(artifactDir, { recursive: true });
   const video = join(artifactDir, 'fixture-reel.mp4');
   const cover = join(artifactDir, 'fixture-cover.jpg');
@@ -208,6 +345,7 @@ async function publishArtifacts(result, artifactDir, ffmpegBin) {
   for (const [name, timestamp] of frames) {
     await runBinary(ffmpegBin, ['-hide_banner', '-loglevel', 'error', '-y', '-ss', timestamp, '-i', video, '-frames:v', '1', '-q:v', '2', join(artifactDir, name)], { timeoutMs: 60_000 });
   }
+  for (const fixture of stressFiles) await copyFile(fixture.path, join(artifactDir, fixture.name));
   const coverInfo = await stat(cover);
   await writeFile(join(artifactDir, 'fixture-metadata.json'), `${JSON.stringify({
     videoFile: 'fixture-reel.mp4',
@@ -222,6 +360,7 @@ async function publishArtifacts(result, artifactDir, ffmpegBin) {
     audioStreams: result.audioStreams,
     pixelFormat: result.pixelFormat,
     faststart: result.faststart,
+    stressFiles: stressFiles.map((item) => item.name),
   }, null, 2)}\n`);
 }
 

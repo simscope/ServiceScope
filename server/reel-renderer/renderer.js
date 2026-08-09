@@ -17,11 +17,18 @@ export async function renderReel({
   ffprobeBin = process.env.FFPROBE_BIN || 'ffprobe',
   timeoutMs = 240_000,
 }) {
+  let manifest;
+  let sourcePaths;
+  try {
+    ({ manifest, sourcePaths } = buildReelRenderManifest(plan, stagedAssets));
+  } catch (error) {
+    throw asReelRenderError(error);
+  }
   const outputDir = await mkdtemp(join(tmpdir(), 'servicescope-reel-output-'));
-  const workDir = await mkdtemp(join(tmpdir(), 'servicescope-reel-work-'));
+  let workDir;
   let succeeded = false;
   try {
-    const { manifest, sourcePaths } = buildReelRenderManifest(plan, stagedAssets);
+    workDir = await mkdtemp(join(tmpdir(), 'servicescope-reel-work-'));
     const normalized = await normalizeStagedAssets(sourcePaths, stagingRoot, workDir);
     const overlays = [];
     for (const scene of manifest.scenes) {
@@ -60,7 +67,7 @@ export async function renderReel({
   } catch (error) {
     throw asReelRenderError(error);
   } finally {
-    await rm(workDir, { recursive: true, force: true });
+    if (workDir) await rm(workDir, { recursive: true, force: true });
     if (!succeeded) await rm(outputDir, { recursive: true, force: true });
   }
 }

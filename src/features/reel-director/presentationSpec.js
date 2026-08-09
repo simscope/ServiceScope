@@ -5,6 +5,14 @@ export const reelPresentationSpec = Object.freeze({
   fps: 30,
   textFadeMs: 180,
   safeZone: Object.freeze({ top: 0.15, right: 0.15, bottom: 0.18, left: 0.08 }),
+  text: Object.freeze({
+    fontFamily: "Arial, 'Liberation Sans', 'DejaVu Sans', sans-serif",
+    scenePrimary: Object.freeze({ minFontSize: 44, maxFontSize: 68, lineHeightRatio: 1.22, maxLines: 3, widthRatio: 1, maxHeightRatio: 0.24 }),
+    sceneSecondary: Object.freeze({ minFontSize: 28, maxFontSize: 38, lineHeightRatio: 1.3, maxLines: 3, widthRatio: 0.9, maxHeightRatio: 0.14 }),
+    cover: Object.freeze({ minFontSize: 48, maxFontSize: 72, lineHeightRatio: 1.2, maxLines: 3, widthRatio: 1, maxHeightRatio: 0.2 }),
+    brandDisplayName: Object.freeze({ minFontSize: 48, maxFontSize: 76, lineHeightRatio: 1.2, maxLines: 3, widthRatio: 0.72, maxHeightRatio: 0.18 }),
+    brandCta: Object.freeze({ minFontSize: 30, maxFontSize: 44, lineHeightRatio: 1.3, maxLines: 3, widthRatio: 0.72, maxHeightRatio: 0.12 }),
+  }),
   transitions: Object.freeze({
     cut: Object.freeze({ durationMs: 0, ffmpeg: 'none' }),
     crossfade: Object.freeze({ durationMs: 450, ffmpeg: 'fade' }),

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Pause, Play, RotateCcw } from 'lucide-react';
 import type { ReelCreativePlanV1 } from '../../features/reel-director/contracts';
 import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec } from '../../features/reel-director/presentationSpec.js';
@@ -95,15 +95,15 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
           </div>
         ) : null}
         {nextBrand && frame.transition ? (
-          <div className="reel-preview-brand-frame reel-preview-transition-next" style={{ opacity: nextOpacity }}>
-            <strong>{plan.brand.displayName}</strong>
-            <span>{plan.brand.cta}</span>
+          <div className="reel-preview-brand-frame reel-preview-transition-next" style={{ ...reelPreviewBrandFrameStyle(), opacity: nextOpacity }}>
+            <strong style={reelPreviewTextStyle('brandDisplayName')}>{plan.brand.displayName}</strong>
+            <span style={reelPreviewTextStyle('brandCta')}>{plan.brand.cta}</span>
           </div>
         ) : null}
         {active?.kind === 'brand' ? (
-          <div className="reel-preview-brand-frame">
-            <strong>{plan.brand.displayName}</strong>
-            <span>{plan.brand.cta}</span>
+          <div className="reel-preview-brand-frame" style={reelPreviewBrandFrameStyle()}>
+            <strong style={reelPreviewTextStyle('brandDisplayName')}>{plan.brand.displayName}</strong>
+            <span style={reelPreviewTextStyle('brandCta')}>{plan.brand.cta}</span>
           </div>
         ) : null}
         {scene ? (
@@ -116,8 +116,8 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
             transform: `translateY(${(1 - textOpacity) * 10}px)`,
           }}>
             <div className="reel-preview-copy">
-              <strong>{scene.overlayText}</strong>
-              {scene.secondaryText ? <span>{scene.secondaryText}</span> : null}
+              <strong style={reelPreviewTextStyle('scenePrimary')}>{scene.overlayText}</strong>
+              {scene.secondaryText ? <span style={reelPreviewTextStyle('sceneSecondary')}>{scene.secondaryText}</span> : null}
             </div>
           </div>
         ) : null}
@@ -139,4 +139,24 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
       </div>
     </section>
   );
+}
+
+function reelPreviewBrandFrameStyle(): CSSProperties {
+  const { top, right, bottom, left } = reelPresentationSpec.safeZone;
+  return { padding: `${top * 100}% ${right * 100}% ${bottom * 100}% ${left * 100}%` };
+}
+
+function reelPreviewTextStyle(styleName: 'scenePrimary' | 'sceneSecondary' | 'brandDisplayName' | 'brandCta'): CSSProperties {
+  const style = reelPresentationSpec.text[styleName];
+  return {
+    maxWidth: `${style.widthRatio * 100}%`,
+    fontFamily: reelPresentationSpec.text.fontFamily,
+    fontSize: `${style.maxFontSize / 10.8}cqw`,
+    lineHeight: style.lineHeightRatio,
+    display: '-webkit-box',
+    WebkitBoxOrient: 'vertical',
+    WebkitLineClamp: style.maxLines,
+    overflow: 'hidden',
+    overflowWrap: 'anywhere',
+  };
 }
