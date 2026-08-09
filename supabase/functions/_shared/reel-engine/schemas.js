@@ -104,6 +104,12 @@ export function validateReelRequestBody(value) {
 }
 
 export function parseReelProviderResult(rawJson, context) {
+  const result = parseReelPlanShape(rawJson);
+  validateReelPlan(result, context);
+  return result;
+}
+
+export function parseReelPlanShape(rawJson) {
   const value = plainObject(rawJson, 'INVALID_REEL_PROVIDER_OUTPUT');
   assertExactFields(value, new Set(rootFields), 'INVALID_REEL_PROVIDER_OUTPUT');
   if (value.schemaVersion !== reelPlanSchemaVersion) fail('INVALID_REEL_PROVIDER_OUTPUT');
@@ -122,7 +128,7 @@ export function parseReelProviderResult(rawJson, context) {
   const safety = parseSafety(value.safety);
   const brand = parseBrand(value.brand);
   const audio = parseAudio(value.audio);
-  const result = {
+  return {
     schemaVersion: reelPlanSchemaVersion,
     decision: value.decision,
     qualityScore: value.qualityScore,
@@ -139,8 +145,6 @@ export function parseReelProviderResult(rawJson, context) {
     brand,
     audio,
   };
-  validateReelPlan(result, context);
-  return result;
 }
 
 export function validateReelPlan(plan, context) {

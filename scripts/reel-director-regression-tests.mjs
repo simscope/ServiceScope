@@ -28,10 +28,11 @@ execFileSync(process.execPath, [
 
 const state = await import('../.tmp/reel-director-tests/features/reel-director/reelState.js');
 const oneClick = await import('../.tmp/reel-director-tests/features/reel-director/oneClickReel.js');
-const [aiPage, previewSource, previewCss, clientApi, edgeIndex, mediaPlanningSource, normalContentClient] = await Promise.all([
+const [aiPage, previewSource, previewCss, presentationSpec, clientApi, edgeIndex, mediaPlanningSource, normalContentClient] = await Promise.all([
   readFile('src/components/portal/AiAssistantPage.tsx', 'utf8'),
   readFile('src/components/portal/ReelPreview.tsx', 'utf8'),
   readFile('src/styles/base.css', 'utf8'),
+  readFile('src/features/reel-director/presentationSpec.js', 'utf8'),
   readFile('src/features/reel-director/clientApi.ts', 'utf8'),
   readFile('supabase/functions/ai-content-generate/index.ts', 'utf8'),
   readFile('src/components/portal/MediaPlanningWorkspace.tsx', 'utf8'),
@@ -355,7 +356,8 @@ check(() => assert.match(aiPage, /reelErrorMessage\(error\)/));
 check(() => assert.match(aiPage, /createReelWorkspaceState\(selectedJob\?\.id\)/));
 check(() => assert.match(aiPage, /mediaAnalysisWorkspace\.result\?\.jobId === selectedJob\?\.id[\s\S]*MediaPlanningWorkspace[\s\S]*Analyze media to edit/));
 check(() => assert.match(previewSource, /data-testid="reel-preview-9x16"/));
-check(() => assert.match(previewCss, /aspect-ratio:\s*9\s*\/\s*16/));
+check(() => assert.match(previewSource, /reelPresentationSpec\.width[\s\S]*reelPresentationSpec\.height/));
+check(() => assert.match(presentationSpec, /width:\s*1080[\s\S]*height:\s*1920[\s\S]*fps:\s*30/));
 check(() => assert.match(previewSource, /Play Reel preview/));
 check(() => assert.match(previewSource, /Pause Reel preview/));
 check(() => assert.match(previewSource, /Restart Reel preview/));
@@ -363,9 +365,15 @@ check(() => assert.match(previewSource, /scene\.overlayText/));
 check(() => assert.match(previewSource, /plan\.brand\.displayName/));
 check(() => assert.match(previewSource, /scene\.durationMs/));
 check(() => assert.match(previewSource, /scene\.motionPreset/));
-check(() => assert.match(previewSource, /scene\.transitionOut/));
+check(() => assert.match(previewSource, /buildReelTimeline\(plan\)/));
+check(() => assert.match(previewSource, /textOpacity \* outgoingTextOpacity/));
+check(() => assert.match(presentationSpec, /scene\.transitionOut/));
+check(() => assert.match(previewSource, /reelPreviewTextStyle\('scenePrimary'\)/));
+check(() => assert.match(previewSource, /reelPreviewTextStyle\('brandDisplayName'\)/));
+check(() => assert.match(presentationSpec, /scenePrimary:[\s\S]*minFontSize:\s*44[\s\S]*maxFontSize:\s*68[\s\S]*maxLines:\s*3/));
+check(() => assert.match(presentationSpec, /sceneSecondary:[\s\S]*widthRatio:\s*0\.9/));
 check(() => assert.match(previewCss, /@media \(max-width: 520px\)/));
-check(() => assert.match(previewCss, /inset: 15% 15% 18% 8%/));
+check(() => assert.match(presentationSpec, /safeZone:[\s\S]*top:\s*0\.15[\s\S]*right:\s*0\.15[\s\S]*bottom:\s*0\.18[\s\S]*left:\s*0\.08/));
 check(() => assert.doesNotMatch(aiPage, /providerResponse|rawJson|error\.stack/));
 
 // Network and regression boundaries.
