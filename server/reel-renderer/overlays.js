@@ -83,6 +83,7 @@ function svgDocument(body) {
 async function rasterize(svg, outputPath) {
   if (/(?:<script|<foreignObject|xlink:href|url\s*\()/i.test(svg)) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
   await sharp(Buffer.from(svg), { density: 144 })
+    .resize(reelPresentationSpec.width, reelPresentationSpec.height)
     .png()
     .toFile(outputPath)
     .catch(() => { throw new ReelRenderError('REEL_RENDER_FAILED'); });

@@ -103,6 +103,10 @@ const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-
 let rendered;
 try {
   await createSyntheticImages(fixtureRoot);
+  const overlayFixture = join(fixtureRoot, 'scene-overlay.png');
+  await renderSceneOverlay(manifest.scenes[0], overlayFixture);
+  const overlayMetadata = await sharp(overlayFixture).metadata();
+  check(() => assert.deepEqual([overlayMetadata.format, overlayMetadata.width, overlayMetadata.height], ['png', 1080, 1920]));
   const tempBeforeFailures = await rendererTempEntries();
   await checkAsync(() => assert.rejects(
     renderReel({ plan: validPlan, stagedAssets: stagedAssets.map((item) => ({ ...item, path: '../outside.jpg' })), stagingRoot: fixtureRoot, ffmpegBin: 'missing-ffmpeg' }),
