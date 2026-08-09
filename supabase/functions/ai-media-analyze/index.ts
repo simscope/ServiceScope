@@ -167,6 +167,7 @@ function createContextRepository(adminClient: ReturnType<typeof createClient<any
       const request = input.request as Record<string, unknown>;
       const context = input.context as Record<string, unknown>;
       const result = input.result as Record<string, unknown>;
+      const safety = result.safety as Record<string, unknown> | undefined;
       const runId = crypto.randomUUID();
       const companyId = String(context.companyId ?? '');
       const jobId = String(context.jobId ?? request.jobId ?? '');
@@ -207,7 +208,7 @@ function createContextRepository(adminClient: ReturnType<typeof createClient<any
         p_company_id: companyId,
         p_job_id: jobId,
         p_correlation_id: String(request.idempotencyKey ?? runId),
-        p_status: result?.safety?.ok === false ? 'failed' : 'completed',
+        p_status: safety?.ok === false ? 'failed' : 'completed',
         p_provider: safeBoundedText(result.provider, 'unknown'),
         p_model: typeof result.model === 'string' ? safeBoundedText(result.model, 'unknown') : null,
         p_analysis_version: 'media-analysis-v1',
