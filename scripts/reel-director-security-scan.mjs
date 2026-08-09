@@ -15,6 +15,7 @@ const serverFiles = [
   'supabase/functions/_shared/reel-engine/prompts.js',
   'supabase/functions/_shared/reel-engine/schemas.js',
   'supabase/functions/_shared/reel-engine/mediaEvidence.js',
+  'supabase/functions/_shared/reel-engine/evidenceCapabilities.js',
 ];
 const browser = (await Promise.all(browserFiles.map((file) => readFile(file, 'utf8')))).join('\n');
 const reelContractSurface = (await Promise.all(browserFiles.slice(1).map((file) => readFile(file, 'utf8')))).join('\n');
@@ -26,6 +27,7 @@ const reelRequestMediaContract = reelContracts.match(/export type ReelMediaPlanI
 const reelEdge = await readFile('supabase/functions/ai-content-generate/index.ts', 'utf8');
 const mediaEdge = await readFile('supabase/functions/ai-media-analyze/index.ts', 'utf8');
 const migration = await readFile('supabase/migrations/20260809013000_reel_authoritative_media_findings.sql', 'utf8');
+const canonicalSchema = await readFile('supabase/schema.sql', 'utf8');
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
 
@@ -69,5 +71,17 @@ check(() => assert.match(migration, /revoke all on function public\.list_company
 check(() => assert.doesNotMatch(browser, /storage_bucket|storage_path|attachment_sha256|current_checksum_matches/i));
 check(() => assert.doesNotMatch(aiPage, /rawJson|providerResponse|error\.stack|storage_path|attachment_sha256/i));
 check(() => assert.doesNotMatch(`${aiPage}\n${preview}`, /meta-social-publish|graph\.facebook\.com|\/feed|\/photos|rendering provider|upload provider/i));
+check(() => assert.match(server, /reelEvidenceCapabilityForId/));
+check(() => assert.match(server, /media:[\s\S]*reelEvidenceCapabilities\.visual/));
+check(() => assert.match(server, /diagnosisClaimPattern[\s\S]*factIds\.has\('diagnosis'\)/));
+check(() => assert.match(server, /repairClaimPattern[\s\S]*factIds\.has\('repair-performed'\)/));
+check(() => assert.match(server, /resultClaimPattern[\s\S]*factIds\.has\('final-result'\)/));
+check(() => assert.match(server, /VISUAL SUGGESTIONS/));
+check(() => assert.match(server, /not verified diagnosis, cause/));
+check(() => assert.match(server, /failure_explainer'[\s\S]*!has\('diagnosis'\)/));
+check(() => assert.equal((migration.match(/-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_BEGIN/g) ?? []).length, 1));
+check(() => assert.equal((canonicalSchema.match(/-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_BEGIN/g) ?? []).length, 1));
+check(() => assert.match(canonicalSchema, /create table public\.company_media_analysis_content_findings/));
+check(() => assert.match(canonicalSchema, /create or replace function public\.list_company_reel_media_analysis_candidates/));
 
 console.log(`AI Reel Director security scan passed (${checks}/${checks}).`);

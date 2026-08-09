@@ -1,11 +1,22 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
+import { extractExactMarkedBlock, normalizeSqlForParity } from './meta-canonical-schema.mjs';
 
 const migration = await readFile(new URL('../supabase/migrations/20260809013000_reel_authoritative_media_findings.sql', import.meta.url), 'utf8');
+const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
+const parityMarkers = {
+  begin: '-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_BEGIN',
+  end: '-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_END',
+  label: 'Reel authoritative media findings',
+};
+const migrationBlock = extractExactMarkedBlock(migration, parityMarkers);
+const canonicalBlock = extractExactMarkedBlock(canonicalSchema, parityMarkers);
 const db = new PGlite();
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
+
+check(() => assert.equal(normalizeSqlForParity(canonicalBlock), normalizeSqlForParity(migrationBlock)));
 
 await db.exec(`
   create role anon nologin;
@@ -71,7 +82,7 @@ await db.exec(`
     unique (attachment_result_id, finding_id)
   );
 `);
-await db.exec(migration);
+await db.exec(canonicalBlock);
 
 const ids = {
   company: '00000000-0000-4000-8000-000000008001',

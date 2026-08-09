@@ -5,6 +5,7 @@ import { genericCreativePattern, reelLimits, reelPlanSchemaVersion } from './con
 import { buildReelPrompt } from './prompts.js';
 import { parseReelProviderResult, validateReelRequestBody } from './schemas.js';
 import { reconstructAuthoritativeReelMedia } from './mediaEvidence.js';
+import { withReelEvidenceCapability } from './evidenceCapabilities.js';
 
 export async function handleReelGeneration({ rawBody, authorization, auth, repository, provider, guards, config, telemetry }) {
   if (!authorization?.startsWith('Bearer ')) throw new ReelHttpError('AUTH_REQUIRED', 401);
@@ -162,17 +163,19 @@ export async function buildReelContext(request, baseContext, repository) {
     text: item.evidenceText,
     source: 'Authoritative persisted media analysis',
     attachmentId: item.attachmentId,
-  }));
+  })).map(withReelEvidenceCapability);
   const companyVoiceEvidence = baseContext.companyVoice?.enabled && baseContext.companyVoice.publicDisplayName
     ? [{
         id: 'company-public-display-name',
         label: 'Approved public company name',
         text: baseContext.companyVoice.publicDisplayName,
         source: 'Company voice settings',
-      }]
+      }].map(withReelEvidenceCapability)
     : [];
   const evidence = [
-    ...baseContext.evidence.filter((item) => !String(item.id).startsWith('attachment-')),
+    ...baseContext.evidence
+      .filter((item) => !String(item.id).startsWith('attachment-'))
+      .map(withReelEvidenceCapability),
     ...mediaEvidence,
     ...companyVoiceEvidence,
   ];

@@ -1,3 +1,5 @@
+-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_BEGIN
+
 create table public.company_media_analysis_content_findings (
   id uuid primary key,
   analysis_run_id uuid not null references public.company_media_analysis_runs(id) on delete cascade,
@@ -368,3 +370,5 @@ comment on table public.company_media_analysis_content_findings is
   'Server-authoritative non-privacy media-analysis findings. Historical results are intentionally not backfilled.';
 comment on function public.list_company_reel_media_analysis_candidates(uuid, uuid, uuid[]) is
   'Returns latest completed server-authoritative Reel analysis evidence without requiring Facebook publication approval.';
+
+-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_END

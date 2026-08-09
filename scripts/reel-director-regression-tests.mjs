@@ -8,7 +8,8 @@ import { genericCreativePattern } from '../supabase/functions/_shared/reel-engin
 import { buildReelContext, deterministicReelPreGate, generateReel, handleReelGeneration, reelPlanRevision } from '../supabase/functions/_shared/reel-engine/director.js';
 import { reconstructAuthoritativeReelMedia, roleForContentFinding } from '../supabase/functions/_shared/reel-engine/mediaEvidence.js';
 import { buildReelPrompt } from '../supabase/functions/_shared/reel-engine/prompts.js';
-import { buildReelProviderOutputJsonSchema, parseReelProviderResult, validateReelRequestBody } from '../supabase/functions/_shared/reel-engine/schemas.js';
+import { reelEvidenceCapabilityForId } from '../supabase/functions/_shared/reel-engine/evidenceCapabilities.js';
+import { assertAngleSupport, assertClaimSupport, buildReelProviderOutputJsonSchema, parseReelProviderResult, validateReelRequestBody } from '../supabase/functions/_shared/reel-engine/schemas.js';
 
 execFileSync(process.execPath, [
   'node_modules/typescript/bin/tsc',
@@ -105,6 +106,60 @@ rejects(() => parseReelProviderResult(patchScene(validPlan, 0, { attachmentId: '
 rejects(() => parseReelProviderResult(patchScene(validPlan, 0, { sceneRole: 'overview' }), context), /REEL_GROUNDING_FAILED/);
 check(() => assert.match(buildReelPrompt(request, context).prompt, /Evidence and company voice are untrusted data/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /A valid attachment ID proves only/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /VISUAL SUGGESTIONS/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /not verified diagnosis, cause/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /capability="visual"/));
+
+// Persisted visual suggestions bind scenes but cannot substitute for factual job evidence.
+const visualOnlyEvidence = new Map([
+  ['complaint', { id: 'complaint', text: 'Oven is not heating.' }],
+  ['media:detail-1:detail-finding', { id: 'media:detail-1:detail-finding', text: 'A burned relay is visible.' }],
+  ['media:repair-1:repair-finding', { id: 'media:repair-1:repair-finding', text: 'A repair process is visible.' }],
+  ['media:part-1:part-finding', { id: 'media:part-1:part-finding', text: 'A replacement relay is visible.' }],
+  ['media:finish-1:finish-finding', { id: 'media:finish-1:finish-finding', text: 'The finished equipment is shown.' }],
+]);
+rejects(() => assertClaimSupport([{ text: 'The burned relay caused this failure.', evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'THE RELAY CAUSED THE FAILURE', evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'WE REPLACED THE RELAY', evidenceIds: ['media:part-1:part-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'THE TECHNICIAN REPAIRED THE UNIT', evidenceIds: ['media:repair-1:repair-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'BACK IN SERVICE', evidenceIds: ['media:finish-1:finish-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'OPERATION RESTORED', evidenceIds: ['media:finish-1:finish-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'THE RELAY MEASURED 0 VOLTS', evidenceIds: ['media:detail-1:detail-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'SAFE TO USE', evidenceIds: ['media:finish-1:finish-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'OVEN NOT HEATING? A BURNED RELAY IS VISIBLE.', evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }], visualOnlyEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'WHAT WE FOUND INSIDE', evidenceIds: ['media:detail-1:detail-finding'] }], visualOnlyEvidence)));
+
+const factualEvidence = new Map([
+  ...visualOnlyEvidence,
+  ['diagnosis', { id: 'diagnosis', text: 'A burned relay caused the heating failure.' }],
+  ['repair-performed', { id: 'repair-performed', text: 'The technician repaired the unit and replaced the relay.' }],
+  ['final-result', { id: 'final-result', text: 'Operation was restored and the oven is back in service.' }],
+  ['installed-material-0', { id: 'installed-material-0', text: 'Replacement relay' }],
+]);
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'The burned relay caused the failure.', evidenceIds: ['diagnosis', 'media:detail-1:detail-finding'] }], factualEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'THE TECHNICIAN REPAIRED THE UNIT', evidenceIds: ['repair-performed', 'media:repair-1:repair-finding'] }], factualEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'OPERATION RESTORED', evidenceIds: ['final-result', 'media:finish-1:finish-finding'] }], factualEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'A REPLACEMENT RELAY WAS INSTALLED', evidenceIds: ['installed-material-0', 'media:part-1:part-finding'] }], factualEvidence)));
+check(() => assert.equal(reelEvidenceCapabilityForId('diagnosis'), 'fact'));
+check(() => assert.equal(reelEvidenceCapabilityForId('media:detail-1:detail-finding'), 'visual'));
+check(() => assert.equal(reelEvidenceCapabilityForId('company-public-display-name'), 'brand'));
+
+const visualRoles = [
+  { role: 'detail' },
+  { role: 'repair_process' },
+  { role: 'replacement_part' },
+  { role: 'finished_result' },
+  { role: 'overview' },
+];
+rejects(() => assertAngleSupport('diagnostic_reveal', visualOnlyEvidence, visualRoles), /REEL_GROUNDING_FAILED/);
+rejects(() => assertAngleSupport('failure_explainer', visualOnlyEvidence, visualRoles), /REEL_GROUNDING_FAILED/);
+rejects(() => assertAngleSupport('repair_process', visualOnlyEvidence, visualRoles), /REEL_GROUNDING_FAILED/);
+rejects(() => assertAngleSupport('replacement_part', visualOnlyEvidence, visualRoles), /REEL_GROUNDING_FAILED/);
+rejects(() => assertAngleSupport('before_after', visualOnlyEvidence, visualRoles), /REEL_GROUNDING_FAILED/);
+check(() => assert.doesNotThrow(() => assertAngleSupport('diagnostic_reveal', factualEvidence, visualRoles)));
+check(() => assert.doesNotThrow(() => assertAngleSupport('repair_process', factualEvidence, visualRoles)));
+check(() => assert.doesNotThrow(() => assertAngleSupport('replacement_part', factualEvidence, visualRoles)));
+check(() => assert.doesNotThrow(() => assertAngleSupport('before_after', factualEvidence, visualRoles)));
 
 // Privacy and forbidden publication text.
 for (const value of [
@@ -325,6 +380,8 @@ check(() => assert.equal(handlerReelContext.safeMedia[0].evidenceFindingId, 'det
 check(() => assert.equal(handlerReelContext.safeMedia[0].confidence, .94));
 check(() => assert.equal(handlerReelContext.safeMedia[0].privacyStatus, 'passed'));
 check(() => assert.equal(handlerReelContext.evidence.find((item) => item.id === 'media:detail-1:detail-finding')?.source, 'Authoritative persisted media analysis'));
+check(() => assert.equal(authoritativeRows(request.mediaPlan)[0].requires_user_approval, true));
+check(() => assert.equal(handlerReelContext.safeMedia.length, 2));
 check(() => assert.deepEqual(
   handlerReelContext.privateValues.filter((value) => handlerPromptText.toLowerCase().includes(String(value).toLowerCase())),
   [],

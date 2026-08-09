@@ -12,6 +12,7 @@ import {
   reelTransitions,
 } from './contracts.js';
 import { normalizeLocale } from '../content-engine/schemas.js';
+import { reelEvidenceCapabilityForId, reelEvidenceCapabilities } from './evidenceCapabilities.js';
 
 const requestFields = new Set([
   'schemaVersion',
@@ -365,25 +366,61 @@ function assertNoPrivateOrForbiddenText(plan, privateValues) {
   if (blockedPatterns.some((pattern) => pattern.test(text))) fail('REEL_PRIVACY_FAILED');
 }
 
-function assertClaimSupport(claims, evidenceById) {
+export function assertClaimSupport(claims, evidenceById) {
   const technicalTerms = /\b(capacitor|compressor|relay|motor|refrigerant|leak|clog|burner|thermostat|sensor|bearing|wiring|control board|replaced|repaired|restored|back in service|fixed|failed component|stopped heating|not heating|not cooling|failure)\b/gi;
   for (const claim of claims) {
-    const referenced = claim.evidenceIds.map((id) => evidenceById.get(id)?.text ?? '').join(' ');
+    const referencedEvidence = claim.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
+    const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
+    assertRequiredFactCapabilities(claim.text, factEvidence);
+    const referenced = (requiresFactOnlyLexicalSupport(claim.text) ? factEvidence : referencedEvidence)
+      .map((item) => item.text ?? '')
+      .join(' ');
     const terms = claim.text.match(technicalTerms) ?? [];
     if (terms.some((term) => !referenced.toLowerCase().includes(term.toLowerCase()))) fail('REEL_GROUNDING_FAILED');
   }
 }
 
-function assertAngleSupport(angle, evidenceById, safeMedia) {
+export function assertAngleSupport(angle, evidenceById, safeMedia) {
   const ids = new Set(evidenceById.keys());
   const roles = new Set(safeMedia.map((item) => item.role));
   const has = (...values) => values.some((value) => ids.has(value));
-  if (['diagnostic_reveal', 'hidden_problem', 'unusual_failure'].includes(angle) && !has('diagnosis') && !roles.has('detail')) fail('REEL_GROUNDING_FAILED');
-  if (['before_after', 'transformation'].includes(angle) && !(roles.has('finished_result') && (roles.has('overview') || roles.has('repair_process')))) fail('REEL_GROUNDING_FAILED');
-  if (angle === 'repair_process' && !has('repair-performed') && !roles.has('repair_process')) fail('REEL_GROUNDING_FAILED');
-  if (angle === 'replacement_part' && !Array.from(ids).some((id) => id.startsWith('installed-material-')) && !roles.has('replacement_part')) fail('REEL_GROUNDING_FAILED');
+  if (['diagnostic_reveal', 'hidden_problem', 'unusual_failure', 'failure_explainer'].includes(angle) && !has('diagnosis')) fail('REEL_GROUNDING_FAILED');
+  if (['before_after', 'transformation'].includes(angle) && !(has('final-result') && roles.has('finished_result') && (roles.has('overview') || roles.has('repair_process')))) fail('REEL_GROUNDING_FAILED');
+  if (angle === 'repair_process' && !has('repair-performed')) fail('REEL_GROUNDING_FAILED');
+  if (angle === 'replacement_part' && !has('repair-performed') && !Array.from(ids).some((id) => id.startsWith('installed-material-'))) fail('REEL_GROUNDING_FAILED');
   if (angle === 'technician_insight' && !has('diagnosis', 'repair-performed', 'final-result')) fail('REEL_GROUNDING_FAILED');
 }
+
+function assertRequiredFactCapabilities(text, factEvidence) {
+  const factIds = new Set(factEvidence.map((item) => item.id));
+  const hasInstalledMaterial = factEvidence.some((item) => String(item.id).startsWith('installed-material-'));
+  if (diagnosisClaimPattern.test(text) && !factIds.has('diagnosis')) fail('REEL_GROUNDING_FAILED');
+  if (replacementClaimPattern.test(text) && !factIds.has('repair-performed') && !hasInstalledMaterial) fail('REEL_GROUNDING_FAILED');
+  if (repairClaimPattern.test(text) && !factIds.has('repair-performed')) fail('REEL_GROUNDING_FAILED');
+  if (resultClaimPattern.test(text) && !factIds.has('final-result')) fail('REEL_GROUNDING_FAILED');
+  if (measurementClaimPattern.test(text) && !factIds.has('diagnosis')) fail('REEL_GROUNDING_FAILED');
+  if (safetyOrSavingsClaimPattern.test(text) && !factIds.has('final-result')) fail('REEL_GROUNDING_FAILED');
+  if (technicianActionPattern.test(text) && !factIds.has('diagnosis') && !factIds.has('repair-performed')) fail('REEL_GROUNDING_FAILED');
+}
+
+function requiresFactOnlyLexicalSupport(text) {
+  return diagnosisClaimPattern.test(text)
+    || replacementClaimPattern.test(text)
+    || repairClaimPattern.test(text)
+    || resultClaimPattern.test(text)
+    || measurementClaimPattern.test(text)
+    || safetyOrSavingsClaimPattern.test(text)
+    || technicianActionPattern.test(text);
+}
+
+const componentPattern = '(?:capacitor|compressor|relay|motor|burner|thermostat|sensor|bearing|wiring|control board)';
+const diagnosisClaimPattern = new RegExp(`\\b(?:caus(?:e|ed|es|ing)|because of|due to|diagnos(?:e|ed|is)|failed component|(?:problem|failure) (?:was|is)|failure was hiding|failed ${componentPattern}|${componentPattern} (?:failed|failure))\\b`, 'i');
+const replacementClaimPattern = /\b(?:replaced|installed|swapped|replacement (?:was|is) (?:installed|completed|performed))\b/i;
+const repairClaimPattern = /\b(?:we|our technician|the technician|our team)\s+(?:repaired|fixed|cleaned|adjusted|rewired|sealed|serviced|tested|inspected)\b|\b(?:was|were) repaired\b|\brepairs? (?:were |was )?(?:completed|performed)\b/i;
+const resultClaimPattern = /\b(?:back in service|restored|working again|operating normally|now (?:works|working)|problem resolved|issue resolved|fixed)\b/i;
+const measurementClaimPattern = /\b\d+(?:\.\d+)?\s*(?:v|volts?|amps?|psi|ohms?|percent|%|degrees?|°[cf])\b/i;
+const safetyOrSavingsClaimPattern = /\b(?:safe to use|safety (?:verified|confirmed|passed)|saved? (?:money|energy|cost)|reduced? (?:cost|bill|usage))\b/i;
+const technicianActionPattern = /\b(?:our technician|the technician|our team)\s+(?:found|diagnosed|repaired|replaced|installed|fixed|restored|tested|inspected|cleaned|adjusted)\b|\bwe\s+(?:found(?!\s+inside\b)|diagnosed|repaired|replaced|installed|fixed|restored|tested|inspected|cleaned|adjusted)\b/i;
 
 function genericCaptionStart(value) {
   const firstSentence = value.trim().split(/[!?\.]/, 1)[0]?.trim() ?? '';
