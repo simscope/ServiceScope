@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pause, Play, RotateCcw } from 'lucide-react';
-import type { ReelCreativePlanV1, ReelSceneV1 } from '../../features/reel-director/contracts';
+import type { ReelCreativePlanV1 } from '../../features/reel-director/contracts';
+import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec } from '../../features/reel-director/presentationSpec.js';
 
 type ReelPreviewProps = {
   plan: ReelCreativePlanV1;
@@ -8,7 +9,7 @@ type ReelPreviewProps = {
 };
 
 export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
-  const timeline = useMemo(() => buildTimeline(plan), [plan]);
+  const timeline = useMemo(() => buildReelTimeline(plan), [plan]);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   const frameRef = useRef<number>();
@@ -45,10 +46,24 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
     };
   }, [playing, timeline.totalDurationMs]);
 
-  const active = activeTimelineItem(timeline.items, elapsedMs);
+  const frame = activeReelFrame(timeline, elapsedMs);
+  const active = frame.item;
   const progress = timeline.totalDurationMs ? Math.min(100, (elapsedMs / timeline.totalDurationMs) * 100) : 0;
   const scene = active?.kind === 'scene' ? active.scene : undefined;
   const asset = scene ? mediaUrls.get(scene.attachmentId) : undefined;
+  const sceneProgress = scene ? Math.min(1, frame.elapsedInItemMs / scene.durationMs) : 0;
+  const motion = scene ? reelMotionFrame(scene.motionPreset, scene.cropStrategy, sceneProgress) : undefined;
+  const nextScene = frame.transition?.nextItem?.kind === 'scene' ? frame.transition.nextItem.scene : undefined;
+  const nextAsset = nextScene ? mediaUrls.get(nextScene.attachmentId) : undefined;
+  const nextMotion = nextScene ? reelMotionFrame(nextScene.motionPreset, nextScene.cropStrategy, 0) : undefined;
+  const nextBrand = frame.transition?.nextItem?.kind === 'brand';
+  const transitionProgress = frame.transition?.progress ?? 0;
+  const currentOpacity = frame.transition?.kind === 'quick_fade' ? Math.max(0, 1 - transitionProgress * 2) : 1;
+  const nextOpacity = frame.transition?.kind === 'quick_fade' ? Math.max(0, transitionProgress * 2 - 1) : transitionProgress;
+  const textOpacity = Math.min(1, frame.elapsedInItemMs / reelPresentationSpec.textFadeMs);
+  const outgoingTextOpacity = frame.transition?.kind === 'quick_fade'
+    ? currentOpacity
+    : frame.transition ? 1 - transitionProgress : 1;
 
   function play() {
     if (elapsedMs >= timeline.totalDurationMs) setElapsedMs(0);
@@ -63,19 +78,27 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
 
   return (
     <section className="reel-preview-shell" aria-label="AI Reel preview">
-      <div className="reel-preview-stage" data-testid="reel-preview-9x16">
+      <div className="reel-preview-stage" data-testid="reel-preview-9x16" style={{ aspectRatio: `${reelPresentationSpec.width} / ${reelPresentationSpec.height}` }}>
         {scene && asset ? (
-          <div key={`${plan.revision}:${scene.id}`} className={`reel-preview-media-frame transition-${scene.transitionOut}`}>
+          <div key={`${plan.revision}:${scene.id}`} className="reel-preview-media-frame" style={{ opacity: currentOpacity }}>
             <img
-              className={`reel-preview-media motion-${scene.motionPreset} crop-${scene.cropStrategy}`}
-              style={{ animationDuration: `${scene.durationMs}ms` }}
+              className="reel-preview-media"
+              style={{ transform: `translate(${(motion?.x ?? 0) * 100}%, ${(motion?.y ?? 0) * 100}%) scale(${motion?.scale ?? 1})` }}
               src={asset.url}
               alt={asset.alt}
             />
           </div>
         ) : null}
-        {scene && elapsedMs === 0 && !playing ? (
-          <div className="reel-preview-cover-title"><span>Cover</span><strong>{plan.cover.title}</strong></div>
+        {nextScene && nextAsset && frame.transition ? (
+          <div className="reel-preview-media-frame reel-preview-transition-next" style={{ opacity: nextOpacity }}>
+            <img className="reel-preview-media" style={{ transform: `translate(${(nextMotion?.x ?? 0) * 100}%, ${(nextMotion?.y ?? 0) * 100}%) scale(${nextMotion?.scale ?? 1})` }} src={nextAsset.url} alt={nextAsset.alt} />
+          </div>
+        ) : null}
+        {nextBrand && frame.transition ? (
+          <div className="reel-preview-brand-frame reel-preview-transition-next" style={{ opacity: nextOpacity }}>
+            <strong>{plan.brand.displayName}</strong>
+            <span>{plan.brand.cta}</span>
+          </div>
         ) : null}
         {active?.kind === 'brand' ? (
           <div className="reel-preview-brand-frame">
@@ -84,8 +107,14 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
           </div>
         ) : null}
         {scene ? (
-          <div className="reel-preview-safe-zone">
-            <span className="reel-preview-role">{sceneRoleLabel(scene.sceneRole)}</span>
+          <div className="reel-preview-safe-zone" style={{
+            top: `${reelPresentationSpec.safeZone.top * 100}%`,
+            right: `${reelPresentationSpec.safeZone.right * 100}%`,
+            bottom: `${reelPresentationSpec.safeZone.bottom * 100}%`,
+            left: `${reelPresentationSpec.safeZone.left * 100}%`,
+            opacity: textOpacity * outgoingTextOpacity,
+            transform: `translateY(${(1 - textOpacity) * 10}px)`,
+          }}>
             <div className="reel-preview-copy">
               <strong>{scene.overlayText}</strong>
               {scene.secondaryText ? <span>{scene.secondaryText}</span> : null}
@@ -110,34 +139,4 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
       </div>
     </section>
   );
-}
-
-type TimelineItem =
-  | { kind: 'scene'; startMs: number; endMs: number; scene: ReelSceneV1 }
-  | { kind: 'brand'; startMs: number; endMs: number };
-
-function buildTimeline(plan: ReelCreativePlanV1) {
-  const items: TimelineItem[] = [];
-  let cursor = 0;
-  for (const scene of plan.scenes) {
-    items.push({ kind: 'scene', startMs: cursor, endMs: cursor + scene.durationMs, scene });
-    cursor += scene.durationMs;
-  }
-  if (plan.brand.enabled) {
-    items.push({ kind: 'brand', startMs: cursor, endMs: cursor + plan.brand.durationMs });
-    cursor += plan.brand.durationMs;
-  }
-  return { items, totalDurationMs: cursor };
-}
-
-function activeTimelineItem(items: TimelineItem[], elapsedMs: number) {
-  return items.find((item) => elapsedMs >= item.startMs && elapsedMs < item.endMs) ?? items[items.length - 1];
-}
-
-function sceneRoleLabel(role: ReelSceneV1['sceneRole']) {
-  if (role === 'repair_process') return 'Process';
-  if (role === 'replacement_part') return 'Part';
-  if (role === 'finished_result') return 'Result';
-  if (role === 'supporting_image') return 'Context';
-  return role.charAt(0).toUpperCase() + role.slice(1);
 }

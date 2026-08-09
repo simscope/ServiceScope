@@ -1,0 +1,20 @@
+export const reelRenderErrorCodes = Object.freeze([
+  'REEL_RENDER_INVALID_PLAN',
+  'REEL_RENDER_MEDIA_INVALID',
+  'REEL_RENDER_MEDIA_MISSING',
+  'REEL_RENDER_TIMEOUT',
+  'REEL_RENDER_FAILED',
+  'REEL_RENDER_OUTPUT_INVALID',
+]);
+
+export class ReelRenderError extends Error {
+  constructor(code) {
+    super(reelRenderErrorCodes.includes(code) ? code : 'REEL_RENDER_FAILED');
+    this.name = 'ReelRenderError';
+    this.code = this.message;
+  }
+}
+
+export function asReelRenderError(error, fallback = 'REEL_RENDER_FAILED') {
+  return error instanceof ReelRenderError ? error : new ReelRenderError(fallback);
+}

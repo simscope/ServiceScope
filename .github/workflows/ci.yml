@@ -8,6 +8,8 @@ on:
       - '.github/workflows/ci.yml'
       - 'scripts/meta-*'
       - 'scripts/reel-director-*'
+      - 'scripts/reel-renderer-*'
+      - 'server/reel-renderer/**'
       - 'src/components/portal/AiAssistantPage.tsx'
       - 'src/components/portal/ReelPreview.tsx'
       - 'src/features/reel-director/**'
@@ -126,3 +128,42 @@ jobs:
 
       - name: Full build
         run: npm run build
+
+  reel-renderer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Ensure FFmpeg and ffprobe
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version
+          ffprobe -version
+
+      - name: Reel renderer regression and real fixture
+        env:
+          REEL_RENDER_REAL_FIXTURE: '1'
+          REEL_RENDER_ARTIFACT_DIR: ${{ runner.temp }}/ai-reel-renderer-fixture
+        run: npm run test:reel-renderer
+
+      - name: Reel renderer security scan
+        run: npm run test:reel-renderer-scan
+
+      - name: Upload Reel renderer fixture
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-reel-renderer-fixture
+          path: ${{ runner.temp }}/ai-reel-renderer-fixture/
+          if-no-files-found: error
+          retention-days: 7
