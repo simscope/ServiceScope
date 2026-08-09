@@ -25,6 +25,7 @@ const [
   providerIdRedactionMigration,
   scheduledFoundationMigration,
   scheduledWorkerMigration,
+  singleActiveScheduleMigration,
   scheduledWorkerEdge,
   scheduledWorker,
   scheduledRepository,
@@ -55,6 +56,7 @@ const [
   read('supabase/migrations/20260805213000_meta_publication_audit_provider_id_redaction.sql'),
   read('supabase/migrations/20260805223000_meta_facebook_scheduled_publication_foundation.sql'),
   read('supabase/migrations/20260807010000_meta_facebook_scheduled_worker_reconciliation.sql'),
+  read('supabase/migrations/20260808235500_meta_facebook_single_active_schedule.sql'),
   read('supabase/functions/meta-social-publish-scheduled-worker/index.ts'),
   read('supabase/functions/_shared/meta-publishing/scheduledWorker.js'),
   read('supabase/functions/_shared/meta-publishing/scheduledRepository.js'),
@@ -131,6 +133,11 @@ check(() => assert.match(edge, /auth\.getUser\(jwt\)/));
 check(() => assert.match(edge, /requireVerifiedAuthUserId\(authResult\)/));
 check(() => assert.match(edge, /\.eq\('company_id', companyId\)[\s\S]*\.eq\('status', 'scheduled'\)/));
 check(() => assert.match(edge, /activeScheduleQuery = activeScheduleQuery\.eq\('job_id', jobId\)/));
+check(() => assert.match(edge, /mapActiveSchedulePersistenceError\(error\)/));
+check(() => assert.match(contracts, /META_SCHEDULE_ALREADY_ACTIVE/));
+check(() => assert.match(contracts, /String\(error\?\.code \?\? ''\) !== '23505'/));
+check(() => assert.match(contracts, /company_social_publications_one_scheduled_per_job_uidx/));
+check(() => assert.doesNotMatch(edge, /jsonResponse\([^\n]*(error\?\.(?:message|details|hint)|activeScheduleConflict)/i));
 check(() => assert.match(edge, /app_current_session/));
 check(() => assert.match(edge, /can_manage_company/));
 check(() => assert.match(edge, /\.eq\('job_id', jobId\)/));
@@ -150,6 +157,11 @@ check(() => assert.match(service, /deriveFacebookPublicationPhotoScheduleEvidenc
 check(() => assert.match(service, /schedulePublication/));
 check(() => assert.match(service, /cancelScheduledPublication/));
 check(() => assert.doesNotMatch(scheduleService, /publishText|publishSinglePhoto|beginPublication|decryptTokenBundle/));
+check(() => assert.match(singleActiveScheduleMigration, /create unique index company_social_publications_one_scheduled_per_job_uidx/i));
+check(() => assert.match(singleActiveScheduleMigration, /on public\.company_social_publications\s*\(company_id, job_id\)[\s\S]*where status = 'scheduled'/i));
+check(() => assert.match(singleActiveScheduleMigration, /group by company_id, job_id[\s\S]*having count\(\*\) > 1[\s\S]*raise exception/i));
+check(() => assert.doesNotMatch(singleActiveScheduleMigration, /\b(?:delete|update)\b/i));
+check(() => assert.match(schema, /create unique index company_social_publications_one_scheduled_per_job_uidx[\s\S]*where status = 'scheduled'/i));
 check(() => assert.match(edge, /p_publication_audit_metadata: input\.publicationAuditMetadata/));
 check(() => assert.match(edge, /list_company_facebook_publication_photo_candidates/));
 check(() => assert.match(service, /revokePublicationPhotoApproval/));

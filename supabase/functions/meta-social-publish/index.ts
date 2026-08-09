@@ -8,6 +8,7 @@ import {
 } from '../_shared/meta-connection/contracts.js';
 import {
   MetaPublishingError,
+  mapActiveSchedulePersistenceError,
   runtimePublishingConfig,
 } from '../_shared/meta-publishing/contracts.js';
 import { createFacebookPublishingProvider } from '../_shared/meta-publishing/provider.js';
@@ -480,6 +481,10 @@ async function scheduledRpcRow(client: ReturnType<typeof createClient>, name: st
   const { data, error } = await client.rpc(name, params);
   const row = Array.isArray(data) ? data[0] : null;
   if (!error && row) return row;
+  if (name === 'schedule_company_facebook_publication') {
+    const activeScheduleConflict = mapActiveSchedulePersistenceError(error);
+    if (activeScheduleConflict) throw activeScheduleConflict;
+  }
   const message = String(error?.message ?? '').toLowerCase();
   if (name === 'cancel_scheduled_company_facebook_publication') {
     if (message.includes('not found')) throw new MetaPublishingError('FORBIDDEN');

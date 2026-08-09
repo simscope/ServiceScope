@@ -41,6 +41,7 @@ export const FACEBOOK_PROVIDER_CATEGORIES = Object.freeze([
 ]);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const SINGLE_ACTIVE_SCHEDULE_INDEX = 'company_social_publications_one_scheduled_per_job_uidx';
 const SAFE_CODES = new Set([
   'OK',
   'AUTH_REQUIRED',
@@ -58,6 +59,7 @@ const SAFE_CODES = new Set([
   'META_PUBLICATION_MEDIA_UNSUPPORTED',
   'META_PUBLICATION_MEDIA_TOO_LARGE',
   'META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED',
+  'META_SCHEDULE_ALREADY_ACTIVE',
   'META_SCHEDULE_CANCELLATION_UNAVAILABLE',
   'INTERNAL_ERROR',
 ]);
@@ -135,6 +137,19 @@ export function normalizeApprovedMessage(value) {
 
 export function assertExplicitApproval(value) {
   if (value !== true) throw new MetaPublishingError('INVALID_REQUEST');
+}
+
+export function mapActiveSchedulePersistenceError(error) {
+  if (String(error?.code ?? '') !== '23505') return null;
+  const constraint = typeof error?.constraint === 'string' ? error.constraint : '';
+  if (constraint && constraint !== SINGLE_ACTIVE_SCHEDULE_INDEX) return null;
+  const message = String(error?.message ?? '').toLowerCase();
+  const exactConstraint = `unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`;
+  const exactIndex = `unique index "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`;
+  if (constraint !== SINGLE_ACTIVE_SCHEDULE_INDEX && !message.includes(exactConstraint) && !message.includes(exactIndex)) {
+    return null;
+  }
+  return new MetaPublishingError('META_SCHEDULE_ALREADY_ACTIVE', 409);
 }
 
 export function normalizeScheduledPublicationTime(value, timezone, nowMs) {
@@ -298,7 +313,7 @@ export function safePublishingTelemetry(event) {
 export function statusForCode(code) {
   if (code === 'AUTH_REQUIRED') return 401;
   if (code === 'FORBIDDEN') return 403;
-  if (code === 'META_PUBLICATION_IN_PROGRESS') return 409;
+  if (code === 'META_PUBLICATION_IN_PROGRESS' || code === 'META_SCHEDULE_ALREADY_ACTIVE') return 409;
   if (code === 'META_PUBLISH_NOT_CONFIGURED' || code === 'INTERNAL_ERROR') return 500;
   return 400;
 }

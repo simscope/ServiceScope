@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   MetaPublishingError,
+  SINGLE_ACTIVE_SCHEDULE_INDEX,
+  mapActiveSchedulePersistenceError,
   normalizeScheduledPublicationTime,
   parsePublishingRequest,
   runtimePublishingConfig,
@@ -92,6 +94,24 @@ function contractChecks() {
   check(() => assert.equal(browserContracts.facebookScheduledForUtc('2026-08-09T11:30')?.endsWith('Z'), true));
   check(() => assert.equal(browserContracts.facebookScheduledForUtc('invalid'), null));
   check(() => assert.ok(browserContracts.formatFacebookScheduledTime(scheduledFor, timezone)));
+
+  const exactConflict = mapActiveSchedulePersistenceError({
+    code: '23505',
+    message: `duplicate key value violates unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`,
+    details: 'private database collision detail',
+  });
+  check(() => assert.equal(exactConflict?.code, 'META_SCHEDULE_ALREADY_ACTIVE'));
+  check(() => assert.equal(exactConflict?.status, 409));
+  check(() => assert.equal(exactConflict?.message, 'META_SCHEDULE_ALREADY_ACTIVE'));
+  check(() => assert.doesNotMatch(JSON.stringify({ code: exactConflict?.code }), /constraint|collision|database/i));
+  check(() => assert.equal(mapActiveSchedulePersistenceError({
+    code: '23505',
+    message: 'duplicate key value violates unique constraint "company_social_publications_company_intent_unique"',
+  }), null));
+  check(() => assert.equal(mapActiveSchedulePersistenceError({
+    code: '22000',
+    message: `unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`,
+  }), null));
 }
 
 function workspaceChecks() {
@@ -169,6 +189,31 @@ async function scheduleServiceChecks() {
   check(() => assert.equal(text.scheduleInputs.length, 2));
   check(() => assert.equal(text.scheduledRows.length, 1));
   check(() => assert.equal(text.providerCalls, 0));
+  await checkAsync(() => assert.rejects(
+    invoke(text, { ...scheduleTextRequest('Different concurrent schedule intent.'), idempotencyKey: ids.otherJob }),
+    (error) => error?.code === 'META_SCHEDULE_ALREADY_ACTIVE' && error?.status === 409,
+  ));
+  check(() => assert.equal(text.scheduledRows.length, 1));
+
+  const differentJob = await makeDependencies({ allowOtherJob: true });
+  await invoke(differentJob, scheduleTextRequest('First job schedule.'));
+  const otherJobResult = await invoke(differentJob, {
+    ...scheduleTextRequest('Different job schedule.'),
+    jobId: ids.otherJob,
+    idempotencyKey: ids.otherJob,
+  });
+  check(() => assert.equal(otherJobResult.status, 'scheduled'));
+  check(() => assert.equal(differentJob.scheduledRows.length, 2));
+
+  const replacement = await makeDependencies();
+  const replaced = await invoke(replacement, scheduleTextRequest('Original active schedule.'));
+  await invoke(replacement, cancelRequest(replaced.publicationId));
+  const replacementResult = await invoke(replacement, {
+    ...scheduleTextRequest('Replacement after cancellation.'),
+    idempotencyKey: ids.otherJob,
+  });
+  check(() => assert.equal(replacementResult.status, 'scheduled'));
+  check(() => assert.equal(replacement.scheduledRows.filter((row) => row.status === 'scheduled').length, 1));
 
   const photo = await makeDependencies();
   const photoResult = await invoke(photo, schedulePhotoRequest());
@@ -298,6 +343,8 @@ async function sourceChecks() {
   check(() => assert.doesNotMatch(scheduleBranch, /publishText|publishSinglePhoto|beginPublication|decryptTokenBundle/));
   check(() => assert.match(edge, /schedule_company_facebook_publication/));
   check(() => assert.match(edge, /cancel_scheduled_company_facebook_publication/));
+  check(() => assert.match(edge, /mapActiveSchedulePersistenceError\(error\)/));
+  check(() => assert.doesNotMatch(edge, /error\.(message|details|hint)[\s\S]{0,120}jsonResponse/));
   check(() => assert.match(edge, /activeScheduledPublication/));
   check(() => assert.match(edge, /\.eq\('company_id', companyId\)[\s\S]*\.eq\('status', 'scheduled'\)/));
   check(() => assert.match(edge, /activeScheduleQuery = activeScheduleQuery\.eq\('job_id', jobId\)/));
@@ -386,7 +433,13 @@ async function makeDependencies(options = {}) {
       },
     },
     repository: {
-      getPublicationContext: async (_companyId, jobId) => jobId === ids.job ? context : null,
+      getPublicationContext: async (_companyId, jobId) => {
+        if (jobId === ids.job) return context;
+        if (options.allowOtherJob && jobId === ids.otherJob && context) {
+          return { ...context, job: { ...context.job, id: ids.otherJob } };
+        }
+        return null;
+      },
       getPublicationAttachment: async (companyId, jobId, attachmentId) => (
         companyId === ids.company && jobId === ids.job && attachmentId === ids.attachment ? photo : null
       ),
@@ -419,6 +472,17 @@ async function makeDependencies(options = {}) {
           && row.attachment_id === input.attachmentId
         ));
         if (existing) return scheduleRpcRow(existing, false);
+        const activeForJob = scheduledRows.find((row) => (
+          row.company_id === input.companyId
+          && row.job_id === input.jobId
+          && row.status === 'scheduled'
+        ));
+        if (activeForJob) {
+          throw mapActiveSchedulePersistenceError({
+            code: '23505',
+            message: `duplicate key value violates unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`,
+          });
+        }
         const row = {
           publication_id: input.publicationId,
           id: input.publicationId,

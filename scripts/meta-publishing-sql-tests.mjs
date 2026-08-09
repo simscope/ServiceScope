@@ -26,6 +26,7 @@ const migrationNames = [
   '20260805213000_meta_publication_audit_provider_id_redaction.sql',
   '20260805223000_meta_facebook_scheduled_publication_foundation.sql',
   '20260807010000_meta_facebook_scheduled_worker_reconciliation.sql',
+  '20260808235500_meta_facebook_single_active_schedule.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -37,6 +38,25 @@ check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.publishing),
   normalizeSqlForParity(extractExactMarkedBlock(migrations[3], META_FACEBOOK_PUBLISH_MARKERS)),
 ));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_SINGLE_ACTIVE_SCHEDULE_INVARIANT_BEGIN',
+    end: '-- META_FACEBOOK_SINGLE_ACTIVE_SCHEDULE_INVARIANT_END',
+    label: 'Meta Facebook single active schedule invariant',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(migrations[16], {
+    begin: '-- META_FACEBOOK_SINGLE_ACTIVE_SCHEDULE_INVARIANT_BEGIN',
+    end: '-- META_FACEBOOK_SINGLE_ACTIVE_SCHEDULE_INVARIANT_END',
+    label: 'Meta Facebook single active schedule invariant',
+  })),
+));
+const singleActiveScheduleMigration = migrations[16];
+check(() => assert.match(singleActiveScheduleMigration, /create unique index company_social_publications_one_scheduled_per_job_uidx/i));
+check(() => assert.match(singleActiveScheduleMigration, /on public\.company_social_publications\s*\(company_id, job_id\)/i));
+check(() => assert.match(singleActiveScheduleMigration, /where status = 'scheduled'/i));
+check(() => assert.match(singleActiveScheduleMigration, /group by company_id, job_id[\s\S]*having count\(\*\) > 1/i));
+check(() => assert.match(singleActiveScheduleMigration, /raise exception/i));
+check(() => assert.doesNotMatch(singleActiveScheduleMigration, /\b(?:delete|update)\b/i));
 check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.publishingAclFix),
   normalizeSqlForParity(extractExactMarkedBlock(migrations[4], META_FACEBOOK_PUBLISH_ACL_FIX_MARKERS)),
@@ -1308,6 +1328,7 @@ await canonicalDb.exec(migrations[12]);
 await canonicalDb.exec(migrations[13]);
 await canonicalDb.exec(migrations[14]);
 await canonicalDb.exec(migrations[15]);
+await canonicalDb.exec(migrations[16]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
@@ -1341,6 +1362,97 @@ const isolationAfterRepeat = await captureIsolationState(isolationDb);
 check(() => assert.deepEqual(repeatedDirectPrivileges, ['INSERT', 'SELECT', 'UPDATE']));
 check(() => assert.deepEqual(isolationAfterRepeat, isolationBefore));
 await isolationDb.close();
+
+const invariantDb = new PGlite();
+await invariantDb.exec(prerequisiteSchema);
+for (const migration of migrations.slice(0, 4)) await invariantDb.exec(migration);
+await invariantDb.exec('grant all privileges on table public.company_social_publications to service_role;');
+for (const migration of migrations.slice(4, 16)) await invariantDb.exec(migration);
+
+const sameCompanyOtherJob = '00000000-0000-4000-8000-000000007300';
+await invariantDb.query(`insert into auth.users (id,email) values ($1,'invariant@example.test')`, [ids.actor]);
+await invariantDb.query(`insert into public.companies (id,name,owner_email) values
+  ($1,'Invariant Primary','primary-invariant@example.test'),
+  ($2,'Invariant Other','other-invariant@example.test')`, [ids.company, ids.otherCompany]);
+await invariantDb.query(`insert into public.jobs (id,company_id,status,job_number) values
+  ($1,$2,'Completed','INV-1'),
+  ($3,$2,'Warranty','INV-2'),
+  ($4,$5,'Completed','INV-3')`, [ids.job, ids.company, sameCompanyOtherJob, ids.otherJob, ids.otherCompany]);
+await invariantDb.query(`insert into public.company_social_connections (
+  id,company_id,provider,status,facebook_page_id,facebook_page_name,granted_scopes,token_envelope,connected_by,connected_at
+) values
+  ($1,$2,'meta-facebook-login','connected','10001','Invariant Page',array['pages_show_list','pages_read_engagement','pages_manage_posts'],$3::jsonb,$4,now()),
+  ($5,$6,'meta-facebook-login','connected','10002','Other Invariant Page',array['pages_show_list','pages_read_engagement','pages_manage_posts'],$3::jsonb,$4,now())`,
+  [ids.connection, ids.company, envelope, ids.actor, ids.threeScopeConnection, ids.otherCompany]);
+
+const invariantScheduleTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+const scheduleInvariant = async ({ publicationId, companyId = ids.company, connectionId = ids.connection, jobId = ids.job, key, message }) => {
+  const result = await invariantDb.query(scheduleTextSql(), [
+    publicationId, companyId, connectionId, jobId, key, message, 'text_only',
+    null, null, null, null, null, ids.actor, verifiedActor.name, verifiedActor.role,
+    invariantScheduleTime, 'America/New_York',
+  ]);
+  return result.rows[0];
+};
+
+const invariantFirstId = '00000000-0000-4000-8000-000000007301';
+const invariantSecondId = '00000000-0000-4000-8000-000000007302';
+const invariantFirst = await scheduleInvariant({ publicationId: invariantFirstId, key: '00000000-0000-4000-8000-000000007311', message: 'Invariant first schedule.' });
+await scheduleInvariant({ publicationId: invariantSecondId, key: '00000000-0000-4000-8000-000000007312', message: 'Invariant second schedule.' });
+let duplicatePreflightRejected = false;
+try {
+  await invariantDb.exec(migrations[16]);
+} catch {
+  duplicatePreflightRejected = true;
+}
+check(() => assert.equal(duplicatePreflightRejected, true));
+const preservedDuplicates = await invariantDb.query(`select count(*)::integer as count from public.company_social_publications where company_id=$1 and job_id=$2 and status='scheduled'`, [ids.company, ids.job]);
+check(() => assert.equal(preservedDuplicates.rows[0].count, 2));
+const absentFailedIndex = await invariantDb.query(`select to_regclass('public.company_social_publications_one_scheduled_per_job_uidx') as relation`);
+check(() => assert.equal(absentFailedIndex.rows[0].relation, null));
+
+await invariantDb.query(`select * from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [invariantSecondId, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
+await invariantDb.exec(migrations[16]);
+const invariantIndex = await invariantDb.query(`
+  select indexdef
+  from pg_indexes
+  where schemaname='public'
+    and tablename='company_social_publications'
+    and indexname='company_social_publications_one_scheduled_per_job_uidx'
+`);
+check(() => assert.equal(invariantIndex.rows.length, 1));
+check(() => assert.match(invariantIndex.rows[0].indexdef, /^CREATE UNIQUE INDEX/i));
+check(() => assert.match(invariantIndex.rows[0].indexdef, /\(company_id, job_id\)/i));
+check(() => assert.match(invariantIndex.rows[0].indexdef, /WHERE \(status = 'scheduled'::text\)/i));
+
+const sameIntentReplay = await scheduleInvariant({ publicationId: '00000000-0000-4000-8000-000000007303', key: '00000000-0000-4000-8000-000000007313', message: 'Invariant first schedule.' });
+check(() => assert.equal(sameIntentReplay.publication_id, invariantFirst.publication_id));
+check(() => assert.equal(sameIntentReplay.should_schedule, false));
+let collisionCode = '';
+let collisionMessage = '';
+try {
+  await scheduleInvariant({ publicationId: '00000000-0000-4000-8000-000000007304', key: '00000000-0000-4000-8000-000000007314', message: 'Different invariant schedule.' });
+} catch (error) {
+  collisionCode = String(error?.code ?? '');
+  collisionMessage = String(error?.message ?? '');
+}
+check(() => assert.equal(collisionCode, '23505'));
+check(() => assert.match(collisionMessage, /company_social_publications_one_scheduled_per_job_uidx/));
+
+const differentJobSchedule = await scheduleInvariant({ publicationId: '00000000-0000-4000-8000-000000007305', jobId: sameCompanyOtherJob, key: '00000000-0000-4000-8000-000000007315', message: 'Different job schedule.' });
+check(() => assert.equal(differentJobSchedule.should_schedule, true));
+const differentCompanySchedule = await scheduleInvariant({ publicationId: '00000000-0000-4000-8000-000000007306', companyId: ids.otherCompany, connectionId: ids.threeScopeConnection, jobId: ids.otherJob, key: '00000000-0000-4000-8000-000000007316', message: 'Different company schedule.' });
+check(() => assert.equal(differentCompanySchedule.should_schedule, true));
+
+await invariantDb.query(`select * from public.cancel_scheduled_company_facebook_publication($1,$2,$3,$4,$5)`, [invariantFirstId, ids.company, ids.actor, verifiedActor.name, verifiedActor.role]);
+const replacementSchedule = await scheduleInvariant({ publicationId: '00000000-0000-4000-8000-000000007307', key: '00000000-0000-4000-8000-000000007317', message: 'Replacement after cancellation.' });
+check(() => assert.equal(replacementSchedule.should_schedule, true));
+const terminalAndActive = await invariantDb.query(`select
+  count(*) filter (where status='cancelled')::integer as cancelled,
+  count(*) filter (where status='scheduled')::integer as scheduled
+  from public.company_social_publications where company_id=$1 and job_id=$2`, [ids.company, ids.job]);
+check(() => assert.deepEqual(terminalAndActive.rows[0], { cancelled: 2, scheduled: 1 }));
+await invariantDb.close();
 
 console.log(`Meta publishing SQL checks passed: ${checks}; rollback artifacts: 0`);
 
