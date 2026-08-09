@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/queues/reel-render.js": {
-      "maxDuration": 900,
+      "maxDuration": 300,
       "experimentalTriggers": [
         {
           "type": "queue/v2beta",
