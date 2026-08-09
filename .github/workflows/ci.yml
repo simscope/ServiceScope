@@ -7,11 +7,18 @@ on:
     paths:
       - '.github/workflows/ci.yml'
       - 'scripts/meta-*'
+      - 'scripts/reel-director-*'
       - 'src/components/portal/AiAssistantPage.tsx'
+      - 'src/components/portal/ReelPreview.tsx'
+      - 'src/features/reel-director/**'
+      - 'src/styles/base.css'
       - 'src/components/portal/FacebookPublishPanel.tsx'
       - 'src/features/meta-publishing/**'
       - 'supabase/functions/_shared/meta-publishing/**'
       - 'supabase/functions/_shared/media-analysis/**'
+      - 'supabase/functions/_shared/reel-engine/**'
+      - 'supabase/functions/_shared/content-engine/providers/openai.js'
+      - 'supabase/functions/ai-content-generate/**'
       - 'supabase/functions/ai-media-analyze/**'
       - 'supabase/functions/meta-social-publish/**'
       - 'supabase/functions/meta-social-publish-scheduled-worker/**'
@@ -45,6 +52,9 @@ jobs:
 
       - name: Meta publishing security scan
         run: npm run test:meta-publishing-scan
+
+      - name: AI Reel Director regression and security
+        run: npm run test:reel-director
 
       - name: Typecheck
         run: npx tsc -b
@@ -89,6 +99,9 @@ jobs:
 
       - name: Check scheduled worker Edge entrypoint
         run: deno check supabase/functions/meta-social-publish-scheduled-worker/index.ts
+
+      - name: Check AI Reel Director Edge entrypoint
+        run: deno check supabase/functions/ai-content-generate/index.ts
 
       - name: Scheduled worker secret auth
         run: deno test --allow-import --allow-net=deno.land scripts/meta-scheduled-worker-deno-tests.ts

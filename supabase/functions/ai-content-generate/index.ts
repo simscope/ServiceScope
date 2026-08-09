@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleContentGeneration, HttpError } from '../_shared/content-engine/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createPreflightFromEnv, createProviderFromEnv } from '../_shared/content-engine/providers/openai.js';
+import { handleReelGeneration, ReelHttpError } from '../_shared/reel-engine/director.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,15 +21,19 @@ Deno.serve(async (request) => {
       return jsonResponse(await handleProviderPreflight(request.headers.get('Authorization') ?? ''));
     }
     const dependencies = makeDependencies();
-    const result = await handleContentGeneration({
+    const handler = parsedBody?.schemaVersion === 'reel-creative-request-v1'
+      ? handleReelGeneration
+      : handleContentGeneration;
+    const result = await handler({
       rawBody,
       authorization: request.headers.get('Authorization') ?? '',
       ...dependencies,
     });
     return jsonResponse(result);
   } catch (error) {
-    const code = error instanceof HttpError ? error.code : error instanceof Error ? error.message : 'INVALID_REQUEST';
-    const status = error instanceof HttpError ? error.status : statusForCode(code);
+    const knownError = error instanceof HttpError || error instanceof ReelHttpError;
+    const code = knownError ? error.code : error instanceof Error ? error.message : 'INVALID_REQUEST';
+    const status = knownError ? error.status : statusForCode(code);
     return jsonResponse({ error: 'Content generation request was rejected.', code }, status);
   }
 });
@@ -202,6 +207,15 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         .eq('company_id', companyId)
         .eq('job_id', jobId)
         .limit(200);
+      return data ?? [];
+    },
+    async listReelMediaCandidates(companyId: string, jobId: string) {
+      const { data, error } = await adminClient.rpc('list_company_facebook_publication_photo_candidates', {
+        p_company_id: companyId,
+        p_job_id: jobId,
+        p_attachment_id: null,
+      });
+      if (error) throw new ReelHttpError('REEL_MEDIA_UNAVAILABLE', 409);
       return data ?? [];
     },
   };
