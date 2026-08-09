@@ -7,8 +7,10 @@ import { buildPrivateValues } from '../supabase/functions/_shared/content-engine
 import { assertMetaAccessRole } from '../supabase/functions/_shared/meta-connection/contracts.js';
 import { connectionEnvelopeContext, encryptTokenBundle } from '../supabase/functions/_shared/meta-connection/crypto.js';
 import {
+  ACTIVE_PUBLICATION_INDEX,
   MetaPublishingError,
   facebookPublishingEnabled,
+  mapActivePublicationPersistenceError,
   normalizeApprovedMessage,
   parsePublishingRequest,
   publicationIntentSource,
@@ -368,6 +370,36 @@ async function serviceChecks() {
   await invoke(base, { ...request, idempotencyKey: '00000000-0000-4000-8000-000000008021' });
   check(() => assert.equal(base.providerCalls.length, 1));
 
+  for (const activePublicationStatus of ['scheduled', 'publishing', 'delivery_unknown']) {
+    const activeConflict = await makeDependencies({ activePublicationStatus });
+    activeConflict.context.connection.granted_scopes = publishingScopes();
+    let conflictError;
+    try {
+      await invoke(activeConflict, publishRequest(`Blocked by active ${activePublicationStatus}.`, newTestUuid()));
+    } catch (error) {
+      conflictError = error;
+    }
+    check(() => assert.equal(conflictError?.code, 'META_PUBLICATION_ACTIVE_CONFLICT'));
+    check(() => assert.equal(conflictError?.status, 409));
+    check(() => assert.equal(activeConflict.providerCalls.length, 0));
+    check(() => assert.doesNotMatch(JSON.stringify({ code: conflictError?.code, message: conflictError?.message }), /token|provider|constraint|index|23505|10001/i));
+  }
+
+  const unrelatedUniqueViolation = await makeDependencies({
+    beginPersistenceError: {
+      code: '23505',
+      message: 'duplicate key value violates unique constraint "unrelated_unique_index"',
+      details: 'private persistence details',
+    },
+  });
+  unrelatedUniqueViolation.context.connection.granted_scopes = publishingScopes();
+  await checkAsync(() => assert.rejects(
+    invoke(unrelatedUniqueViolation, publishRequest('Unrelated collision remains generic.', newTestUuid())),
+    (error) => error?.code === 'INTERNAL_ERROR' && error?.status === 500,
+  ));
+  check(() => assert.equal(unrelatedUniqueViolation.providerCalls.length, 0));
+  check(() => assert.doesNotMatch(JSON.stringify(unrelatedUniqueViolation.telemetryEvents), /private persistence details|unrelated_unique_index/));
+
   for (const body of [
     { ...request, explicitApproval: false },
     { ...request, message: '' },
@@ -550,7 +582,7 @@ async function sourceChecks() {
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
 }
 
-async function makeDependencies({ providerError = null, markUnknownError = null, attachment = undefined, attachmentPatch = {}, photoApproved = true, latestAnalysisInvalid = false } = {}) {
+async function makeDependencies({ providerError = null, markUnknownError = null, beginPersistenceError = null, activePublicationStatus = null, attachment = undefined, attachmentPatch = {}, photoApproved = true, latestAnalysisInvalid = false } = {}) {
   const connection = {
     id: ids.connection,
     company_id: ids.company,
@@ -728,6 +760,15 @@ async function makeDependencies({ providerError = null, markUnknownError = null,
         beginInputs.push(input);
         const existing = publications.get(input.publicationIntentSha256);
         if (existing) return { ...existing, should_publish: false };
+        if (beginPersistenceError) throw beginPersistenceError;
+        if (activePublicationStatus) {
+          throw mapActivePublicationPersistenceError({
+            code: '23505',
+            constraint: ACTIVE_PUBLICATION_INDEX,
+            message: `duplicate key value violates unique constraint "${ACTIVE_PUBLICATION_INDEX}"`,
+            details: 'private active publication collision',
+          });
+        }
         const row = {
           publication_id: input.publicationId,
           publication_status: 'publishing',

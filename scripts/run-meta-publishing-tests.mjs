@@ -19,6 +19,9 @@ try {
   run(process.execPath, ['scripts/meta-publishing-regression-tests.mjs'], {
     META_PUBLISHING_COMPILED_ROOT: outputRoot,
   });
+  run(process.execPath, ['scripts/meta-scheduled-ui-regression-tests.mjs'], {
+    META_PUBLISHING_COMPILED_ROOT: outputRoot,
+  });
   run(process.execPath, ['scripts/meta-scheduled-worker-regression-tests.mjs']);
 } finally {
   await rm(outputRoot, { recursive: true, force: true });

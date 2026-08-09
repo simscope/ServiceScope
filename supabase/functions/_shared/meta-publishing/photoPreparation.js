@@ -83,6 +83,43 @@ export async function prepareFacebookPublicationPhoto({
   };
 }
 
+export async function deriveFacebookPublicationPhotoScheduleEvidence({
+  photo,
+  companyId,
+  jobId,
+  privateValues,
+  deps,
+}) {
+  const validated = validateFacebookPublicationPhotoAttachment({ photo, companyId, jobId, privateValues });
+  const originalBytes = await deps.repository.downloadAttachmentBytes({
+    storageBucket: String(validated.storage_bucket),
+    storagePath: String(validated.storage_path),
+    maxBytes: maxFacebookPhotoBytes,
+  });
+  const originalSha256 = await sha256Hex(originalBytes, deps.cryptoApi);
+  const eligibility = await deps.repository.revalidatePublicationPhotoEligibility(
+    companyId,
+    jobId,
+    String(validated.id),
+    originalSha256,
+  );
+  if (
+    !eligibility?.eligibleForFacebookPublication
+    || !eligibility.approval?.id
+    || !eligibility.analysisRunId
+    || !eligibility.attachmentResultId
+  ) {
+    throw new MetaPublishingError('META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED');
+  }
+  return {
+    attachmentId: String(validated.id),
+    attachmentSha256: originalSha256,
+    analysisRunId: String(eligibility.analysisRunId),
+    attachmentResultId: String(eligibility.attachmentResultId),
+    approvalId: String(eligibility.approval.id),
+  };
+}
+
 export function validateFacebookPublicationPhotoAttachment({ photo, companyId, jobId, privateValues }) {
   if (!photo) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
   if (String(photo.company_id) !== companyId || String(photo.job_id) !== jobId) {

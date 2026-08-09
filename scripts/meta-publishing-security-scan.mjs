@@ -25,6 +25,7 @@ const [
   providerIdRedactionMigration,
   scheduledFoundationMigration,
   scheduledWorkerMigration,
+  singleActivePublicationMigration,
   scheduledWorkerEdge,
   scheduledWorker,
   scheduledRepository,
@@ -55,6 +56,7 @@ const [
   read('supabase/migrations/20260805213000_meta_publication_audit_provider_id_redaction.sql'),
   read('supabase/migrations/20260805223000_meta_facebook_scheduled_publication_foundation.sql'),
   read('supabase/migrations/20260807010000_meta_facebook_scheduled_worker_reconciliation.sql'),
+  read('supabase/migrations/20260808235500_meta_facebook_single_active_schedule.sql'),
   read('supabase/functions/meta-social-publish-scheduled-worker/index.ts'),
   read('supabase/functions/_shared/meta-publishing/scheduledWorker.js'),
   read('supabase/functions/_shared/meta-publishing/scheduledRepository.js'),
@@ -68,6 +70,8 @@ const [
 ]);
 
 const browserSources = `${client}\n${panel}\n${aiPage}`;
+const scheduleClient = client.slice(client.indexOf('export function scheduleFacebookText'));
+const scheduleService = service.slice(service.indexOf('if (scheduledAction)'), service.indexOf("stage = 'decrypt_connection'"));
 const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${photoPreparation}\n${mediaAnalysisEdge}\n${scheduledWorkerEdge}\n${scheduledWorker}\n${scheduledRepository}\n${scheduledWorkerAuth}`;
 const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}\n${runtimeClosureMigration}\n${persistenceClosureMigration}\n${providerIdRedactionMigration}`;
 const providerIdRedactionFunction = providerIdRedactionMigration.match(/create or replace function private\.complete_company_facebook_publication_unvalidated_20260805[\s\S]+?revoke all on function private\.complete_company_facebook_publication_unvalidated_20260805/)?.[0] ?? '';
@@ -85,31 +89,58 @@ check(() => assert.doesNotMatch(browserSources, /password/i));
 check(() => assert.match(client, /supabaseFunction<.*>\(functionName/s));
 check(() => assert.match(client, /action: 'publish_facebook_text'/));
 check(() => assert.match(client, /action: 'publish_facebook_single_photo'/));
+check(() => assert.match(client, /action: 'schedule_facebook_text'/));
+check(() => assert.match(client, /action: 'schedule_facebook_single_photo'/));
+check(() => assert.match(client, /action: 'cancel_facebook_scheduled_publication'/));
 check(() => assert.match(client, /action: 'approve_facebook_publication_photo'/));
 check(() => assert.match(client, /action: 'revoke_facebook_publication_photo_approval'/));
 check(() => assert.match(client, /explicitApproval: true/));
 check(() => assert.match(client, /idempotencyKey: string/));
 check(() => assert.doesNotMatch(client, /mediaUrl|storagePath|base64|pageId|connectionId|accessToken/i));
+check(() => assert.doesNotMatch(scheduleClient, /pageId|connectionId|analysisRunId|attachmentResultId|approvalId|sha256|providerId|claimToken|executionAttempts/i));
+check(() => assert.doesNotMatch(browserSources, /meta_scheduled_publisher|SUPABASE_SECRET_KEYS|vault\.decrypted_secrets/i));
 check(() => assert.match(panel, /crypto\.randomUUID\(\)/));
 check(() => assert.match(panel, /workspace\.submitting/));
 check(() => assert.match(panel, /invalidateFacebookPublishApproval/));
 check(() => assert.match(panel, /loadFacebookPublishingStatus\(companyId, jobId\)/));
-check(() => assert.match(panel, /snapshot\.lastPublication/));
+check(() => assert.match(panel, /currentFacebookPublication\(workspace, snapshot\)/));
+check(() => assert.match(panel, /currentFacebookActiveSchedule\(workspace, snapshot\)/));
+check(() => assert.match(panel, /reconcileFacebookPublishWorkspaceFromStatus/));
+check(() => assert.match(panel, /FACEBOOK_STATUS_REFRESH_MS = 45_000/));
+check(() => assert.match(panel, /window\.setTimeout\(refreshStatus, FACEBOOK_STATUS_REFRESH_MS\)/));
+check(() => assert.match(panel, /window\.clearTimeout\(timeoutId\)/));
 check(() => assert.match(panel, /snapshot\?\.eligiblePhotos/));
 check(() => assert.match(panel, /eligibleForFacebookPublication/));
 check(() => assert.match(panel, /checksumMatch/));
 check(() => assert.doesNotMatch(panel, /pageCheckAcknowledged|I checked the Facebook Page/));
 check(() => assert.match(panel, /blocked until a reconciliation workflow resolves the unknown delivery state/i));
 check(() => assert.match(panel, /Text-only - selected photos and videos will not be uploaded/i));
-check(() => assert.match(panel, /Exactly one approved selected photo will be uploaded/i));
+check(() => assert.match(panel, /Exactly one approved selected photo will be used/i));
+check(() => assert.match(panel, /Publish now/));
+check(() => assert.match(panel, /Schedule for later/));
+check(() => assert.match(panel, /Schedule publication/));
+check(() => assert.match(panel, /Cancel scheduled publication/));
 check(() => assert.match(panel, /META_PUBLICATION_DELIVERY_UNKNOWN|normalizePublishingError/));
 check(() => assert.doesNotMatch(panel, /retry/i));
+const statusPollingSource = panel.slice(panel.indexOf('const refreshStatus = async'), panel.indexOf('function openConfirmation'));
+check(() => assert.equal((statusPollingSource.match(/loadFacebookPublishingStatus/g) ?? []).length, 1));
+check(() => assert.doesNotMatch(statusPollingSource, /scheduleFacebook|cancelFacebook|publishFacebook|provider|decrypt/i));
 
 check(() => assert.match(config, /\[functions\.meta-social-publish\]\s+verify_jwt = true/));
 check(() => assert.doesNotMatch(config, /\[functions\.meta-social-publish\]\s+verify_jwt = false/));
 check(() => assert.match(edge, /const jwt = requireBearerJwt\(authorization\)/));
 check(() => assert.match(edge, /auth\.getUser\(jwt\)/));
 check(() => assert.match(edge, /requireVerifiedAuthUserId\(authResult\)/));
+check(() => assert.match(edge, /\.eq\('company_id', companyId\)[\s\S]*\.eq\('status', 'scheduled'\)/));
+check(() => assert.match(edge, /activeScheduleQuery = activeScheduleQuery\.eq\('job_id', jobId\)/));
+check(() => assert.match(edge, /mapActivePublicationPersistenceError\(error\)/));
+check(() => assert.match(edge, /name === 'begin_company_facebook_publication'[\s\S]*mapActivePublicationPersistenceError\(error\)/));
+check(() => assert.match(edge, /name === 'schedule_company_facebook_publication'[\s\S]*mapActivePublicationPersistenceError\(error\)/));
+check(() => assert.match(contracts, /META_PUBLICATION_ACTIVE_CONFLICT/));
+check(() => assert.match(contracts, /String\(error\?\.code \?\? ''\) !== '23505'/));
+check(() => assert.match(contracts, /company_social_publications_one_active_per_job_uidx/));
+check(() => assert.doesNotMatch(contracts, /one_scheduled_per_job_uidx/));
+check(() => assert.doesNotMatch(edge, /jsonResponse\([^\n]*(error\?\.(?:message|details|hint)|activePublicationConflict)/i));
 check(() => assert.match(edge, /app_current_session/));
 check(() => assert.match(edge, /can_manage_company/));
 check(() => assert.match(edge, /\.eq\('job_id', jobId\)/));
@@ -125,12 +156,24 @@ check(() => assert.match(service, /connectionEnvelopeContext/));
 check(() => assert.match(service, /beginPublication/));
 check(() => assert.match(service, /publicationIntentSha256/));
 check(() => assert.match(service, /revalidatePublicationPhotoEligibility/));
+check(() => assert.match(service, /deriveFacebookPublicationPhotoScheduleEvidence/));
+check(() => assert.match(service, /schedulePublication/));
+check(() => assert.match(service, /cancelScheduledPublication/));
+check(() => assert.doesNotMatch(scheduleService, /publishText|publishSinglePhoto|beginPublication|decryptTokenBundle/));
+check(() => assert.match(singleActivePublicationMigration, /create unique index company_social_publications_one_active_per_job_uidx/i));
+check(() => assert.equal((singleActivePublicationMigration.match(/where status in \('scheduled', 'publishing', 'delivery_unknown'\)/gi) ?? []).length, 2));
+check(() => assert.match(singleActivePublicationMigration, /group by company_id, job_id[\s\S]*having count\(\*\) > 1[\s\S]*raise exception/i));
+check(() => assert.doesNotMatch(singleActivePublicationMigration, /\b(?:delete|update)\b/i));
+check(() => assert.doesNotMatch(singleActivePublicationMigration, /'published'|'failed'|'cancelled'/i));
+check(() => assert.match(schema, /create unique index company_social_publications_one_active_per_job_uidx[\s\S]*where status in \('scheduled', 'publishing', 'delivery_unknown'\)/i));
+check(() => assert.doesNotMatch(`${schema}\n${singleActivePublicationMigration}`, /one_scheduled_per_job_uidx/));
 check(() => assert.match(edge, /p_publication_audit_metadata: input\.publicationAuditMetadata/));
 check(() => assert.match(edge, /list_company_facebook_publication_photo_candidates/));
 check(() => assert.match(service, /revokePublicationPhotoApproval/));
 check(() => assert.match(photoPreparation, /deps\.imageProcessor/));
 check(() => assert.match(photoPreparation, /processor\.sanitize/));
 check(() => assert.match(service, /if \(!beginning\.should_publish\)/));
+check(() => assert.ok(service.indexOf('await deps.repository.beginPublication') < service.indexOf('await deps.provider.publish')));
 check(() => assert.match(service, /markUnknown/));
 check(() => assert.match(service, /META_PUBLICATION_DELIVERY_UNKNOWN/));
 check(() => assert.match(service, /maxBodyBytes/));
@@ -143,7 +186,10 @@ check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'attachme
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'attachmentId', 'explicitApproval', 'revocationReason'\]/));
 check(() => assert.match(contracts, /analysisRunId', 'attachmentResultId/));
 check(() => assert.match(contracts, /\['action', 'companyId', 'jobId', 'message', 'idempotencyKey', 'explicitApproval'\]/));
-check(() => assert.doesNotMatch(contracts, /scheduled|instagram|mediaIds|mediaUrl|storagePath|base64/));
+check(() => assert.match(contracts, /schedule_facebook_text/));
+check(() => assert.match(contracts, /schedule_facebook_single_photo/));
+check(() => assert.match(contracts, /cancel_facebook_scheduled_publication/));
+check(() => assert.doesNotMatch(contracts, /instagram|mediaIds|mediaUrl|storagePath|base64/));
 check(() => assert.doesNotMatch(contracts.match(/const allowed[\s\S]*?;/)?.[0] ?? '', /pageId|connectionId/));
 
 check(() => assert.match(provider, /https:\/\/graph\.facebook\.com\/\$\{config\.graphApiVersion\}/));
