@@ -25,7 +25,7 @@ const [
   providerIdRedactionMigration,
   scheduledFoundationMigration,
   scheduledWorkerMigration,
-  singleActiveScheduleMigration,
+  singleActivePublicationMigration,
   scheduledWorkerEdge,
   scheduledWorker,
   scheduledRepository,
@@ -133,11 +133,14 @@ check(() => assert.match(edge, /auth\.getUser\(jwt\)/));
 check(() => assert.match(edge, /requireVerifiedAuthUserId\(authResult\)/));
 check(() => assert.match(edge, /\.eq\('company_id', companyId\)[\s\S]*\.eq\('status', 'scheduled'\)/));
 check(() => assert.match(edge, /activeScheduleQuery = activeScheduleQuery\.eq\('job_id', jobId\)/));
-check(() => assert.match(edge, /mapActiveSchedulePersistenceError\(error\)/));
-check(() => assert.match(contracts, /META_SCHEDULE_ALREADY_ACTIVE/));
+check(() => assert.match(edge, /mapActivePublicationPersistenceError\(error\)/));
+check(() => assert.match(edge, /name === 'begin_company_facebook_publication'[\s\S]*mapActivePublicationPersistenceError\(error\)/));
+check(() => assert.match(edge, /name === 'schedule_company_facebook_publication'[\s\S]*mapActivePublicationPersistenceError\(error\)/));
+check(() => assert.match(contracts, /META_PUBLICATION_ACTIVE_CONFLICT/));
 check(() => assert.match(contracts, /String\(error\?\.code \?\? ''\) !== '23505'/));
-check(() => assert.match(contracts, /company_social_publications_one_scheduled_per_job_uidx/));
-check(() => assert.doesNotMatch(edge, /jsonResponse\([^\n]*(error\?\.(?:message|details|hint)|activeScheduleConflict)/i));
+check(() => assert.match(contracts, /company_social_publications_one_active_per_job_uidx/));
+check(() => assert.doesNotMatch(contracts, /one_scheduled_per_job_uidx/));
+check(() => assert.doesNotMatch(edge, /jsonResponse\([^\n]*(error\?\.(?:message|details|hint)|activePublicationConflict)/i));
 check(() => assert.match(edge, /app_current_session/));
 check(() => assert.match(edge, /can_manage_company/));
 check(() => assert.match(edge, /\.eq\('job_id', jobId\)/));
@@ -157,17 +160,20 @@ check(() => assert.match(service, /deriveFacebookPublicationPhotoScheduleEvidenc
 check(() => assert.match(service, /schedulePublication/));
 check(() => assert.match(service, /cancelScheduledPublication/));
 check(() => assert.doesNotMatch(scheduleService, /publishText|publishSinglePhoto|beginPublication|decryptTokenBundle/));
-check(() => assert.match(singleActiveScheduleMigration, /create unique index company_social_publications_one_scheduled_per_job_uidx/i));
-check(() => assert.match(singleActiveScheduleMigration, /on public\.company_social_publications\s*\(company_id, job_id\)[\s\S]*where status = 'scheduled'/i));
-check(() => assert.match(singleActiveScheduleMigration, /group by company_id, job_id[\s\S]*having count\(\*\) > 1[\s\S]*raise exception/i));
-check(() => assert.doesNotMatch(singleActiveScheduleMigration, /\b(?:delete|update)\b/i));
-check(() => assert.match(schema, /create unique index company_social_publications_one_scheduled_per_job_uidx[\s\S]*where status = 'scheduled'/i));
+check(() => assert.match(singleActivePublicationMigration, /create unique index company_social_publications_one_active_per_job_uidx/i));
+check(() => assert.equal((singleActivePublicationMigration.match(/where status in \('scheduled', 'publishing', 'delivery_unknown'\)/gi) ?? []).length, 2));
+check(() => assert.match(singleActivePublicationMigration, /group by company_id, job_id[\s\S]*having count\(\*\) > 1[\s\S]*raise exception/i));
+check(() => assert.doesNotMatch(singleActivePublicationMigration, /\b(?:delete|update)\b/i));
+check(() => assert.doesNotMatch(singleActivePublicationMigration, /'published'|'failed'|'cancelled'/i));
+check(() => assert.match(schema, /create unique index company_social_publications_one_active_per_job_uidx[\s\S]*where status in \('scheduled', 'publishing', 'delivery_unknown'\)/i));
+check(() => assert.doesNotMatch(`${schema}\n${singleActivePublicationMigration}`, /one_scheduled_per_job_uidx/));
 check(() => assert.match(edge, /p_publication_audit_metadata: input\.publicationAuditMetadata/));
 check(() => assert.match(edge, /list_company_facebook_publication_photo_candidates/));
 check(() => assert.match(service, /revokePublicationPhotoApproval/));
 check(() => assert.match(photoPreparation, /deps\.imageProcessor/));
 check(() => assert.match(photoPreparation, /processor\.sanitize/));
 check(() => assert.match(service, /if \(!beginning\.should_publish\)/));
+check(() => assert.ok(service.indexOf('await deps.repository.beginPublication') < service.indexOf('await deps.provider.publish')));
 check(() => assert.match(service, /markUnknown/));
 check(() => assert.match(service, /META_PUBLICATION_DELIVERY_UNKNOWN/));
 check(() => assert.match(service, /maxBodyBytes/));

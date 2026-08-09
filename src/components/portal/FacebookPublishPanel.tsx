@@ -225,7 +225,7 @@ export function FacebookPublishPanel({ companyId, jobId, jobStatus, message, sel
       } : current);
     } catch (error) {
       const errorCode = publishingErrorCode(error);
-      if (errorCode === 'META_PUBLICATION_DELIVERY_UNKNOWN') {
+      if (errorCode === 'META_PUBLICATION_DELIVERY_UNKNOWN' || errorCode === 'META_PUBLICATION_ACTIVE_CONFLICT') {
         try {
           const refreshed = await loadFacebookPublishingStatus(companyId, jobId);
           setSnapshot(refreshed);

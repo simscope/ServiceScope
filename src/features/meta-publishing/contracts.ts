@@ -71,7 +71,7 @@ export const FACEBOOK_PUBLISH_ERROR_MESSAGES: Record<string, string> = {
   META_PUBLICATION_MEDIA_UNSUPPORTED: 'The selected photo type is not supported for Facebook publishing.',
   META_PUBLICATION_MEDIA_TOO_LARGE: 'The selected photo exceeds the publishing limit.',
   META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED: 'The selected photo needs privacy review before publishing.',
-  META_SCHEDULE_ALREADY_ACTIVE: 'A Facebook publication is already scheduled for this job. Cancel it before scheduling another.',
+  META_PUBLICATION_ACTIVE_CONFLICT: 'Another Facebook publication for this job is already scheduled, publishing, or awaiting delivery confirmation.',
   META_SCHEDULE_CANCELLATION_UNAVAILABLE: 'This scheduled publication can no longer be cancelled.',
 };
 

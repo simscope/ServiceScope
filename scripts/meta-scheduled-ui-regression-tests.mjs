@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import {
   MetaPublishingError,
-  SINGLE_ACTIVE_SCHEDULE_INDEX,
-  mapActiveSchedulePersistenceError,
+  ACTIVE_PUBLICATION_INDEX,
+  mapActivePublicationPersistenceError,
   normalizeScheduledPublicationTime,
   parsePublishingRequest,
   runtimePublishingConfig,
@@ -95,23 +95,27 @@ function contractChecks() {
   check(() => assert.equal(browserContracts.facebookScheduledForUtc('invalid'), null));
   check(() => assert.ok(browserContracts.formatFacebookScheduledTime(scheduledFor, timezone)));
 
-  const exactConflict = mapActiveSchedulePersistenceError({
+  const exactConflict = mapActivePublicationPersistenceError({
     code: '23505',
-    message: `duplicate key value violates unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`,
+    message: `duplicate key value violates unique constraint "${ACTIVE_PUBLICATION_INDEX}"`,
     details: 'private database collision detail',
   });
-  check(() => assert.equal(exactConflict?.code, 'META_SCHEDULE_ALREADY_ACTIVE'));
+  check(() => assert.equal(exactConflict?.code, 'META_PUBLICATION_ACTIVE_CONFLICT'));
   check(() => assert.equal(exactConflict?.status, 409));
-  check(() => assert.equal(exactConflict?.message, 'META_SCHEDULE_ALREADY_ACTIVE'));
+  check(() => assert.equal(exactConflict?.message, 'META_PUBLICATION_ACTIVE_CONFLICT'));
   check(() => assert.doesNotMatch(JSON.stringify({ code: exactConflict?.code }), /constraint|collision|database/i));
-  check(() => assert.equal(mapActiveSchedulePersistenceError({
+  check(() => assert.equal(mapActivePublicationPersistenceError({
     code: '23505',
     message: 'duplicate key value violates unique constraint "company_social_publications_company_intent_unique"',
   }), null));
-  check(() => assert.equal(mapActiveSchedulePersistenceError({
+  check(() => assert.equal(mapActivePublicationPersistenceError({
     code: '22000',
-    message: `unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`,
+    message: `unique constraint "${ACTIVE_PUBLICATION_INDEX}"`,
   }), null));
+  check(() => assert.equal(
+    browserContracts.FACEBOOK_PUBLISH_ERROR_MESSAGES.META_PUBLICATION_ACTIVE_CONFLICT,
+    'Another Facebook publication for this job is already scheduled, publishing, or awaiting delivery confirmation.',
+  ));
 }
 
 function workspaceChecks() {
@@ -191,9 +195,19 @@ async function scheduleServiceChecks() {
   check(() => assert.equal(text.providerCalls, 0));
   await checkAsync(() => assert.rejects(
     invoke(text, { ...scheduleTextRequest('Different concurrent schedule intent.'), idempotencyKey: ids.otherJob }),
-    (error) => error?.code === 'META_SCHEDULE_ALREADY_ACTIVE' && error?.status === 409,
+    (error) => error?.code === 'META_PUBLICATION_ACTIVE_CONFLICT' && error?.status === 409,
   ));
   check(() => assert.equal(text.scheduledRows.length, 1));
+
+  for (const activePublicationStatus of ['publishing', 'delivery_unknown']) {
+    const conflict = await makeDependencies({ activePublicationStatus });
+    await checkAsync(() => assert.rejects(
+      invoke(conflict, scheduleTextRequest(`Schedule blocked by ${activePublicationStatus}.`)),
+      (error) => error?.code === 'META_PUBLICATION_ACTIVE_CONFLICT' && error?.status === 409,
+    ));
+    check(() => assert.equal(conflict.scheduledRows.length, 1));
+    check(() => assert.equal(conflict.providerCalls, 0));
+  }
 
   const differentJob = await makeDependencies({ allowOtherJob: true });
   await invoke(differentJob, scheduleTextRequest('First job schedule.'));
@@ -343,7 +357,9 @@ async function sourceChecks() {
   check(() => assert.doesNotMatch(scheduleBranch, /publishText|publishSinglePhoto|beginPublication|decryptTokenBundle/));
   check(() => assert.match(edge, /schedule_company_facebook_publication/));
   check(() => assert.match(edge, /cancel_scheduled_company_facebook_publication/));
-  check(() => assert.match(edge, /mapActiveSchedulePersistenceError\(error\)/));
+  check(() => assert.match(edge, /mapActivePublicationPersistenceError\(error\)/));
+  check(() => assert.match(edge, /name === 'begin_company_facebook_publication'[\s\S]*mapActivePublicationPersistenceError\(error\)/));
+  check(() => assert.match(edge, /name === 'schedule_company_facebook_publication'[\s\S]*mapActivePublicationPersistenceError\(error\)/));
   check(() => assert.doesNotMatch(edge, /error\.(message|details|hint)[\s\S]{0,120}jsonResponse/));
   check(() => assert.match(edge, /activeScheduledPublication/));
   check(() => assert.match(edge, /\.eq\('company_id', companyId\)[\s\S]*\.eq\('status', 'scheduled'\)/));
@@ -369,6 +385,10 @@ async function sourceChecks() {
   check(() => assert.equal((cancelSource.match(/cancelFacebookScheduledPublication/g) ?? []).length, 1));
   check(() => assert.match(cancelSource, /catch \(error\)[\s\S]*loadFacebookPublishingStatus/));
   check(() => assert.doesNotMatch(cancelSource, /while\s*\(|setTimeout|setInterval/));
+  const submissionSource = panel.slice(panel.indexOf('async function submitPublication'), panel.indexOf('async function cancelScheduledPublication'));
+  check(() => assert.match(submissionSource, /META_PUBLICATION_ACTIVE_CONFLICT/));
+  check(() => assert.equal((submissionSource.match(/loadFacebookPublishingStatus/g) ?? []).length, 1));
+  check(() => assert.doesNotMatch(submissionSource, /while\s*\(|setTimeout|setInterval|retry/i));
 }
 
 async function makeDependencies(options = {}) {
@@ -415,6 +435,25 @@ async function makeDependencies(options = {}) {
   let beginCalls = 0;
   let sanitizerCalls = 0;
   let downloadCalls = 0;
+
+  if (options.activePublicationStatus) {
+    scheduledRows.push({
+      publication_id: ids.otherJob,
+      id: ids.otherJob,
+      company_id: ids.company,
+      job_id: ids.job,
+      connection_id: ids.connection,
+      approved_message: 'Existing active publication.',
+      status: options.activePublicationStatus,
+      scheduled_for: options.activePublicationStatus === 'scheduled' ? scheduledFor : null,
+      scheduled_timezone: options.activePublicationStatus === 'scheduled' ? timezone : null,
+      publication_kind: 'text_only',
+      attachment_id: null,
+      last_error_code: options.activePublicationStatus === 'delivery_unknown' ? 'META_PUBLICATION_DELIVERY_UNKNOWN' : null,
+      approved_at: new Date(nowMs - 60_000).toISOString(),
+      published_at: null,
+    });
+  }
 
   const deps = {
     context,
@@ -475,12 +514,12 @@ async function makeDependencies(options = {}) {
         const activeForJob = scheduledRows.find((row) => (
           row.company_id === input.companyId
           && row.job_id === input.jobId
-          && row.status === 'scheduled'
+          && ['scheduled', 'publishing', 'delivery_unknown'].includes(row.status)
         ));
         if (activeForJob) {
-          throw mapActiveSchedulePersistenceError({
+          throw mapActivePublicationPersistenceError({
             code: '23505',
-            message: `duplicate key value violates unique constraint "${SINGLE_ACTIVE_SCHEDULE_INDEX}"`,
+            message: `duplicate key value violates unique constraint "${ACTIVE_PUBLICATION_INDEX}"`,
           });
         }
         const row = {

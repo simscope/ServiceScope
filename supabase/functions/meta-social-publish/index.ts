@@ -8,7 +8,7 @@ import {
 } from '../_shared/meta-connection/contracts.js';
 import {
   MetaPublishingError,
-  mapActiveSchedulePersistenceError,
+  mapActivePublicationPersistenceError,
   runtimePublishingConfig,
 } from '../_shared/meta-publishing/contracts.js';
 import { createFacebookPublishingProvider } from '../_shared/meta-publishing/provider.js';
@@ -473,6 +473,10 @@ function safeDisplayName(value: unknown) {
 async function oneRpcRow(client: ReturnType<typeof createClient>, name: string, params: Record<string, unknown>) {
   const { data, error } = await client.rpc(name, params);
   const row = Array.isArray(data) ? data[0] : null;
+  if (name === 'begin_company_facebook_publication') {
+    const activePublicationConflict = mapActivePublicationPersistenceError(error);
+    if (activePublicationConflict) throw activePublicationConflict;
+  }
   if (error || !row) throw new MetaPublishingError('INTERNAL_ERROR');
   return row;
 }
@@ -482,8 +486,8 @@ async function scheduledRpcRow(client: ReturnType<typeof createClient>, name: st
   const row = Array.isArray(data) ? data[0] : null;
   if (!error && row) return row;
   if (name === 'schedule_company_facebook_publication') {
-    const activeScheduleConflict = mapActiveSchedulePersistenceError(error);
-    if (activeScheduleConflict) throw activeScheduleConflict;
+    const activePublicationConflict = mapActivePublicationPersistenceError(error);
+    if (activePublicationConflict) throw activePublicationConflict;
   }
   const message = String(error?.message ?? '').toLowerCase();
   if (name === 'cancel_scheduled_company_facebook_publication') {
