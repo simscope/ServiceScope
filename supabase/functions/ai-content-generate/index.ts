@@ -59,10 +59,10 @@ async function handleProviderPreflight(authorization: string) {
       code: result.code,
       latencyMs: 0,
       attempts: 1,
-      httpStatus: result.httpStatus,
-      providerRequestId: result.providerRequestId,
-      providerErrorType: result.providerErrorType,
-      providerErrorCode: result.providerErrorCode,
+      httpStatus: 'httpStatus' in result ? result.httpStatus : undefined,
+      providerRequestId: 'providerRequestId' in result ? result.providerRequestId : undefined,
+      providerErrorType: 'providerErrorType' in result ? result.providerErrorType : undefined,
+      providerErrorCode: 'providerErrorCode' in result ? result.providerErrorCode : undefined,
     });
     return result;
   } finally {
@@ -76,8 +76,8 @@ function makeDependencies() {
   const serviceRoleKey = getServiceRoleKey();
   if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new HttpError('ENGINE_NOT_CONFIGURED', 500);
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
-  const { provider, providerId, model } = createProviderFromEnv((key) => Deno.env.get(key));
-  const preflight = createPreflightFromEnv((key) => Deno.env.get(key));
+  const { provider, providerId, model } = createProviderFromEnv((key: string) => Deno.env.get(key));
+  const preflight = createPreflightFromEnv((key: string) => Deno.env.get(key));
   return {
     auth: createAuthRepository(supabaseUrl, anonKey),
     repository: createContextRepository(adminClient),
@@ -108,7 +108,7 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
   };
 }
 
-function createContextRepository(adminClient: ReturnType<typeof createClient>) {
+function createContextRepository(adminClient: ReturnType<typeof createClient<any>>) {
   return {
     async getJob(jobId: string) {
       const { data } = await adminClient
