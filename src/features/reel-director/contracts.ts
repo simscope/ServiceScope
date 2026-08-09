@@ -1,5 +1,5 @@
 import type { AssistantLocalFacts } from '../ai-assistant/assistantModel';
-import type { MediaPlanningOutputPrivacyStatus, MediaPlanningRole } from '../media-planning/planningState';
+import type { MediaPlanningRole } from '../media-planning/planningState';
 
 export const REEL_REQUEST_SCHEMA_VERSION = 'reel-creative-request-v1';
 export const REEL_PLAN_SCHEMA_VERSION = 'reel-creative-plan-v1';
@@ -33,12 +33,6 @@ export type ReelCreativeRequestV1 = {
 export type ReelMediaPlanItem = {
   attachmentId: string;
   position: number;
-  role: MediaPlanningRole;
-  evidenceFindingId?: string;
-  evidenceCategory?: string;
-  evidenceText: string;
-  confidence: number;
-  privacyStatus: MediaPlanningOutputPrivacyStatus;
 };
 
 export type ReelCreativePlanV1 = {
@@ -94,10 +88,17 @@ export const REEL_ERROR_MESSAGES: Record<string, string> = {
   UNSUPPORTED_STATUS: 'AI Reel is available for Completed and Warranty jobs.',
   INVALID_REQUEST: 'The Reel request needs to be refreshed.',
   REEL_MEDIA_UNAVAILABLE: 'Approved media changed. Review the current media before generating again.',
+  REEL_ANALYSIS_REQUIRED: 'Current media analysis is required before creating this Reel.',
+  REEL_ANALYSIS_STALE: 'Selected media changed and must be analyzed again.',
+  REEL_PRIVACY_REVIEW_REQUIRED: 'Selected photos need privacy review before AI Reel can use them.',
   REEL_PRIVACY_FAILED: 'Private information was detected. The Reel was not created.',
   REEL_GROUNDING_FAILED: 'The proposed story could not be supported by current job evidence.',
   REEL_QUALITY_FAILED: 'The proposed Reel did not meet the creative quality threshold.',
   INVALID_REEL_PROVIDER_OUTPUT: 'The Reel story could not be safely validated.',
+  ENGINE_NOT_CONFIGURED: 'AI Reel generation is temporarily unavailable.',
+  PROVIDER_TIMEOUT: 'AI Reel generation timed out. Try again shortly.',
+  PROVIDER_RATE_LIMITED: 'AI Reel generation is temporarily busy. Try again shortly.',
+  PROVIDER_UNAVAILABLE: 'AI Reel generation is temporarily unavailable.',
   REEL_GENERATION_FAILED: 'Reel generation is temporarily unavailable.',
 };
 

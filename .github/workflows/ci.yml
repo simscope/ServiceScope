@@ -75,7 +75,7 @@ jobs:
         run: npm ci
 
       - name: Meta publishing SQL
-        run: npm run test:meta-publishing-sql
+        run: npm run test:meta-publishing-sql && npm run test:reel-director-sql
 
   meta-image-sanitizer-deno:
     runs-on: ubuntu-latest
@@ -102,6 +102,9 @@ jobs:
 
       - name: Check AI Reel Director Edge entrypoint
         run: deno check supabase/functions/ai-content-generate/index.ts
+
+      - name: Check media analysis Edge entrypoint
+        run: deno check supabase/functions/ai-media-analyze/index.ts
 
       - name: Scheduled worker secret auth
         run: deno test --allow-import --allow-net=deno.land scripts/meta-scheduled-worker-deno-tests.ts

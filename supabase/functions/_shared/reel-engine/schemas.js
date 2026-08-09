@@ -7,7 +7,6 @@ import {
   reelMotionPresets,
   reelMusicModes,
   reelPlanSchemaVersion,
-  reelPrivacyStatuses,
   reelRequestSchemaVersion,
   reelSceneRoles,
   reelTransitions,
@@ -26,12 +25,6 @@ const requestFields = new Set([
 const requestMediaFields = new Set([
   'attachmentId',
   'position',
-  'role',
-  'evidenceFindingId',
-  'evidenceCategory',
-  'evidenceText',
-  'confidence',
-  'privacyStatus',
 ]);
 const rootFields = [
   'schemaVersion',
@@ -86,26 +79,16 @@ export function validateReelRequestBody(value) {
   const mediaPlan = body.mediaPlan.map((item, index) => {
     const row = plainObject(item);
     assertNoUnknownFields(row, requestMediaFields);
-    for (const field of ['attachmentId', 'position', 'role', 'evidenceText', 'confidence', 'privacyStatus']) {
+    for (const field of ['attachmentId', 'position']) {
       if (!Object.prototype.hasOwnProperty.call(row, field)) fail('INVALID_REQUEST');
     }
     const attachmentId = exactId(row.attachmentId, 128);
     if (seen.has(attachmentId)) fail('INVALID_REQUEST');
     seen.add(attachmentId);
     if (!Number.isInteger(row.position) || row.position !== index + 1) fail('INVALID_REQUEST');
-    if (!reelSceneRoles.includes(row.role)) fail('INVALID_REQUEST');
-    if (!reelPrivacyStatuses.includes(row.privacyStatus)) fail('INVALID_REQUEST');
-    const confidence = Number(row.confidence);
-    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) fail('INVALID_REQUEST');
     return {
       attachmentId,
       position: row.position,
-      role: row.role,
-      evidenceFindingId: optionalId(row.evidenceFindingId, 160),
-      evidenceCategory: optionalId(row.evidenceCategory, 80),
-      evidenceText: cleanText(row.evidenceText, 240),
-      confidence,
-      privacyStatus: row.privacyStatus,
     };
   });
   return {
@@ -450,10 +433,6 @@ function cleanText(value, limit) {
 function exactId(value, limit) {
   if (typeof value !== 'string' || value !== value.trim() || !value || value.length > limit || !/^[A-Za-z0-9:_-]+$/.test(value)) fail('INVALID_REQUEST');
   return value;
-}
-
-function optionalId(value, limit) {
-  return value === undefined || value === null || value === '' ? undefined : exactId(value, limit);
 }
 
 function assertExactFields(value, allowed, code = 'INVALID_REQUEST') {

@@ -32,6 +32,7 @@ import {
   validateMediaAnalysisSelection,
   type MediaAnalysisAttachmentResult,
   type MediaAnalysisFinding,
+  type MediaAnalysisResult,
 } from '../../features/media-analysis/contracts';
 import {
   applyMediaAnalysisError,
@@ -64,6 +65,7 @@ import {
 } from '../../features/company-voice/contracts';
 import { generateAiReel } from '../../features/reel-director/clientApi';
 import { reelErrorMessage } from '../../features/reel-director/contracts';
+import { runOneClickReel } from '../../features/reel-director/oneClickReel';
 import {
   applyReelPlan,
   approveCurrentReel,
@@ -197,16 +199,26 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     mediaAnalysisWorkspace.approvals,
   ]);
 
+  const excludedReelAttachmentIds = useMemo(
+    () => Object.entries(mediaAnalysisWorkspace.approvals)
+      .filter(([, approval]) => approval === 'excluded')
+      .map(([attachmentId]) => attachmentId)
+      .sort(),
+    [mediaAnalysisWorkspace.approvals],
+  );
+
   const currentReelInputRevision = useMemo(() => reelInputRevision({
     jobId: selectedJob?.id,
     localFacts,
+    media: assistantContext?.publicSafe.media ?? [],
     planning: mediaPlanningState,
     analysis: mediaAnalysisWorkspace.result,
+    excludedAttachmentIds: excludedReelAttachmentIds,
     companyVoiceRevision: JSON.stringify(companyVoiceSummary),
-  }), [selectedJob?.id, localFacts, mediaPlanningState, mediaAnalysisWorkspace.result, companyVoiceSummary]);
+  }), [selectedJob?.id, localFacts, assistantContext?.publicSafe.media, mediaPlanningState, mediaAnalysisWorkspace.result, excludedReelAttachmentIds, companyVoiceSummary]);
   const currentReelMediaPlan = useMemo(
-    () => reelMediaPlan(mediaPlanningState, mediaAnalysisWorkspace.result),
-    [mediaPlanningState, mediaAnalysisWorkspace.result],
+    () => reelMediaPlan(assistantContext?.publicSafe.media ?? [], mediaPlanningState, excludedReelAttachmentIds),
+    [assistantContext?.publicSafe.media, mediaPlanningState, excludedReelAttachmentIds],
   );
   const reelMediaUrls = useMemo(() => new Map(
     (selectedJob?.attachments ?? []).flatMap((attachment) => {
@@ -216,11 +228,9 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
   ), [selectedJob?.attachments]);
   const reelApproved = isCurrentReelApproved(reelWorkspace, currentReelInputRevision);
   const selectedJobIdRef = useRef(selectedJob?.id);
-  const reelInputRevisionRef = useRef(currentReelInputRevision);
 
   useEffect(() => {
     selectedJobIdRef.current = selectedJob?.id;
-    reelInputRevisionRef.current = currentReelInputRevision;
     setReelWorkspace((current) => reconcileReelApproval(current, currentReelInputRevision));
   }, [selectedJob?.id, currentReelInputRevision]);
 
@@ -342,6 +352,26 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     }
   }
 
+  async function runMediaAnalysis(attachmentIds: string[]): Promise<MediaAnalysisResult> {
+    if (!selectedJob) throw new Error('MEDIA_NOT_FOUND');
+    const requestJobId = selectedJob.id;
+    const requestId = `${requestJobId}:media:${Date.now()}:${crypto.randomUUID()}`;
+    const started = beginMediaAnalysisRequest(mediaAnalysisWorkspace, requestId);
+    if (!started.shouldRequest) throw new Error('MEDIA_PROVIDER_UNAVAILABLE');
+    setMediaAnalysisWorkspace(started.state);
+
+    try {
+      const result = await analyzeSelectedMedia({ jobId: requestJobId, attachmentIds, idempotencyKey: requestId });
+      setMediaAnalysisWorkspace((current) => applyMediaAnalysisResult(current, result, requestId, requestJobId));
+      setFacebookStatusRefreshToken((current) => current + 1);
+      return result;
+    } catch (error) {
+      const normalized = normalizeMediaAnalysisError(error);
+      setMediaAnalysisWorkspace((current) => applyMediaAnalysisError(current, normalized.message, requestId));
+      throw new Error(`${normalized.code}: ${normalized.message}`);
+    }
+  }
+
   async function analyzeMedia() {
     if (!selectedJob || !assistantContext || mediaAnalysisWorkspace.status === 'pending') return;
     const selection = validateMediaAnalysisSelection(assistantContext.publicSafe.media);
@@ -354,30 +384,21 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
       return;
     }
 
-    const requestJobId = selectedJob.id;
-    const requestId = `${requestJobId}:media:${Date.now()}:${crypto.randomUUID()}`;
-    const started = beginMediaAnalysisRequest(mediaAnalysisWorkspace, requestId);
-    if (!started.shouldRequest) return;
-    setMediaAnalysisWorkspace(started.state);
-
     try {
-      const result = await analyzeSelectedMedia({
-        jobId: requestJobId,
-        attachmentIds: selection.attachmentIds,
-        idempotencyKey: requestId,
-      });
-      setMediaAnalysisWorkspace((current) => applyMediaAnalysisResult(current, result, requestId, requestJobId));
-      setFacebookStatusRefreshToken((current) => current + 1);
-    } catch (error) {
-      const normalized = normalizeMediaAnalysisError(error);
-      setMediaAnalysisWorkspace((current) => applyMediaAnalysisError(current, normalized.message, requestId));
+      await runMediaAnalysis(selection.attachmentIds);
+    } catch {
+      // runMediaAnalysis records the safe workspace error.
     }
   }
 
   async function generateReel() {
-    if (!selectedJob || unsupportedStatus || ['analyzing', 'creating_story'].includes(reelWorkspace.status)) return;
+    if (!selectedJob || !assistantContext || unsupportedStatus || ['analyzing', 'creating_story'].includes(reelWorkspace.status)) return;
     const requestJobId = selectedJob.id;
-    const requestRevision = currentReelInputRevision;
+    const mediaPlan = currentReelMediaPlan;
+    if (!mediaPlan.length) {
+      setReelWorkspace((current) => ({ ...current, status: 'failed', error: 'Select at least one supported job photo.', approvedRevision: undefined }));
+      return;
+    }
     setReelWorkspace((current) => ({
       ...current,
       status: 'analyzing',
@@ -385,24 +406,56 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
       approvalInvalidated: Boolean(current.approvedRevision || current.approvalInvalidated),
       approvedRevision: undefined,
     }));
-    const stageTimer = window.setTimeout(() => {
-      setReelWorkspace((current) => current.status === 'analyzing' ? { ...current, status: 'creating_story' } : current);
-    }, 450);
     try {
-      const plan = await generateAiReel({
-        jobId: requestJobId,
-        locale: generationPreferencesByChannel['Short Video'].locale,
-        localFacts,
-        mediaPlan: currentReelMediaPlan,
-        planningRevision: requestRevision,
-        idempotencyKey: `${requestJobId}:reel:${Date.now()}:${crypto.randomUUID()}`,
+      const workflow = await runOneClickReel({
+        mediaPlan,
+        currentAnalysis: mediaAnalysisWorkspace.result,
+        analyze: runMediaAnalysis,
+        privacyReviewCount: (analysis) => unresolvedPrivacyAttachmentCount(
+          analysis,
+          mediaPlan.map((item) => item.attachmentId),
+          mediaAnalysisWorkspace.approvals,
+        ),
+        onStage: (status) => setReelWorkspace((current) => ({ ...current, status })),
+        generate: async (analysisResult) => {
+          const requestRevision = reelInputRevision({
+            jobId: requestJobId,
+            localFacts,
+            media: assistantContext.publicSafe.media,
+            planning: mediaPlanningState,
+            analysis: analysisResult,
+            excludedAttachmentIds: excludedReelAttachmentIds,
+            companyVoiceRevision: JSON.stringify(companyVoiceSummary),
+          });
+          const plan = await generateAiReel({
+            jobId: requestJobId,
+            locale: generationPreferencesByChannel['Short Video'].locale,
+            localFacts,
+            mediaPlan,
+            planningRevision: requestRevision,
+            idempotencyKey: `${requestJobId}:reel:${Date.now()}:${crypto.randomUUID()}`,
+          });
+          return { plan, requestRevision };
+        },
       });
-      if (selectedJobIdRef.current !== requestJobId || reelInputRevisionRef.current !== requestRevision) return;
-      setReelWorkspace((current) => applyReelPlan(current, plan, requestRevision));
+      if (workflow.kind === 'privacy_review_required') {
+        setReelWorkspace((current) => ({
+          ...current,
+          status: 'privacy_review_required',
+          error: `${workflow.count} photo${workflow.count === 1 ? '' : 's'} need privacy review before AI Reel can use them.`,
+          approvedRevision: undefined,
+        }));
+        return;
+      }
+      if (selectedJobIdRef.current !== requestJobId) return;
+      setReelWorkspace((current) => applyReelPlan(current, workflow.value.plan, workflow.value.requestRevision));
     } catch (error) {
-      setReelWorkspace((current) => ({ ...current, status: 'failed', error: reelErrorMessage(error), approvedRevision: undefined }));
-    } finally {
-      window.clearTimeout(stageTimer);
+      const message = reelErrorMessage(error);
+      if (String(error).includes('REEL_PRIVACY_REVIEW_REQUIRED')) {
+        setReelWorkspace((current) => ({ ...current, status: 'privacy_review_required', error: message, approvedRevision: undefined }));
+      } else {
+        setReelWorkspace((current) => ({ ...current, status: 'failed', error: message, approvedRevision: undefined }));
+      }
     }
   }
 
@@ -538,11 +591,11 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
             {mediaAnalysisWorkspace.status === 'pending' ? 'Analyzing...' : `Analyze selected media (${selectedMediaCount})`}
           </button>
           <p className="ai-assistant-media-limits">
-            Up to {MEDIA_ANALYSIS_MAX_PHOTOS} photos per request. JPEG, PNG, and WEBP are supported. Video is accepted for
-            metadata/manual review only. Analysis runs only when you start it.
+            Up to {MEDIA_ANALYSIS_MAX_PHOTOS} photos per request. JPEG, PNG, and WEBP are supported. Generate Reel runs
+            required safe analysis automatically. Video is accepted for metadata/manual review only.
           </p>
           {selectedPhotoCount > MEDIA_ANALYSIS_MAX_PHOTOS ? (
-            <p className="ai-assistant-status-note">Select {MEDIA_ANALYSIS_MAX_PHOTOS} or fewer photos before analysis.</p>
+            <p className="ai-assistant-status-note">Generate Reel chooses up to {MEDIA_ANALYSIS_MAX_PHOTOS} photos deterministically. Reduce the selection only for manual analysis.</p>
           ) : null}
           {mediaAnalysisWorkspace.error ? (
             <p className="ai-assistant-analysis-error">
@@ -642,7 +695,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
               <div className="ai-reel-heading">
                 <div>
                   <span className="ai-reel-kicker"><Film size={16} aria-hidden="true" /> AI Reel</span>
-                  <h2>Turn approved job media into a story</h2>
+                  <h2>Turn safe job media into a story</h2>
                 </div>
                 <span className={`ai-reel-status status-${reelWorkspace.status}`}>{reelStatusLabel(reelWorkspace.status)}</span>
               </div>
@@ -702,6 +755,12 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                 <div className="ai-reel-decision-state">
                   <Film size={24} aria-hidden="true" />
                   <div><h3>Not every job needs a Reel</h3><p>{reelWorkspace.plan.qualityReasons[0]}</p></div>
+                </div>
+              ) : null}
+              {reelWorkspace.status === 'privacy_review_required' ? (
+                <div className="ai-reel-decision-state error">
+                  <Lock size={24} aria-hidden="true" />
+                  <div><h3>Privacy review required</h3><p>{reelWorkspace.error}</p></div>
                 </div>
               ) : null}
               {reelWorkspace.status === 'failed' ? (
@@ -927,6 +986,19 @@ function contentResultToDraftText(result: ContentGenerationResult) {
     result.content.callToAction ? `CTA: ${result.content.callToAction}` : '',
     result.content.hashtags.length ? result.content.hashtags.join(' ') : '',
   ].filter(Boolean).join('\n');
+}
+
+function unresolvedPrivacyAttachmentCount(
+  result: MediaAnalysisResult | undefined,
+  attachmentIds: string[],
+  approvals: Record<string, MediaReviewApprovalState>,
+) {
+  const selected = new Set(attachmentIds);
+  return result?.attachments.filter((attachment) => (
+    selected.has(attachment.id)
+      && approvals[attachment.id] !== 'false_positive'
+      && attachment.findings.some((finding) => isPrivacyFinding(finding.category))
+  )).length ?? 0;
 }
 
 function formatReelAngle(value: string) {

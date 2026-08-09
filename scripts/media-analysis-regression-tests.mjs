@@ -83,7 +83,13 @@ const [mediaClientApi, mediaClientContracts, mediaWorkspaceState] = await Promis
 
 assert.match(edgeIndex, /handleMediaAnalysis/);
 assert.match(edgeIndex, /privacyFindingCategories/);
+assert.match(edgeIndex, /contentFindingCategories/);
 assert.match(edgeIndex, /privacyFindingCategorySet\.has/);
+assert.match(edgeIndex, /contentFindingCategorySet\.has/);
+assert.match(edgeIndex, /contentFindings:\s*contentFindings\.map/);
+for (const field of ['findingId', 'findingCategory', 'evidenceType', 'confidence', 'explanation', 'riskLevel', 'requiresUserApproval']) {
+  assert.match(edgeIndex, new RegExp(`${field}:`));
+}
 assert.doesNotMatch(edgeIndex, /startsWith\('possible_'\)/);
 assert.match(edgeIndex, /createMediaProviderFromEnv/);
 assert.match(edgeIndex, /createSignedUrl\(attachment\.storagePath, signedUrlTtlSeconds\)/);

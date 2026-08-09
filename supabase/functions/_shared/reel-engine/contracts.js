@@ -37,7 +37,7 @@ export const reelMusicModes = Object.freeze(['none', 'future_library']);
 
 export const reelLimits = Object.freeze({
   maxRequestBytes: 28_000,
-  maxMediaItems: 12,
+  maxMediaItems: 4,
   minCreateScenes: 2,
   maxCreateScenes: 7,
   minSceneDurationMs: 1_500,

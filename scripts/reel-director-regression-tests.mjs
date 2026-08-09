@@ -5,7 +5,8 @@ import { createMemoryGuards } from '../supabase/functions/_shared/content-engine
 import { buildAuthorizedContext } from '../supabase/functions/_shared/content-engine/context.js';
 import { assertNoPrivateValues } from '../supabase/functions/_shared/content-engine/privacy.js';
 import { genericCreativePattern } from '../supabase/functions/_shared/reel-engine/contracts.js';
-import { buildReelContext, deterministicReelFallback, generateReel, handleReelGeneration, reelPlanRevision } from '../supabase/functions/_shared/reel-engine/director.js';
+import { buildReelContext, deterministicReelPreGate, generateReel, handleReelGeneration, reelPlanRevision } from '../supabase/functions/_shared/reel-engine/director.js';
+import { reconstructAuthoritativeReelMedia, roleForContentFinding } from '../supabase/functions/_shared/reel-engine/mediaEvidence.js';
 import { buildReelPrompt } from '../supabase/functions/_shared/reel-engine/prompts.js';
 import { buildReelProviderOutputJsonSchema, parseReelProviderResult, validateReelRequestBody } from '../supabase/functions/_shared/reel-engine/schemas.js';
 
@@ -13,6 +14,7 @@ execFileSync(process.execPath, [
   'node_modules/typescript/bin/tsc',
   'src/features/reel-director/reelState.ts',
   'src/features/reel-director/contracts.ts',
+  'src/features/reel-director/oneClickReel.ts',
   'src/features/ai-assistant/assistantModel.ts',
   'src/features/media-planning/planningState.ts',
   'src/features/media-analysis/contracts.ts',
@@ -24,6 +26,7 @@ execFileSync(process.execPath, [
 ], { stdio: 'pipe' });
 
 const state = await import('../.tmp/reel-director-tests/features/reel-director/reelState.js');
+const oneClick = await import('../.tmp/reel-director-tests/features/reel-director/oneClickReel.js');
 const [aiPage, previewSource, previewCss, clientApi, edgeIndex, mediaPlanningSource, normalContentClient] = await Promise.all([
   readFile('src/components/portal/AiAssistantPage.tsx', 'utf8'),
   readFile('src/components/portal/ReelPreview.tsx', 'utf8'),
@@ -50,8 +53,8 @@ const request = {
     finalResult: 'Heating operation was restored.',
   },
   mediaPlan: [
-    media('detail-1', 1, 'detail', 'possible_problem_detail', 'The burned relay is visible in this problem detail.'),
-    media('finish-1', 2, 'finished_result', 'finished_result', 'The restored oven is shown after testing.'),
+    media('detail-1', 1),
+    media('finish-1', 2),
   ],
   planningRevision: 'planning-1',
   idempotencyKey: 'reel-request-1',
@@ -64,8 +67,18 @@ const validatedRequest = validateReelRequestBody(request);
 check(() => assert.equal(validatedRequest.locale, 'en-US'));
 check(() => assert.equal(validatedRequest.mediaPlan.length, 2));
 rejects(() => validateReelRequestBody({ ...request, unknown: true }), /INVALID_REQUEST/);
+rejects(() => validateReelRequestBody({ ...request, mediaPlan: [...request.mediaPlan, media('third', 3), media('fourth', 4), media('fifth', 5)] }), /INVALID_REQUEST/);
 rejects(() => validateReelRequestBody({ ...request, mediaPlan: [{ ...request.mediaPlan[0], secret: 'x' }] }), /INVALID_REQUEST/);
-rejects(() => validateReelRequestBody({ ...request, mediaPlan: [{ ...request.mediaPlan[0], privacyStatus: 'blocked' }] }), /INVALID_REQUEST/);
+for (const [field, value] of Object.entries({
+  role: 'replacement_part',
+  evidenceFindingId: 'forged-finding',
+  evidenceCategory: 'replacement_part',
+  evidenceText: 'The compressor failed and caused the cooling problem.',
+  confidence: 1,
+  privacyStatus: 'passed',
+})) {
+  rejects(() => validateReelRequestBody({ ...request, mediaPlan: [{ ...request.mediaPlan[0], [field]: value }] }), /INVALID_REQUEST/);
+}
 check(() => assert.equal(parseReelProviderResult(validPlan, context).decision, 'create_reel'));
 check(() => assert.equal(parseReelProviderResult(needsMorePlan(), context).decision, 'needs_more_media'));
 check(() => assert.equal(parseReelProviderResult(skipPlan(), context).decision, 'skip'));
@@ -121,30 +134,50 @@ for (const hook of [
   rejects(() => parseReelProviderResult(withHook(validPlan, hook), context), /REEL_QUALITY_FAILED/);
 }
 check(() => assert.equal(parseReelProviderResult(validPlan, context).hook.text, 'WHY THIS OVEN STOPPED HEATING'));
-check(() => assert.equal(deterministicReelFallback({ ...context, safeMedia: [context.safeMedia[0]] }).decision, 'needs_more_media'));
-check(() => assert.equal(deterministicReelFallback({ ...context, evidence: [], safeMedia: [] }).decision, 'skip'));
+check(() => assert.equal(deterministicReelPreGate({ ...context, safeMedia: [context.safeMedia[0]] }).decision, 'needs_more_media'));
+check(() => assert.equal(deterministicReelPreGate({ ...context, evidence: [], safeMedia: [] }).decision, 'skip'));
+check(() => assert.equal(deterministicReelPreGate(context), null));
+check(() => assert.equal(roleForContentFinding('equipment_overview'), 'overview'));
+check(() => assert.equal(roleForContentFinding('possible_problem_detail'), 'detail'));
+check(() => assert.equal(roleForContentFinding('repair_process'), 'repair_process'));
+check(() => assert.equal(roleForContentFinding('replacement_part'), 'replacement_part'));
+check(() => assert.equal(roleForContentFinding('finished_result'), 'finished_result'));
+check(() => assert.equal(roleForContentFinding('unclear'), 'supporting_image'));
 
 // Media selection/order and client approval state.
 const planning = {
-  eligibleMedia: [
-    { attachmentId: 'finish-1', evidenceFindingId: 'finish-finding', explanation: 'Finished result', confidence: .9 },
-    { attachmentId: 'detail-1', evidenceFindingId: 'detail-finding', explanation: 'Problem detail', confidence: .95 },
-  ],
-  shortVideoScenes: [
-    { attachmentId: 'finish-1', position: 1, sceneRole: 'finished_result', privacyStatus: 'passed' },
-    { attachmentId: 'detail-1', position: 2, sceneRole: 'detail', privacyStatus: 'reviewed' },
-  ],
+  eligibleMedia: [], shortVideoScenes: [], orderedAttachmentIds: [], manualOrder: false,
   revision: 2,
   resultRevision: 'analysis-1',
 };
-const analysis = { analysisVersion: 'v1', safety: { ok: true }, attachments: [
-  { id: 'finish-1', findings: [{ findingId: 'finish-finding', category: 'finished_result', explanation: 'Finished result', confidence: .9 }] },
-  { id: 'detail-1', findings: [{ findingId: 'detail-finding', category: 'possible_problem_detail', explanation: 'Problem detail', confidence: .95 }] },
+const browserMedia = [
+  browserPhoto('finish-1', 0, 'Result'),
+  browserPhoto('detail-1', 1, 'Problem'),
+];
+const analysis = { analysisVersion: 'v1', jobId: 'job-1', safety: { ok: true }, attachments: [
+  analyzedAttachment('finish-1'),
+  analyzedAttachment('detail-1'),
 ] };
-const ordered = state.reelMediaPlan(planning, analysis);
+const ordered = state.reelMediaPlan(browserMedia, planning);
 check(() => assert.deepEqual(ordered.map((item) => item.attachmentId), ['finish-1', 'detail-1']));
-check(() => assert.equal(ordered[1].privacyStatus, 'reviewed'));
-const inputRevision = state.reelInputRevision({ jobId: 'job-1', localFacts: request.localFacts, planning, analysis, companyVoiceRevision: 'voice-1' });
+check(() => assert.deepEqual(Object.keys(ordered[0]).sort(), ['attachmentId', 'position']));
+const fivePhotos = [
+  browserPhoto('unlabeled', 0),
+  browserPhoto('result', 1, 'Result'),
+  browserPhoto('part', 2, 'Part'),
+  browserPhoto('problem', 3, 'Problem'),
+  browserPhoto('overview', 4, 'Overview'),
+];
+check(() => assert.deepEqual(
+  state.reelMediaPlan(fivePhotos, planning).map((item) => item.attachmentId),
+  ['overview', 'problem', 'part', 'result'],
+));
+check(() => assert.deepEqual(
+  state.reelMediaPlan(browserMedia, planning, ['detail-1']).map((item) => item.attachmentId),
+  ['finish-1'],
+));
+check(() => assert.equal(state.hasCurrentReelAnalysis(analysis, ordered), true));
+const inputRevision = state.reelInputRevision({ jobId: 'job-1', localFacts: request.localFacts, media: browserMedia, planning, analysis, companyVoiceRevision: 'voice-1' });
 const readyState = state.applyReelPlan(state.createReelWorkspaceState('job-1'), { ...validPlan, revision: 'plan-r1' }, inputRevision);
 const approved = state.approveCurrentReel(readyState, inputRevision);
 check(() => assert.equal(state.isCurrentReelApproved(approved, inputRevision), true));
@@ -187,6 +220,85 @@ check(() => assert.match(edgeIndex, /handleContentGeneration/));
 check(() => assert.match(normalContentClient, /ContentGenerationResult/));
 check(() => assert.match(mediaPlanningSource, /Carousel Plan/));
 
+// One-click analyze -> generate orchestration is bounded and does not need a second user action.
+let analysisCalls = 0;
+let generationCalls = 0;
+const noAnalysisFlow = await oneClick.runOneClickReel({
+  mediaPlan: request.mediaPlan,
+  currentAnalysis: undefined,
+  async analyze() { analysisCalls += 1; return analysis; },
+  async generate() { generationCalls += 1; return validPlan; },
+  privacyReviewCount: () => 0,
+});
+check(() => assert.equal(noAnalysisFlow.kind, 'generated'));
+check(() => assert.equal(analysisCalls, 1));
+check(() => assert.equal(generationCalls, 1));
+
+analysisCalls = 0;
+generationCalls = 0;
+await oneClick.runOneClickReel({
+  mediaPlan: request.mediaPlan,
+  currentAnalysis: analysis,
+  async analyze() { analysisCalls += 1; return analysis; },
+  async generate() { generationCalls += 1; return validPlan; },
+  privacyReviewCount: () => 0,
+});
+check(() => assert.equal(analysisCalls, 0));
+check(() => assert.equal(generationCalls, 1));
+
+analysisCalls = 0;
+generationCalls = 0;
+await oneClick.runOneClickReel({
+  mediaPlan: request.mediaPlan,
+  currentAnalysis: analysis,
+  async analyze() { analysisCalls += 1; return analysis; },
+  async generate() {
+    generationCalls += 1;
+    if (generationCalls === 1) throw new Error('REEL_ANALYSIS_STALE');
+    return validPlan;
+  },
+  privacyReviewCount: () => 0,
+});
+check(() => assert.equal(analysisCalls, 1));
+check(() => assert.equal(generationCalls, 2));
+
+analysisCalls = 0;
+generationCalls = 0;
+const privacyFlow = await oneClick.runOneClickReel({
+  mediaPlan: request.mediaPlan,
+  currentAnalysis: undefined,
+  async analyze() { analysisCalls += 1; return analysis; },
+  async generate() { generationCalls += 1; return validPlan; },
+  privacyReviewCount: () => 2,
+});
+check(() => assert.equal(privacyFlow.kind, 'privacy_review_required'));
+check(() => assert.equal(analysisCalls, 1));
+check(() => assert.equal(generationCalls, 0));
+
+analysisCalls = 0;
+generationCalls = 0;
+await assert.rejects(() => oneClick.runOneClickReel({
+  mediaPlan: request.mediaPlan,
+  currentAnalysis: undefined,
+  async analyze() { analysisCalls += 1; throw new Error('MEDIA_PROVIDER_UNAVAILABLE'); },
+  async generate() { generationCalls += 1; return validPlan; },
+  privacyReviewCount: () => 0,
+}), /MEDIA_PROVIDER_UNAVAILABLE/);
+check(() => assert.equal(analysisCalls, 1));
+check(() => assert.equal(generationCalls, 0));
+
+analysisCalls = 0;
+generationCalls = 0;
+await assert.rejects(() => oneClick.runOneClickReel({
+  mediaPlan: request.mediaPlan,
+  currentAnalysis: analysis,
+  async analyze() { analysisCalls += 1; return analysis; },
+  async generate() { generationCalls += 1; throw new Error('PROVIDER_TIMEOUT'); },
+  privacyReviewCount: () => 0,
+}), /PROVIDER_TIMEOUT/);
+check(() => assert.equal(analysisCalls, 0));
+check(() => assert.equal(generationCalls, 1));
+
 // Server boundary: authorized current media succeeds; unsafe or unauthenticated requests never reach provider.
 let providerCalls = 0;
 const handlerDependencies = makeDependencies({
@@ -206,6 +318,13 @@ check(() => assert.equal(parseReelProviderResult(validPlan, handlerReelContext).
 check(() => assert.doesNotThrow(() => assertNoPrivateValues(handlerReelContext.evidence, handlerReelContext.privateValues)));
 const handlerPrompt = buildReelPrompt(validatedRequest, handlerReelContext);
 const handlerPromptText = JSON.stringify(handlerPrompt);
+check(() => assert.match(handlerPromptText, /The burned relay is visible in this problem detail/));
+check(() => assert.doesNotMatch(handlerPromptText, /compressor failed/i));
+check(() => assert.equal(handlerReelContext.safeMedia[0].role, 'detail'));
+check(() => assert.equal(handlerReelContext.safeMedia[0].evidenceFindingId, 'detail-finding'));
+check(() => assert.equal(handlerReelContext.safeMedia[0].confidence, .94));
+check(() => assert.equal(handlerReelContext.safeMedia[0].privacyStatus, 'passed'));
+check(() => assert.equal(handlerReelContext.evidence.find((item) => item.id === 'media:detail-1:detail-finding')?.source, 'Authoritative persisted media analysis'));
 check(() => assert.deepEqual(
   handlerReelContext.privateValues.filter((value) => handlerPromptText.toLowerCase().includes(String(value).toLowerCase())),
   [],
@@ -214,11 +333,11 @@ const lowInformationRequest = validateReelRequestBody({
   ...request,
   mediaPlan: [
     ...request.mediaPlan,
-    media('low-1', 3, 'supporting_image', 'low_information', 'A low-information general image.'),
+    media('low-1', 3),
   ],
 });
 const lowInformationContext = await buildReelContext(lowInformationRequest, handlerBaseContext, {
-  async listReelMediaCandidates() { return lowInformationRequest.mediaPlan.map((item) => ({ attachment_id: item.attachmentId })); },
+  async listReelMediaCandidates() { return authoritativeRows(lowInformationRequest.mediaPlan); },
 });
 check(() => assert.deepEqual(lowInformationContext.safeMedia.map((item) => item.attachmentId), ['detail-1', 'finish-1']));
 const generated = await handleReelGeneration(handlerDependencies);
@@ -229,26 +348,67 @@ check(() => assert.match(generated.revision, /^reel-v1-/));
 providerCalls = 0;
 await assert.rejects(() => handleReelGeneration(makeDependencies({ authorization: '', provider: { id: 'mock-reel', async generate() { providerCalls += 1; } } })), /AUTH_REQUIRED/);
 check(() => assert.equal(providerCalls, 0));
+
+for (const reelRows of [
+  authoritativeRows(request.mediaPlan, { checksumMatches: false }),
+  authoritativeRows(request.mediaPlan, { excluded: true }),
+  [],
+]) {
+  providerCalls = 0;
+  await assert.rejects(() => handleReelGeneration(makeDependencies({
+    reelRows,
+    provider: { id: 'mock-reel', async generate() { providerCalls += 1; return { provider: 'mock-reel', model: 'test', rawJson: validPlan }; } },
+  })), /REEL_ANALYSIS_STALE|REEL_MEDIA_UNAVAILABLE|REEL_ANALYSIS_REQUIRED/);
+  check(() => assert.equal(providerCalls, 0));
+}
 await assert.rejects(() => handleReelGeneration(makeDependencies({
-  payload: { ...request, mediaPlan: [...request.mediaPlan, media('blocked-1', 3, 'detail', 'possible_face', 'A face is visible.', 'reviewed')] },
+  reelRows: authoritativeRows(request.mediaPlan, { privacyReviewStatus: 'blocked', unresolvedPrivacyCount: 1 }),
   provider: { id: 'mock-reel', async generate() { providerCalls += 1; } },
-})), /REEL_MEDIA_UNAVAILABLE/);
+})), /REEL_PRIVACY_REVIEW_REQUIRED/);
 check(() => assert.equal(providerCalls, 0));
 
-const fallbackResult = await generateReel({
+for (const code of ['PROVIDER_TIMEOUT', 'PROVIDER_RATE_LIMITED', 'PROVIDER_UNAVAILABLE']) {
+  await assert.rejects(() => generateReel({
+    request: validatedRequest,
+    context,
+    provider: { id: 'mock-reel', async generate() { throw new Error(code); } },
+    config: { model: 'test', timeoutMs: 5, maxAttempts: 1, maxOutputBytes: 5000 },
+    telemetry: { record() {} },
+  }), new RegExp(code));
+}
+await assert.rejects(() => generateReel({
   request: validatedRequest,
   context,
-  provider: { id: 'mock-reel', async generate() { return { provider: 'mock-reel', model: 'test', rawJson: { invalid: true } }; } },
-  config: { model: 'test', timeoutMs: 1000, maxAttempts: 1, maxOutputBytes: 5000 },
+  provider: {
+    id: 'mock-reel',
+    async generate(_request, { signal }) {
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('network aborted')), { once: true }));
+    },
+  },
+  config: { model: 'test', timeoutMs: 1, maxAttempts: 1, maxOutputBytes: 5000 },
   telemetry: { record() {} },
-});
-check(() => assert.notEqual(fallbackResult.decision, 'create_reel'));
-check(() => assert.equal(fallbackResult.safety.ok, false));
+}), /PROVIDER_TIMEOUT/);
+await assert.rejects(() => generateReel({
+  request: validatedRequest,
+  context,
+  provider: null,
+  config: { model: 'test', timeoutMs: 5, maxAttempts: 1, maxOutputBytes: 5000 },
+  telemetry: { record() {} },
+}), /ENGINE_NOT_CONFIGURED/);
+for (const rawJson of [{ invalid: true }, { ...validPlan, hook: { ...validPlan.hook, text: 'A COMPRESSOR CAUSED THIS' } }]) {
+  await assert.rejects(() => generateReel({
+    request: validatedRequest,
+    context,
+    provider: { id: 'mock-reel', async generate() { return { provider: 'mock-reel', model: 'test', rawJson }; } },
+    config: { model: 'test', timeoutMs: 1000, maxAttempts: 1, maxOutputBytes: 5000 },
+    telemetry: { record() {} },
+  }), /INVALID_REEL_PROVIDER_OUTPUT|REEL_GROUNDING_FAILED/);
+}
 
 console.log(`AI Reel Director regression tests passed (${checks}/${checks}).`);
 
-function media(attachmentId, position, role, evidenceCategory, evidenceText, privacyStatus = 'passed') {
-  return { attachmentId, position, role, evidenceFindingId: `${role}-finding`, evidenceCategory, evidenceText, confidence: .94, privacyStatus };
+function media(attachmentId, position) {
+  return { attachmentId, position };
 }
 
 function makeContext() {
@@ -269,8 +429,8 @@ function makeContext() {
       { id: 'company-public-display-name', text: 'Northstar Service', source: 'Company voice settings' },
     ],
     safeMedia: [
-      { ...request.mediaPlan[0], evidenceId: 'media:detail-1:detail-finding' },
-      { ...request.mediaPlan[1], evidenceId: 'media:finish-1:finished_result-finding' },
+      authoritativeMedia('detail-1', 1, 'detail', 'possible_problem_detail', 'detail-finding', 'The burned relay is visible in this problem detail.'),
+      authoritativeMedia('finish-1', 2, 'finished_result', 'finished_result', 'finished_result-finding', 'The restored oven is shown after testing.'),
     ],
   };
 }
@@ -336,11 +496,82 @@ function makeDependencies(overrides = {}) {
       async listMaterials() { return []; },
       async listAttachments() { return payload.mediaPlan.map((item) => ({ id: item.attachmentId, company_id: 'company-1', job_id: 'job-1', kind: 'photo', mime_type: 'image/jpeg' })); },
       async listInvoices() { return []; }, async listComments() { return []; },
-      async listReelMediaCandidates() { return request.mediaPlan.map((item) => ({ attachment_id: item.attachmentId })); },
+      async listReelMediaCandidates() { return overrides.reelRows ?? authoritativeRows(payload.mediaPlan); },
     },
     provider: overrides.provider,
     guards: createMemoryGuards(),
     config: { model: 'test', timeoutMs: 1000, maxAttempts: 1, maxOutputBytes: 10000 },
     telemetry: { record() {} },
   };
+}
+
+function browserPhoto(id, order, label) {
+  return { id, name: `${id}.jpg`, mimeType: 'image/jpeg', kind: 'photo', uploadedAt: '2026-08-09T00:00:00Z', selected: true, order, label };
+}
+
+function analyzedAttachment(id) {
+  return {
+    id,
+    analysisRunId: `run-${id}`,
+    attachmentResultId: `result-${id}`,
+    kind: 'photo',
+    mimeType: 'image/jpeg',
+    sizeBytes: 100,
+    status: 'analyzed',
+    visualAnalysisPerformed: true,
+    manualReviewRequired: false,
+    findings: [],
+  };
+}
+
+function authoritativeMedia(attachmentId, position, role, category, findingId, evidenceText) {
+  return {
+    attachmentId,
+    position,
+    role,
+    evidenceFindingId: findingId,
+    evidenceCategory: category,
+    evidenceText,
+    confidence: .94,
+    privacyStatus: 'passed',
+    evidenceId: `media:${attachmentId}:${findingId}`,
+    analysisRunId: `run-${attachmentId}`,
+    attachmentResultId: `result-${attachmentId}`,
+    attachmentSha256: `\\x${'a'.repeat(64)}`,
+    meaningful: !['low_information', 'duplicate_candidate', 'unclear'].includes(category),
+  };
+}
+
+function authoritativeRows(mediaPlan, overrides = {}) {
+  return mediaPlan.map((item) => {
+    const isFinish = item.attachmentId.includes('finish');
+    const isLow = item.attachmentId.includes('low');
+    const category = isFinish ? 'finished_result' : isLow ? 'low_information' : 'possible_problem_detail';
+    const findingId = isFinish ? 'finished_result-finding' : isLow ? 'low-finding' : 'detail-finding';
+    const explanation = isFinish
+      ? 'The restored oven is shown after testing.'
+      : isLow
+        ? 'A low-information general image.'
+        : 'The burned relay is visible in this problem detail.';
+    return {
+      requested_position: item.position,
+      attachment_id: item.attachmentId,
+      attachment_result_id: `result-${item.attachmentId}`,
+      analysis_run_id: `run-${item.attachmentId}`,
+      attachment_sha256: `\\x${'a'.repeat(64)}`,
+      detected_mime_type: 'image/jpeg',
+      analysis_status: 'analyzed',
+      privacy_review_status: overrides.privacyReviewStatus ?? 'passed',
+      excluded: overrides.excluded ?? false,
+      finding_id: findingId,
+      finding_category: category,
+      evidence_type: 'visual_suggestion',
+      confidence: .94,
+      explanation,
+      risk_level: 'low',
+      requires_user_approval: true,
+      unresolved_privacy_count: overrides.unresolvedPrivacyCount ?? 0,
+      current_checksum_matches: overrides.checksumMatches ?? true,
+    };
+  });
 }
