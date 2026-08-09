@@ -2,6 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleContentGeneration, HttpError } from '../_shared/content-engine/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createPreflightFromEnv, createProviderFromEnv } from '../_shared/content-engine/providers/openai.js';
+import { handleReelGeneration, ReelHttpError } from '../_shared/reel-engine/director.js';
+import { attachmentSha256 } from '../_shared/media-analysis/checksum.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,15 +22,19 @@ Deno.serve(async (request) => {
       return jsonResponse(await handleProviderPreflight(request.headers.get('Authorization') ?? ''));
     }
     const dependencies = makeDependencies();
-    const result = await handleContentGeneration({
+    const handler = parsedBody?.schemaVersion === 'reel-creative-request-v1'
+      ? handleReelGeneration
+      : handleContentGeneration;
+    const result = await handler({
       rawBody,
       authorization: request.headers.get('Authorization') ?? '',
       ...dependencies,
     });
     return jsonResponse(result);
   } catch (error) {
-    const code = error instanceof HttpError ? error.code : error instanceof Error ? error.message : 'INVALID_REQUEST';
-    const status = error instanceof HttpError ? error.status : statusForCode(code);
+    const knownError = error instanceof HttpError || error instanceof ReelHttpError;
+    const code = knownError ? error.code : error instanceof Error ? error.message : 'INVALID_REQUEST';
+    const status = knownError ? error.status : statusForCode(code);
     return jsonResponse({ error: 'Content generation request was rejected.', code }, status);
   }
 });
@@ -54,10 +60,10 @@ async function handleProviderPreflight(authorization: string) {
       code: result.code,
       latencyMs: 0,
       attempts: 1,
-      httpStatus: result.httpStatus,
-      providerRequestId: result.providerRequestId,
-      providerErrorType: result.providerErrorType,
-      providerErrorCode: result.providerErrorCode,
+      httpStatus: 'httpStatus' in result ? result.httpStatus : undefined,
+      providerRequestId: 'providerRequestId' in result ? result.providerRequestId : undefined,
+      providerErrorType: 'providerErrorType' in result ? result.providerErrorType : undefined,
+      providerErrorCode: 'providerErrorCode' in result ? result.providerErrorCode : undefined,
     });
     return result;
   } finally {
@@ -71,8 +77,8 @@ function makeDependencies() {
   const serviceRoleKey = getServiceRoleKey();
   if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new HttpError('ENGINE_NOT_CONFIGURED', 500);
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
-  const { provider, providerId, model } = createProviderFromEnv((key) => Deno.env.get(key));
-  const preflight = createPreflightFromEnv((key) => Deno.env.get(key));
+  const { provider, providerId, model } = createProviderFromEnv((key: string) => Deno.env.get(key));
+  const preflight = createPreflightFromEnv((key: string) => Deno.env.get(key));
   return {
     auth: createAuthRepository(supabaseUrl, anonKey),
     repository: createContextRepository(adminClient),
@@ -103,7 +109,7 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
   };
 }
 
-function createContextRepository(adminClient: ReturnType<typeof createClient>) {
+function createContextRepository(adminClient: ReturnType<typeof createClient<any>>) {
   return {
     async getJob(jobId: string) {
       const { data } = await adminClient
@@ -203,6 +209,31 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         .eq('job_id', jobId)
         .limit(200);
       return data ?? [];
+    },
+    async listReelMediaCandidates(companyId: string, jobId: string, attachmentIds: string[]) {
+      const { data, error } = await adminClient.rpc('list_company_reel_media_analysis_candidates', {
+        p_company_id: companyId,
+        p_job_id: jobId,
+        p_attachment_ids: attachmentIds,
+      });
+      if (error) throw new ReelHttpError('REEL_MEDIA_UNAVAILABLE', 409);
+      const rows = Array.isArray(data) ? data as Array<Record<string, unknown>> : [];
+      const currentHashByAttachment = new Map<string, string | null>();
+      for (const row of rows) {
+        const attachmentId = String(row.attachment_id ?? '');
+        if (!attachmentId || currentHashByAttachment.has(attachmentId)) continue;
+        currentHashByAttachment.set(attachmentId, await attachmentSha256(adminClient, row));
+      }
+      return rows.map((row) => {
+        const currentHash = currentHashByAttachment.get(String(row.attachment_id ?? ''));
+        const persistedHash = String(row.attachment_sha256 ?? '').toLowerCase();
+        return {
+          ...row,
+          storage_bucket: undefined,
+          storage_path: undefined,
+          current_checksum_matches: Boolean(currentHash && persistedHash && currentHash.toLowerCase() === persistedHash),
+        };
+      });
     },
   };
 }

@@ -19,8 +19,8 @@ export function createOpenAiProvider({ apiKey, model, fetchImpl = fetch }) {
           body: JSON.stringify({
             model,
             input: request.prompt,
-            text: { format: buildProviderOutputResponseFormat() },
-            max_output_tokens: 1200,
+            text: { format: request.responseFormat ?? buildProviderOutputResponseFormat() },
+            max_output_tokens: Math.min(3000, Math.max(300, Number(request.maxOutputTokens) || 1200)),
           }),
         });
       } catch (error) {

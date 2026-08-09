@@ -2,7 +2,8 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { handleMediaAnalysis, HttpError, statusForCode } from '../_shared/media-analysis/applicationService.js';
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createMediaProviderFromEnv } from '../_shared/media-analysis/providers/openai.js';
-import { privacyFindingCategories, signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
+import { contentFindingCategories, privacyFindingCategories, signedUrlTtlSeconds } from '../_shared/media-analysis/contracts.js';
+import { attachmentSha256 } from '../_shared/media-analysis/checksum.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +12,7 @@ const corsHeaders = {
 };
 const guards = createMemoryGuards();
 const privacyFindingCategorySet = new Set(privacyFindingCategories);
+const contentFindingCategorySet = new Set(contentFindingCategories);
 
 Deno.serve(async (request) => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
@@ -72,7 +74,7 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
   };
 }
 
-function createContextRepository(adminClient: ReturnType<typeof createClient>) {
+function createContextRepository(adminClient: ReturnType<typeof createClient<any>>) {
   return {
     async getJob(jobId: string) {
       const { data } = await adminClient
@@ -165,6 +167,7 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
       const request = input.request as Record<string, unknown>;
       const context = input.context as Record<string, unknown>;
       const result = input.result as Record<string, unknown>;
+      const safety = result.safety as Record<string, unknown> | undefined;
       const runId = crypto.randomUUID();
       const companyId = String(context.companyId ?? '');
       const jobId = String(context.jobId ?? request.jobId ?? '');
@@ -176,12 +179,23 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         if (!attachment || item.kind !== 'photo') continue;
         const checksum = await attachmentSha256(adminClient, attachment);
         if (!checksum) throw new HttpError('MEDIA_PROVIDER_UNAVAILABLE', 503);
-        const privacyFindings = (item.findings as Array<Record<string, unknown>> ?? []).filter((finding) => privacyFindingCategorySet.has(String(finding.category ?? '')));
+        const findings = item.findings as Array<Record<string, unknown>> ?? [];
+        const privacyFindings = findings.filter((finding) => privacyFindingCategorySet.has(String(finding.category ?? '')));
+        const contentFindings = findings.filter((finding) => contentFindingCategorySet.has(String(finding.category ?? '')));
         persistenceAttachments.push({
           attachmentId: String(item.id),
           attachmentSha256: checksum,
           detectedMimeType: String(item.mimeType ?? attachment.mimeType ?? '').toLowerCase(),
           analysisStatus: ['analyzed', 'metadata_only', 'manual_review'].includes(String(item.status)) ? item.status : 'manual_review',
+          contentFindings: contentFindings.map((finding) => ({
+            findingId: safeBoundedText(finding.findingId, crypto.randomUUID()),
+            findingCategory: String(finding.category),
+            evidenceType: String(finding.evidenceType),
+            confidence: Number(finding.confidence),
+            explanation: String(finding.explanation).trim(),
+            riskLevel: String(finding.riskLevel),
+            requiresUserApproval: finding.requiresUserApproval === true,
+          })),
           privacyFindings: privacyFindings.map((finding) => ({
             findingId: safeBoundedText(finding.findingId, crypto.randomUUID()),
             findingCategory: safeFindingCategory(finding.category),
@@ -194,7 +208,7 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
         p_company_id: companyId,
         p_job_id: jobId,
         p_correlation_id: String(request.idempotencyKey ?? runId),
-        p_status: result?.safety?.ok === false ? 'failed' : 'completed',
+        p_status: safety?.ok === false ? 'failed' : 'completed',
         p_provider: safeBoundedText(result.provider, 'unknown'),
         p_model: typeof result.model === 'string' ? safeBoundedText(result.model, 'unknown') : null,
         p_analysis_version: 'media-analysis-v1',
@@ -230,16 +244,6 @@ function createContextRepository(adminClient: ReturnType<typeof createClient>) {
       }
     },
   };
-}
-
-async function attachmentSha256(adminClient: ReturnType<typeof createClient>, attachment: Record<string, unknown>) {
-  const bucket = String(attachment.storageBucket ?? attachment.storage_bucket ?? '');
-  const path = String(attachment.storagePath ?? attachment.storage_path ?? '');
-  if (!bucket || !path) return null;
-  const { data, error } = await adminClient.storage.from(bucket).download(path);
-  if (error || !data || data.size > 12_000_000) return null;
-  const digest = await crypto.subtle.digest('SHA-256', await data.arrayBuffer());
-  return `\\x${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
 function safeBoundedText(value: unknown, fallback: string) {
