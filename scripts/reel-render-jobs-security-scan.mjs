@@ -72,8 +72,8 @@ check(() => assert.doesNotMatch(`${worker}\n${repository}\n${producer}`, /stderr
 check(() => assert.doesNotMatch(`${worker}\n${repository}\n${producer}\n${migration}`, /meta_social|facebook|graph\.facebook|\/feed|\/photos/i));
 check(() => assert.doesNotMatch(packageJson, /ffmpeg-static|ffprobe-static/));
 check(() => assert.match(packageJson, /"@vercel\/queue": "\^0\.4\.0"/));
-check(() => assert.match(vercel, /"topic": "servicescope-reel-render-v1"/));
-check(() => assert.match(vercel, /"source": "\/auth\/meta\/callback"/));
+check(() => assert.match(vercel, /"topic"\s*:\s*"servicescope-reel-render-v1"/));
+check(() => assert.match(vercel, /"source"\s*:\s*"\/auth\/meta\/callback"/));
 
 const begin = migration.match(/create or replace function public\.begin_company_reel_render_request[\s\S]*?\$\$;/)?.[0] ?? '';
 check(() => assert.doesNotMatch(begin, /p_company_id|p_job_id|p_plan_json|p_render_fingerprint|p_output/));
