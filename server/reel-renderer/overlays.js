@@ -58,7 +58,9 @@ export function escapeXml(value) {
 }
 
 function wrapText(value, maxCharacters, maxLines) {
-  const words = String(value).trim().split(/\s+/).filter(Boolean);
+  const text = String(value).trim();
+  if (/(?:https?:|xlink:href|url\s*\()/i.test(text)) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
+  const words = text.split(/\s+/).filter(Boolean);
   const lines = [];
   for (const word of words) {
     if (word.length > maxCharacters) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
@@ -79,7 +81,7 @@ function svgDocument(body) {
 }
 
 async function rasterize(svg, outputPath) {
-  if (/(?:<script|<foreignObject|https?:|xlink:href|url\s*\()/i.test(svg)) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
+  if (/(?:<script|<foreignObject|xlink:href|url\s*\()/i.test(svg)) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
   await sharp(Buffer.from(svg), { density: 144 })
     .png()
     .toFile(outputPath)

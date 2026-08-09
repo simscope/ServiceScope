@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSafeZonePixels } from '../src/features/reel-director/presentationSpec.js';
 import { buildFfmpegArgs, buildReelRenderManifest, escapeXml, renderReel } from '../server/reel-renderer/index.js';
+import { renderSceneOverlay } from '../server/reel-renderer/overlays.js';
 import { runBinary } from '../server/reel-renderer/process.js';
 
 let checks = 0;
@@ -91,6 +92,11 @@ check(() => assert.match(ffmpeg.filterGraph, /xfade=transition=fadeblack:duratio
 check(() => assert.match(ffmpeg.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.035\+/));
 check(() => assert.doesNotMatch(ffmpeg.filterGraph, /See this|Northstar|drawtext|photo-[abc]|Overview|Detail|Process|Part|Result|Context/));
 check(() => assert.equal(escapeXml(`A&B <tag> "quote" 'single'`), 'A&amp;B &lt;tag&gt; &quot;quote&quot; &apos;single&apos;'));
+check(() => assert.doesNotMatch(escapeXml('<script>alert(1)</script>'), /<script>/i));
+await checkAsync(() => assert.rejects(
+  renderSceneOverlay({ overlayText: 'Approved text', secondaryText: 'https://example.com/private' }, join(tmpdir(), 'servicescope-reel-url-rejected.png')),
+  /REEL_RENDER_INVALID_PLAN/,
+));
 await checkAsync(() => assert.rejects(runBinary(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeoutMs: 30 }), /REEL_RENDER_TIMEOUT/));
 
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-'));
