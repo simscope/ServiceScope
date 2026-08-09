@@ -498,8 +498,11 @@ check(() => assert.equal(generationCalls, 1));
 
 // Server boundary: authorized current media succeeds; unsafe or unauthenticated requests never reach provider.
 let providerCalls = 0;
+let persistedPlan;
+let persistenceCalls = 0;
 const handlerDependencies = makeDependencies({
   provider: { id: 'mock-reel', async generate() { providerCalls += 1; return { provider: 'mock-reel', model: 'test', rawJson: validPlan }; } },
+  async persistReelCreativePlan(input) { persistenceCalls += 1; persistedPlan = input; return '00000000-0000-4000-8000-00000000d101'; },
 });
 const handlerSession = await handlerDependencies.auth.resolveSession(handlerDependencies.authorization);
 const handlerBaseContext = await buildAuthorizedContext({
@@ -543,6 +546,24 @@ const generated = await handleReelGeneration(handlerDependencies);
 check(() => assert.equal(generated.decision, 'create_reel', JSON.stringify({ safety: generated.safety, providerCalls })));
 check(() => assert.equal(providerCalls, 1));
 check(() => assert.match(generated.revision, /^reel-v1-/));
+check(() => assert.equal(generated.creativePlanId, '00000000-0000-4000-8000-00000000d101'));
+check(() => assert.equal(persistenceCalls, 1));
+check(() => assert.deepEqual(persistedPlan.localFacts, request.localFacts));
+check(() => assert.deepEqual(persistedPlan.mediaPlan, request.mediaPlan));
+check(() => assert.equal(persistedPlan.plan.revision, generated.revision));
+check(() => assert.equal(persistedPlan.createdBy, '00000000-0000-4000-8000-00000000d100'));
+const generatedRetry = await handleReelGeneration(handlerDependencies);
+check(() => assert.equal(generatedRetry.creativePlanId, generated.creativePlanId));
+check(() => assert.equal(providerCalls, 1));
+check(() => assert.equal(persistenceCalls, 1));
+
+let nonRenderablePersistenceCalls = 0;
+const needsMoreGenerated = await handleReelGeneration(makeDependencies({
+  provider: { id: 'mock-reel', async generate() { return { provider: 'mock-reel', model: 'test', rawJson: needsMorePlan() }; } },
+  async persistReelCreativePlan() { nonRenderablePersistenceCalls += 1; return 'must-not-persist'; },
+}));
+check(() => assert.equal(needsMoreGenerated.decision, 'needs_more_media'));
+check(() => assert.equal(nonRenderablePersistenceCalls, 0));
 
 providerCalls = 0;
 await assert.rejects(() => handleReelGeneration(makeDependencies({ authorization: '', provider: { id: 'mock-reel', async generate() { providerCalls += 1; } } })), /AUTH_REQUIRED/);
@@ -684,7 +705,7 @@ function makeDependencies(overrides = {}) {
   const payload = overrides.payload ?? request;
   return {
     rawBody: JSON.stringify(payload), authorization: overrides.authorization ?? 'Bearer token',
-    auth: { async resolveSession() { return { kind: 'company', company_id: 'company-1', user_id: 'user-1', email: 'owner@example.test' }; } },
+    auth: { async resolveSession() { return { kind: 'company', company_id: 'company-1', user_id: 'user-1', auth_user_id: '00000000-0000-4000-8000-00000000d100', email: 'owner@example.test' }; } },
     repository: {
       async getJob() { return { id: 'job-1', company_id: 'company-1', job_number: 'AB-42', status: 'Completed', system: 'Oven', issue: 'The oven stopped heating.', notes: 'Private note', service_call_fee_cents: 10000, labor_cents: 20000, customer_id: 'customer-1', customer_location_id: 'location-1' }; },
       async getCompany() { return { id: 'company-1', owner_email: 'owner@example.test', access_rules: { aiAssistant: 'full' } }; },
@@ -696,6 +717,7 @@ function makeDependencies(overrides = {}) {
       async listAttachments() { return payload.mediaPlan.map((item) => ({ id: item.attachmentId, company_id: 'company-1', job_id: 'job-1', kind: 'photo', mime_type: 'image/jpeg' })); },
       async listInvoices() { return []; }, async listComments() { return []; },
       async listReelMediaCandidates() { return overrides.reelRows ?? authoritativeRows(payload.mediaPlan); },
+      ...(overrides.persistReelCreativePlan ? { persistReelCreativePlan: overrides.persistReelCreativePlan } : {}),
     },
     provider: overrides.provider,
     guards: createMemoryGuards(),

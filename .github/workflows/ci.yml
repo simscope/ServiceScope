@@ -6,13 +6,20 @@ on:
       - main
     paths:
       - '.github/workflows/ci.yml'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vercel.json'
       - 'scripts/meta-*'
       - 'scripts/reel-director-*'
       - 'scripts/reel-renderer-*'
+      - 'scripts/reel-render-jobs-*'
+      - 'api/**'
+      - 'server/reel-render-jobs/**'
       - 'server/reel-renderer/**'
       - 'src/components/portal/AiAssistantPage.tsx'
       - 'src/components/portal/ReelPreview.tsx'
       - 'src/features/reel-director/**'
+      - 'src/features/reel-render-jobs/**'
       - 'src/styles/base.css'
       - 'src/components/portal/FacebookPublishPanel.tsx'
       - 'src/features/meta-publishing/**'
@@ -25,6 +32,7 @@ on:
       - 'supabase/functions/meta-social-publish/**'
       - 'supabase/functions/meta-social-publish-scheduled-worker/**'
       - 'supabase/migrations/**meta_facebook**.sql'
+      - 'supabase/migrations/**reel**.sql'
       - 'supabase/schema.sql'
   push:
     branches:
@@ -58,6 +66,9 @@ jobs:
       - name: AI Reel Director regression and security
         run: npm run test:reel-director
 
+      - name: Durable Reel render jobs regression and security
+        run: npm run test:reel-render-jobs && npm run test:reel-render-jobs-scan
+
       - name: Typecheck
         run: npx tsc -b
 
@@ -77,7 +88,7 @@ jobs:
         run: npm ci
 
       - name: Meta publishing SQL
-        run: npm run test:meta-publishing-sql && npm run test:reel-director-sql
+        run: npm run test:meta-publishing-sql && npm run test:reel-director-sql && npm run test:reel-render-jobs-sql
 
   meta-image-sanitizer-deno:
     runs-on: ubuntu-latest

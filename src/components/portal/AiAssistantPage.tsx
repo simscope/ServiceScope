@@ -77,6 +77,8 @@ import {
   reelStatusLabel,
 } from '../../features/reel-director/reelState';
 import { ReelPreview } from './ReelPreview';
+import { beginReelRender, loadPersistedReelWorkspace, loadReelArtifacts } from '../../features/reel-render-jobs/clientApi';
+import { renderErrorMessage, type ReelRenderWorkspace } from '../../features/reel-render-jobs/contracts';
 
 const mediaLabels: AssistantMediaLabel[] = ['Overview', 'Problem', 'Repair', 'Part', 'Result'];
 const assistantTones: AssistantTone[] = ['Professional', 'Friendly', 'Technical', 'Educational', 'Marketing'];
@@ -108,6 +110,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
   const [mediaAnalysisWorkspace, setMediaAnalysisWorkspace] = useState(() => createMediaAnalysisWorkspaceState(selectedJob?.id));
   const [mediaPlanningState, setMediaPlanningState] = useState(() => createMediaPlanningState(selectedJob?.id));
   const [reelWorkspace, setReelWorkspace] = useState(() => createReelWorkspaceState(selectedJob?.id));
+  const [reelRender, setReelRender] = useState<ReelRenderWorkspace>({ status: 'idle' });
   const [reelEditOpen, setReelEditOpen] = useState(false);
   const [facebookStatusRefreshToken, setFacebookStatusRefreshToken] = useState(0);
 
@@ -142,9 +145,56 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     setMediaAnalysisWorkspace(createMediaAnalysisWorkspaceState(selectedJob?.id));
     setMediaPlanningState(createMediaPlanningState(selectedJob?.id));
     setReelWorkspace(createReelWorkspaceState(selectedJob?.id));
+    setReelRender({ status: 'idle' });
     setReelEditOpen(false);
     setFacebookStatusRefreshToken((current) => current + 1);
   }, [selectedJob?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedJob?.id) return () => { active = false; };
+    loadPersistedReelWorkspace(selectedJob.id).then(async (saved) => {
+      if (!active || !saved) return;
+      const plan = { ...saved.plan_json, creativePlanId: saved.creative_plan_id };
+      setReelWorkspace((current) => ({ ...current, status: 'reel_ready', plan, creativePlanId: saved.creative_plan_id, inputRevision: saved.plan_revision, error: '' }));
+      if (saved.render_job_id && saved.render_status) {
+        const next: ReelRenderWorkspace = {
+          renderJobId: saved.render_job_id,
+          status: saved.render_status,
+          errorCode: saved.render_error_code ?? undefined,
+          durationMs: saved.duration_ms ?? undefined,
+          width: saved.width ?? undefined,
+          height: saved.height ?? undefined,
+        };
+        if (saved.artifact_available) {
+          const artifact = await loadReelArtifacts(saved.render_job_id);
+          Object.assign(next, { videoUrl: artifact.videoUrl, coverUrl: artifact.coverUrl, artifactExpiresAt: artifact.expiresAt });
+        }
+        if (active) setReelRender(next);
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [selectedJob?.id]);
+
+  useEffect(() => {
+    if (!selectedJob?.id || !['queued', 'rendering'].includes(reelRender.status)) return;
+    const timer = window.setInterval(() => {
+      loadPersistedReelWorkspace(selectedJob.id).then(async (saved) => {
+        if (!saved?.render_job_id || !saved.render_status) return;
+        const next: ReelRenderWorkspace = {
+          renderJobId: saved.render_job_id, status: saved.render_status,
+          errorCode: saved.render_error_code ?? undefined, durationMs: saved.duration_ms ?? undefined,
+          width: saved.width ?? undefined, height: saved.height ?? undefined,
+        };
+        if (saved.artifact_available) {
+          const artifact = await loadReelArtifacts(saved.render_job_id);
+          Object.assign(next, { videoUrl: artifact.videoUrl, coverUrl: artifact.coverUrl, artifactExpiresAt: artifact.expiresAt });
+        }
+        setReelRender(next);
+      }).catch(() => {});
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [selectedJob?.id, reelRender.status]);
 
   const summary = selectedJob ? buildAssistantJobSummary(selectedJob) : null;
   const mediaCounts = selectedJob ? assistantMediaCounts(selectedJob) : { photos: 0, videos: 0 };
@@ -459,6 +509,30 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     }
   }
 
+  async function createMp4() {
+    const creativePlanId = reelWorkspace.creativePlanId ?? reelWorkspace.plan?.creativePlanId;
+    const revision = reelWorkspace.plan?.revision;
+    if (!creativePlanId || !revision || ['queued', 'rendering'].includes(reelRender.status)) return;
+    try {
+      const result = await beginReelRender(creativePlanId, revision);
+      setReelRender({ renderJobId: result.renderJobId, status: result.status, errorCode: result.errorCode ?? undefined });
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'REEL_RENDER_FAILED';
+      setReelRender({ status: code === 'REEL_RENDER_NOT_CONFIGURED' ? 'not_configured' : 'failed', errorCode: code });
+    }
+  }
+
+  async function refreshReelArtifacts() {
+    if (!reelRender.renderJobId) return;
+    try {
+      const artifact = await loadReelArtifacts(reelRender.renderJobId);
+      setReelRender((current) => ({ ...current, videoUrl: artifact.videoUrl, coverUrl: artifact.coverUrl, artifactExpiresAt: artifact.expiresAt }));
+    } catch (error) {
+      const code = error instanceof Error ? error.message : 'REEL_RENDER_FAILED';
+      setReelRender((current) => ({ ...current, errorCode: code }));
+    }
+  }
+
   async function updateMediaApproval(attachmentId: string, approval: MediaReviewApprovalState) {
     if (!selectedJob) return;
     const result = mediaAnalysisWorkspace.result?.attachments.find((item) => item.id === attachmentId);
@@ -717,6 +791,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
               </div>
 
               {reelWorkspace.status === 'reel_ready' && reelWorkspace.plan ? (
+                <>
                 <div className="ai-reel-result">
                   <div className="ai-reel-preview-column">
                     <ReelPreview plan={reelWorkspace.plan} mediaUrls={reelMediaUrls} />
@@ -740,9 +815,28 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                       <CheckCircle2 size={18} aria-hidden="true" />
                       {reelApproved ? 'Reel approved' : 'Approve Reel'}
                     </button>
+                    {reelWorkspace.creativePlanId || reelWorkspace.plan.creativePlanId ? (
+                      <div className="ai-reel-render-actions">
+                        <button className="primary-button" type="button" onClick={createMp4} disabled={['queued', 'rendering', 'completed'].includes(reelRender.status)}>
+                          <Video size={18} aria-hidden="true" />
+                          {reelRender.status === 'queued' ? 'Queued' : reelRender.status === 'rendering' ? 'Rendering' : reelRender.status === 'completed' ? 'MP4 ready' : 'Create MP4'}
+                        </button>
+                        {reelRender.status === 'failed' || reelRender.status === 'not_configured' ? <span className="ai-reel-approval-note">{renderErrorMessage(reelRender.errorCode)}</span> : null}
+                      </div>
+                    ) : null}
                     {!reelApproved && reelWorkspace.approvalInvalidated ? <span className="ai-reel-approval-note">The preview changed and needs approval again.</span> : null}
                   </div>
                 </div>
+                {reelRender.status === 'completed' && reelRender.videoUrl ? (
+                  <div className="ai-reel-render-result">
+                    <video controls preload="metadata" poster={reelRender.coverUrl} src={reelRender.videoUrl} />
+                    <div className="ai-reel-render-actions">
+                      <a className="primary-button" href={reelRender.videoUrl} download><Download size={18} aria-hidden="true" />Download MP4</a>
+                      <button className="secondary-button" type="button" onClick={refreshReelArtifacts}>Refresh link</button>
+                    </div>
+                  </div>
+                ) : null}
+                </>
               ) : null}
 
               {reelWorkspace.status === 'needs_more_media' && reelWorkspace.plan ? (

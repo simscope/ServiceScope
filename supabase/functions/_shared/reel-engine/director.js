@@ -44,8 +44,9 @@ export async function handleReelGeneration({ rawBody, authorization, auth, repos
     return result;
   }
   const result = await generateReel({ request: { ...request, promptVersion: voicedRequest.promptVersion }, context, provider, config, telemetry });
-  guards.set(cacheKey, result);
-  return result;
+  const persisted = await persistCreativePlan(result, request, context, repository);
+  guards.set(cacheKey, persisted);
+  return persisted;
 }
 
 export async function generateReel({ request, context, provider, config, telemetry, clock = Date }) {
@@ -235,6 +236,24 @@ function finalizePlan(plan, request, context) {
       companyVoice: context.companyVoice,
     })),
   };
+}
+
+async function persistCreativePlan(plan, request, context, repository) {
+  if (plan.decision !== 'create_reel' || typeof repository.persistReelCreativePlan !== 'function') return plan;
+  const creativePlanId = await repository.persistReelCreativePlan({
+    companyId: context.companyId,
+    jobId: context.jobId,
+    createdBy: context.actorAuthUserId,
+    schemaVersion: plan.schemaVersion,
+    planRevision: plan.revision,
+    locale: request.locale,
+    planningRevision: request.planningRevision,
+    localFacts: request.localFacts,
+    mediaPlan: request.mediaPlan.map(({ attachmentId, position }) => ({ attachmentId, position })),
+    plan,
+  });
+  if (!creativePlanId) throw new ReelHttpError('REEL_GENERATION_FAILED', 503);
+  return { ...plan, creativePlanId };
 }
 
 function missingShotInstructions(media) {

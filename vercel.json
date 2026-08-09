@@ -1,4 +1,17 @@
 {
+  "functions": {
+    "api/queues/reel-render.js": {
+      "maxDuration": 900,
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "servicescope-reel-render-v1",
+          "retryAfterSeconds": 60,
+          "initialDelaySeconds": 0
+        }
+      ]
+    }
+  },
   "rewrites": [
     {
       "source": "/auth/meta/callback",

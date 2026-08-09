@@ -1582,6 +1582,27 @@ button {
   justify-self: start;
 }
 
+.ai-reel-render-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-reel-render-result {
+  display: grid;
+  gap: 10px;
+  max-width: 360px;
+}
+
+.ai-reel-render-result video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  background: #101820;
+  object-fit: contain;
+}
+
 .ai-reel-approved {
   border-color: #a7d8bb;
   background: #edf9f2;

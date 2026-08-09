@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/patch-payroll-payment-history.cjs && vite --host 127.0.0.1",
-    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-patch && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:content-engine && npm run test:company-voice && npm run test:meta-connection && npm run test:meta-connection-sql && npm run test:meta-publishing && npm run test:meta-publishing-sql && npm run test:media-analysis && npm run test:media-planning && npm run test:reel-director && npm run test:reel-director-sql && npm run test:reel-renderer && npm run test:preview-qa && tsc -b && vite build && npm run test:reel-renderer-scan && npm run test:preview-qa-bundle && npm run test:meta-connection-scan && npm run test:meta-publishing-scan",
+    "build": "node scripts/patch-payroll-payment-history.cjs && npm run test:payroll-patch && npm run test:payroll-history && npm run test:employee-payroll && npm run test:calendar-technician && npm run test:calendar-persistence && npm run test:warehouse-adjustments && npm run test:social-post && npm run test:ai-assistant && npm run test:content-engine && npm run test:company-voice && npm run test:meta-connection && npm run test:meta-connection-sql && npm run test:meta-publishing && npm run test:meta-publishing-sql && npm run test:media-analysis && npm run test:media-planning && npm run test:reel-director && npm run test:reel-director-sql && npm run test:reel-render-jobs && npm run test:reel-render-jobs-sql && npm run test:reel-renderer && npm run test:preview-qa && tsc -b && vite build && npm run test:reel-render-jobs-scan && npm run test:reel-renderer-scan && npm run test:preview-qa-bundle && npm run test:meta-connection-scan && npm run test:meta-publishing-scan",
     "test:social-post": "tsc scripts/social-post-regression-tests.ts --target ES2020 --module NodeNext --moduleResolution NodeNext --outDir .tmp/social-post-tests --skipLibCheck && node .tmp/social-post-tests/scripts/social-post-regression-tests.js",
     "test:warehouse-import": "node scripts/warehouse-import-regression-tests.mjs",
     "test:warehouse-categories": "node scripts/warehouse-categories-regression-tests.mjs",
@@ -27,6 +27,9 @@
     "test:media-planning": "node scripts/media-planning-regression-tests.mjs",
     "test:reel-director": "node scripts/reel-director-regression-tests.mjs && node scripts/reel-director-security-scan.mjs",
     "test:reel-director-sql": "node scripts/reel-director-sql-tests.mjs",
+    "test:reel-render-jobs": "node scripts/reel-render-jobs-regression-tests.mjs",
+    "test:reel-render-jobs-sql": "node scripts/reel-render-jobs-sql-tests.mjs",
+    "test:reel-render-jobs-scan": "node scripts/reel-render-jobs-security-scan.mjs",
     "test:reel-renderer": "node scripts/reel-renderer-regression-tests.mjs",
     "test:reel-renderer-scan": "node scripts/reel-renderer-security-scan.mjs",
     "test:payroll-patch": "node scripts/payroll-payment-history-patch-regression-tests.cjs",
@@ -42,6 +45,7 @@
     "tech:build": "npm run build --prefix apps/technician-mobile/client"
   },
   "dependencies": {
+    "@vercel/queue": "^0.4.0",
     "jspdf": "^4.2.1",
     "leaflet": "^1.9.4",
     "lucide-react": "^0.468.0",

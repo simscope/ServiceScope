@@ -81,7 +81,7 @@ const trackedRendererMedia = execFileSync('git', ['ls-files', 'server', 'shared'
 check(() => assert.deepEqual(trackedRendererMedia, []));
 
 const dist = await readDistJavaScript();
-check(() => assert.doesNotMatch(dist, /server\/reel-renderer|node:child_process|REEL_RENDER_(?:FAILED|TIMEOUT|OUTPUT_INVALID|AUDIO_UNSUPPORTED|TEXT_OVERFLOW|UNAUTHORIZED)|FFMPEG_BIN|FFPROBE_BIN|libx264|reel-render-manifest-v1|authorizeReelForRender|renderAuthorizedReel/i));
+check(() => assert.doesNotMatch(dist, /server\/reel-renderer|node:child_process|FFMPEG_BIN|FFPROBE_BIN|libx264|reel-render-manifest-v1|authorizeReelForRender|renderAuthorizedReel/i));
 
 console.log(`Reel renderer security scan passed (${checks}/${checks}).`);
 
