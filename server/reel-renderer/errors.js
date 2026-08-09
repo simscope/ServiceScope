@@ -1,5 +1,6 @@
 export const reelRenderErrorCodes = Object.freeze([
   'REEL_RENDER_INVALID_PLAN',
+  'REEL_RENDER_UNAUTHORIZED',
   'REEL_RENDER_MEDIA_INVALID',
   'REEL_RENDER_MEDIA_MISSING',
   'REEL_RENDER_AUDIO_UNSUPPORTED',
@@ -7,6 +8,10 @@ export const reelRenderErrorCodes = Object.freeze([
   'REEL_RENDER_TIMEOUT',
   'REEL_RENDER_FAILED',
   'REEL_RENDER_OUTPUT_INVALID',
+  'REEL_GROUNDING_FAILED',
+  'REEL_PRIVACY_FAILED',
+  'REEL_QUALITY_FAILED',
+  'REEL_MEDIA_UNAVAILABLE',
 ]);
 
 export class ReelRenderError extends Error {

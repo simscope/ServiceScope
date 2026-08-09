@@ -1,11 +1,11 @@
-import { parseReelPlanShape } from '../../supabase/functions/_shared/reel-engine/schemas.js';
 import { buildReelTimeline, reelPresentationSpec, reelSafeZonePixels } from '../../src/features/reel-director/presentationSpec.js';
+import { requireAuthorizedReelPlan } from './authorization.js';
 import { ReelRenderError } from './errors.js';
 
 export const reelRenderManifestSchemaVersion = 'reel-render-manifest-v1';
 
-export function buildReelRenderManifest(plan, stagedAssets) {
-  const canonicalPlan = canonicalRenderPlan(plan);
+export function buildReelRenderManifest(authorization, stagedAssets) {
+  const canonicalPlan = requireAuthorizedReelPlan(authorization);
   const assetRows = normalizeAssetRows(stagedAssets);
   const expectedIds = new Set([
     ...canonicalPlan.scenes.map((scene) => scene.attachmentId),
@@ -55,30 +55,7 @@ export function buildReelRenderManifest(plan, stagedAssets) {
     }),
   });
   const sourcePaths = new Map([...sourceKeys].map(([attachmentId, sourceKey]) => [sourceKey, byAttachment.get(attachmentId)]));
-  return { manifest, sourcePaths, plan: canonicalPlan };
-}
-
-function canonicalRenderPlan(plan) {
-  try {
-    if (!plainObject(plan) || typeof plan.revision !== 'string' || !/^[A-Za-z0-9:_-]{1,180}$/.test(plan.revision)) fail();
-    const { revision, ...providerPlan } = plan;
-    const parsed = { ...parseReelPlanShape(providerPlan), revision };
-    if (parsed.decision !== 'create_reel' || !parsed.safety.ok || parsed.safety.privacy !== 'passed'
-      || parsed.safety.grounding !== 'passed' || parsed.safety.quality !== 'passed') fail();
-    if (parsed.audio.musicMode !== 'none' || parsed.voiceover.enabled || parsed.voiceover.script !== '') {
-      fail('REEL_RENDER_AUDIO_UNSUPPORTED');
-    }
-    if (parsed.scenes.length < 2 || parsed.scenes[0].overlayText.toLocaleLowerCase() !== parsed.hook.text.toLocaleLowerCase()) fail();
-    if (!parsed.cover.attachmentId) fail();
-    const ids = parsed.scenes.map((scene) => scene.attachmentId);
-    if (new Set(ids).size !== ids.length || parsed.scenes.some((scene, index) => scene.position !== index + 1)) fail();
-    const timeline = buildReelTimeline(parsed);
-    if (timeline.totalDurationMs < 12_000 || timeline.totalDurationMs > 25_000) fail();
-    return parsed;
-  } catch (error) {
-    if (error instanceof ReelRenderError) throw error;
-    fail();
-  }
+  return { manifest, sourcePaths };
 }
 
 function normalizeAssetRows(value) {

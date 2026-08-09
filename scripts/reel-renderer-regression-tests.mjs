@@ -5,7 +5,15 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
 import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSafeZonePixels } from '../src/features/reel-director/presentationSpec.js';
-import { buildFfmpegArgs, buildReelRenderManifest, escapeXml, layoutReelText, measureTextPixels, renderReel } from '../server/reel-renderer/index.js';
+import {
+  authorizeReelForRender,
+  buildFfmpegArgs,
+  buildReelRenderManifest,
+  escapeXml,
+  layoutReelText,
+  measureTextPixels,
+  renderAuthorizedReel,
+} from '../server/reel-renderer/index.js';
 import { renderBrandCard, renderCover, renderSceneOverlay } from '../server/reel-renderer/overlays.js';
 import { runBinary } from '../server/reel-renderer/process.js';
 
@@ -32,7 +40,7 @@ const validPlan = {
   missingShots: [],
   claims: [{ id: 'claim-1', text: 'Service transformation', evidenceIds: ['diagnosis'] }],
   safety: { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] },
-  brand: { enabled: true, displayName: 'Northstar Service', cta: 'Book dependable service', durationMs: 1_800, evidenceIds: ['company-public-display-name'] },
+  brand: { enabled: true, displayName: 'Northstar Service', cta: 'Book dependable service', durationMs: 1_800, evidenceIds: ['company-public-display-name', 'company-voice-cta'] },
   audio: { musicMode: 'none' },
 };
 const stagedAssets = [
@@ -40,10 +48,29 @@ const stagedAssets = [
   { attachmentId: 'photo-b', path: 'photo-b.png' },
   { attachmentId: 'photo-c', path: 'photo-c.webp' },
 ];
+const validContext = {
+  privateValues: [],
+  companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
+  evidence: [
+    { id: 'diagnosis', text: 'See this service transformation. A clear service story built from the approved job media, from the starting view through the work and the finished equipment. Service transformation.' },
+    { id: 'repair-performed', text: 'Careful work in progress through a controlled service sequence.' },
+    { id: 'media:photo-a:finding', text: 'See this service transformation. A clear starting point.' },
+    { id: 'media:photo-b:finding', text: 'Careful work in progress. A controlled service sequence.' },
+    { id: 'media:photo-c:finding', text: 'Ready for the next call. The finished equipment view.' },
+    { id: 'company-public-display-name', text: 'Northstar Service' },
+    { id: 'company-voice-cta', text: 'Book dependable service' },
+  ],
+  safeMedia: [
+    { attachmentId: 'photo-a', role: 'overview' },
+    { attachmentId: 'photo-b', role: 'repair_process' },
+    { attachmentId: 'photo-c', role: 'finished_result' },
+  ],
+};
 const russianPrimary = '\u041a\u041e\u041d\u0414\u0418\u0426\u0418\u041e\u041d\u0415\u0420 \u041d\u0415 \u041e\u0425\u041b\u0410\u0416\u0414\u0410\u0415\u0422?';
 const spanishPrimary = '\u00bfEL AIRE NO EST\u00c1 ENFRIANDO?';
 
-const { manifest } = buildReelRenderManifest(validPlan, stagedAssets);
+const authorizedPlan = authorizeReelForRender({ plan: validPlan, context: validContext });
+const { manifest } = buildReelRenderManifest(authorizedPlan, stagedAssets);
 check(() => assert.equal(manifest.schemaVersion, 'reel-render-manifest-v1'));
 check(() => assert.deepEqual([manifest.width, manifest.height, manifest.fps], [1080, 1920, 30]));
 check(() => assert.equal(manifest.durationMs, 13_800));
@@ -62,25 +89,112 @@ for (const mutate of [
   (plan) => { plan.scenes[0].transitionOut = 'wipe'; },
   (plan) => { plan.scenes[0].overlayText = 'Different first scene'; },
 ]) {
-  check(() => assert.throws(() => buildReelRenderManifest(mutatedPlan(mutate), stagedAssets), /REEL_RENDER_INVALID_PLAN/));
+  check(() => assert.throws(
+    () => authorizeReelForRender({ plan: mutatedPlan(mutate), context: validContext }),
+    /REEL_RENDER_INVALID_PLAN|REEL_QUALITY_FAILED|REEL_GROUNDING_FAILED/,
+  ));
 }
-check(() => assert.doesNotThrow(() => buildReelRenderManifest(validPlan, stagedAssets)));
+check(() => assert.doesNotThrow(() => authorizeReelForRender({ plan: validPlan, context: validContext })));
+check(() => assert.throws(() => buildReelRenderManifest(validPlan, stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
+check(() => assert.throws(() => buildReelRenderManifest({}, stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
+check(() => assert.throws(() => buildReelRenderManifest(JSON.parse(JSON.stringify(authorizedPlan)), stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
 check(() => assert.throws(
-  () => buildReelRenderManifest(mutatedPlan((plan) => { plan.voiceover = { enabled: true, script: 'Approved narration', evidenceIds: ['diagnosis'] }; }), stagedAssets),
+  () => authorizeReelForRender({
+    plan: mutatedPlan((plan) => { plan.voiceover = { enabled: true, script: 'See this service transformation', evidenceIds: ['diagnosis'] }; }),
+    context: validContext,
+  }),
   /REEL_RENDER_AUDIO_UNSUPPORTED/,
 ));
 check(() => assert.throws(
-  () => buildReelRenderManifest(mutatedPlan((plan) => { plan.voiceover = { enabled: false, script: 'Contradictory narration', evidenceIds: [] }; }), stagedAssets),
+  () => authorizeReelForRender({ plan: mutatedPlan((plan) => { plan.voiceover = { enabled: false, script: 'Contradictory narration', evidenceIds: [] }; }), context: validContext }),
   /REEL_RENDER_INVALID_PLAN/,
 ));
 check(() => assert.throws(
-  () => buildReelRenderManifest(mutatedPlan((plan) => { plan.audio.musicMode = 'future_library'; }), stagedAssets),
+  () => authorizeReelForRender({ plan: mutatedPlan((plan) => { plan.audio.musicMode = 'future_library'; }), context: validContext }),
   /REEL_RENDER_AUDIO_UNSUPPORTED/,
 ));
-check(() => assert.throws(() => buildReelRenderManifest(validPlan, stagedAssets.slice(0, 2)), /REEL_RENDER_MEDIA_MISSING|REEL_RENDER_MEDIA_INVALID/));
-check(() => assert.throws(() => buildReelRenderManifest(validPlan, [...stagedAssets, { attachmentId: 'extra', path: 'extra.jpg' }]), /REEL_RENDER_MEDIA_INVALID/));
-check(() => assert.throws(() => buildReelRenderManifest(validPlan, [stagedAssets[0], stagedAssets[0], stagedAssets[2]]), /REEL_RENDER_MEDIA_INVALID/));
-check(() => assert.throws(() => buildReelRenderManifest(validPlan, stagedAssets.map((item, index) => index === 0 ? { ...item, path: 'https://example.com/a.jpg' } : item)), /REEL_RENDER_MEDIA_INVALID/));
+check(() => assert.throws(() => buildReelRenderManifest(authorizedPlan, stagedAssets.slice(0, 2)), /REEL_RENDER_MEDIA_MISSING|REEL_RENDER_MEDIA_INVALID/));
+check(() => assert.throws(() => buildReelRenderManifest(authorizedPlan, [...stagedAssets, { attachmentId: 'extra', path: 'extra.jpg' }]), /REEL_RENDER_MEDIA_INVALID/));
+check(() => assert.throws(() => buildReelRenderManifest(authorizedPlan, [stagedAssets[0], stagedAssets[0], stagedAssets[2]]), /REEL_RENDER_MEDIA_INVALID/));
+check(() => assert.throws(() => buildReelRenderManifest(authorizedPlan, stagedAssets.map((item, index) => index === 0 ? { ...item, path: 'https://example.com/a.jpg' } : item)), /REEL_RENDER_MEDIA_INVALID/));
+
+const relayContext = createRelayContext();
+const relayPlan = createRelayPlan();
+check(() => assert.doesNotThrow(() => authorizeReelForRender({ plan: relayPlan, context: relayContext })));
+const contactorTamperedPlan = mutateRelayPlan((plan) => { plan.scenes[1].overlayText = 'CONTACTOR REPLACED'; });
+check(() => assert.equal(contactorTamperedPlan.revision, relayPlan.revision));
+check(() => assert.deepEqual(contactorTamperedPlan.safety, relayPlan.safety));
+check(() => assert.deepEqual(contactorTamperedPlan.scenes[1].evidenceIds, relayPlan.scenes[1].evidenceIds));
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: contactorTamperedPlan, context: relayContext }),
+  /REEL_GROUNDING_FAILED/,
+));
+for (const text of ['FUSE REPLACED', 'VALVE REPLACED', 'COOLING RESTORED', 'SYSTEM PRESSURE RESTORED']) {
+  check(() => assert.throws(
+    () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.scenes[1].overlayText = text; }), context: relayContext }),
+    /REEL_GROUNDING_FAILED/,
+  ));
+}
+check(() => assert.throws(
+  () => authorizeReelForRender({
+    plan: mutateRelayPlan((plan) => { plan.revision = 'reel-v1-tampered'; plan.scenes[1].overlayText = 'CONTACTOR REPLACED'; }),
+    context: relayContext,
+  }),
+  /REEL_GROUNDING_FAILED/,
+));
+for (const text of ['FUSE CAUSED THE FAILURE', 'CONTACTOR CAUSED THE FAILURE']) {
+  check(() => assert.throws(
+    () => authorizeReelForRender({
+      plan: mutateRelayPlan((plan) => { plan.hook.text = text; plan.scenes[0].overlayText = text; }),
+      context: relayContext,
+    }),
+    /REEL_GROUNDING_FAILED/,
+  ));
+}
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.brand.displayName = 'Tampered Service'; }), context: relayContext }),
+  /REEL_GROUNDING_FAILED/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.brand.cta = 'Buy luxury equipment now'; }), context: relayContext }),
+  /REEL_GROUNDING_FAILED/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.scenes[0].attachmentId = 'unknown-photo'; }), context: relayContext }),
+  /REEL_MEDIA_UNAVAILABLE/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.scenes[0].sceneRole = 'overview'; }), context: relayContext }),
+  /REEL_GROUNDING_FAILED/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.scenes[1].evidenceIds = ['unknown-evidence']; }), context: relayContext }),
+  /REEL_GROUNDING_FAILED/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: mutateRelayPlan((plan) => { plan.cover.attachmentId = 'unknown-photo'; }), context: relayContext }),
+  /REEL_MEDIA_UNAVAILABLE/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({
+    plan: mutateRelayPlan((plan) => {
+      plan.caption.text = `${plan.caption.text} Jane Customer.`;
+      plan.safety = { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] };
+    }),
+    context: relayContext,
+  }),
+  /REEL_PRIVACY_FAILED/,
+));
+check(() => assert.throws(
+  () => authorizeReelForRender({
+    plan: mutateRelayPlan((plan) => {
+      plan.qualityScore = 20;
+      plan.safety = { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] };
+    }),
+    context: relayContext,
+  }),
+  /REEL_QUALITY_FAILED/,
+));
 
 const timeline = buildReelTimeline(validPlan);
 check(() => assert.equal(activeReelFrame(timeline, 0).item.scene.id, 'scene-1'));
@@ -159,24 +273,31 @@ try {
   const overlayMetadata = await sharp(overlayFixture).metadata();
   check(() => assert.deepEqual([overlayMetadata.format, overlayMetadata.width, overlayMetadata.height], ['png', 1080, 1920]));
   const tempBeforeFailures = await rendererTempEntries();
-  await checkAsync(() => assert.rejects(
-    renderReel({
-      plan: mutatedPlan((plan) => { plan.voiceover = { enabled: true, script: 'Approved narration', evidenceIds: ['diagnosis'] }; }),
-      stagedAssets,
-      stagingRoot: 'normalization-must-not-run',
-      ffmpegBin: 'ffmpeg-must-not-run',
+  await checkAsync(async () => assert.throws(
+    () => authorizeReelForRender({
+      plan: mutatedPlan((plan) => { plan.voiceover = { enabled: true, script: 'See this service transformation', evidenceIds: ['diagnosis'] }; }),
+      context: validContext,
     }),
     /REEL_RENDER_AUDIO_UNSUPPORTED/,
   ));
   await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), tempBeforeFailures));
   await checkAsync(() => assert.rejects(
-    renderReel({ plan: validPlan, stagedAssets: stagedAssets.map((item) => ({ ...item, path: '../outside.jpg' })), stagingRoot: fixtureRoot, ffmpegBin: 'missing-ffmpeg' }),
+    renderAuthorizedReel({ authorized: validPlan, stagedAssets, stagingRoot: 'normalization-must-not-run', ffmpegBin: 'ffmpeg-must-not-run', ffprobeBin: 'ffprobe-must-not-run' }),
+    /REEL_RENDER_UNAUTHORIZED/,
+  ));
+  await checkAsync(() => assert.rejects(
+    renderAuthorizedReel({ authorized: JSON.parse(JSON.stringify(authorizedPlan)), stagedAssets, stagingRoot: 'normalization-must-not-run', ffmpegBin: 'ffmpeg-must-not-run', ffprobeBin: 'ffprobe-must-not-run' }),
+    /REEL_RENDER_UNAUTHORIZED/,
+  ));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), tempBeforeFailures));
+  await checkAsync(() => assert.rejects(
+    renderAuthorizedReel({ authorized: authorizedPlan, stagedAssets: stagedAssets.map((item) => ({ ...item, path: '../outside.jpg' })), stagingRoot: fixtureRoot, ffmpegBin: 'missing-ffmpeg' }),
     /REEL_RENDER_MEDIA_MISSING|REEL_RENDER_MEDIA_INVALID/,
   ));
   for (const invalidPath of ['unsafe.svg', 'unsafe.pdf', 'malformed.jpg', 'too-wide.png']) {
     await checkAsync(() => assert.rejects(
-      renderReel({
-        plan: validPlan,
+      renderAuthorizedReel({
+        authorized: authorizedPlan,
         stagedAssets: stagedAssets.map((item, index) => index === 0 ? { ...item, path: invalidPath } : item),
         stagingRoot: fixtureRoot,
         ffmpegBin: 'missing-ffmpeg',
@@ -190,7 +311,7 @@ try {
   const available = binaryAvailable(ffmpegBin) && binaryAvailable(ffprobeBin);
   if (process.env.REEL_RENDER_REAL_FIXTURE === '1' && !available) throw new Error('REAL_FFMPEG_FIXTURE_REQUIRED');
   if (available) {
-    rendered = await renderReel({ plan: validPlan, stagedAssets, stagingRoot: fixtureRoot, ffmpegBin, ffprobeBin });
+    rendered = await renderAuthorizedReel({ authorized: authorizedPlan, stagedAssets, stagingRoot: fixtureRoot, ffmpegBin, ffprobeBin });
     await verifyRealRender(rendered);
     checks += 12;
     if (process.env.REEL_RENDER_ARTIFACT_DIR) await publishArtifacts(rendered, process.env.REEL_RENDER_ARTIFACT_DIR, ffmpegBin, stressFixtures.artifactFiles);
@@ -211,6 +332,77 @@ function scene(id, position, attachmentId, durationMs, overlayText, secondaryTex
 
 function mutatedPlan(mutate) {
   const plan = structuredClone(validPlan);
+  mutate(plan);
+  return plan;
+}
+
+function createRelayContext() {
+  return {
+    privateValues: ['Jane Customer'],
+    companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
+    evidence: [
+      { id: 'complaint', text: 'The oven stopped heating.' },
+      { id: 'diagnosis', text: 'A burned relay caused the heating failure.' },
+      { id: 'repair-performed', text: 'The burned relay was replaced.' },
+      { id: 'final-result', text: 'Heating operation was restored.' },
+      { id: 'media:detail-1:detail-finding', text: 'The burned relay is visible in this problem detail.' },
+      { id: 'media:finish-1:finished_result-finding', text: 'The restored oven is shown after testing.' },
+      { id: 'company-public-display-name', text: 'Northstar Service' },
+    ],
+    safeMedia: [
+      { attachmentId: 'detail-1', role: 'detail' },
+      { attachmentId: 'finish-1', role: 'finished_result' },
+    ],
+  };
+}
+
+function createRelayPlan() {
+  return {
+    schemaVersion: 'reel-creative-plan-v1',
+    revision: 'reel-v1-relay-fixture',
+    decision: 'create_reel',
+    qualityScore: 86,
+    qualityReasons: ['A specific supported failure and repair create a useful visual story.'],
+    marketingAngle: 'diagnostic_reveal',
+    hook: { text: 'BURNED RELAY CAUSED HEATING FAILURE', evidenceIds: ['complaint', 'diagnosis'] },
+    cover: { title: 'BURNED RELAY CAUSED HEATING FAILURE', attachmentId: 'detail-1' },
+    scenes: [
+      {
+        id: 'scene-1', position: 1, attachmentId: 'detail-1', sceneRole: 'detail', durationMs: 5_000,
+        overlayText: 'BURNED RELAY CAUSED HEATING FAILURE', secondaryText: 'The burned relay is visible in detail',
+        motionPreset: 'focus_detail', cropStrategy: 'detail_crop', transitionOut: 'quick_fade',
+        evidenceIds: ['media:detail-1:detail-finding', 'complaint', 'diagnosis'], voiceoverLine: null,
+      },
+      {
+        id: 'scene-2', position: 2, attachmentId: 'finish-1', sceneRole: 'finished_result', durationMs: 5_000,
+        overlayText: 'RELAY REPLACED', secondaryText: 'HEATING OPERATION RESTORED',
+        motionPreset: 'slow_zoom_out', cropStrategy: 'subject_center', transitionOut: 'crossfade',
+        evidenceIds: ['media:finish-1:finished_result-finding', 'repair-performed', 'final-result'], voiceoverLine: null,
+      },
+    ],
+    caption: {
+      text: 'A burned relay caused this heating failure. The burned relay was replaced. Heating operation was restored. Having a similar oven issue? Send us a message. #OvenRepair',
+      evidenceIds: ['complaint', 'diagnosis', 'repair-performed', 'final-result', 'company-public-display-name'],
+    },
+    voiceover: { enabled: false, script: '', evidenceIds: [] },
+    missingShots: [],
+    claims: [
+      { id: 'claim-1', text: 'The oven stopped heating.', evidenceIds: ['complaint'] },
+      { id: 'claim-2', text: 'A burned relay caused the failure.', evidenceIds: ['diagnosis'] },
+      { id: 'claim-3', text: 'The relay was replaced.', evidenceIds: ['repair-performed'] },
+      { id: 'claim-4', text: 'Heating operation was restored.', evidenceIds: ['final-result'] },
+    ],
+    safety: { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] },
+    brand: {
+      enabled: true, displayName: 'Northstar Service', cta: 'Having a similar issue? Send us a message.',
+      durationMs: 2_000, evidenceIds: ['company-public-display-name'],
+    },
+    audio: { musicMode: 'none' },
+  };
+}
+
+function mutateRelayPlan(mutate) {
+  const plan = createRelayPlan();
   mutate(plan);
   return plan;
 }

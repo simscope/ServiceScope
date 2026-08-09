@@ -9,8 +9,8 @@ import { renderBrandCard, renderCover, renderSceneOverlay } from './overlays.js'
 import { validateRenderedVideo } from './probe.js';
 import { runBinary } from './process.js';
 
-export async function renderReel({
-  plan,
+export async function renderAuthorizedReel({
+  authorized,
   stagedAssets,
   stagingRoot,
   ffmpegBin = process.env.FFMPEG_BIN || 'ffmpeg',
@@ -20,7 +20,7 @@ export async function renderReel({
   let manifest;
   let sourcePaths;
   try {
-    ({ manifest, sourcePaths } = buildReelRenderManifest(plan, stagedAssets));
+    ({ manifest, sourcePaths } = buildReelRenderManifest(authorized, stagedAssets));
   } catch (error) {
     throw asReelRenderError(error);
   }
