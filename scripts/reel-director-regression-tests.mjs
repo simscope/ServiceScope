@@ -90,6 +90,8 @@ rejects(() => parseReelProviderResult({ ...validPlan, qualityScore: 101 }, conte
 rejects(() => parseReelProviderResult({ ...validPlan, qualityScore: 69 }, context), /REEL_QUALITY_FAILED/);
 rejects(() => parseReelProviderResult(patchScene(validPlan, 0, { durationMs: 1499 }), context), /INVALID_REEL_PROVIDER_OUTPUT/);
 rejects(() => parseReelProviderResult({ ...validPlan, brand: { ...validPlan.brand, durationMs: 2501 } }, context), /INVALID_REEL_PROVIDER_OUTPUT/);
+rejects(() => parseReelProviderResult({ ...validPlan, brand: { ...validPlan.brand, cta: 'THE RELAY WAS THE CULPRIT' } }, context), /REEL_GROUNDING_FAILED/);
+rejects(() => parseReelProviderResult({ ...validPlan, cover: { ...validPlan.cover, title: 'DEAD COMPRESSOR' } }, context), /REEL_GROUNDING_FAILED/);
 rejects(() => parseReelProviderResult({ ...validPlan, scenes: [validPlan.scenes[0]] }, context), /REEL_QUALITY_FAILED/);
 rejects(() => parseReelProviderResult({ ...validPlan, scenes: [...validPlan.scenes, ...validPlan.scenes, ...validPlan.scenes, validPlan.scenes[0], validPlan.scenes[1]] }, context), /INVALID_REEL_PROVIDER_OUTPUT/);
 rejects(() => parseReelProviderResult(patchScene(validPlan, 1, { id: 'scene-1' }), context), /INVALID_REEL_PROVIDER_OUTPUT/);
@@ -108,6 +110,8 @@ check(() => assert.match(buildReelPrompt(request, context).prompt, /Evidence and
 check(() => assert.match(buildReelPrompt(request, context).prompt, /A valid attachment ID proves only/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /VISUAL SUGGESTIONS/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /not verified diagnosis, cause/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /keep complaint symptoms and visible components in separate statements/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /must be extractive from its visual evidence/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /capability="visual"/));
 
 // Persisted visual suggestions bind scenes but cannot substitute for factual job evidence.
@@ -126,8 +130,31 @@ rejects(() => assertClaimSupport([{ text: 'BACK IN SERVICE', evidenceIds: ['medi
 rejects(() => assertClaimSupport([{ text: 'OPERATION RESTORED', evidenceIds: ['media:finish-1:finish-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
 rejects(() => assertClaimSupport([{ text: 'THE RELAY MEASURED 0 VOLTS', evidenceIds: ['media:detail-1:detail-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
 rejects(() => assertClaimSupport([{ text: 'SAFE TO USE', evidenceIds: ['media:finish-1:finish-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
-check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'OVEN NOT HEATING? A BURNED RELAY IS VISIBLE.', evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }], visualOnlyEvidence)));
+for (const unsafeVisualInference of [
+  'BAD RELAY, NO HEAT',
+  'FAULTY RELAY FOUND',
+  'THE RELAY WAS THE CULPRIT',
+  'THIS RELAY KILLED THE HEAT',
+  'THE RELAY WAS RESPONSIBLE',
+  'BROKEN RELAY, NO HEAT',
+  'RELAY ISSUE FOUND',
+  'DEAD COMPRESSOR',
+  'THE PROBLEM IS THIS RELAY',
+]) {
+  rejects(() => assertClaimSupport([{ text: unsafeVisualInference, evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+  rejects(() => parseReelProviderResult({
+    ...validPlan,
+    claims: [...validPlan.claims, { id: 'adversarial-visual-inference', text: unsafeVisualInference, evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }],
+  }, context), /REEL_GROUNDING_FAILED/);
+}
+rejects(() => assertClaimSupport([{ text: 'OVEN NOT HEATING? A BURNED RELAY IS VISIBLE.', evidenceIds: ['complaint', 'media:detail-1:detail-finding'] }], visualOnlyEvidence), /REEL_GROUNDING_FAILED/);
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'BURNED RELAY VISIBLE', evidenceIds: ['media:detail-1:detail-finding'] }], visualOnlyEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'OVEN NOT HEATING?', evidenceIds: ['complaint'] }], visualOnlyEvidence)));
 check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'WHAT WE FOUND INSIDE', evidenceIds: ['media:detail-1:detail-finding'] }], visualOnlyEvidence)));
+check(() => assert.doesNotThrow(() => parseReelProviderResult({
+  ...validPlan,
+  claims: [...validPlan.claims, { id: 'visual-description', text: 'BURNED RELAY VISIBLE', evidenceIds: ['media:detail-1:detail-finding'] }],
+}, context)));
 
 const factualEvidence = new Map([
   ...visualOnlyEvidence,
@@ -232,7 +259,10 @@ check(() => assert.deepEqual(
   ['finish-1'],
 ));
 check(() => assert.equal(state.hasCurrentReelAnalysis(analysis, ordered), true));
+check(() => assert.equal(state.isReelAnalysisRefreshError(new Error('PROVIDER_UNAVAILABLE: mentions REEL_ANALYSIS_STALE')), false));
 const inputRevision = state.reelInputRevision({ jobId: 'job-1', localFacts: request.localFacts, media: browserMedia, planning, analysis, companyVoiceRevision: 'voice-1' });
+const persistedInputRevision = state.reelInputRevision({ jobId: 'job-1', localFacts: request.localFacts, media: browserMedia, planning, companyVoiceRevision: 'voice-1' });
+check(() => assert.equal(persistedInputRevision, state.reelInputRevision({ jobId: 'job-1', localFacts: request.localFacts, media: browserMedia, planning, companyVoiceRevision: 'voice-1' })));
 const readyState = state.applyReelPlan(state.createReelWorkspaceState('job-1'), { ...validPlan, revision: 'plan-r1' }, inputRevision);
 const approved = state.approveCurrentReel(readyState, inputRevision);
 check(() => assert.equal(state.isCurrentReelApproved(approved, inputRevision), true));
@@ -246,12 +276,15 @@ check(() => assert.notEqual(reelPlanRevision(validPlan, 'input-a'), reelPlanRevi
 check(() => assert.match(aiPage, /: 'Generate Reel'/));
 check(() => assert.match(aiPage, /: 'Approve Reel'/));
 check(() => assert.match(aiPage, /<SlidersHorizontal[\s\S]{0,120}Edit/));
+check(() => assert.match(aiPage, /Analyze media to edit the advanced media plan/));
+check(() => assert.match(aiPage, /status: 'creating_story'/));
 check(() => assert.equal(state.reelStatusLabel('analyzing'), 'Analyzing safe media'));
 check(() => assert.equal(state.reelStatusLabel('creating_story'), 'Creating story'));
 check(() => assert.match(aiPage, /A stronger Reel needs a few more shots/));
 check(() => assert.match(aiPage, /Not every job needs a Reel/));
 check(() => assert.match(aiPage, /reelErrorMessage\(error\)/));
 check(() => assert.match(aiPage, /createReelWorkspaceState\(selectedJob\?\.id\)/));
+check(() => assert.match(aiPage, /mediaAnalysisWorkspace\.result\?\.jobId === selectedJob\?\.id[\s\S]*MediaPlanningWorkspace[\s\S]*Analyze media to edit/));
 check(() => assert.match(previewSource, /data-testid="reel-preview-9x16"/));
 check(() => assert.match(previewCss, /aspect-ratio:\s*9\s*\/\s*16/));
 check(() => assert.match(previewSource, /Play Reel preview/));
@@ -275,47 +308,64 @@ check(() => assert.match(edgeIndex, /handleContentGeneration/));
 check(() => assert.match(normalContentClient, /ContentGenerationResult/));
 check(() => assert.match(mediaPlanningSource, /Carousel Plan/));
 
-// One-click analyze -> generate orchestration is bounded and does not need a second user action.
+// One-click uses persisted server authority first and permits one bounded analysis refresh.
 let analysisCalls = 0;
 let generationCalls = 0;
+let generationAnalyses = [];
+let stages = [];
 const noAnalysisFlow = await oneClick.runOneClickReel({
   mediaPlan: request.mediaPlan,
   currentAnalysis: undefined,
   async analyze() { analysisCalls += 1; return analysis; },
-  async generate() { generationCalls += 1; return validPlan; },
+  async generate(receivedAnalysis) { generationCalls += 1; generationAnalyses.push(receivedAnalysis); return validPlan; },
   privacyReviewCount: () => 0,
+  onStage(status) { stages.push(status); },
 });
 check(() => assert.equal(noAnalysisFlow.kind, 'generated'));
-check(() => assert.equal(analysisCalls, 1));
-check(() => assert.equal(generationCalls, 1));
-
-analysisCalls = 0;
-generationCalls = 0;
-await oneClick.runOneClickReel({
-  mediaPlan: request.mediaPlan,
-  currentAnalysis: analysis,
-  async analyze() { analysisCalls += 1; return analysis; },
-  async generate() { generationCalls += 1; return validPlan; },
-  privacyReviewCount: () => 0,
-});
+check(() => assert.equal(noAnalysisFlow.analysis, undefined));
 check(() => assert.equal(analysisCalls, 0));
 check(() => assert.equal(generationCalls, 1));
+check(() => assert.deepEqual(generationAnalyses, [undefined]));
+check(() => assert.deepEqual(stages, ['creating_story']));
 
 analysisCalls = 0;
 generationCalls = 0;
-await oneClick.runOneClickReel({
+generationAnalyses = [];
+const localAnalysisFlow = await oneClick.runOneClickReel({
   mediaPlan: request.mediaPlan,
   currentAnalysis: analysis,
   async analyze() { analysisCalls += 1; return analysis; },
-  async generate() {
-    generationCalls += 1;
-    if (generationCalls === 1) throw new Error('REEL_ANALYSIS_STALE');
-    return validPlan;
-  },
+  async generate(receivedAnalysis) { generationCalls += 1; generationAnalyses.push(receivedAnalysis); return validPlan; },
   privacyReviewCount: () => 0,
 });
-check(() => assert.equal(analysisCalls, 1));
-check(() => assert.equal(generationCalls, 2));
+check(() => assert.equal(localAnalysisFlow.analysis, analysis));
+check(() => assert.equal(analysisCalls, 0));
+check(() => assert.equal(generationCalls, 1));
+check(() => assert.deepEqual(generationAnalyses, [analysis]));
+
+for (const refreshCode of ['REEL_ANALYSIS_REQUIRED', 'REEL_ANALYSIS_STALE']) {
+  analysisCalls = 0;
+  generationCalls = 0;
+  generationAnalyses = [];
+  stages = [];
+  await oneClick.runOneClickReel({
+    mediaPlan: request.mediaPlan,
+    currentAnalysis: undefined,
+    async analyze() { analysisCalls += 1; return analysis; },
+    async generate(receivedAnalysis) {
+      generationCalls += 1;
+      generationAnalyses.push(receivedAnalysis);
+      if (generationCalls === 1) throw new Error(refreshCode);
+      return validPlan;
+    },
+    privacyReviewCount: () => 0,
+    onStage(status) { stages.push(status); },
+  });
+  check(() => assert.equal(analysisCalls, 1));
+  check(() => assert.equal(generationCalls, 2));
+  check(() => assert.deepEqual(generationAnalyses, [undefined, analysis]));
+  check(() => assert.deepEqual(stages, ['creating_story', 'analyzing', 'creating_story']));
+}
 
 analysisCalls = 0;
 generationCalls = 0;
@@ -323,34 +373,49 @@ const privacyFlow = await oneClick.runOneClickReel({
   mediaPlan: request.mediaPlan,
   currentAnalysis: undefined,
   async analyze() { analysisCalls += 1; return analysis; },
-  async generate() { generationCalls += 1; return validPlan; },
-  privacyReviewCount: () => 2,
+  async generate() { generationCalls += 1; throw new Error('REEL_PRIVACY_REVIEW_REQUIRED'); },
+  privacyReviewCount: () => 0,
 });
 check(() => assert.equal(privacyFlow.kind, 'privacy_review_required'));
-check(() => assert.equal(analysisCalls, 1));
-check(() => assert.equal(generationCalls, 0));
+check(() => assert.equal(privacyFlow.analysis, undefined));
+check(() => assert.equal(analysisCalls, 0));
+check(() => assert.equal(generationCalls, 1));
+
+for (const providerFailure of ['PROVIDER_TIMEOUT', 'INVALID_REEL_PROVIDER_OUTPUT']) {
+  analysisCalls = 0;
+  generationCalls = 0;
+  await assert.rejects(() => oneClick.runOneClickReel({
+    mediaPlan: request.mediaPlan,
+    currentAnalysis: undefined,
+    async analyze() { analysisCalls += 1; return analysis; },
+    async generate() { generationCalls += 1; throw new Error(providerFailure); },
+    privacyReviewCount: () => 0,
+  }), new RegExp(providerFailure));
+  check(() => assert.equal(analysisCalls, 0));
+  check(() => assert.equal(generationCalls, 1));
+}
 
 analysisCalls = 0;
 generationCalls = 0;
 await assert.rejects(() => oneClick.runOneClickReel({
   mediaPlan: request.mediaPlan,
   currentAnalysis: undefined,
-  async analyze() { analysisCalls += 1; throw new Error('MEDIA_PROVIDER_UNAVAILABLE'); },
-  async generate() { generationCalls += 1; return validPlan; },
+  async analyze() { analysisCalls += 1; return analysis; },
+  async generate() { generationCalls += 1; throw new Error('REEL_ANALYSIS_STALE'); },
   privacyReviewCount: () => 0,
-}), /MEDIA_PROVIDER_UNAVAILABLE/);
+}), /REEL_ANALYSIS_STALE/);
 check(() => assert.equal(analysisCalls, 1));
-check(() => assert.equal(generationCalls, 0));
+check(() => assert.equal(generationCalls, 2));
 
 analysisCalls = 0;
 generationCalls = 0;
-await assert.rejects(() => oneClick.runOneClickReel({
+await oneClick.runOneClickReel({
   mediaPlan: request.mediaPlan,
-  currentAnalysis: analysis,
+  currentAnalysis: undefined,
   async analyze() { analysisCalls += 1; return analysis; },
-  async generate() { generationCalls += 1; throw new Error('PROVIDER_TIMEOUT'); },
+  async generate() { generationCalls += 1; return validPlan; },
   privacyReviewCount: () => 0,
-}), /PROVIDER_TIMEOUT/);
+});
 check(() => assert.equal(analysisCalls, 0));
 check(() => assert.equal(generationCalls, 1));
 

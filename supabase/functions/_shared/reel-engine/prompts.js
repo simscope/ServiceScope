@@ -35,6 +35,8 @@ export function buildReelPrompt(request, context) {
       'A valid attachment ID proves only that safe current media exists. It does not prove a diagnosis or repair.',
       'Persisted media-analysis findings are VISUAL SUGGESTIONS for media selection and visible-content description only.',
       'Visual suggestions are not verified diagnosis, cause, failed-component, repair-action, replacement, or final-result facts.',
+      'Without factual diagnosis, keep complaint symptoms and visible components in separate statements and never imply a relationship between them.',
+      'Visual-only component wording must be extractive from its visual evidence, apart from neutral presentation words such as shown, visible, close-up, look, inside, detail, or here.',
       'Use diagnosis evidence for diagnosis or cause, repair-performed or installed-material evidence for repair/replacement, and final-result evidence for restored or fixed outcomes.',
       'A technical scene must cite both its media evidence ID for visual binding and every required factual evidence ID for its words.',
       'For create_reel, use at least two distinct safe attachments and never repeat an attachment as multiple scenes.',

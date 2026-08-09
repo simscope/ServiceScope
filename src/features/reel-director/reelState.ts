@@ -132,7 +132,16 @@ export function hasCurrentReelAnalysis(result: MediaAnalysisResult | undefined, 
 
 export function isReelAnalysisRefreshError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? '');
-  return message.includes('REEL_ANALYSIS_REQUIRED') || message.includes('REEL_ANALYSIS_STALE');
+  return hasExactReelErrorCode(message, 'REEL_ANALYSIS_REQUIRED') || hasExactReelErrorCode(message, 'REEL_ANALYSIS_STALE');
+}
+
+export function isReelPrivacyReviewError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return hasExactReelErrorCode(message, 'REEL_PRIVACY_REVIEW_REQUIRED');
+}
+
+function hasExactReelErrorCode(message: string, code: string) {
+  return message === code || message.startsWith(`${code}:`);
 }
 
 function mediaLabelPriority(label: AssistantMediaLabel | undefined) {

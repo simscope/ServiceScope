@@ -401,7 +401,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     }
     setReelWorkspace((current) => ({
       ...current,
-      status: 'analyzing',
+      status: 'creating_story',
       error: '',
       approvalInvalidated: Boolean(current.approvedRevision || current.approvalInvalidated),
       approvedRevision: undefined,
@@ -769,13 +769,25 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
             </section>
           ) : null}
 
-          {reelEditOpen && !unsupportedStatus && mediaAnalysisWorkspace.result?.jobId === selectedJob?.id ? (
-            <MediaPlanningWorkspace
-              state={mediaPlanningState}
-              media={assistantContext.publicSafe.media}
-              privateValues={assistantContext.privateValues}
-              onChange={setMediaPlanningState}
-            />
+          {reelEditOpen && !unsupportedStatus ? (
+            mediaAnalysisWorkspace.result?.jobId === selectedJob?.id ? (
+              <MediaPlanningWorkspace
+                state={mediaPlanningState}
+                media={assistantContext.publicSafe.media}
+                privateValues={assistantContext.privateValues}
+                onChange={setMediaPlanningState}
+              />
+            ) : (
+              <div className="ai-reel-decision-state">
+                <SlidersHorizontal size={24} aria-hidden="true" />
+                <div>
+                  <h3>Analyze media to edit the advanced media plan</h3>
+                  <button className="secondary-button" type="button" onClick={analyzeMedia} disabled={mediaAnalysisWorkspace.status === 'pending'}>
+                    Analyze media
+                  </button>
+                </div>
+              </div>
+            )
           ) : null}
 
           <section className="ai-assistant-capabilities" aria-label="Assistant channels">

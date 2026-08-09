@@ -28,6 +28,9 @@ const reelEdge = await readFile('supabase/functions/ai-content-generate/index.ts
 const mediaEdge = await readFile('supabase/functions/ai-media-analyze/index.ts', 'utf8');
 const migration = await readFile('supabase/migrations/20260809013000_reel_authoritative_media_findings.sql', 'utf8');
 const canonicalSchema = await readFile('supabase/schema.sql', 'utf8');
+const oneClickSource = await readFile('src/features/reel-director/oneClickReel.ts', 'utf8');
+const reelStateSource = await readFile('src/features/reel-director/reelState.ts', 'utf8');
+const reelRegression = await readFile('scripts/reel-director-regression-tests.mjs', 'utf8');
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
 
@@ -78,7 +81,36 @@ check(() => assert.match(server, /repairClaimPattern[\s\S]*factIds\.has\('repair
 check(() => assert.match(server, /resultClaimPattern[\s\S]*factIds\.has\('final-result'\)/));
 check(() => assert.match(server, /VISUAL SUGGESTIONS/));
 check(() => assert.match(server, /not verified diagnosis, cause/));
+check(() => assert.match(server, /keep complaint symptoms and visible components in separate statements/));
+check(() => assert.match(server, /must be extractive from its visual evidence/));
 check(() => assert.match(server, /failure_explainer'[\s\S]*!has\('diagnosis'\)/));
+check(() => assert.match(server, /assertStatementEvidenceCoverage/));
+check(() => assert.match(server, /meaningfulEvidenceTokens/));
+check(() => assert.match(server, /usesVisualMeaning && usesSymptomMeaning/));
+check(() => assert.match(server, /statementTokens\.some\(\(token\) => !supportedTokens\.has\(token\)/));
+check(() => assert.match(server, /plan\.cover\.title, evidenceIds: plan\.hook\.evidenceIds/));
+check(() => assert.match(server, /brandCtaTokens/));
+for (const unsafeVisualInference of [
+  'BAD RELAY, NO HEAT',
+  'FAULTY RELAY FOUND',
+  'THE RELAY WAS THE CULPRIT',
+  'THIS RELAY KILLED THE HEAT',
+  'THE RELAY WAS RESPONSIBLE',
+  'BROKEN RELAY, NO HEAT',
+  'RELAY ISSUE FOUND',
+  'DEAD COMPRESSOR',
+  'THE PROBLEM IS THIS RELAY',
+]) {
+  check(() => assert.match(reelRegression, new RegExp(unsafeVisualInference.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))));
+}
+check(() => assert.match(reelRegression, /BURNED RELAY VISIBLE/));
+check(() => assert.match(reelRegression, /OVEN NOT HEATING\?/));
+check(() => assert.doesNotMatch(oneClickSource, /if \(!hasCurrentReelAnalysis[\s\S]{0,180}input\.analyze/));
+check(() => assert.match(oneClickSource, /value: T; analysis\?: MediaAnalysisResult/));
+check(() => assert.match(oneClickSource, /isReelPrivacyReviewError\(error\)[\s\S]*privacy_review_required/));
+check(() => assert.match(oneClickSource, /!isReelAnalysisRefreshError\(error\)[\s\S]*throw error/));
+check(() => assert.match(reelStateSource, /hasExactReelErrorCode\(message, 'REEL_ANALYSIS_REQUIRED'\)[\s\S]*hasExactReelErrorCode\(message, 'REEL_ANALYSIS_STALE'\)/));
+check(() => assert.match(aiPage, /Analyze media to edit the advanced media plan/));
 check(() => assert.equal((migration.match(/-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_BEGIN/g) ?? []).length, 1));
 check(() => assert.equal((canonicalSchema.match(/-- REEL_AUTHORITATIVE_MEDIA_FINDINGS_BEGIN/g) ?? []).length, 1));
 check(() => assert.match(canonicalSchema, /create table public\.company_media_analysis_content_findings/));

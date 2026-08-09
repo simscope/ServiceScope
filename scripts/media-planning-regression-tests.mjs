@@ -350,7 +350,9 @@ assert.equal(JSON.stringify(existingWorkspace), beforePlanning);
 assert.equal(assistant.canOpenJobInAiAssistant('In progress'), false);
 assert.equal(assistant.canOpenJobInAiAssistant('Completed'), true);
 assert.equal(assistant.canOpenJobInAiAssistant('Warranty'), true);
-assert.match(aiPageSource, /!unsupportedStatus && mediaAnalysisWorkspace\.result\?\.jobId === selectedJob\?\.id/);
+assert.match(aiPageSource, /reelEditOpen && !unsupportedStatus/);
+assert.match(aiPageSource, /mediaAnalysisWorkspace\.result\?\.jobId === selectedJob\?\.id[\s\S]*<MediaPlanningWorkspace/);
+assert.match(aiPageSource, /Analyze media to edit the advanced media plan[\s\S]*onClick=\{analyzeMedia\}/);
 
 // 31. Planning has no persistence, Edge or provider boundary.
 const planningBrowserSource = `${planningSource}\n${planningUiSource}`;

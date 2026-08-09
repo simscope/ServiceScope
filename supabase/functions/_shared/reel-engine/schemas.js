@@ -158,13 +158,6 @@ export function validateReelPlan(plan, context) {
     if (!evidenceIds.every((id) => evidenceById.has(id))) fail('REEL_GROUNDING_FAILED');
   }
   assertNoPrivateOrForbiddenText(plan, context.privateValues);
-  assertClaimSupport(plan.claims, evidenceById);
-  assertClaimSupport([
-    { text: plan.hook.text, evidenceIds: plan.hook.evidenceIds },
-    { text: plan.caption.text, evidenceIds: plan.caption.evidenceIds },
-    ...plan.scenes.map((scene) => ({ text: `${scene.overlayText} ${scene.secondaryText ?? ''} ${scene.voiceoverLine ?? ''}`, evidenceIds: scene.evidenceIds })),
-    ...(plan.voiceover.enabled ? [{ text: plan.voiceover.script, evidenceIds: plan.voiceover.evidenceIds }] : []),
-  ], evidenceById);
 
   const scoreDecision = plan.qualityScore >= 70
     ? 'create_reel'
@@ -174,6 +167,19 @@ export function validateReelPlan(plan, context) {
   if (scoreDecision !== plan.decision) fail('REEL_QUALITY_FAILED');
 
   if (plan.decision === 'create_reel') {
+    assertClaimSupport(plan.claims, evidenceById);
+    assertClaimSupport([
+      { text: plan.hook.text, evidenceIds: plan.hook.evidenceIds },
+      { text: plan.cover.title, evidenceIds: plan.hook.evidenceIds },
+      { text: plan.caption.text, evidenceIds: plan.caption.evidenceIds },
+      ...plan.scenes.flatMap((scene) => [
+        { text: scene.overlayText, evidenceIds: scene.evidenceIds },
+        { text: scene.secondaryText ?? '', evidenceIds: scene.evidenceIds },
+        { text: scene.voiceoverLine ?? '', evidenceIds: scene.evidenceIds },
+      ]),
+      ...(plan.voiceover.enabled ? [{ text: plan.voiceover.script, evidenceIds: plan.voiceover.evidenceIds }] : []),
+      ...(plan.brand.enabled ? [{ text: plan.brand.cta, evidenceIds: plan.brand.evidenceIds }] : []),
+    ], evidenceById);
     if (!plan.safety.ok || plan.safety.privacy !== 'passed' || plan.safety.grounding !== 'passed' || plan.safety.quality !== 'passed') fail('REEL_QUALITY_FAILED');
     if (genericCreativePattern.test(plan.hook.text) || genericCaptionStart(plan.caption.text)) fail('REEL_QUALITY_FAILED');
     if (wordCount(plan.hook.text) < 3 || wordCount(plan.hook.text) > 8) fail('REEL_QUALITY_FAILED');
@@ -369,15 +375,55 @@ function assertNoPrivateOrForbiddenText(plan, privateValues) {
 export function assertClaimSupport(claims, evidenceById) {
   const technicalTerms = /\b(capacitor|compressor|relay|motor|refrigerant|leak|clog|burner|thermostat|sensor|bearing|wiring|control board|replaced|repaired|restored|back in service|fixed|failed component|stopped heating|not heating|not cooling|failure)\b/gi;
   for (const claim of claims) {
+    if (!claim.text) continue;
     const referencedEvidence = claim.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
     const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
-    assertRequiredFactCapabilities(claim.text, factEvidence);
+    assertStatementEvidenceCoverage(claim, evidenceById);
     const referenced = (requiresFactOnlyLexicalSupport(claim.text) ? factEvidence : referencedEvidence)
       .map((item) => item.text ?? '')
       .join(' ');
     const terms = claim.text.match(technicalTerms) ?? [];
     if (terms.some((term) => !referenced.toLowerCase().includes(term.toLowerCase()))) fail('REEL_GROUNDING_FAILED');
   }
+}
+
+export function assertStatementEvidenceCoverage(statement, evidenceById) {
+  const text = String(statement.text ?? '').trim();
+  if (!text) return;
+  const referencedEvidence = statement.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
+  const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
+  const visualEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.visual);
+  const brandEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.brand);
+  assertRequiredFactCapabilities(text, factEvidence);
+
+  if (brandEvidence.length && !factEvidence.length && !visualEvidence.length) {
+    const brandTokens = evidenceTokenSet(brandEvidence);
+    if (meaningfulEvidenceTokens(text).some((token) => !brandTokens.has(token) && !brandCtaTokens.has(token))) {
+      fail('REEL_GROUNDING_FAILED');
+    }
+    return;
+  }
+
+  const factIds = new Set(factEvidence.map((item) => item.id));
+  const hasDiagnosis = factIds.has('diagnosis');
+  if (!hasDiagnosis) {
+    const statementTokens = meaningfulEvidenceTokens(text);
+    const supportedTokens = evidenceTokenSet([...factEvidence, ...visualEvidence]);
+    const capabilityTokens = allowedCapabilityTokens(factIds);
+    if (statementTokens.some((token) => !supportedTokens.has(token) && !capabilityTokens.has(token))) {
+      fail('REEL_GROUNDING_FAILED');
+    }
+
+    if (visualEvidence.length) {
+      const visualTokens = evidenceTokenSet(visualEvidence);
+      const symptomTokens = evidenceTokenSet(factEvidence.filter((item) => ['complaint', 'system-equipment'].includes(item.id)));
+      const usesVisualMeaning = statementTokens.some((token) => visualTokens.has(token));
+      const usesSymptomMeaning = statementTokens.some((token) => symptomTokens.has(token) && !visualTokens.has(token));
+      if (usesVisualMeaning && usesSymptomMeaning) fail('REEL_GROUNDING_FAILED');
+    }
+  }
+
+  assertLiteralFactCoverage(text, factEvidence);
 }
 
 export function assertAngleSupport(angle, evidenceById, safeMedia) {
@@ -421,6 +467,55 @@ const resultClaimPattern = /\b(?:back in service|restored|working again|operatin
 const measurementClaimPattern = /\b\d+(?:\.\d+)?\s*(?:v|volts?|amps?|psi|ohms?|percent|%|degrees?|°[cf])\b/i;
 const safetyOrSavingsClaimPattern = /\b(?:safe to use|safety (?:verified|confirmed|passed)|saved? (?:money|energy|cost)|reduced? (?:cost|bill|usage))\b/i;
 const technicianActionPattern = /\b(?:our technician|the technician|our team)\s+(?:found|diagnosed|repaired|replaced|installed|fixed|restored|tested|inspected|cleaned|adjusted)\b|\bwe\s+(?:found(?!\s+inside\b)|diagnosed|repaired|replaced|installed|fixed|restored|tested|inspected|cleaned|adjusted)\b/i;
+
+const neutralPresentationTokens = new Set([
+  'a', 'an', 'the', 'this', 'that', 'these', 'those', 'is', 'are', 'was', 'were', 'be', 'been',
+  'being', 'of', 'to', 'in', 'on', 'at', 'for', 'from', 'with', 'and', 'or', 'but', 'our', 'your',
+  'their', 'its', 'it', 'why', 'what', 'how', 'when', 'where', 'here', 'inside', 'close', 'up',
+  'look', 'shown', 'visible', 'detail', 'view', 'scene', 'photo', 'image', 'unit', 'equipment',
+  'component', 'we', 'found', 'one', 'small', 'having', 'similar', 'send', 'message', 'us',
+]);
+
+const brandCtaTokens = new Set([
+  'issue', 'help', 'contact', 'call', 'book', 'schedule', 'today', 'learn', 'more', 'get', 'touch',
+]);
+
+function meaningfulEvidenceTokens(value) {
+  return (String(value ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])
+    .map(normalizeEvidenceToken)
+    .filter((token) => token && !neutralPresentationTokens.has(token));
+}
+
+function normalizeEvidenceToken(token) {
+  const exact = {
+    burned: 'burn', burning: 'burn', heating: 'heat', cooling: 'cool', stopped: 'stop',
+    replaced: 'replace', replacing: 'replace', repaired: 'repair', repairing: 'repair',
+    restored: 'restore', restoring: 'restore', installed: 'install', installing: 'install',
+  };
+  return exact[token] ?? token;
+}
+
+function evidenceTokenSet(evidence) {
+  return new Set(evidence.flatMap((item) => meaningfulEvidenceTokens(item.text)));
+}
+
+function allowedCapabilityTokens(factIds) {
+  const result = new Set();
+  if (factIds.has('repair-performed')) ['repair', 'replace', 'install', 'fix', 'service', 'test'].forEach((token) => result.add(token));
+  if (Array.from(factIds).some((id) => id.startsWith('installed-material-'))) ['replace', 'install', 'replacement', 'part', 'material'].forEach((token) => result.add(token));
+  if (factIds.has('final-result')) ['restore', 'working', 'operation', 'back', 'service', 'result'].forEach((token) => result.add(token));
+  return result;
+}
+
+function assertLiteralFactCoverage(text, factEvidence) {
+  const factText = factEvidence.map((item) => String(item.text ?? '').toLowerCase()).join(' ');
+  const measurements = text.toLowerCase().match(/\b\d+(?:\.\d+)?\s*(?:v|volts?|amps?|psi|ohms?|percent|%|degrees?)\b/g) ?? [];
+  if (measurements.some((measurement) => !factText.includes(measurement))) fail('REEL_GROUNDING_FAILED');
+  if (safetyOrSavingsClaimPattern.test(text)) {
+    const factualTokens = evidenceTokenSet(factEvidence);
+    if (meaningfulEvidenceTokens(text).some((token) => !factualTokens.has(token))) fail('REEL_GROUNDING_FAILED');
+  }
+}
 
 function genericCaptionStart(value) {
   const firstSentence = value.trim().split(/[!?\.]/, 1)[0]?.trim() ?? '';
