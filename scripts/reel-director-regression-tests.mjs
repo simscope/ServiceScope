@@ -112,6 +112,8 @@ check(() => assert.match(buildReelPrompt(request, context).prompt, /VISUAL SUGGE
 check(() => assert.match(buildReelPrompt(request, context).prompt, /not verified diagnosis, cause/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /keep complaint symptoms and visible components in separate statements/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /must be extractive from its visual evidence/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /authorize only wording entailed by their supplied text/));
+check(() => assert.match(buildReelPrompt(request, context).prompt, /Ground every caption and voiceover sentence independently/));
 check(() => assert.match(buildReelPrompt(request, context).prompt, /capability="visual"/));
 
 // Persisted visual suggestions bind scenes but cannot substitute for factual job evidence.
@@ -166,7 +168,74 @@ const factualEvidence = new Map([
 check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'The burned relay caused the failure.', evidenceIds: ['diagnosis', 'media:detail-1:detail-finding'] }], factualEvidence)));
 check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'THE TECHNICIAN REPAIRED THE UNIT', evidenceIds: ['repair-performed', 'media:repair-1:repair-finding'] }], factualEvidence)));
 check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'OPERATION RESTORED', evidenceIds: ['final-result', 'media:finish-1:finish-finding'] }], factualEvidence)));
-check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'A REPLACEMENT RELAY WAS INSTALLED', evidenceIds: ['installed-material-0', 'media:part-1:part-finding'] }], factualEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'A REPLACEMENT RELAY', evidenceIds: ['installed-material-0', 'media:part-1:part-finding'] }], factualEvidence)));
+rejects(() => assertClaimSupport([{ text: 'A REPLACEMENT RELAY WAS INSTALLED', evidenceIds: ['installed-material-0', 'media:part-1:part-finding'] }], factualEvidence), /REEL_GROUNDING_FAILED/);
+
+// Fact IDs authorize only content entailed by the corresponding authoritative source.
+const sourceBoundEvidence = new Map([
+  ['system-equipment', { id: 'system-equipment', text: 'Oven' }],
+  ['complaint', { id: 'complaint', text: 'Oven was not heating.' }],
+  ['diagnosis', { id: 'diagnosis', text: 'A burned relay caused the heating failure.' }],
+  ['repair-performed', { id: 'repair-performed', text: 'The burned relay was replaced.' }],
+  ['final-result', { id: 'final-result', text: 'Heating operation was restored.' }],
+  ['installed-material-0', { id: 'installed-material-0', text: 'Replacement relay' }],
+  ['media:fuse:finding', { id: 'media:fuse:finding', text: 'A fuse is visible.' }],
+  ['media:contactor:finding', { id: 'media:contactor:finding', text: 'A contactor is visible.' }],
+  ['media:finished:finding', { id: 'media:finished:finding', text: 'Finished equipment is shown.' }],
+  ['media:control-module:finding', { id: 'media:control-module:finding', text: 'A control module is visible.' }],
+]);
+const everySourceBoundEvidenceId = Array.from(sourceBoundEvidence.keys());
+for (const unsupportedFact of [
+  'FUSE CAUSED THE FAILURE',
+  'CONTACTOR CAUSED THE FAILURE',
+  'LOOSE CONNECTION CAUSED THE FAILURE',
+  'VALVE CAUSED THE FAILURE',
+  'FUSE WAS THE PROBLEM',
+  'BAD FUSE CAUSED THIS',
+  'FUSE REPLACED',
+  'CONTACTOR REPLACED',
+  'VALVE INSTALLED',
+  'CONTROL MODULE INSTALLED',
+  'NEW CONTROL MODULE INSTALLED',
+  'COOLING RESTORED',
+  'AIRFLOW RESTORED',
+  'SYSTEM PRESSURE RESTORED',
+]) {
+  rejects(() => assertClaimSupport([{ text: unsupportedFact, evidenceIds: everySourceBoundEvidenceId }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+}
+rejects(() => assertClaimSupport([{ text: 'FUSE CAUSED THE FAILURE', evidenceIds: ['diagnosis', 'media:fuse:finding'] }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'CONTACTOR REPLACED', evidenceIds: ['diagnosis', 'repair-performed', 'media:contactor:finding'] }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'COOLING RESTORED', evidenceIds: ['final-result', 'media:finished:finding'] }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => assertClaimSupport([{ text: 'NEW CONTROL MODULE INSTALLED', evidenceIds: ['repair-performed', 'installed-material-0', 'media:control-module:finding'] }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'A burned relay caused the failure.', evidenceIds: ['diagnosis'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'The relay caused the heating failure.', evidenceIds: ['diagnosis'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Why the oven stopped heating', evidenceIds: ['complaint'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'The relay was replaced.', evidenceIds: ['repair-performed'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Relay replaced', evidenceIds: ['repair-performed'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Heating restored', evidenceIds: ['final-result'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Heating operation was restored.', evidenceIds: ['final-result'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Replacement relay', evidenceIds: ['installed-material-0'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Burned relay visible', evidenceIds: ['media:fuse:finding', 'media:contactor:finding', 'media:control-module:finding', 'diagnosis'] }], new Map([
+  ...sourceBoundEvidence,
+  ['media:fuse:finding', { id: 'media:fuse:finding', text: 'A burned relay is visible.' }],
+]))));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Oven was not heating.', evidenceIds: ['complaint'] }], sourceBoundEvidence)));
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'Oven was not heating. A burned relay caused the failure.', evidenceIds: ['complaint', 'diagnosis'] }], sourceBoundEvidence)));
+rejects(() => assertClaimSupport([{ text: 'Oven was not heating. A fuse caused the failure.', evidenceIds: everySourceBoundEvidenceId }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+check(() => assert.doesNotThrow(() => assertClaimSupport([{ text: 'We found the problem. The relay was replaced.', evidenceIds: ['diagnosis', 'repair-performed'] }], sourceBoundEvidence)));
+rejects(() => assertClaimSupport([{ text: 'We found the problem. The contactor was replaced.', evidenceIds: everySourceBoundEvidenceId }], sourceBoundEvidence), /REEL_GROUNDING_FAILED/);
+rejects(() => parseReelProviderResult({
+  ...validPlan,
+  caption: { text: 'Oven was not heating. A fuse caused the failure.', evidenceIds: context.evidence.map((item) => item.id) },
+}, context), /REEL_GROUNDING_FAILED/);
+check(() => assert.equal(parseReelProviderResult({
+  ...validPlan,
+  voiceover: { enabled: true, script: 'We found the problem. The relay was replaced.', evidenceIds: ['diagnosis', 'repair-performed'] },
+}, context).voiceover.enabled, true));
+rejects(() => parseReelProviderResult({
+  ...validPlan,
+  voiceover: { enabled: true, script: 'We found the problem. The contactor was replaced.', evidenceIds: context.evidence.map((item) => item.id) },
+}, context), /REEL_GROUNDING_FAILED/);
 check(() => assert.equal(reelEvidenceCapabilityForId('diagnosis'), 'fact'));
 check(() => assert.equal(reelEvidenceCapabilityForId('media:detail-1:detail-finding'), 'visual'));
 check(() => assert.equal(reelEvidenceCapabilityForId('company-public-display-name'), 'brand'));
@@ -568,7 +637,7 @@ function createPlan() {
       { id: 'scene-1', position: 1, attachmentId: 'detail-1', sceneRole: 'detail', durationMs: 5000, overlayText: 'WHY THIS OVEN STOPPED HEATING', secondaryText: 'The failure was hiding in one small part.', motionPreset: 'focus_detail', cropStrategy: 'detail_crop', transitionOut: 'quick_fade', evidenceIds: ['media:detail-1:detail-finding', 'complaint', 'diagnosis'], voiceoverLine: null },
       { id: 'scene-2', position: 2, attachmentId: 'finish-1', sceneRole: 'finished_result', durationMs: 5000, overlayText: 'HEATING OPERATION RESTORED', secondaryText: 'The burned relay was replaced and operation restored.', motionPreset: 'slow_zoom_out', cropStrategy: 'subject_center', transitionOut: 'crossfade', evidenceIds: ['media:finish-1:finished_result-finding', 'repair-performed', 'final-result'], voiceoverLine: null },
     ],
-    caption: { text: 'A burned relay caused this heating failure. We replaced the relay and restored operation. Having a similar oven issue? Send us a message. #OvenRepair', evidenceIds: ['diagnosis', 'repair-performed', 'final-result', 'company-public-display-name'] },
+    caption: { text: 'A burned relay caused this heating failure. We replaced the relay and restored operation. Having a similar oven issue? Send us a message. #OvenRepair', evidenceIds: ['complaint', 'diagnosis', 'repair-performed', 'final-result', 'company-public-display-name'] },
     voiceover: { enabled: false, script: '', evidenceIds: [] }, missingShots: [],
     claims: [
       { id: 'claim-1', text: 'The oven stopped heating.', evidenceIds: ['complaint'] },

@@ -83,11 +83,19 @@ check(() => assert.match(server, /VISUAL SUGGESTIONS/));
 check(() => assert.match(server, /not verified diagnosis, cause/));
 check(() => assert.match(server, /keep complaint symptoms and visible components in separate statements/));
 check(() => assert.match(server, /must be extractive from its visual evidence/));
+check(() => assert.match(server, /authorize only wording entailed by their supplied text/));
+check(() => assert.match(server, /Ground every caption and voiceover sentence independently/));
 check(() => assert.match(server, /failure_explainer'[\s\S]*!has\('diagnosis'\)/));
 check(() => assert.match(server, /assertStatementEvidenceCoverage/));
+check(() => assert.match(server, /statementSentences/));
+check(() => assert.match(server, /factEvidenceForStatement/));
+check(() => assert.match(server, /selectedFactEvidence/));
 check(() => assert.match(server, /meaningfulEvidenceTokens/));
 check(() => assert.match(server, /usesVisualMeaning && usesSymptomMeaning/));
-check(() => assert.match(server, /statementTokens\.some\(\(token\) => !supportedTokens\.has\(token\)/));
+check(() => assert.match(server, /meaningfulEvidenceTokens\(text\)\.some\(\(token\) => \([\s\S]*!supportedTokens\.has\(token\)/));
+check(() => assert.match(server, /explicitVisualDescriptionPattern[\s\S]*!requiresFactOnlyLexicalSupport/));
+check(() => assert.match(server, /replacementClaimPattern\.test\(text\)[\s\S]*!factIds\.has\('repair-performed'\)/));
+check(() => assert.doesNotMatch(server, /technicalTerms\s*=\s*\/[^\n]+(?:fuse|contactor|valve|loose connection|control module)/i));
 check(() => assert.match(server, /plan\.cover\.title, evidenceIds: plan\.hook\.evidenceIds/));
 check(() => assert.match(server, /brandCtaTokens/));
 for (const unsafeVisualInference of [
@@ -105,6 +113,26 @@ for (const unsafeVisualInference of [
 }
 check(() => assert.match(reelRegression, /BURNED RELAY VISIBLE/));
 check(() => assert.match(reelRegression, /OVEN NOT HEATING\?/));
+for (const unsupportedFact of [
+  'FUSE CAUSED THE FAILURE',
+  'CONTACTOR CAUSED THE FAILURE',
+  'LOOSE CONNECTION CAUSED THE FAILURE',
+  'VALVE CAUSED THE FAILURE',
+  'FUSE WAS THE PROBLEM',
+  'BAD FUSE CAUSED THIS',
+  'FUSE REPLACED',
+  'CONTACTOR REPLACED',
+  'VALVE INSTALLED',
+  'CONTROL MODULE INSTALLED',
+  'NEW CONTROL MODULE INSTALLED',
+  'COOLING RESTORED',
+  'AIRFLOW RESTORED',
+  'SYSTEM PRESSURE RESTORED',
+]) {
+  check(() => assert.match(reelRegression, new RegExp(unsupportedFact)));
+}
+check(() => assert.match(reelRegression, /Oven was not heating\. A burned relay caused the failure\./));
+check(() => assert.match(reelRegression, /We found the problem\. The relay was replaced\./));
 check(() => assert.doesNotMatch(oneClickSource, /if \(!hasCurrentReelAnalysis[\s\S]{0,180}input\.analyze/));
 check(() => assert.match(oneClickSource, /value: T; analysis\?: MediaAnalysisResult/));
 check(() => assert.match(oneClickSource, /isReelPrivacyReviewError\(error\)[\s\S]*privacy_review_required/));

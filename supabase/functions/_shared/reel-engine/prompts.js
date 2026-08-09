@@ -38,6 +38,8 @@ export function buildReelPrompt(request, context) {
       'Without factual diagnosis, keep complaint symptoms and visible components in separate statements and never imply a relationship between them.',
       'Visual-only component wording must be extractive from its visual evidence, apart from neutral presentation words such as shown, visible, close-up, look, inside, detail, or here.',
       'Use diagnosis evidence for diagnosis or cause, repair-performed or installed-material evidence for repair/replacement, and final-result evidence for restored or fixed outcomes.',
+      'Fact evidence IDs authorize only wording entailed by their supplied text: diagnosis content cannot be borrowed from repair, repair or install actions cannot be borrowed from a material label, and result content cannot be borrowed from a visual.',
+      'Ground every caption and voiceover sentence independently; attaching extra evidence IDs never authorizes unsupported components, actions, causes, or outcomes.',
       'A technical scene must cite both its media evidence ID for visual binding and every required factual evidence ID for its words.',
       'For create_reel, use at least two distinct safe attachments and never repeat an attachment as multiple scenes.',
       'Select a supported marketing angle. Hook text must be 3-8 words and grounded by evidence IDs.',

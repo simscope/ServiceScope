@@ -167,6 +167,7 @@ export function validateReelPlan(plan, context) {
   if (scoreDecision !== plan.decision) fail('REEL_QUALITY_FAILED');
 
   if (plan.decision === 'create_reel') {
+    if (genericCreativePattern.test(plan.hook.text) || genericCaptionStart(plan.caption.text)) fail('REEL_QUALITY_FAILED');
     assertClaimSupport(plan.claims, evidenceById);
     assertClaimSupport([
       { text: plan.hook.text, evidenceIds: plan.hook.evidenceIds },
@@ -181,7 +182,6 @@ export function validateReelPlan(plan, context) {
       ...(plan.brand.enabled ? [{ text: plan.brand.cta, evidenceIds: plan.brand.evidenceIds }] : []),
     ], evidenceById);
     if (!plan.safety.ok || plan.safety.privacy !== 'passed' || plan.safety.grounding !== 'passed' || plan.safety.quality !== 'passed') fail('REEL_QUALITY_FAILED');
-    if (genericCreativePattern.test(plan.hook.text) || genericCaptionStart(plan.caption.text)) fail('REEL_QUALITY_FAILED');
     if (wordCount(plan.hook.text) < 3 || wordCount(plan.hook.text) > 8) fail('REEL_QUALITY_FAILED');
     if (plan.caption.text.length < 80 || countHashtags(plan.caption.text) > 5) fail('REEL_QUALITY_FAILED');
     if (plan.hook.evidenceIds.length < 1) fail('REEL_GROUNDING_FAILED');
@@ -376,14 +376,21 @@ export function assertClaimSupport(claims, evidenceById) {
   const technicalTerms = /\b(capacitor|compressor|relay|motor|refrigerant|leak|clog|burner|thermostat|sensor|bearing|wiring|control board|replaced|repaired|restored|back in service|fixed|failed component|stopped heating|not heating|not cooling|failure)\b/gi;
   for (const claim of claims) {
     if (!claim.text) continue;
-    const referencedEvidence = claim.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
-    const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
     assertStatementEvidenceCoverage(claim, evidenceById);
-    const referenced = (requiresFactOnlyLexicalSupport(claim.text) ? factEvidence : referencedEvidence)
-      .map((item) => item.text ?? '')
-      .join(' ');
-    const terms = claim.text.match(technicalTerms) ?? [];
-    if (terms.some((term) => !referenced.toLowerCase().includes(term.toLowerCase()))) fail('REEL_GROUNDING_FAILED');
+    for (const text of statementSentences(claim.text)) {
+      const referencedEvidence = claim.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
+      const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
+      const lexicalEvidence = requiresFactOnlyLexicalSupport(text)
+        ? factEvidenceForStatement(text, factEvidence)
+        : referencedEvidence;
+      const lexicalTokens = evidenceTokenSet(lexicalEvidence);
+      const lexicalFactEvidence = lexicalEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
+      const lexicalCapabilities = allowedCapabilityTokens(new Set(lexicalFactEvidence.map((item) => item.id)), lexicalFactEvidence);
+      const terms = text.match(technicalTerms) ?? [];
+      if (terms.some((term) => meaningfulEvidenceTokens(term).some((token) => !lexicalTokens.has(token) && !lexicalCapabilities.has(token)))) {
+        fail('REEL_GROUNDING_FAILED');
+      }
+    }
   }
 }
 
@@ -393,37 +400,53 @@ export function assertStatementEvidenceCoverage(statement, evidenceById) {
   const referencedEvidence = statement.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
   const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
   const visualEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.visual);
+  const factIds = new Set(factEvidence.map((item) => item.id));
+  if (!factIds.has('diagnosis') && visualEvidence.length) {
+    const statementTokens = meaningfulEvidenceTokens(text);
+    const visualTokens = evidenceTokenSet(visualEvidence);
+    const symptomTokens = evidenceTokenSet(factEvidence.filter((item) => ['complaint', 'system-equipment'].includes(item.id)));
+    const usesVisualMeaning = statementTokens.some((token) => visualTokens.has(token));
+    const usesSymptomMeaning = statementTokens.some((token) => symptomTokens.has(token) && !visualTokens.has(token));
+    if (usesVisualMeaning && usesSymptomMeaning) fail('REEL_GROUNDING_FAILED');
+  }
+
+  for (const sentence of statementSentences(text)) {
+    assertSingleStatementEvidenceCoverage({ ...statement, text: sentence }, evidenceById);
+  }
+}
+
+function assertSingleStatementEvidenceCoverage(statement, evidenceById) {
+  const text = String(statement.text ?? '').trim();
+  const referencedEvidence = statement.evidenceIds.map((id) => evidenceById.get(id)).filter(Boolean);
+  const factEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.fact);
+  const visualEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.visual);
   const brandEvidence = referencedEvidence.filter((item) => reelEvidenceCapabilityForId(item.id) === reelEvidenceCapabilities.brand);
   assertRequiredFactCapabilities(text, factEvidence);
 
   if (brandEvidence.length && !factEvidence.length && !visualEvidence.length) {
-    const brandTokens = evidenceTokenSet(brandEvidence);
-    if (meaningfulEvidenceTokens(text).some((token) => !brandTokens.has(token) && !brandCtaTokens.has(token))) {
-      fail('REEL_GROUNDING_FAILED');
-    }
+    assertSupportedTokens(text, brandEvidence, new Set(), brandEvidence);
     return;
   }
 
-  const factIds = new Set(factEvidence.map((item) => item.id));
-  const hasDiagnosis = factIds.has('diagnosis');
-  if (!hasDiagnosis) {
-    const statementTokens = meaningfulEvidenceTokens(text);
-    const supportedTokens = evidenceTokenSet([...factEvidence, ...visualEvidence]);
-    const capabilityTokens = allowedCapabilityTokens(factIds);
-    if (statementTokens.some((token) => !supportedTokens.has(token) && !capabilityTokens.has(token))) {
-      fail('REEL_GROUNDING_FAILED');
-    }
-
-    if (visualEvidence.length) {
-      const visualTokens = evidenceTokenSet(visualEvidence);
-      const symptomTokens = evidenceTokenSet(factEvidence.filter((item) => ['complaint', 'system-equipment'].includes(item.id)));
-      const usesVisualMeaning = statementTokens.some((token) => visualTokens.has(token));
-      const usesSymptomMeaning = statementTokens.some((token) => symptomTokens.has(token) && !visualTokens.has(token));
-      if (usesVisualMeaning && usesSymptomMeaning) fail('REEL_GROUNDING_FAILED');
-    }
+  if (visualEvidence.length && explicitVisualDescriptionPattern.test(text) && !requiresFactOnlyLexicalSupport(text)) {
+    assertSupportedTokens(text, visualEvidence, new Set(), brandEvidence);
+    return;
   }
 
-  assertLiteralFactCoverage(text, factEvidence);
+  if (factEvidence.length) {
+    const selectedFactEvidence = factEvidenceForStatement(text, factEvidence);
+    const selectedFactIds = new Set(selectedFactEvidence.map((item) => item.id));
+    assertSupportedTokens(text, selectedFactEvidence, allowedCapabilityTokens(selectedFactIds, selectedFactEvidence), brandEvidence);
+    assertLiteralFactCoverage(text, selectedFactEvidence);
+    return;
+  }
+
+  if (visualEvidence.length) {
+    assertSupportedTokens(text, visualEvidence, new Set(), brandEvidence);
+    return;
+  }
+
+  assertSupportedTokens(text, [], new Set(), brandEvidence);
 }
 
 export function assertAngleSupport(angle, evidenceById, safeMedia) {
@@ -439,13 +462,12 @@ export function assertAngleSupport(angle, evidenceById, safeMedia) {
 
 function assertRequiredFactCapabilities(text, factEvidence) {
   const factIds = new Set(factEvidence.map((item) => item.id));
-  const hasInstalledMaterial = factEvidence.some((item) => String(item.id).startsWith('installed-material-'));
   if (diagnosisClaimPattern.test(text) && !factIds.has('diagnosis')) fail('REEL_GROUNDING_FAILED');
-  if (replacementClaimPattern.test(text) && !factIds.has('repair-performed') && !hasInstalledMaterial) fail('REEL_GROUNDING_FAILED');
+  if (replacementClaimPattern.test(text) && !factIds.has('repair-performed')) fail('REEL_GROUNDING_FAILED');
   if (repairClaimPattern.test(text) && !factIds.has('repair-performed')) fail('REEL_GROUNDING_FAILED');
   if (resultClaimPattern.test(text) && !factIds.has('final-result')) fail('REEL_GROUNDING_FAILED');
-  if (measurementClaimPattern.test(text) && !factIds.has('diagnosis')) fail('REEL_GROUNDING_FAILED');
-  if (safetyOrSavingsClaimPattern.test(text) && !factIds.has('final-result')) fail('REEL_GROUNDING_FAILED');
+  if (measurementClaimPattern.test(text) && !factEvidence.some((item) => containsEveryMeasurement(text, item.text))) fail('REEL_GROUNDING_FAILED');
+  if (safetyOrSavingsClaimPattern.test(text) && !factEvidence.some((item) => containsEveryMeaningfulToken(text, item.text))) fail('REEL_GROUNDING_FAILED');
   if (technicianActionPattern.test(text) && !factIds.has('diagnosis') && !factIds.has('repair-performed')) fail('REEL_GROUNDING_FAILED');
 }
 
@@ -459,21 +481,83 @@ function requiresFactOnlyLexicalSupport(text) {
     || technicianActionPattern.test(text);
 }
 
+function statementSentences(value) {
+  return (String(value ?? '').match(/[^.!?\n]+[.!?]?/g) ?? [])
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+}
+
+function factEvidenceForStatement(text, factEvidence) {
+  const selectedIds = new Set();
+  const add = (...ids) => ids.forEach((id) => selectedIds.add(id));
+  const addInstalledMaterials = () => factEvidence
+    .filter((item) => String(item.id).startsWith('installed-material-'))
+    .forEach((item) => selectedIds.add(item.id));
+
+  if (diagnosisClaimPattern.test(text)) add('diagnosis');
+  if (replacementClaimPattern.test(text)) {
+    add('repair-performed');
+    addInstalledMaterials();
+  }
+  if (repairClaimPattern.test(text)) add('repair-performed');
+  if (resultClaimPattern.test(text)) add('final-result');
+  if (measurementClaimPattern.test(text)) {
+    factEvidence.filter((item) => containsEveryMeasurement(text, item.text)).forEach((item) => selectedIds.add(item.id));
+  }
+  if (safetyOrSavingsClaimPattern.test(text)) {
+    factEvidence.filter((item) => containsEveryMeaningfulToken(text, item.text)).forEach((item) => selectedIds.add(item.id));
+  }
+  if (technicianActionPattern.test(text)) {
+    if (/\b(?:found|diagnosed)\b/i.test(text)) add('diagnosis');
+    if (/\b(?:repaired|replaced|installed|fixed|tested|inspected|cleaned|adjusted)\b/i.test(text)) add('repair-performed');
+    if (/\brestored\b/i.test(text)) add('repair-performed', 'final-result');
+  }
+
+  if (!selectedIds.size) return factEvidence;
+  return factEvidence.filter((item) => selectedIds.has(item.id));
+}
+
+function assertSupportedTokens(text, evidence, capabilityTokens, brandEvidence) {
+  const publicBrandEvidence = brandEvidence.filter((item) => item.id === 'company-public-display-name');
+  const supportedTokens = evidenceTokenSet([...evidence, ...publicBrandEvidence]);
+  const hasBrandSupport = brandEvidence.length > 0;
+  if (meaningfulEvidenceTokens(text).some((token) => (
+    !supportedTokens.has(token)
+    && !capabilityTokens.has(token)
+    && !(hasBrandSupport && brandCtaTokens.has(token))
+  ))) {
+    fail('REEL_GROUNDING_FAILED');
+  }
+}
+
+function containsEveryMeasurement(statement, evidenceText) {
+  const measurements = String(statement ?? '').toLowerCase().match(/\b\d+(?:\.\d+)?\s*(?:v|volts?|amps?|psi|ohms?|percent|%|degrees?)\b/g) ?? [];
+  const source = String(evidenceText ?? '').toLowerCase();
+  return measurements.length > 0 && measurements.every((measurement) => source.includes(measurement));
+}
+
+function containsEveryMeaningfulToken(statement, evidenceText) {
+  const sourceTokens = new Set(meaningfulEvidenceTokens(evidenceText));
+  const statementTokens = meaningfulEvidenceTokens(statement);
+  return statementTokens.length > 0 && statementTokens.every((token) => sourceTokens.has(token));
+}
+
 const componentPattern = '(?:capacitor|compressor|relay|motor|burner|thermostat|sensor|bearing|wiring|control board)';
-const diagnosisClaimPattern = new RegExp(`\\b(?:caus(?:e|ed|es|ing)|because of|due to|diagnos(?:e|ed|is)|failed component|(?:problem|failure) (?:was|is)|failure was hiding|failed ${componentPattern}|${componentPattern} (?:failed|failure))\\b`, 'i');
+const diagnosisClaimPattern = new RegExp(`\\b(?:caus(?:e|ed|es|ing)|because of|due to|diagnos(?:e|ed|is)|failed component|(?:problem|failure) (?:was|is)|(?:is|was) the (?:problem|cause|culprit|reason)|failure was hiding|(?:culprit|responsible)|killed|failed ${componentPattern}|${componentPattern} (?:failed|failure))\\b`, 'i');
 const replacementClaimPattern = /\b(?:replaced|installed|swapped|replacement (?:was|is) (?:installed|completed|performed))\b/i;
 const repairClaimPattern = /\b(?:we|our technician|the technician|our team)\s+(?:repaired|fixed|cleaned|adjusted|rewired|sealed|serviced|tested|inspected)\b|\b(?:was|were) repaired\b|\brepairs? (?:were |was )?(?:completed|performed)\b/i;
 const resultClaimPattern = /\b(?:back in service|restored|working again|operating normally|now (?:works|working)|problem resolved|issue resolved|fixed)\b/i;
 const measurementClaimPattern = /\b\d+(?:\.\d+)?\s*(?:v|volts?|amps?|psi|ohms?|percent|%|degrees?|°[cf])\b/i;
 const safetyOrSavingsClaimPattern = /\b(?:safe to use|safety (?:verified|confirmed|passed)|saved? (?:money|energy|cost)|reduced? (?:cost|bill|usage))\b/i;
 const technicianActionPattern = /\b(?:our technician|the technician|our team)\s+(?:found|diagnosed|repaired|replaced|installed|fixed|restored|tested|inspected|cleaned|adjusted)\b|\bwe\s+(?:found(?!\s+inside\b)|diagnosed|repaired|replaced|installed|fixed|restored|tested|inspected|cleaned|adjusted)\b/i;
+const explicitVisualDescriptionPattern = /\b(?:visible|shown|pictured|close[- ]?up|look(?:ing)? inside|found inside|detail|view)\b/i;
 
 const neutralPresentationTokens = new Set([
   'a', 'an', 'the', 'this', 'that', 'these', 'those', 'is', 'are', 'was', 'were', 'be', 'been',
   'being', 'of', 'to', 'in', 'on', 'at', 'for', 'from', 'with', 'and', 'or', 'but', 'our', 'your',
   'their', 'its', 'it', 'why', 'what', 'how', 'when', 'where', 'here', 'inside', 'close', 'up',
   'look', 'shown', 'visible', 'detail', 'view', 'scene', 'photo', 'image', 'unit', 'equipment',
-  'component', 'we', 'found', 'one', 'small', 'having', 'similar', 'send', 'message', 'us',
+  'component', 'we', 'found', 'one', 'small', 'part', 'hiding', 'having', 'similar', 'send', 'message', 'us',
 ]);
 
 const brandCtaTokens = new Set([
@@ -481,7 +565,8 @@ const brandCtaTokens = new Set([
 ]);
 
 function meaningfulEvidenceTokens(value) {
-  return (String(value ?? '').toLowerCase().match(/[a-z0-9]+/g) ?? [])
+  const words = String(value ?? '').replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+  return (words.match(/[a-z0-9]+/g) ?? [])
     .map(normalizeEvidenceToken)
     .filter((token) => token && !neutralPresentationTokens.has(token));
 }
@@ -489,6 +574,7 @@ function meaningfulEvidenceTokens(value) {
 function normalizeEvidenceToken(token) {
   const exact = {
     burned: 'burn', burning: 'burn', heating: 'heat', cooling: 'cool', stopped: 'stop',
+    caused: 'cause', causes: 'cause', causing: 'cause', failures: 'failure',
     replaced: 'replace', replacing: 'replace', repaired: 'repair', repairing: 'repair',
     restored: 'restore', restoring: 'restore', installed: 'install', installing: 'install',
   };
@@ -499,11 +585,13 @@ function evidenceTokenSet(evidence) {
   return new Set(evidence.flatMap((item) => meaningfulEvidenceTokens(item.text)));
 }
 
-function allowedCapabilityTokens(factIds) {
+function allowedCapabilityTokens(factIds, factEvidence = []) {
   const result = new Set();
-  if (factIds.has('repair-performed')) ['repair', 'replace', 'install', 'fix', 'service', 'test'].forEach((token) => result.add(token));
-  if (Array.from(factIds).some((id) => id.startsWith('installed-material-'))) ['replace', 'install', 'replacement', 'part', 'material'].forEach((token) => result.add(token));
+  if (factIds.has('diagnosis')) ['cause', 'problem', 'culprit', 'reason', 'responsible'].forEach((token) => result.add(token));
+  if (factIds.has('repair-performed')) ['repair', 'replace', 'fix', 'service', 'test'].forEach((token) => result.add(token));
+  if (Array.from(factIds).some((id) => id.startsWith('installed-material-'))) ['replacement', 'part', 'material'].forEach((token) => result.add(token));
   if (factIds.has('final-result')) ['restore', 'working', 'operation', 'back', 'service', 'result'].forEach((token) => result.add(token));
+  if (factEvidence.some((item) => ['complaint', 'system-equipment'].includes(item.id) && /\b(?:not|no longer)\s+(?:heating|cooling|working)\b/i.test(item.text))) result.add('stop');
   return result;
 }
 
