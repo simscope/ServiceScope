@@ -4,6 +4,12 @@ export const reelRendererVersion = 'servicescope-reel-renderer-v1';
 export const reelRenderBucket = 'company-reel-renders';
 export const reelArtifactTtlSeconds = 300;
 export const reelRenderRequestMaxBytes = 2048;
+export const reelWorkerMaxDurationSeconds = 300;
+export const reelWorkerLeaseSeconds = 360;
+export const reelQueueVisibilitySeconds = 360;
+export const reelQueueRetryDelaySeconds = 60;
+export const reelRenderMaxAttempts = 5;
+export const reelDispatchMaxAttempts = 2;
 
 const requestFields = new Set(['creativePlanId', 'expectedPlanRevision']);
 const messageFields = new Set(['schemaVersion', 'renderJobId']);

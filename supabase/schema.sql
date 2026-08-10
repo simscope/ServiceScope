@@ -8237,6 +8237,45 @@ begin
 end;
 $$;
 
+create or replace function public.can_access_company_ai_assistant(target_company_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  select auth.uid() is not null and (
+    exists (
+      select 1
+      from public.companies company
+      where company.id = target_company_id
+        and lower(company.owner_email::text) = lower(coalesce(auth.email(), ''))
+    )
+    or exists (
+      select 1
+      from public.company_users company_user
+      left join public.company_profiles profile on profile.company_id = company_user.company_id
+      where company_user.company_id = target_company_id
+        and company_user.status = 'active'
+        and (
+          company_user.auth_user_id = auth.uid()
+          or lower(company_user.email::text) = lower(coalesce(auth.email(), ''))
+        )
+        and case
+          when profile.access_rules->>'aiAssistant' in ('full', 'readonly', 'off')
+            then profile.access_rules->>'aiAssistant'
+          else 'full'
+        end <> 'off'
+        and case
+          when company_user.portal_access_rules->>'aiAssistant' in ('full', 'readonly', 'off')
+            then company_user.portal_access_rules->>'aiAssistant'
+          when company_user.role::text = 'technician' then 'off'
+          else 'full'
+        end <> 'off'
+    )
+  );
+$$;
+
 create or replace function public.get_company_reel_workspace(p_job_id uuid)
 returns table (
   creative_plan_id uuid, plan_revision text, plan_json jsonb, plan_created_at timestamptz,
@@ -8254,10 +8293,9 @@ declare target_company_id uuid;
 begin
   if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
   select company_id into target_company_id from public.jobs where id = p_job_id;
-  if target_company_id is null or not (
-    public.can_access_company(target_company_id)
-    or exists (select 1 from public.companies where id=target_company_id and lower(owner_email::text)=lower(coalesce(auth.email(),'')))
-  ) then raise exception 'FORBIDDEN'; end if;
+  if target_company_id is null or not public.can_access_company_ai_assistant(target_company_id) then
+    raise exception 'FORBIDDEN';
+  end if;
   return query
   select plan.id, plan.plan_revision, plan.plan_json, plan.created_at,
     render.id, render.status, render.error_code, render.duration_ms, render.width, render.height,
@@ -8288,10 +8326,10 @@ declare result public.company_reel_render_jobs%rowtype;
 begin
   if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
   select * into plan from public.company_reel_creative_plans where id = p_creative_plan_id for key share;
-  if not found or plan.plan_revision <> p_expected_plan_revision or not (
-    public.can_access_company(plan.company_id)
-    or exists (select 1 from public.companies where id=plan.company_id and lower(owner_email::text)=lower(coalesce(auth.email(),'')))
-  ) then raise exception 'REEL_RENDER_PLAN_UNAVAILABLE'; end if;
+  if not found or plan.plan_revision <> p_expected_plan_revision
+    or not public.can_access_company_ai_assistant(plan.company_id) then
+    raise exception 'REEL_RENDER_PLAN_UNAVAILABLE';
+  end if;
   fingerprint := encode(sha256(convert_to(concat_ws(E'\n',
     'reel-render-fingerprint-v1', plan.plan_revision, plan.plan_json::text,
     'servicescope-reel-renderer-v1', 'reel-presentation-v1', 'mp4-h264-yuv420p-faststart-v1'
@@ -8313,7 +8351,8 @@ begin
 end;
 $$;
 
-create or replace function public.claim_company_reel_render_job(p_render_job_id uuid, p_lease_seconds integer default 900)
+-- 300s Vercel worker runtime plus a 60s reclaim buffer.
+create or replace function public.claim_company_reel_render_job(p_render_job_id uuid, p_lease_seconds integer default 360)
 returns setof public.company_reel_render_jobs
 language plpgsql
 security definer
@@ -8321,6 +8360,11 @@ set search_path = ''
 as $$
 begin
   if p_lease_seconds not between 60 and 1800 then raise exception 'invalid Reel render lease'; end if;
+  update public.company_reel_render_jobs job set
+    status='failed', lease_token=null, leased_until=null, error_code='REEL_RENDER_FAILED',
+    completed_at=clock_timestamp(), updated_at=clock_timestamp()
+  where job.id=p_render_job_id and job.status='rendering' and job.attempt_count=5
+    and job.leased_until <= clock_timestamp();
   return query
   update public.company_reel_render_jobs job set
     status='rendering', attempt_count=job.attempt_count+1, lease_token=gen_random_uuid(),
@@ -8329,6 +8373,24 @@ begin
   where job.id = p_render_job_id
     and job.attempt_count < 5
     and (job.status='queued' or (job.status='rendering' and job.leased_until <= clock_timestamp()))
+  returning job.*;
+end;
+$$;
+
+create or replace function public.release_company_reel_render_job_for_retry(
+  p_render_job_id uuid,
+  p_lease_token uuid
+)
+returns setof public.company_reel_render_jobs
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  return query update public.company_reel_render_jobs job set
+    leased_until=clock_timestamp(), updated_at=clock_timestamp()
+  where job.id=p_render_job_id and job.status='rendering' and job.lease_token=p_lease_token
+    and job.leased_until > clock_timestamp() and job.attempt_count < 5
   returning job.*;
 end;
 $$;
@@ -8386,14 +8448,18 @@ $$;
 
 revoke all on function public.persist_company_reel_creative_plan(uuid,uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb) from public, anon, authenticated;
 grant execute on function public.persist_company_reel_creative_plan(uuid,uuid,uuid,text,text,text,text,jsonb,jsonb,jsonb) to service_role;
+revoke all on function public.can_access_company_ai_assistant(uuid) from public, anon, authenticated;
+grant execute on function public.can_access_company_ai_assistant(uuid) to service_role;
 revoke all on function public.get_company_reel_workspace(uuid) from public, anon;
 grant execute on function public.get_company_reel_workspace(uuid) to authenticated;
 revoke all on function public.begin_company_reel_render_request(uuid,text) from public, anon;
 grant execute on function public.begin_company_reel_render_request(uuid,text) to authenticated;
 revoke all on function public.claim_company_reel_render_job(uuid,integer) from public, anon, authenticated;
+revoke all on function public.release_company_reel_render_job_for_retry(uuid,uuid) from public, anon, authenticated;
 revoke all on function public.complete_company_reel_render_job(uuid,uuid,text,text,text,integer,integer,integer,integer,text,text,integer,bigint,boolean) from public, anon, authenticated;
 revoke all on function public.fail_company_reel_render_job(uuid,uuid,text) from public, anon, authenticated;
 grant execute on function public.claim_company_reel_render_job(uuid,integer) to service_role;
+grant execute on function public.release_company_reel_render_job_for_retry(uuid,uuid) to service_role;
 grant execute on function public.complete_company_reel_render_job(uuid,uuid,text,text,text,integer,integer,integer,integer,text,text,integer,bigint,boolean) to service_role;
 grant execute on function public.fail_company_reel_render_job(uuid,uuid,text) to service_role;
 revoke all on function public.prevent_company_reel_creative_plan_update() from public, anon, authenticated;

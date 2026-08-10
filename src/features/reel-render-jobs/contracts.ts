@@ -33,6 +33,7 @@ export type PersistedReelWorkspace = {
 
 export const REEL_RENDER_ERROR_MESSAGES: Record<string, string> = {
   REEL_RENDER_NOT_CONFIGURED: 'MP4 rendering is not configured for this environment.',
+  REEL_RENDER_DISPATCH_FAILED: 'The MP4 job is queued and delivery will retry automatically.',
   REEL_RENDER_PLAN_UNAVAILABLE: 'The saved Reel plan changed. Generate a current Reel before rendering.',
   REEL_RENDER_CONTEXT_STALE: 'Job evidence changed. Generate a current Reel before rendering.',
   REEL_RENDER_MEDIA_MISSING: 'A selected photo is no longer available.',

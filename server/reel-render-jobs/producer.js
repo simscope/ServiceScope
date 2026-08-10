@@ -1,4 +1,10 @@
-import { parseRenderRequest, reelRenderRequestMaxBytes, renderMessage, RenderJobError } from './contracts.js';
+import {
+  parseRenderRequest,
+  reelDispatchMaxAttempts,
+  reelRenderRequestMaxBytes,
+  renderMessage,
+  RenderJobError,
+} from './contracts.js';
 
 export function createRenderRequestHandler({ client, publish, enabled }) {
   return async function handle(request) {
@@ -19,7 +25,7 @@ export function createRenderRequestHandler({ client, publish, enabled }) {
       const job = Array.isArray(rows) ? rows[0] : null;
       if (!job?.render_job_id) throw new RenderJobError('REEL_RENDER_PLAN_UNAVAILABLE', 409);
       if (job.status === 'queued') {
-        await publish(renderMessage(job.render_job_id), job.render_job_id);
+        await publishQueuedJob(publish, job.render_job_id);
       }
       return json({ renderJobId: job.render_job_id, status: job.status, errorCode: job.error_code ?? null }, 202);
     } catch (error) {
@@ -28,6 +34,19 @@ export function createRenderRequestHandler({ client, publish, enabled }) {
       return json({ code }, status);
     }
   };
+}
+
+async function publishQueuedJob(publish, renderJobId) {
+  for (let attempt = 1; attempt <= reelDispatchMaxAttempts; attempt += 1) {
+    try {
+      await publish(renderMessage(renderJobId), renderJobId);
+      return;
+    } catch {
+      if (attempt === reelDispatchMaxAttempts) {
+        throw new RenderJobError('REEL_RENDER_DISPATCH_FAILED', 503);
+      }
+    }
+  }
 }
 
 function parseJson(raw) {

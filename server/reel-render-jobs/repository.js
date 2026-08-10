@@ -1,14 +1,17 @@
 import { createHash } from 'node:crypto';
 import { buildAuthorizedContext } from '../../supabase/functions/_shared/content-engine/context.js';
 import { buildReelContext } from '../../supabase/functions/_shared/reel-engine/director.js';
-import { RenderJobError } from './contracts.js';
+import { reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
 
 const maxMediaBytes = 12_000_000;
 
 export function createRenderRepository(client) {
   return {
     async claim(renderJobId) {
-      const rows = await client.adminRpc('claim_company_reel_render_job', { p_render_job_id: renderJobId, p_lease_seconds: 900 });
+      const rows = await client.adminRpc('claim_company_reel_render_job', {
+        p_render_job_id: renderJobId,
+        p_lease_seconds: reelWorkerLeaseSeconds,
+      });
       return Array.isArray(rows) ? rows[0] ?? null : null;
     },
     async status(renderJobId) {
@@ -52,6 +55,11 @@ export function createRenderRepository(client) {
     fail(renderJobId, leaseToken, errorCode) {
       return client.adminRpc('fail_company_reel_render_job', {
         p_render_job_id: renderJobId, p_lease_token: leaseToken, p_error_code: errorCode,
+      });
+    },
+    release(renderJobId, leaseToken) {
+      return client.adminRpc('release_company_reel_render_job_for_retry', {
+        p_render_job_id: renderJobId, p_lease_token: leaseToken,
       });
     },
     upload: client.upload,

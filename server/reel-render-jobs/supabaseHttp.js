@@ -10,19 +10,28 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
     if (service && !serviceKey) throw new RenderJobError('REEL_RENDER_NOT_CONFIGURED', 503);
     const accessToken = service ? serviceKey : token;
     if (!accessToken) throw new RenderJobError('AUTH_REQUIRED', 401);
-    const response = await fetchImpl(`${url}${path}`, {
-      method,
-      headers: {
-        apikey: service ? serviceKey : anonKey,
-        Authorization: `Bearer ${accessToken}`,
-        ...headers,
-      },
-      body,
-    });
+    let response;
+    try {
+      response = await fetchImpl(`${url}${path}`, {
+        method,
+        headers: {
+          apikey: service ? serviceKey : anonKey,
+          Authorization: `Bearer ${accessToken}`,
+          ...headers,
+        },
+        body,
+      });
+    } catch {
+      throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+    }
     if (!response.ok) throw new RenderJobError(response.status === 401 ? 'AUTH_REQUIRED' : 'REEL_RENDER_SERVICE_UNAVAILABLE', response.status);
     if (binary) return new Uint8Array(await response.arrayBuffer());
     const text = await response.text();
-    return text ? JSON.parse(text) : null;
+    try {
+      return text ? JSON.parse(text) : null;
+    } catch {
+      throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+    }
   }
 
   return {

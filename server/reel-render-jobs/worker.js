@@ -3,14 +3,23 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { authorizeReelForRender } from '../reel-renderer/authorization.js';
 import { renderAuthorizedReel } from '../reel-renderer/renderer.js';
-import { normalizeRenderError, parseRenderMessage, reelRenderBucket, RenderJobError } from './contracts.js';
+import {
+  normalizeRenderError,
+  parseRenderMessage,
+  reelRenderBucket,
+  reelRenderMaxAttempts,
+  RenderJobError,
+} from './contracts.js';
 
 export function createRenderWorker({ repository, authorize = authorizeReelForRender, render = renderAuthorizedReel }) {
   return async function process(message) {
     const { renderJobId } = parseRenderMessage(message);
     const claim = await repository.claim(renderJobId);
     if (!claim) {
-      if (await repository.status(renderJobId) === 'completed') return { status: 'completed', rendered: false };
+      const status = await repository.status(renderJobId);
+      if (status === 'completed' || status === 'failed' || status === null) {
+        return { status: status ?? 'missing', rendered: false };
+      }
       throw new RenderJobError('REEL_RENDER_BUSY', 409);
     }
     let stagingRoot;
@@ -39,8 +48,14 @@ export function createRenderWorker({ repository, authorize = authorizeReelForRen
       return { status: 'completed', rendered: true };
     } catch (error) {
       const code = normalizeRenderError(error);
-      if (terminal(error, code)) await repository.fail(claim.id, claim.lease_token, code).catch(() => {});
-      throw new RenderJobError(code, 500);
+      if (retryable(error)) return await retryOrFail(repository, claim);
+      try {
+        const failed = await repository.fail(claim.id, claim.lease_token, code);
+        if (!oneRow(failed)) return await retryOrFail(repository, claim);
+        return { status: 'failed', rendered: false, errorCode: code };
+      } catch {
+        return await retryOrFail(repository, claim);
+      }
     } finally {
       if (output) await output.dispose().catch(() => {});
       if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true });
@@ -48,7 +63,21 @@ export function createRenderWorker({ repository, authorize = authorizeReelForRen
   };
 }
 
-function terminal(error, code) {
-  if (error instanceof RenderJobError && error.code === 'REEL_RENDER_SERVICE_UNAVAILABLE') return false;
-  return code !== 'REEL_RENDER_FAILED' || !/SERVICE_UNAVAILABLE/.test(String(error));
+async function retryOrFail(repository, claim) {
+  if (claim.attempt_count >= reelRenderMaxAttempts) {
+    const failed = await repository.fail(claim.id, claim.lease_token, 'REEL_RENDER_FAILED');
+    if (!oneRow(failed)) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+    return { status: 'failed', rendered: false, errorCode: 'REEL_RENDER_FAILED' };
+  }
+  const released = await repository.release(claim.id, claim.lease_token);
+  if (!oneRow(released)) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+  throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+}
+
+function retryable(error) {
+  return error instanceof RenderJobError && error.code === 'REEL_RENDER_SERVICE_UNAVAILABLE';
+}
+
+function oneRow(value) {
+  return Array.isArray(value) && value.length === 1;
 }

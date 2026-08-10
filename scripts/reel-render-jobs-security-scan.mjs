@@ -5,6 +5,7 @@ const read = (path) => readFile(path, 'utf8');
 const [
   client, browserContracts, producer, worker, repository, contracts, artifacts,
   requestApi, queueApi, migration, schema, packageJson, vercel, aiEdge, director,
+  dispatchRecovery, assistantPage,
 ] = await Promise.all([
   read('src/features/reel-render-jobs/clientApi.ts'),
   read('src/features/reel-render-jobs/contracts.ts'),
@@ -21,6 +22,8 @@ const [
   read('vercel.json'),
   read('supabase/functions/ai-content-generate/index.ts'),
   read('supabase/functions/_shared/reel-engine/director.js'),
+  read('src/features/reel-render-jobs/dispatchRecovery.js'),
+  read('src/components/portal/AiAssistantPage.tsx'),
 ]);
 
 let checks = 0;
@@ -41,6 +44,9 @@ check(() => assert.match(requestApi, /REEL_RENDER_ENABLED === 'true'/));
 check(() => assert.doesNotMatch(requestApi, /=== 'false'|!== 'false'/));
 check(() => assert.match(queueApi, /handleNodeCallback/));
 check(() => assert.match(queueApi, /REEL_RENDER_ENABLED === 'true'/));
+check(() => assert.doesNotMatch(queueApi, /deliveryCount/));
+check(() => assert.match(queueApi, /visibilityTimeoutSeconds: reelQueueVisibilitySeconds/));
+check(() => assert.match(queueApi, /afterSeconds: reelQueueRetryDelaySeconds/));
 check(() => assert.match(worker, /repository\.loadAuthority\(claim\)/));
 check(() => assert.match(worker, /authorize\(\{ plan: authority\.plan, context: authority\.context \}\)/));
 check(() => assert.match(worker, /mkdtemp\(join\(tmpdir\(\)/));
@@ -52,6 +58,10 @@ check(() => assert.match(repository, /createHash\('sha256'\)/));
 check(() => assert.match(repository, /current_checksum_matches/));
 check(() => assert.match(repository, /storage_bucket: undefined/));
 check(() => assert.match(repository, /storage_path: undefined/));
+check(() => assert.match(repository, /release_company_reel_render_job_for_retry/));
+check(() => assert.match(worker, /repository\.release\(claim\.id, claim\.lease_token\)/));
+check(() => assert.match(worker, /claim\.attempt_count >= reelRenderMaxAttempts/));
+check(() => assert.match(worker, /status === 'completed' \|\| status === 'failed' \|\| status === null/));
 check(() => assert.doesNotMatch(browserContracts, /output_bucket|object_path|lease_token|leased_until|local_facts/));
 check(() => assert.doesNotMatch(client, /SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY/));
 check(() => assert.doesNotMatch(browserContracts, /SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY/));
@@ -74,12 +84,38 @@ check(() => assert.doesNotMatch(packageJson, /ffmpeg-static|ffprobe-static/));
 check(() => assert.match(packageJson, /"@vercel\/queue": "\^0\.4\.0"/));
 check(() => assert.match(vercel, /"topic"\s*:\s*"servicescope-reel-render-v1"/));
 check(() => assert.match(vercel, /"source"\s*:\s*"\/auth\/meta\/callback"/));
+check(() => assert.match(vercel, /"maxDuration"\s*:\s*300/));
+check(() => assert.match(contracts, /reelWorkerMaxDurationSeconds = 300/));
+check(() => assert.match(contracts, /reelWorkerLeaseSeconds = 360/));
+check(() => assert.match(contracts, /reelQueueVisibilitySeconds = 360/));
+check(() => assert.match(producer, /REEL_RENDER_DISPATCH_FAILED/));
+check(() => assert.match(producer, /attempt <= reelDispatchMaxAttempts/));
+check(() => assert.match(dispatchRecovery, /REEL_DISPATCH_RECOVERY_INTERVAL_MS = 60_000/));
+check(() => assert.match(dispatchRecovery, /workspace\?\.render_status === 'queued'/));
+check(() => assert.match(assistantPage, /recoverQueuedReelDispatch\(saved\)/));
+check(() => assert.match(assistantPage, /reelDispatchRecoveryAtRef/));
 
 const begin = migration.match(/create or replace function public\.begin_company_reel_render_request[\s\S]*?\$\$;/)?.[0] ?? '';
 check(() => assert.doesNotMatch(begin, /p_company_id|p_job_id|p_plan_json|p_render_fingerprint|p_output/));
 check(() => assert.match(begin, /auth\.uid\(\)/));
+check(() => assert.match(begin, /can_access_company_ai_assistant\(plan\.company_id\)/));
+check(() => assert.doesNotMatch(begin, /can_access_company\(/));
 const safeRead = migration.match(/create or replace function public\.get_company_reel_workspace[\s\S]*?\$\$;/)?.[0] ?? '';
 check(() => assert.doesNotMatch(safeRead.match(/returns table \([\s\S]*?\)/)?.[0] ?? '', /local_facts|media_plan|output_bucket|object_path|lease/));
+check(() => assert.match(safeRead, /can_access_company_ai_assistant\(target_company_id\)/));
+check(() => assert.doesNotMatch(safeRead, /can_access_company\(/));
+const aiAccess = migration.match(/create or replace function public\.can_access_company_ai_assistant[\s\S]*?\$\$;/)?.[0] ?? '';
+check(() => assert.match(aiAccess, /company\.owner_email/));
+check(() => assert.match(aiAccess, /company_user\.status = 'active'/));
+check(() => assert.match(aiAccess, /profile\.access_rules->>'aiAssistant'/));
+check(() => assert.match(aiAccess, /company_user\.portal_access_rules->>'aiAssistant'/));
+check(() => assert.match(aiAccess, /company_user\.role::text = 'technician' then 'off'/));
+check(() => assert.doesNotMatch(aiAccess, /can_access_company\(/));
+const release = migration.match(/create or replace function public\.release_company_reel_render_job_for_retry[\s\S]*?\$\$;/)?.[0] ?? '';
+check(() => assert.match(release, /job\.lease_token=p_lease_token/));
+check(() => assert.match(release, /leased_until=clock_timestamp\(\)/));
+check(() => assert.match(migration, /revoke all on function public\.release_company_reel_render_job_for_retry\(uuid,uuid\) from public, anon, authenticated/));
+check(() => assert.match(migration, /grant execute on function public\.release_company_reel_render_job_for_retry\(uuid,uuid\) to service_role/));
 check(() => assert.equal((schema.match(/-- REEL_RENDER_JOBS_BEGIN/g) ?? []).length, 1));
 check(() => assert.equal((schema.match(/-- REEL_RENDER_JOBS_END/g) ?? []).length, 1));
 
