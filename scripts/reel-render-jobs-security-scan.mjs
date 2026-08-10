@@ -5,7 +5,7 @@ const read = (path) => readFile(path, 'utf8');
 const [
   client, browserContracts, producer, worker, repository, contracts, artifacts,
   requestApi, queueApi, migration, schema, packageJson, vercel, aiEdge, director,
-  dispatchRecovery, assistantPage,
+  dispatchRecovery, assistantPage, supabaseHttp, queueConsumer, renderState,
 ] = await Promise.all([
   read('src/features/reel-render-jobs/clientApi.ts'),
   read('src/features/reel-render-jobs/contracts.ts'),
@@ -24,6 +24,9 @@ const [
   read('supabase/functions/_shared/reel-engine/director.js'),
   read('src/features/reel-render-jobs/dispatchRecovery.js'),
   read('src/components/portal/AiAssistantPage.tsx'),
+  read('server/reel-render-jobs/supabaseHttp.js'),
+  read('server/reel-render-jobs/queueConsumer.js'),
+  read('src/features/reel-render-jobs/renderState.js'),
 ]);
 
 let checks = 0;
@@ -46,7 +49,14 @@ check(() => assert.match(queueApi, /handleNodeCallback/));
 check(() => assert.match(queueApi, /REEL_RENDER_ENABLED === 'true'/));
 check(() => assert.doesNotMatch(queueApi, /deliveryCount/));
 check(() => assert.match(queueApi, /visibilityTimeoutSeconds: reelQueueVisibilitySeconds/));
-check(() => assert.match(queueApi, /afterSeconds: reelQueueRetryDelaySeconds/));
+check(() => assert.match(queueApi, /retry: reelQueueRetry/));
+check(() => assert.doesNotMatch(queueApi, /status: 'disabled'/));
+check(() => assert.match(queueConsumer, /parseRenderMessage\(message\)/));
+check(() => assert.match(queueConsumer, /if \(!enabled\(\)\) throw new RenderJobError\('REEL_RENDER_NOT_CONFIGURED'/));
+check(() => assert.match(queueConsumer, /status: 'ignored'/));
+check(() => assert.match(queueConsumer, /reelQueueDisabledRetryDelaySeconds/));
+check(() => assert.match(queueConsumer, /reelQueueRetryDelaySeconds/));
+check(() => assert.ok(queueConsumer.indexOf('parseRenderMessage(message)') < queueConsumer.indexOf('if (!enabled())')));
 check(() => assert.match(worker, /repository\.loadAuthority\(claim\)/));
 check(() => assert.match(worker, /authorize\(\{ plan: authority\.plan, context: authority\.context \}\)/));
 check(() => assert.match(worker, /mkdtemp\(join\(tmpdir\(\)/));
@@ -56,6 +66,14 @@ check(() => assert.match(repository, /company_reel_creative_plans/));
 check(() => assert.match(repository, /localFacts: planRow\.local_facts/));
 check(() => assert.match(repository, /createHash\('sha256'\)/));
 check(() => assert.match(repository, /current_checksum_matches/));
+check(() => assert.match(repository, /client\.downloadBounded\(row\.storage_bucket, row\.storage_path, reelRenderMaxMediaBytes\)/));
+check(() => assert.doesNotMatch(repository, /client\.download\(/));
+check(() => assert.match(supabaseHttp, /contentLength > maxBytes/));
+check(() => assert.match(supabaseHttp, /response\.body\.getReader\(\)/));
+check(() => assert.match(supabaseHttp, /length \+ chunk\.byteLength > maxBytes/));
+check(() => assert.match(supabaseHttp, /reader\.cancel\(\)/));
+check(() => assert.match(supabaseHttp, /bytes\.subarray\(0, length\)/));
+check(() => assert.doesNotMatch(supabaseHttp, /arrayBuffer\(/));
 check(() => assert.match(repository, /storage_bucket: undefined/));
 check(() => assert.match(repository, /storage_path: undefined/));
 check(() => assert.match(repository, /release_company_reel_render_job_for_retry/));
@@ -63,6 +81,8 @@ check(() => assert.match(worker, /repository\.release\(claim\.id, claim\.lease_t
 check(() => assert.match(worker, /claim\.attempt_count >= reelRenderMaxAttempts/));
 check(() => assert.match(worker, /status === 'completed' \|\| status === 'failed' \|\| status === null/));
 check(() => assert.doesNotMatch(browserContracts, /output_bucket|object_path|lease_token|leased_until|local_facts/));
+check(() => assert.match(browserContracts, /creativePlanId\?: string/));
+check(() => assert.match(browserContracts, /planRevision\?: string/));
 check(() => assert.doesNotMatch(client, /SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY/));
 check(() => assert.doesNotMatch(browserContracts, /SUPABASE_SERVICE_ROLE_KEY|SERVICE_ROLE_KEY/));
 check(() => assert.match(artifacts, /reelArtifactTtlSeconds/));
@@ -92,8 +112,16 @@ check(() => assert.match(producer, /REEL_RENDER_DISPATCH_FAILED/));
 check(() => assert.match(producer, /attempt <= reelDispatchMaxAttempts/));
 check(() => assert.match(dispatchRecovery, /REEL_DISPATCH_RECOVERY_INTERVAL_MS = 60_000/));
 check(() => assert.match(dispatchRecovery, /workspace\?\.render_status === 'queued'/));
-check(() => assert.match(assistantPage, /recoverQueuedReelDispatch\(saved\)/));
+check(() => assert.match(assistantPage, /recoverQueuedReelDispatch\(saved, activeScope\)/));
 check(() => assert.match(assistantPage, /reelDispatchRecoveryAtRef/));
+check(() => assert.match(renderState, /reconcileReelRenderForPlan/));
+check(() => assert.match(renderState, /isReelAsyncScopeCurrent/));
+check(() => assert.match(renderState, /sameReelPlanIdentity/));
+check(() => assert.match(assistantPage, /return idleReelRender\(nextIdentity\)/));
+check(() => assert.match(assistantPage, /sameReelPlanIdentity\(startedScope, savedIdentity\)/));
+check(() => assert.match(assistantPage, /activeReelRender\.videoUrl/));
+check(() => assert.doesNotMatch(assistantPage, /reelRender\.videoUrl/));
+check(() => assert.match(assistantPage, /beginReelRender\(creativePlanId, revision\)/));
 
 const begin = migration.match(/create or replace function public\.begin_company_reel_render_request[\s\S]*?\$\$;/)?.[0] ?? '';
 check(() => assert.doesNotMatch(begin, /p_company_id|p_job_id|p_plan_json|p_render_fingerprint|p_output/));

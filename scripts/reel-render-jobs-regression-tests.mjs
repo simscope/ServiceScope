@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createArtifactHandler } from '../server/reel-render-jobs/artifacts.js';
 import {
   reelDispatchMaxAttempts,
+  reelQueueDisabledRetryDelaySeconds,
+  reelQueueRetryDelaySeconds,
   reelQueueVisibilitySeconds,
+  reelRenderMaxMediaBytes,
   reelRenderMaxAttempts,
   reelRenderMessageSchema,
   reelRenderTopic,
@@ -15,9 +19,18 @@ import {
 } from '../server/reel-render-jobs/contracts.js';
 import { asNodeHandler } from '../server/reel-render-jobs/nodeAdapter.js';
 import { createRenderRequestHandler } from '../server/reel-render-jobs/producer.js';
+import { createReelQueueConsumer, reelQueueRetry } from '../server/reel-render-jobs/queueConsumer.js';
 import { createSupabaseHttpClient } from '../server/reel-render-jobs/supabaseHttp.js';
 import { createRenderWorker } from '../server/reel-render-jobs/worker.js';
 import { REEL_DISPATCH_RECOVERY_INTERVAL_MS, shouldRecoverReelDispatch } from '../src/features/reel-render-jobs/dispatchRecovery.js';
+import {
+  idleReelRender,
+  isReelAsyncScopeCurrent,
+  isReelRenderForPlan,
+  reconcileReelRenderForPlan,
+  reelPlanIdentity,
+  sameReelPlanIdentity,
+} from '../src/features/reel-render-jobs/renderState.js';
 
 const creativePlanId = '00000000-0000-4000-8000-000000000101';
 const renderJobId = '00000000-0000-4000-8000-000000000201';
@@ -212,6 +225,172 @@ for (const invalid of [
   await checkAsync(() => assert.rejects(client.adminRpc('private_rpc', {}), /REEL_RENDER_SERVICE_UNAVAILABLE/));
 }
 
+function storageClient(fetchImpl) {
+  return createSupabaseHttpClient(
+    { SUPABASE_URL: 'https://project.supabase.test', SUPABASE_ANON_KEY: 'public-anon-key', SUPABASE_SERVICE_ROLE_KEY: 'server-secret-key' },
+    fetchImpl,
+  );
+}
+
+function byteStream({ chunks, onPull = () => {}, onCancel = () => {}, errorAt = -1 }) {
+  let index = 0;
+  return new ReadableStream({
+    pull(controller) {
+      onPull(index);
+      if (index === errorAt) {
+        controller.error(new Error('stream interrupted'));
+        return;
+      }
+      if (index >= chunks.length) {
+        controller.close();
+        return;
+      }
+      controller.enqueue(chunks[index]);
+      index += 1;
+    },
+    cancel() { onCancel(); },
+  });
+}
+
+function readerResponse({ chunks, contentLength, onRead = () => {}, onCancel = () => {}, errorAt = -1 }) {
+  let index = 0;
+  const reader = {
+    async read() {
+      onRead(index);
+      if (index === errorAt) throw new Error('stream interrupted');
+      if (index >= chunks.length) return { done: true, value: undefined };
+      const value = chunks[index];
+      index += 1;
+      return { done: false, value };
+    },
+    async cancel() { onCancel(); },
+    releaseLock() {},
+  };
+  return {
+    ok: true,
+    status: 200,
+    headers: new Headers(contentLength ? { 'content-length': contentLength } : undefined),
+    body: { getReader: () => reader, cancel: () => reader.cancel() },
+  };
+}
+
+{
+  const source = new Uint8Array(5_000_000).fill(7);
+  const client = storageClient(async () => new Response(source, { status: 200, headers: { 'content-length': '5000000' } }));
+  const downloaded = await client.downloadBounded('private', 'five-meg.jpg', reelRenderMaxMediaBytes);
+  check(() => assert.equal(downloaded.byteLength, source.byteLength));
+  check(() => assert.equal(createHash('sha256').update(downloaded).digest('hex'), createHash('sha256').update(source).digest('hex')));
+}
+{
+  let readers = 0;
+  let cancelled = 0;
+  const client = storageClient(async () => ({
+    ok: true,
+    status: 200,
+    headers: new Headers({ 'content-length': '20000000' }),
+    body: {
+      async cancel() { cancelled += 1; },
+      getReader() { readers += 1; throw new Error('body must not be read'); },
+    },
+  }));
+  await checkAsync(() => assert.rejects(client.downloadBounded('private', 'oversize.jpg', reelRenderMaxMediaBytes), /REEL_RENDER_CONTEXT_STALE/));
+  check(() => assert.equal(readers, 0));
+  check(() => assert.equal(cancelled, 1));
+}
+{
+  const chunks = Array.from({ length: 11 }, () => new Uint8Array(1_000_000).fill(3));
+  const client = storageClient(async () => new Response(byteStream({ chunks }), { status: 200 }));
+  const downloaded = await client.downloadBounded('private', 'eleven-meg.jpg', reelRenderMaxMediaBytes);
+  check(() => assert.equal(downloaded.byteLength, 11_000_000));
+  check(() => assert.equal(downloaded[0], 3));
+  check(() => assert.equal(downloaded.at(-1), 3));
+}
+for (const contentLength of [undefined, '5000000']) {
+  let reads = 0;
+  let cancelled = 0;
+  const response = readerResponse({
+    chunks: [new Uint8Array(reelRenderMaxMediaBytes), new Uint8Array([1])],
+    contentLength,
+    onRead: () => { reads += 1; },
+    onCancel: () => { cancelled += 1; },
+  });
+  const client = storageClient(async () => response);
+  await checkAsync(() => assert.rejects(client.downloadBounded('private', 'stream-oversize.jpg', reelRenderMaxMediaBytes), /REEL_RENDER_CONTEXT_STALE/));
+  check(() => assert.equal(reads, 2));
+  check(() => assert.equal(cancelled, 1));
+}
+{
+  let reads = 0;
+  let cancelled = 0;
+  const chunks = Array.from({ length: 100 }, () => new Uint8Array(1_000_000));
+  const client = storageClient(async () => readerResponse({
+    chunks,
+    onRead: () => { reads += 1; },
+    onCancel: () => { cancelled += 1; },
+  }));
+  await checkAsync(() => assert.rejects(client.downloadBounded('private', 'very-large.jpg', reelRenderMaxMediaBytes), /REEL_RENDER_CONTEXT_STALE/));
+  check(() => assert.equal(reads, 13));
+  check(() => assert.equal(cancelled, 1));
+}
+{
+  const client = storageClient(async () => readerResponse({
+    chunks: [new Uint8Array(1024)],
+    errorAt: 1,
+  }));
+  await checkAsync(() => assert.rejects(client.downloadBounded('private', 'network-error.jpg', reelRenderMaxMediaBytes), /REEL_RENDER_SERVICE_UNAVAILABLE/));
+}
+
+{
+  const planA = reelPlanIdentity('plan-a', 'revision-a');
+  const planB = reelPlanIdentity('plan-b', 'revision-b');
+  const completedA = { ...planA, renderJobId: 'render-a', status: 'completed', videoUrl: 'signed-a.mp4', coverUrl: 'signed-a.jpg' };
+  const failedA = { ...planA, renderJobId: 'render-a', status: 'failed', errorCode: 'REEL_RENDER_FAILED' };
+  const renderingA = { ...planA, renderJobId: 'render-a', status: 'rendering' };
+  const resetCompleted = reconcileReelRenderForPlan(completedA, planB);
+  const resetFailed = reconcileReelRenderForPlan(failedA, planB);
+  const resetRendering = reconcileReelRenderForPlan(renderingA, planB);
+  check(() => assert.deepEqual(resetCompleted, idleReelRender(planB)));
+  check(() => assert.deepEqual(resetFailed, idleReelRender(planB)));
+  check(() => assert.deepEqual(resetRendering, idleReelRender(planB)));
+  check(() => assert.equal(resetCompleted.videoUrl, undefined));
+  check(() => assert.equal(reconcileReelRenderForPlan(completedA, planA), completedA));
+  check(() => assert.equal(isReelRenderForPlan(completedA, planB), false));
+  check(() => assert.equal(sameReelPlanIdentity(planA, planB), false));
+  const planAScope = { jobId: 'job-1', ...planA, epoch: 1 };
+  const planBScope = { jobId: 'job-1', ...planB, epoch: 2 };
+  check(() => assert.equal(isReelAsyncScopeCurrent(planAScope, planBScope), false));
+  check(() => assert.equal(isReelAsyncScopeCurrent(planBScope, planBScope), true));
+}
+
+{
+  let enabled = true;
+  const calls = { worker: 0 };
+  const consumer = createReelQueueConsumer({
+    enabled: () => enabled,
+    worker: async (message) => { calls.worker += 1; return { status: 'completed', rendered: message.renderJobId === renderJobId }; },
+  });
+  const first = await consumer({ schemaVersion: reelRenderMessageSchema, renderJobId });
+  check(() => assert.deepEqual(first, { status: 'completed', rendered: true }));
+  enabled = false;
+  let disabledError;
+  await checkAsync(async () => {
+    await assert.rejects(consumer({ schemaVersion: reelRenderMessageSchema, renderJobId }), (error) => {
+      disabledError = error;
+      return error instanceof RenderJobError && error.code === 'REEL_RENDER_NOT_CONFIGURED';
+    });
+  });
+  check(() => assert.equal(calls.worker, 1));
+  check(() => assert.deepEqual(reelQueueRetry(disabledError), { afterSeconds: reelQueueDisabledRetryDelaySeconds }));
+  const malformed = await consumer({ schemaVersion: reelRenderMessageSchema, renderJobId, plan: {} });
+  check(() => assert.deepEqual(malformed, { status: 'ignored', rendered: false }));
+  check(() => assert.equal(calls.worker, 1));
+  enabled = true;
+  const retried = await consumer({ schemaVersion: reelRenderMessageSchema, renderJobId });
+  check(() => assert.deepEqual(retried, { status: 'completed', rendered: true }));
+  check(() => assert.equal(calls.worker, 2));
+  check(() => assert.deepEqual(reelQueueRetry(new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503)), { afterSeconds: reelQueueRetryDelaySeconds }));
+}
+
 function workerFixture(overrides = {}) {
   const calls = { claim: 0, load: 0, authorize: 0, render: 0, uploads: [], complete: 0, fail: [], release: 0, disposed: 0 };
   const claim = {
@@ -387,4 +566,6 @@ check(() => assert.equal(reelWorkerMaxDurationSeconds, 300));
 check(() => assert.equal(reelWorkerLeaseSeconds, 360));
 check(() => assert.equal(reelQueueVisibilitySeconds, reelWorkerLeaseSeconds));
 check(() => assert.ok(reelWorkerLeaseSeconds > reelWorkerMaxDurationSeconds));
+check(() => assert.equal(reelQueueDisabledRetryDelaySeconds, 300));
+check(() => assert.equal(reelRenderMaxMediaBytes, 12_000_000));
 console.log(`Reel render job regression tests passed (${checks}/${checks}).`);

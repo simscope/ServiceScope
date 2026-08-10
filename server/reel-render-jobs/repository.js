@@ -1,9 +1,7 @@
 import { createHash } from 'node:crypto';
 import { buildAuthorizedContext } from '../../supabase/functions/_shared/content-engine/context.js';
 import { buildReelContext } from '../../supabase/functions/_shared/reel-engine/director.js';
-import { reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
-
-const maxMediaBytes = 12_000_000;
+import { reelRenderMaxMediaBytes, reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
 
 export function createRenderRepository(client) {
   return {
@@ -89,8 +87,8 @@ function contextRepository(client, assets) {
       const byId = new Map();
       for (const row of rows ?? []) {
         if (byId.has(row.attachment_id)) continue;
-        const bytes = await client.download(row.storage_bucket, row.storage_path);
-        if (!bytes.length || bytes.length > maxMediaBytes) throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
+        const bytes = await client.downloadBounded(row.storage_bucket, row.storage_path, reelRenderMaxMediaBytes);
+        if (!bytes.length) throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
         const checksum = `\\x${createHash('sha256').update(bytes).digest('hex')}`;
         byId.set(row.attachment_id, { bytes, checksum });
         assets.set(row.attachment_id, bytes);

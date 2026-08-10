@@ -6,7 +6,7 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
   const serviceKey = String(env.SUPABASE_SERVICE_ROLE_KEY ?? env.SERVICE_ROLE_KEY ?? '');
   if (!url || !anonKey) throw new RenderJobError('REEL_RENDER_NOT_CONFIGURED', 503);
 
-  async function request(path, { method = 'GET', token, service = false, body, headers = {}, binary = false } = {}) {
+  async function responseFor(path, { method = 'GET', token, service = false, body, headers = {} } = {}) {
     if (service && !serviceKey) throw new RenderJobError('REEL_RENDER_NOT_CONFIGURED', 503);
     const accessToken = service ? serviceKey : token;
     if (!accessToken) throw new RenderJobError('AUTH_REQUIRED', 401);
@@ -25,7 +25,11 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
       throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
     }
     if (!response.ok) throw new RenderJobError(response.status === 401 ? 'AUTH_REQUIRED' : 'REEL_RENDER_SERVICE_UNAVAILABLE', response.status);
-    if (binary) return new Uint8Array(await response.arrayBuffer());
+    return response;
+  }
+
+  async function request(path, options) {
+    const response = await responseFor(path, options);
     const text = await response.text();
     try {
       return text ? JSON.parse(text) : null;
@@ -55,8 +59,39 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
     select(table, query) {
       return request(`/rest/v1/${encodeURIComponent(table)}?${query}`, { service: true });
     },
-    download(bucket, path) {
-      return request(`/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath(path)}`, { service: true, binary: true });
+    async downloadBounded(bucket, path, maxBytes) {
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 1) throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
+      const response = await responseFor(`/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath(path)}`, { service: true });
+      const contentLength = parseContentLength(response.headers.get('content-length'));
+      if (contentLength !== null && contentLength > maxBytes) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
+      }
+      if (!response.body) return new Uint8Array();
+
+      const reader = response.body.getReader();
+      const bytes = new Uint8Array(maxBytes + 1);
+      let length = 0;
+      try {
+        while (true) {
+          const result = await reader.read();
+          if (result.done) break;
+          const chunk = result.value;
+          if (!(chunk instanceof Uint8Array)) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+          if (length + chunk.byteLength > maxBytes) {
+            throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
+          }
+          bytes.set(chunk, length);
+          length += chunk.byteLength;
+        }
+      } catch (error) {
+        await reader.cancel().catch(() => undefined);
+        if (error instanceof RenderJobError) throw error;
+        throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+      } finally {
+        reader.releaseLock();
+      }
+      return bytes.subarray(0, length);
     },
     upload(bucket, path, bytes, contentType) {
       return request(`/storage/v1/object/${encodeURIComponent(bucket)}/${objectPath(path)}`, {
@@ -75,4 +110,10 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
 
 function objectPath(value) {
   return String(value).split('/').map(encodeURIComponent).join('/');
+}
+
+function parseContentLength(value) {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
 }

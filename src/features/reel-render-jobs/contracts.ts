@@ -3,6 +3,8 @@ import type { ReelCreativePlanV1 } from '../reel-director/contracts';
 export type ReelRenderStatus = 'idle' | 'queued' | 'rendering' | 'completed' | 'failed' | 'not_configured';
 
 export type ReelRenderWorkspace = {
+  creativePlanId?: string;
+  planRevision?: string;
   renderJobId?: string;
   status: ReelRenderStatus;
   errorCode?: string;

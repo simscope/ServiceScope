@@ -8,8 +8,10 @@ export const reelWorkerMaxDurationSeconds = 300;
 export const reelWorkerLeaseSeconds = 360;
 export const reelQueueVisibilitySeconds = 360;
 export const reelQueueRetryDelaySeconds = 60;
+export const reelQueueDisabledRetryDelaySeconds = 300;
 export const reelRenderMaxAttempts = 5;
 export const reelDispatchMaxAttempts = 2;
+export const reelRenderMaxMediaBytes = 12_000_000;
 
 const requestFields = new Set(['creativePlanId', 'expectedPlanRevision']);
 const messageFields = new Set(['schemaVersion', 'renderJobId']);
