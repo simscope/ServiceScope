@@ -38,6 +38,7 @@ export type ReelMediaPlanItem = {
 export type ReelCreativePlanV1 = {
   schemaVersion: typeof REEL_PLAN_SCHEMA_VERSION;
   revision: string;
+  creativePlanId?: string;
   decision: ReelDecision;
   qualityScore: number;
   qualityReasons: string[];

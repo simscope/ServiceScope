@@ -46,6 +46,7 @@ export async function buildAuthorizedContext({ request, session, repository }) {
     jobId: job.id,
     companyId: company.id,
     actorId: actorId(session),
+    actorAuthUserId: String(session.auth_user_id ?? ''),
     status: job.status,
     missingInformation: [
       request.localFacts.diagnosis ? '' : 'Diagnosis missing',

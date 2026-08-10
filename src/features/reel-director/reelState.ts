@@ -17,6 +17,7 @@ export type ReelWorkspaceState = {
   jobId?: string;
   status: ReelGenerationStatus;
   plan?: ReelCreativePlanV1;
+  creativePlanId?: string;
   inputRevision?: string;
   approvedRevision?: string;
   approvalInvalidated?: boolean;
@@ -86,6 +87,7 @@ export function applyReelPlan(state: ReelWorkspaceState, plan: ReelCreativePlanV
         ? 'needs_more_media' as const
         : 'skip' as const,
     plan,
+    creativePlanId: plan.creativePlanId,
     inputRevision,
     approvedRevision: undefined,
     approvalInvalidated: Boolean(state.approvedRevision || state.approvalInvalidated),

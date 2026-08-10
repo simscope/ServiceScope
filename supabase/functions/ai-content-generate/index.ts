@@ -100,11 +100,13 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
   return {
     async resolveSession(authorization: string) {
       const callerClient = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: authorization } } });
+      const { data: authData, error: authError } = await callerClient.auth.getUser();
+      if (authError || !authData.user?.id) throw new HttpError('AUTH_REQUIRED', 401);
       const { data, error } = await callerClient.rpc('app_current_session');
       if (error) throw new HttpError('AUTH_REQUIRED', 401);
       const session = Array.isArray(data) ? data[0] : null;
       if (!session) throw new HttpError('AUTH_REQUIRED', 401);
-      return session;
+      return { ...session, auth_user_id: authData.user.id };
     },
   };
 }
@@ -234,6 +236,22 @@ function createContextRepository(adminClient: ReturnType<typeof createClient<any
           current_checksum_matches: Boolean(currentHash && persistedHash && currentHash.toLowerCase() === persistedHash),
         };
       });
+    },
+    async persistReelCreativePlan(input: Record<string, unknown>) {
+      const { data, error } = await adminClient.rpc('persist_company_reel_creative_plan', {
+        p_company_id: input.companyId,
+        p_job_id: input.jobId,
+        p_created_by: input.createdBy,
+        p_schema_version: input.schemaVersion,
+        p_plan_revision: input.planRevision,
+        p_locale: input.locale,
+        p_planning_revision: input.planningRevision,
+        p_local_facts: input.localFacts,
+        p_media_plan: input.mediaPlan,
+        p_plan_json: input.plan,
+      });
+      if (error || typeof data !== 'string') throw new ReelHttpError('REEL_GENERATION_FAILED', 503);
+      return data;
     },
   };
 }

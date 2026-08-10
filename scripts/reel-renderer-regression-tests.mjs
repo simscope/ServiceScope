@@ -16,6 +16,9 @@ import {
 } from '../server/reel-renderer/index.js';
 import { renderBrandCard, renderCover, renderSceneOverlay } from '../server/reel-renderer/overlays.js';
 import { runBinary } from '../server/reel-renderer/process.js';
+import { createArtifactHandler } from '../server/reel-render-jobs/artifacts.js';
+import { reelRenderMessageSchema } from '../server/reel-render-jobs/contracts.js';
+import { createRenderWorker } from '../server/reel-render-jobs/worker.js';
 
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
@@ -314,6 +317,7 @@ try {
     rendered = await renderAuthorizedReel({ authorized: authorizedPlan, stagedAssets, stagingRoot: fixtureRoot, ffmpegBin, ffprobeBin });
     await verifyRealRender(rendered);
     checks += 12;
+    await verifyDurableRenderWorkflow(fixtureRoot);
     if (process.env.REEL_RENDER_ARTIFACT_DIR) await publishArtifacts(rendered, process.env.REEL_RENDER_ARTIFACT_DIR, ffmpegBin, stressFixtures.artifactFiles);
     console.log(`Real Reel fixture rendered (${rendered.fileSize} MP4 bytes, ${rendered.durationMs}ms).`);
   } else {
@@ -325,6 +329,47 @@ try {
 }
 
 console.log(`Reel renderer regression tests passed (${checks}/${checks}).`);
+
+async function verifyDurableRenderWorkflow(fixtureRoot) {
+  const renderJobId = '00000000-0000-4000-8000-00000000d301';
+  const companyId = '00000000-0000-4000-8000-00000000d302';
+  const jobId = '00000000-0000-4000-8000-00000000d303';
+  const uploads = new Map();
+  let completed;
+  const assets = new Map();
+  for (const asset of stagedAssets) assets.set(asset.attachmentId, await readFile(join(fixtureRoot, asset.path)));
+  const repository = {
+    async claim() {
+      return { id: renderJobId, company_id: companyId, job_id: jobId, creative_plan_id: 'plan-1', lease_token: 'lease-1' };
+    },
+    async status() { return 'rendering'; },
+    async loadAuthority() { return { plan: validPlan, context: validContext, assets }; },
+    async upload(bucket, path, bytes, mime) { uploads.set(path, { bucket, bytes, mime }); },
+    async complete(_id, _token, paths, metadata) { completed = { paths, metadata }; return [{ status: 'completed' }]; },
+    async fail() { throw new Error('REAL_DURABLE_FIXTURE_MUST_NOT_FAIL'); },
+  };
+  const result = await createRenderWorker({ repository })({ schemaVersion: reelRenderMessageSchema, renderJobId });
+  check(() => assert.deepEqual(result, { status: 'completed', rendered: true }));
+  check(() => assert.equal(uploads.size, 2));
+  check(() => assert.ok(uploads.get(`${companyId}/${renderJobId}/reel.mp4`)?.bytes.length > 1_000));
+  check(() => assert.equal(uploads.get(`${companyId}/${renderJobId}/reel.mp4`)?.mime, 'video/mp4'));
+  check(() => assert.equal(uploads.get(`${companyId}/${renderJobId}/cover.jpg`)?.mime, 'image/jpeg'));
+  check(() => assert.deepEqual([completed.metadata.width, completed.metadata.height, completed.metadata.audioStreams], [1080, 1920, 0]));
+
+  const artifactHandler = createArtifactHandler({ client: {
+    async authenticate() { return { token: 'synthetic-user-token' }; },
+    async select() { return [{ id: renderJobId, job_id: jobId, status: 'completed', output_bucket: completed.paths.bucket, video_object_path: completed.paths.video, cover_object_path: completed.paths.cover }]; },
+    async userRpc() { return [{ render_job_id: renderJobId }]; },
+    async sign(_bucket, path) { return { signedURL: `https://signed.synthetic.test/${path}` }; },
+  } });
+  const response = await artifactHandler(new Request('https://synthetic.test/api/reel-render-artifacts', {
+    method: 'POST', headers: { authorization: 'Bearer synthetic-user-token' }, body: JSON.stringify({ renderJobId }),
+  }));
+  const body = await response.json();
+  check(() => assert.equal(response.status, 200));
+  check(() => assert.match(body.videoUrl, /^https:\/\/signed\.synthetic\.test\//));
+  check(() => assert.match(body.coverUrl, /^https:\/\/signed\.synthetic\.test\//));
+}
 
 function scene(id, position, attachmentId, durationMs, overlayText, secondaryText, motionPreset, cropStrategy, transitionOut) {
   return { id, position, attachmentId, sceneRole: position === 1 ? 'overview' : position === 2 ? 'repair_process' : 'finished_result', durationMs, overlayText, secondaryText, motionPreset, cropStrategy, transitionOut, evidenceIds: [`media:${attachmentId}:finding`], voiceoverLine: null };
