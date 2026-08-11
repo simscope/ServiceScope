@@ -16,6 +16,16 @@ const beginFunction = (sql) => sql.match(/create or replace function public\.beg
 const constraintVersion = (sql) => sql.match(/company_reel_render_jobs_renderer_check\s+check \(renderer_version = '([^']+)'\)/i)?.[1];
 const rendererConstantVersion = (sql) => sql.match(/current_renderer_version constant text :=\s*'([^']+)'/i)?.[1];
 const currentSchemaBlock = extractExactMarkedBlock(schema, markers);
+const normalizedUpgradeMigration = upgradeMigration.trim();
+const transactionBeginStatements = normalizedUpgradeMigration.match(/^\s*begin\s*;\s*$/gim) ?? [];
+const transactionCommitStatements = normalizedUpgradeMigration.match(/^\s*commit\s*;\s*$/gim) ?? [];
+const transactionRollbackStatements = normalizedUpgradeMigration.match(/^\s*rollback\s*;\s*$/gim) ?? [];
+const transactionBeginIndex = normalizedUpgradeMigration.search(/^begin\s*;/i);
+const lockIndex = normalizedUpgradeMigration.search(/lock table public\.company_reel_render_jobs in access exclusive mode/i);
+const emptyTableGuardIndex = normalizedUpgradeMigration.search(/if exists \(select 1 from public\.company_reel_render_jobs\)/i);
+const constraintChangeIndex = normalizedUpgradeMigration.search(/alter table public\.company_reel_render_jobs/i);
+const rpcChangeIndex = normalizedUpgradeMigration.search(/create or replace function public\.begin_company_reel_render_request/i);
+const transactionCommitIndex = normalizedUpgradeMigration.search(/\ncommit\s*;\s*$/i);
 const expectedCurrentBlock = block
   .replace("check (renderer_version = 'servicescope-reel-renderer-v1')", "check (renderer_version = 'servicescope-reel-renderer-v2')")
   .replace(beginFunction(block), () => beginFunction(upgradeMigration));
@@ -30,6 +40,17 @@ check(() => assert.equal(normalizeSqlForParity(beginFunction(upgradeMigration)),
 check(() => assert.equal(normalizeSqlForParity(expectedCurrentBlock), normalizeSqlForParity(currentSchemaBlock)));
 check(() => assert.match(beginFunction(upgradeMigration), /current_renderer_version, 'reel-presentation-v1'/));
 check(() => assert.match(beginFunction(upgradeMigration), /fingerprint, current_renderer_version/));
+check(() => assert.match(normalizedUpgradeMigration, /^begin\s*;/i));
+check(() => assert.match(normalizedUpgradeMigration, /commit\s*;$/i));
+check(() => assert.equal(transactionBeginStatements.length, 1));
+check(() => assert.equal(transactionCommitStatements.length, 1));
+check(() => assert.equal(transactionRollbackStatements.length, 0));
+check(() => assert.ok(transactionBeginIndex === 0));
+check(() => assert.ok(transactionBeginIndex < lockIndex));
+check(() => assert.ok(lockIndex < emptyTableGuardIndex));
+check(() => assert.ok(emptyTableGuardIndex < constraintChangeIndex));
+check(() => assert.ok(constraintChangeIndex < rpcChangeIndex));
+check(() => assert.ok(rpcChangeIndex < transactionCommitIndex));
 
 const baseDatabaseSql = `
   create role anon nologin; create role authenticated nologin; create role service_role nologin;
@@ -83,7 +104,7 @@ await guardDb.exec(`
 `);
 const guardBefore = (await guardDb.query('select renderer_version,render_fingerprint,count(*) over ()::int row_count from public.company_reel_render_jobs')).rows[0];
 await checkAsync(() => assert.rejects(
-  guardDb.exec(`begin; ${upgradeMigration} commit;`),
+  guardDb.exec(upgradeMigration),
   /REEL_RENDERER_V2_MIGRATION_REQUIRES_EMPTY_RENDER_JOBS/,
 ));
 await guardDb.exec('rollback');
@@ -94,7 +115,7 @@ check(() => assert.equal(guardedConstraintVersion, 'servicescope-reel-renderer-v
 await guardDb.close();
 
 const db = await historicalDatabase();
-await db.exec(`begin; ${upgradeMigration} commit;`);
+await db.exec(upgradeMigration);
 const upgradedConstraintVersion = await databaseConstraintVersion(db);
 check(() => assert.equal(upgradedConstraintVersion, reelRendererVersion));
 

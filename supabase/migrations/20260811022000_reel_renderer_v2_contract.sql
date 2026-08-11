@@ -1,3 +1,5 @@
+BEGIN;
+
 lock table public.company_reel_render_jobs in access exclusive mode;
 
 do $$
@@ -58,3 +60,5 @@ $$;
 
 revoke all on function public.begin_company_reel_render_request(uuid,text) from public, anon;
 grant execute on function public.begin_company_reel_render_request(uuid,text) to authenticated;
+
+COMMIT;
