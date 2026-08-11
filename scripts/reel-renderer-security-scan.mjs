@@ -12,6 +12,7 @@ const rendererFiles = [
   'server/reel-renderer/probe.js',
   'server/reel-renderer/process.js',
   'server/reel-renderer/renderer.js',
+  'server/reel-renderer/runtimeSpec.js',
   'server/reel-renderer/textLayout.js',
 ];
 const browserFiles = [
@@ -73,6 +74,10 @@ check(() => assert.doesNotMatch(packageJson, /ffmpeg-static|shotstack|remotion|c
 check(() => assert.match(rendererSource, /'-an'/));
 check(() => assert.match(rendererSource, /'libx264'/));
 check(() => assert.match(rendererSource, /'\+faststart'/));
+check(() => assert.match(rendererSource, /'-filter_complex_threads',\s*'1'/));
+check(() => assert.match(rendererSource, /'-threads',\s*'1'/));
+check(() => assert.doesNotMatch(rendererSource, /'-filter_threads'/));
+check(() => assert.doesNotMatch(renderer, /2160|3840/));
 check(() => assert.doesNotMatch(renderer, /outputPath\s*[:=].*input|destinationDir|outputDir\s*=.*(?:request|options)/i));
 
 const trackedRendererMedia = execFileSync('git', ['ls-files', 'server', 'shared', 'scripts'], { encoding: 'utf8' })

@@ -8,6 +8,7 @@ import { buildReelRenderManifest } from './manifest.js';
 import { renderBrandCard, renderCover, renderSceneOverlay } from './overlays.js';
 import { validateRenderedVideo } from './probe.js';
 import { runBinary } from './process.js';
+import { reelWorkingRaster } from './runtimeSpec.js';
 
 export async function renderAuthorizedReel({
   authorized,
@@ -74,7 +75,7 @@ export async function renderAuthorizedReel({
 
 export function buildFfmpegArgs({ manifest, normalized, overlays, brandPath, videoPath }) {
   if (!manifest?.scenes?.length || overlays.length !== manifest.scenes.length) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
-  const args = ['-hide_banner', '-loglevel', 'error', '-y'];
+  const args = ['-hide_banner', '-loglevel', 'error', '-y', '-filter_complex_threads', '1'];
   const filters = [];
   const clips = [];
   let inputIndex = 0;
@@ -126,6 +127,7 @@ export function buildFfmpegArgs({ manifest, normalized, overlays, brandPath, vid
     '-map', '[outv]',
     '-an',
     '-c:v', 'libx264',
+    '-threads', '1',
     '-preset', 'medium',
     '-crf', '22',
     '-pix_fmt', 'yuv420p',
@@ -157,7 +159,7 @@ function motionFilter(scene, incomingMs) {
   const zoom = `${decimal(startScale)}+${decimal(scaleDelta)}*${progress}`;
   const x = `iw/2-(iw/zoom/2)-iw*(${decimal(startX)}+${decimal(deltaX)}*${progress})`;
   const y = `ih/2-(ih/zoom/2)-ih*(${decimal(startY)}+${decimal(deltaY)}*${progress})`;
-  return `scale=2160:3840:force_original_aspect_ratio=increase,crop=2160:3840,zoompan=z='${zoom}':x='${x}':y='${y}':d=1:s=${reelPresentationSpec.width}x${reelPresentationSpec.height}:fps=${reelPresentationSpec.fps},trim=duration=${seconds(scene.durationMs + incomingMs)},setpts=PTS-STARTPTS,setsar=1`;
+  return `scale=${reelWorkingRaster.width}:${reelWorkingRaster.height}:force_original_aspect_ratio=increase,crop=${reelWorkingRaster.width}:${reelWorkingRaster.height},zoompan=z='${zoom}':x='${x}':y='${y}':d=1:s=${reelPresentationSpec.width}x${reelPresentationSpec.height}:fps=${reelPresentationSpec.fps},trim=duration=${seconds(scene.durationMs + incomingMs)},setpts=PTS-STARTPTS,setsar=1`;
 }
 
 function seconds(milliseconds) {

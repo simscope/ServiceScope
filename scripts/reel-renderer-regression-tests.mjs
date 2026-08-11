@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,17 +8,21 @@ import sharp from 'sharp';
 import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSafeZonePixels } from '../src/features/reel-director/presentationSpec.js';
 import {
   authorizeReelForRender,
+  assertReelWorkingRasterGeometry,
   buildFfmpegArgs,
   buildReelRenderManifest,
   escapeXml,
   layoutReelText,
   measureTextPixels,
   renderAuthorizedReel,
+  reelWorkingGeometry,
+  reelWorkingRaster,
 } from '../server/reel-renderer/index.js';
+import { normalizeStagedAssets } from '../server/reel-renderer/assets.js';
 import { renderBrandCard, renderCover, renderSceneOverlay } from '../server/reel-renderer/overlays.js';
 import { runBinary } from '../server/reel-renderer/process.js';
 import { createArtifactHandler } from '../server/reel-render-jobs/artifacts.js';
-import { reelRenderMessageSchema } from '../server/reel-render-jobs/contracts.js';
+import { reelRendererVersion, reelRenderMessageSchema } from '../server/reel-render-jobs/contracts.js';
 import { createRenderWorker } from '../server/reel-render-jobs/worker.js';
 
 let checks = 0;
@@ -73,7 +78,7 @@ const russianPrimary = '\u041a\u041e\u041d\u0414\u0418\u0426\u0418\u041e\u041d\u
 const spanishPrimary = '\u00bfEL AIRE NO EST\u00c1 ENFRIANDO?';
 
 const authorizedPlan = authorizeReelForRender({ plan: validPlan, context: validContext });
-const { manifest } = buildReelRenderManifest(authorizedPlan, stagedAssets);
+const { manifest, sourcePaths } = buildReelRenderManifest(authorizedPlan, stagedAssets);
 check(() => assert.equal(manifest.schemaVersion, 'reel-render-manifest-v1'));
 check(() => assert.deepEqual([manifest.width, manifest.height, manifest.fps], [1080, 1920, 30]));
 check(() => assert.equal(manifest.durationMs, 13_800));
@@ -211,6 +216,16 @@ check(() => assert.ok(reelMotionFrame('slow_zoom_in', 'cover_center', 1).scale >
 check(() => assert.ok(reelMotionFrame('pan_left', 'cover_center', 1).x < reelMotionFrame('pan_left', 'cover_center', 0).x));
 check(() => assert.equal(reelMotionFrame('static', 'cover_center', 0.5).scale, 1));
 check(() => assert.equal(reelPresentationSpec.textFadeMs, 180));
+check(() => assert.deepEqual(reelWorkingRaster, { width: 1440, height: 2560 }));
+check(() => assert.deepEqual(assertReelWorkingRasterGeometry(), reelWorkingGeometry));
+check(() => assert.equal(reelWorkingGeometry.combinations, Object.keys(reelPresentationSpec.crops).length * Object.keys(reelPresentationSpec.motions).length));
+check(() => assert.ok(reelWorkingGeometry.minimumSampleWidth >= reelPresentationSpec.width));
+check(() => assert.ok(reelWorkingGeometry.minimumSampleHeight >= reelPresentationSpec.height));
+check(() => assert.equal(reelRendererVersion, 'servicescope-reel-renderer-v2'));
+check(() => assert.notEqual(
+  renderFingerprint(validPlan, 'servicescope-reel-renderer-v1'),
+  renderFingerprint(validPlan, reelRendererVersion),
+));
 check(() => assert.deepEqual(
   [reelPresentationSpec.text.scenePrimary.minFontSize, reelPresentationSpec.text.scenePrimary.maxFontSize, reelPresentationSpec.text.scenePrimary.maxLines],
   [44, 68, 3],
@@ -222,6 +237,12 @@ check(() => assert.ok(ffmpeg.args.includes('libx264')));
 check(() => assert.ok(ffmpeg.args.includes('yuv420p')));
 check(() => assert.ok(ffmpeg.args.includes('+faststart')));
 check(() => assert.ok(ffmpeg.args.includes('-an')));
+check(() => assert.deepEqual(optionValues(ffmpeg.args, '-filter_complex_threads'), ['1']));
+check(() => assert.deepEqual(optionValues(ffmpeg.args, '-threads'), ['1']));
+check(() => assert.ok(ffmpeg.args.indexOf('-filter_complex_threads') < ffmpeg.args.indexOf('-filter_complex')));
+check(() => assert.ok(ffmpeg.args.indexOf('-threads') > ffmpeg.args.indexOf('libx264')));
+check(() => assert.match(ffmpeg.filterGraph, /scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560/));
+check(() => assert.doesNotMatch(ffmpeg.filterGraph, /2160|3840/));
 check(() => assert.match(ffmpeg.filterGraph, /xfade=transition=fade:duration=0\.45/));
 check(() => assert.match(ffmpeg.filterGraph, /xfade=transition=fadeblack:duration=0\.25/));
 check(() => assert.match(ffmpeg.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.035\+/));
@@ -265,6 +286,14 @@ const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-
 let rendered;
 try {
   await createSyntheticImages(fixtureRoot);
+  const normalizationDir = join(fixtureRoot, 'normalized');
+  await mkdir(normalizationDir);
+  const normalizedAssets = await normalizeStagedAssets(sourcePaths, fixtureRoot, normalizationDir);
+  for (const path of normalizedAssets.values()) {
+    const metadata = await sharp(path).metadata();
+    check(() => assert.ok(metadata.width <= reelWorkingRaster.width && metadata.height <= reelWorkingRaster.height));
+    check(() => assert.ok(metadata.width === reelWorkingRaster.width || metadata.height === reelWorkingRaster.height));
+  }
   const stressFixtures = await createStressFixtures(fixtureRoot);
   for (const { layout, bounds, zone } of stressFixtures.layoutChecks) {
     check(() => assertLayoutInside(layout, bounds, zone));
@@ -373,6 +402,17 @@ async function verifyDurableRenderWorkflow(fixtureRoot) {
 
 function scene(id, position, attachmentId, durationMs, overlayText, secondaryText, motionPreset, cropStrategy, transitionOut) {
   return { id, position, attachmentId, sceneRole: position === 1 ? 'overview' : position === 2 ? 'repair_process' : 'finished_result', durationMs, overlayText, secondaryText, motionPreset, cropStrategy, transitionOut, evidenceIds: [`media:${attachmentId}:finding`], voiceoverLine: null };
+}
+
+function optionValues(args, option) {
+  return args.flatMap((value, index) => value === option ? [args[index + 1]] : []);
+}
+
+function renderFingerprint(plan, rendererVersion) {
+  return createHash('sha256').update([
+    'reel-render-fingerprint-v1', plan.revision, JSON.stringify(plan), rendererVersion,
+    reelPresentationSpec.schemaVersion, 'mp4-h264-yuv420p-faststart-v1',
+  ].join('\n')).digest('hex');
 }
 
 function mutatedPlan(mutate) {

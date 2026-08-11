@@ -2,6 +2,7 @@ import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import sharp from 'sharp';
 import { ReelRenderError } from './errors.js';
+import { reelWorkingRaster } from './runtimeSpec.js';
 
 const supportedFormats = new Set(['jpeg', 'png', 'webp']);
 const maxInputPixels = 40_000_000;
@@ -27,7 +28,7 @@ export async function normalizeStagedAssets(sourcePaths, stagingRoot, workDir) {
     await pipeline
       .rotate()
       .flatten({ background: '#101820' })
-      .resize({ width: 2160, height: 3840, fit: 'inside', withoutEnlargement: false })
+      .resize({ ...reelWorkingRaster, fit: 'inside', withoutEnlargement: false })
       .jpeg({ quality: 92, chromaSubsampling: '4:2:0' })
       .toFile(outputPath)
       .catch(() => { throw new ReelRenderError('REEL_RENDER_MEDIA_INVALID'); });
