@@ -4,5 +4,13 @@ export { buildReelRenderManifest, reelRenderManifestSchemaVersion } from './mani
 export { escapeXml } from './overlays.js';
 export { assertSafeOverlayText, layoutReelText, measureTextPixels } from './textLayout.js';
 export { validateRenderedVideo } from './probe.js';
-export { buildFfmpegArgs, renderAuthorizedReel } from './renderer.js';
+export {
+  buildBrandClipArgs,
+  buildFinalComposeArgs,
+  buildSceneClipArgs,
+  createReelRenderer,
+  reelIntermediateSpec,
+  reelMaxAggregateIntermediateBytes,
+  renderAuthorizedReel,
+} from './renderer.js';
 export { assertReelWorkingRasterGeometry, reelWorkingGeometry, reelWorkingRaster } from './runtimeSpec.js';

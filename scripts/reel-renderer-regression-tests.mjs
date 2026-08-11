@@ -9,14 +9,20 @@ import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSp
 import {
   authorizeReelForRender,
   assertReelWorkingRasterGeometry,
-  buildFfmpegArgs,
+  buildBrandClipArgs,
+  buildFinalComposeArgs,
   buildReelRenderManifest,
+  buildSceneClipArgs,
+  createReelRenderer,
   escapeXml,
   layoutReelText,
   measureTextPixels,
   renderAuthorizedReel,
   reelWorkingGeometry,
   reelWorkingRaster,
+  reelIntermediateSpec,
+  reelMaxAggregateIntermediateBytes,
+  ReelRenderError,
 } from '../server/reel-renderer/index.js';
 import { normalizeStagedAssets } from '../server/reel-renderer/assets.js';
 import { renderBrandCard, renderCover, renderSceneOverlay } from '../server/reel-renderer/overlays.js';
@@ -231,22 +237,59 @@ check(() => assert.deepEqual(
   [44, 68, 3],
 ));
 
-const fakeNormalized = new Map(manifest.scenes.map((item) => [item.sourceKey, `/staged/${item.sourceKey}.jpg`]));
-const ffmpeg = buildFfmpegArgs({ manifest, normalized: fakeNormalized, overlays: manifest.scenes.map((_, index) => `/work/overlay-${index}.png`), brandPath: '/work/brand.png', videoPath: '/output/reel.mp4' });
-check(() => assert.ok(ffmpeg.args.includes('libx264')));
-check(() => assert.ok(ffmpeg.args.includes('yuv420p')));
-check(() => assert.ok(ffmpeg.args.includes('+faststart')));
-check(() => assert.ok(ffmpeg.args.includes('-an')));
-check(() => assert.deepEqual(optionValues(ffmpeg.args, '-filter_complex_threads'), ['1']));
-check(() => assert.deepEqual(optionValues(ffmpeg.args, '-threads'), ['1']));
-check(() => assert.ok(ffmpeg.args.indexOf('-filter_complex_threads') < ffmpeg.args.indexOf('-filter_complex')));
-check(() => assert.ok(ffmpeg.args.indexOf('-threads') > ffmpeg.args.indexOf('libx264')));
-check(() => assert.match(ffmpeg.filterGraph, /scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560/));
-check(() => assert.doesNotMatch(ffmpeg.filterGraph, /2160|3840/));
-check(() => assert.match(ffmpeg.filterGraph, /xfade=transition=fade:duration=0\.45/));
-check(() => assert.match(ffmpeg.filterGraph, /xfade=transition=fadeblack:duration=0\.25/));
-check(() => assert.match(ffmpeg.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.035\+/));
-check(() => assert.doesNotMatch(ffmpeg.filterGraph, /See this|Northstar|drawtext|photo-[abc]|Overview|Detail|Process|Part|Result|Context/));
+const sceneClip = buildSceneClipArgs({
+  scene: manifest.scenes[1],
+  incomingMs: 450,
+  normalizedPath: '/work/normalized-scene-2.jpg',
+  overlayPath: '/work/overlay-scene-2.png',
+  clipPath: '/work/scene-2.mp4',
+});
+check(() => assert.deepEqual(optionValues(sceneClip.args, '-i'), ['/work/normalized-scene-2.jpg', '/work/overlay-scene-2.png']));
+check(() => assert.equal(sceneClip.clipDurationMs, manifest.scenes[1].durationMs + 450));
+check(() => assert.deepEqual(reelIntermediateSpec, { width: 1080, height: 1920, fps: 30, codec: 'libx264', preset: 'ultrafast', crf: 10, pixelFormat: 'yuv420p', threads: 1 }));
+check(() => assert.deepEqual(optionValues(sceneClip.args, '-filter_complex_threads'), ['1']));
+check(() => assert.deepEqual(optionValues(sceneClip.args, '-threads'), ['1']));
+check(() => assert.deepEqual(optionValues(sceneClip.args, '-preset'), ['ultrafast']));
+check(() => assert.deepEqual(optionValues(sceneClip.args, '-crf'), ['10']));
+check(() => assert.match(sceneClip.filterGraph, /scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560/));
+check(() => assert.match(sceneClip.filterGraph, /fade=t=in:st=0\.45:d=0\.18/));
+check(() => assert.match(sceneClip.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.035\+/));
+check(() => assert.doesNotMatch(sceneClip.filterGraph, /2160|3840|See this|Northstar|drawtext|photo-[abc]/));
+
+const brandClip = buildBrandClipArgs({ brandPath: '/work/brand.png', durationMs: 1_800, incomingMs: 450, clipPath: '/work/brand.mp4' });
+check(() => assert.equal(brandClip.clipDurationMs, 2_250));
+check(() => assert.deepEqual(optionValues(brandClip.args, '-i'), ['/work/brand.png']));
+check(() => assert.deepEqual(optionValues(brandClip.args, '-preset'), ['ultrafast']));
+check(() => assert.match(brandClip.filterGraph, /scale=1080:1920/));
+
+const finalClips = manifest.scenes.map((scene, index) => ({
+  path: `/work/scene-${index + 1}.mp4`,
+  durationMs: scene.durationMs,
+  incomingMs: index === 0 ? 0 : (manifest.scenes[index - 1].transition?.durationMs ?? 0),
+  transitionKind: index === 0 ? 'cut' : (manifest.scenes[index - 1].transition?.kind ?? 'cut'),
+}));
+finalClips.push({
+  path: '/work/brand.mp4',
+  durationMs: manifest.brand.durationMs,
+  incomingMs: manifest.scenes.at(-1).transition?.durationMs ?? 0,
+  transitionKind: manifest.scenes.at(-1).transition?.kind ?? 'cut',
+});
+const finalCompose = buildFinalComposeArgs({ clips: finalClips, durationMs: manifest.durationMs, videoPath: '/output/reel.mp4' });
+check(() => assert.deepEqual(optionValues(finalCompose.args, '-i'), finalClips.map((clip) => clip.path)));
+check(() => assert.ok(optionValues(finalCompose.args, '-i').every((path) => path.endsWith('.mp4'))));
+check(() => assert.doesNotMatch(finalCompose.args.join('\n'), /normalized-|overlay-|\.jpe?g|\.png/i));
+check(() => assert.deepEqual(optionValues(finalCompose.args, '-preset'), ['medium']));
+check(() => assert.deepEqual(optionValues(finalCompose.args, '-crf'), ['22']));
+check(() => assert.equal(optionValues(finalCompose.args, '-threads').length, finalClips.length + 1));
+check(() => assert.ok(optionValues(finalCompose.args, '-threads').every((value) => value === '1')));
+check(() => assert.ok(finalCompose.args.includes('+faststart') && finalCompose.args.includes('-an')));
+check(() => assert.match(finalCompose.filterGraph, /xfade=transition=fade:duration=0\.45:offset=3\.55/));
+check(() => assert.match(finalCompose.filterGraph, /xfade=transition=fadeblack:duration=0\.25:offset=7\.75/));
+check(() => assert.match(finalCompose.filterGraph, /trim=duration=13\.8/));
+for (const remote of ['https://example.test/source.jpg', 'http://example.test/clip.mp4', 'file:///private/source.jpg']) {
+  check(() => assert.throws(() => buildSceneClipArgs({ scene: manifest.scenes[0], incomingMs: 0, normalizedPath: remote, overlayPath: '/work/overlay.png', clipPath: '/work/clip.mp4' }), /REEL_RENDER_MEDIA_INVALID/));
+  check(() => assert.throws(() => buildFinalComposeArgs({ clips: [{ path: remote, durationMs: 1000, incomingMs: 0, transitionKind: 'cut' }], durationMs: 1000, videoPath: '/output/reel.mp4' }), /REEL_RENDER_MEDIA_INVALID/));
+}
 check(() => assert.equal(escapeXml(`A&B <tag> "quote" 'single'`), 'A&amp;B &lt;tag&gt; &quot;quote&quot; &apos;single&apos;'));
 check(() => assert.doesNotMatch(escapeXml('<script>alert(1)</script>'), /<script>/i));
 check(() => assert.doesNotMatch(escapeXml('</text><script>alert(1)</script>'), /<script>/i));
@@ -281,6 +324,8 @@ for (const malicious of ['<image href="https://example.com/x">', 'url(https://ex
   ));
 }
 await checkAsync(() => assert.rejects(runBinary(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], { timeoutMs: 30 }), /REEL_RENDER_TIMEOUT/));
+
+await verifyStagedRendererOrchestration();
 
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-'));
 let rendered;
@@ -406,6 +451,183 @@ function scene(id, position, attachmentId, durationMs, overlayText, secondaryTex
 
 function optionValues(args, option) {
   return args.flatMap((value, index) => value === option ? [args[index + 1]] : []);
+}
+
+async function verifyStagedRendererOrchestration() {
+  const expectedOrder = [
+    'scene-1', 'scene-2', 'scene-3', 'scene-4', 'scene-5', 'scene-6', 'scene-7',
+    'brand', 'final-compose', 'validation',
+  ];
+  const successful = stagedRendererHarness();
+  const result = await successful.render();
+  check(() => assert.deepEqual(successful.calls.map((call) => call.stage), expectedOrder));
+  check(() => assert.equal(successful.maximumActive, 1));
+  check(() => assert.ok(successful.calls.every((call) => call.timeoutMs > 0 && call.timeoutMs <= 240_000)));
+  check(() => assert.equal(successful.events.filter((event) => event.phase === 'artifact').at(-1).aggregateIntermediateBytes, 8_000_000));
+  check(() => assert.equal(reelMaxAggregateIntermediateBytes, 180_000_000));
+  await result.dispose();
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), successful.tempBefore));
+
+  const sceneOne = stagedRendererHarness({ failStage: 'scene-1' });
+  await checkAsync(() => assert.rejects(sceneOne.render(), /REEL_RENDER_FAILED/));
+  check(() => assert.deepEqual(sceneOne.calls.map((call) => call.stage), ['scene-1']));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), sceneOne.tempBefore));
+
+  const sceneFour = stagedRendererHarness({ failStage: 'scene-4' });
+  await checkAsync(() => assert.rejects(sceneFour.render(), /REEL_RENDER_FAILED/));
+  check(() => assert.deepEqual(sceneFour.calls.map((call) => call.stage), ['scene-1', 'scene-2', 'scene-3', 'scene-4']));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), sceneFour.tempBefore));
+
+  const brand = stagedRendererHarness({ failStage: 'brand' });
+  await checkAsync(() => assert.rejects(brand.render(), /REEL_RENDER_FAILED/));
+  check(() => assert.equal(brand.calls.at(-1).stage, 'brand'));
+  check(() => assert.equal(brand.calls.some((call) => call.stage === 'final-compose'), false));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), brand.tempBefore));
+
+  const aggregate = stagedRendererHarness({ intermediateSizes: [50_000_000, 50_000_000, 50_000_000, 50_000_001] });
+  await checkAsync(() => assert.rejects(aggregate.render(), /REEL_RENDER_OUTPUT_INVALID/));
+  check(() => assert.deepEqual(aggregate.calls.map((call) => call.stage), ['scene-1', 'scene-2', 'scene-3', 'scene-4']));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), aggregate.tempBefore));
+
+  const beforeNextScene = stagedRendererHarness({ nowValues: [0, 1, 240_001] });
+  await checkAsync(() => assert.rejects(beforeNextScene.render(), /REEL_RENDER_TIMEOUT/));
+  check(() => assert.deepEqual(beforeNextScene.calls.map((call) => call.stage), ['scene-1']));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), beforeNextScene.tempBefore));
+
+  const beforeFinal = stagedRendererHarness({ nowValues: [0, 1, 2, 3, 4, 5, 6, 7, 8, 240_001] });
+  await checkAsync(() => assert.rejects(beforeFinal.render(), /REEL_RENDER_TIMEOUT/));
+  check(() => assert.deepEqual(beforeFinal.calls.map((call) => call.stage), expectedOrder.slice(0, 8)));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), beforeFinal.tempBefore));
+
+  const finalFailure = stagedRendererHarness({ failStage: 'final-compose' });
+  await checkAsync(() => assert.rejects(finalFailure.render(), /REEL_RENDER_FAILED/));
+  check(() => assert.equal(finalFailure.calls.at(-1).stage, 'final-compose'));
+  check(() => assert.equal(finalFailure.calls.some((call) => call.stage === 'validation'), false));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), finalFailure.tempBefore));
+
+  const probeFailure = stagedRendererHarness({ failStage: 'validation' });
+  await checkAsync(() => assert.rejects(probeFailure.render(), /REEL_RENDER_OUTPUT_INVALID/));
+  check(() => assert.equal(probeFailure.calls.at(-1).stage, 'validation'));
+  await checkAsync(async () => assert.deepEqual(await rendererTempEntries(), probeFailure.tempBefore));
+
+  const seven = stagedManifestFixture();
+  const final = buildFinalComposeArgs({ clips: seven.clips, durationMs: seven.manifest.durationMs, videoPath: '/output/seven.mp4' });
+  check(() => assert.match(final.filterGraph, /xfade=transition=fade:duration=0\.45:offset=2\.85/));
+  check(() => assert.match(final.filterGraph, /xfade=transition=fadeblack:duration=0\.25:offset=6\.35/));
+  check(() => assert.match(final.filterGraph, /\[joined2\]\[clip3\]concat=n=2:v=1:a=0/));
+  check(() => assert.match(final.filterGraph, /trim=duration=25/));
+  check(() => assert.equal(seven.clips.reduce((total, clip) => total + clip.durationMs, 0), 25_000));
+}
+
+function stagedRendererHarness({ failStage, intermediateSizes, nowValues } = {}) {
+  const fixture = stagedManifestFixture();
+  const calls = [];
+  const events = [];
+  const sizes = [...(intermediateSizes ?? Array(8).fill(1_000_000))];
+  const times = nowValues ? [...nowValues] : null;
+  let timeIndex = 0;
+  let active = 0;
+  let maximumActive = 0;
+  let currentStage = 'idle';
+  const tempBeforePromise = rendererTempEntries();
+  const execute = async (_binary, args, { timeoutMs }) => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    calls.push({ stage: currentStage, args, timeoutMs });
+    try {
+      await Promise.resolve();
+      if (currentStage === failStage && currentStage !== 'validation') throw new ReelRenderError('REEL_RENDER_FAILED');
+      return { stdout: '', stderrBytes: 0 };
+    } finally {
+      active -= 1;
+    }
+  };
+  const renderer = createReelRenderer({
+    execute,
+    validate: async (_path, _duration, binary, timeoutMs, run) => {
+      await run(binary, ['synthetic-probe'], { timeoutMs });
+      if (failStage === 'validation') throw new ReelRenderError('REEL_RENDER_OUTPUT_INVALID');
+      return {
+        durationMs: fixture.manifest.durationMs,
+        width: 1080,
+        height: 1920,
+        fps: 30,
+        videoCodec: 'h264',
+        pixelFormat: 'yuv420p',
+        audioStreams: 0,
+        fileSize: 1_000_000,
+        faststart: true,
+      };
+    },
+    buildManifest: () => ({ manifest: fixture.manifest, sourcePaths: fixture.sourcePaths }),
+    normalize: async () => fixture.normalized,
+    renderOverlay: async () => {},
+    renderBrand: async () => {},
+    renderCoverImage: async () => {},
+    fileStat: async () => ({ size: sizes.shift() ?? 1_000_000 }),
+    now: times
+      ? () => times[Math.min(timeIndex++, times.length - 1)]
+      : () => timeIndex++,
+    onStageChange(event) {
+      events.push(event);
+      if (event.phase === 'start') currentStage = event.stage === 'scene' ? `scene-${event.position}` : event.stage;
+      if (event.phase === 'end') currentStage = 'idle';
+    },
+  });
+  return {
+    calls,
+    events,
+    get maximumActive() { return maximumActive; },
+    get tempBefore() { return this._tempBefore; },
+    async render() {
+      this._tempBefore = await tempBeforePromise;
+      return await renderer({ authorized: {}, stagedAssets: [], stagingRoot: '/synthetic', timeoutMs: 240_000 });
+    },
+  };
+}
+
+function stagedManifestFixture() {
+  const durations = [3_300, 3_300, 3_300, 3_300, 3_300, 3_300, 3_200];
+  const motions = ['slow_zoom_in', 'focus_detail', 'pan_left', 'pan_right', 'static', 'slow_zoom_out', 'focus_detail'];
+  const crops = ['cover_center', 'detail_crop', 'subject_center', 'cover_center', 'subject_center', 'detail_crop', 'cover_center'];
+  const transitions = [
+    { kind: 'crossfade', durationMs: 450 },
+    { kind: 'quick_fade', durationMs: 250 },
+    null,
+    { kind: 'crossfade', durationMs: 450 },
+    { kind: 'quick_fade', durationMs: 250 },
+    { kind: 'crossfade', durationMs: 450 },
+    { kind: 'crossfade', durationMs: 450 },
+  ];
+  const scenes = durations.map((durationMs, index) => ({
+    position: index + 1,
+    sourceKey: `source-${index + 1}`,
+    durationMs,
+    motionPreset: motions[index],
+    cropStrategy: crops[index],
+    transition: transitions[index],
+  }));
+  const manifest = {
+    durationMs: 25_000,
+    scenes,
+    brand: { enabled: true, durationMs: 2_000 },
+    cover: { sourceKey: 'source-1', title: 'Synthetic cover' },
+  };
+  const sourcePaths = new Map(scenes.map((scene) => [scene.sourceKey, `${scene.sourceKey}.jpg`]));
+  const normalized = new Map(scenes.map((scene) => [scene.sourceKey, `/work/normalized-${scene.position}.jpg`]));
+  const clips = scenes.map((scene, index) => ({
+    path: `/work/scene-${scene.position}.mp4`,
+    durationMs: scene.durationMs,
+    incomingMs: index === 0 ? 0 : (scenes[index - 1].transition?.durationMs ?? 0),
+    transitionKind: index === 0 ? 'cut' : (scenes[index - 1].transition?.kind ?? 'cut'),
+  }));
+  clips.push({
+    path: '/work/brand.mp4',
+    durationMs: manifest.brand.durationMs,
+    incomingMs: scenes.at(-1).transition.durationMs,
+    transitionKind: scenes.at(-1).transition.kind,
+  });
+  return { manifest, sourcePaths, normalized, clips };
 }
 
 function renderFingerprint(plan, rendererVersion) {
