@@ -107,6 +107,8 @@ jobs:
             '
 
       - name: Benchmark exact 13.8 second fixture
+        id: benchmark_nominal
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -124,6 +126,8 @@ jobs:
               --output=/artifacts/13.8s
 
       - name: Benchmark normal worst-case 25 second fixture
+        id: benchmark_worst
+        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -173,3 +177,8 @@ jobs:
             '${{ steps.upload.outputs.artifact-id }}' \
             '${{ steps.upload.outputs.artifact-digest }}' \
             '${{ steps.upload.outputs.artifact-url }}'
+
+      - name: Enforce hard qualification limits
+        shell: bash
+        run: |
+          node --input-type=module -e "import { readFile } from 'node:fs/promises'; const r=JSON.parse(await readFile('./qualification-artifact/runtime-report.json')); if(r.fixtures.nominal.status!=='PASS'||r.fixtures.worstNormal.status!=='PASS') process.exit(1)"

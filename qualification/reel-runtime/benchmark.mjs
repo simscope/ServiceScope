@@ -66,6 +66,8 @@ async function runFixture(name, outputDir) {
   const sampler = createSampler();
   const totalStarted = performance.now();
   const stagingRoot = await mkdtemp(join(tmpdir(), `servicescope-qualification-${name}-`));
+  const timingFile = join(outputDir, 'ffmpeg-time.txt');
+  const diagnosticFile = join(outputDir, 'ffmpeg-stderr.txt');
   let rendered;
   try {
     sampler.start();
@@ -78,8 +80,8 @@ async function runFixture(name, outputDir) {
     assert.equal(manifest.durationMs, fixture.expectedDurationMs);
     assert.equal(manifest.scenes.length, fixture.expectedScenes);
 
-    const timingFile = join(stagingRoot, 'ffmpeg-time.json');
     process.env.FFMPEG_METRICS_FILE = timingFile;
+    process.env.FFMPEG_DIAGNOSTIC_FILE = diagnosticFile;
 
     const rendererStarted = performance.now();
     rendered = await renderAuthorizedReel({
@@ -157,11 +159,44 @@ async function runFixture(name, outputDir) {
     assert.ok(report.margins.tmpBytes > 0, 'Container exceeded 500 MB /tmp limit');
     await writeFile(join(outputDir, 'fixture-report.json'), `${JSON.stringify(report, null, 2)}\n`);
     console.log(JSON.stringify(report, null, 2));
+  } catch (error) {
+    const resources = await sampler.finish();
+    const totalWallMs = performance.now() - totalStarted;
+    await writeFile(join(outputDir, 'resource-samples.csv'), resourceSamplesCsv(resources.samples));
+    const report = {
+      fixture: name,
+      status: 'FAIL',
+      errorCode: typeof error?.code === 'string' ? error.code : 'QUALIFICATION_FAILED',
+      errorMessage: String(error?.message ?? error),
+      performance: {
+        totalWallMs: round(totalWallMs),
+        cgroupCpuUsageMs: round(resources.cpuUsageUsec / 1000),
+        sampledPeakCpuPercent: round(resources.peakCpuPercent),
+        containerPeakMemoryBytes: resources.memoryPeakBytes,
+        sampledPeakMemoryBytes: resources.sampledMemoryPeakBytes,
+        peakTmpBytes: resources.tmpPeakBytes,
+        rendererWorkDirectoryPeakBytes: resources.workPeakBytes,
+        normalizedSourcePeakBytes: resources.normalizedPeakBytes,
+      },
+      limits,
+      cgroupMemoryEvents: await readKeyValueFile('/sys/fs/cgroup/memory.events'),
+      ffmpegTiming: await readOptional(timingFile),
+      ffmpegDiagnostic: await readOptional(diagnosticFile),
+      runtime: {
+        node: process.version,
+        network: 'none',
+        cgroupV2MemoryPeakAvailable: resources.cgroupV2MemoryPeakAvailable,
+      },
+    };
+    await writeFile(join(outputDir, 'fixture-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+    console.error(JSON.stringify(report, null, 2));
+    throw error;
   } finally {
     await sampler.finish().catch(() => {});
     await rendered?.dispose().catch(() => {});
     await rm(stagingRoot, { recursive: true, force: true });
     delete process.env.FFMPEG_METRICS_FILE;
+    delete process.env.FFMPEG_DIAGNOSTIC_FILE;
   }
 }
 
@@ -520,6 +555,23 @@ async function readNumber(path) {
   }
 }
 
+async function readKeyValueFile(path) {
+  try {
+    const text = await readFile(path, 'utf8');
+    return Object.fromEntries(text.trim().split(/\r?\n/).map((line) => {
+      const [key, value] = line.trim().split(/\s+/, 2);
+      return [key, Number(value)];
+    }));
+  } catch {
+    return {};
+  }
+}
+
+async function readOptional(path) {
+  try { return (await readFile(path, 'utf8')).slice(-16_384); }
+  catch { return ''; }
+}
+
 async function directoryBytes(root) {
   let total = 0;
   let entries;
@@ -587,14 +639,12 @@ async function combineReports(root) {
   };
   assert.equal(report.container.gplEnabled, true);
   assert.equal(report.container.libx264, true);
-  assert.equal(nominal.status, 'PASS');
-  assert.equal(worst.status, 'PASS');
   await writeFile(join(root, 'runtime-report.json'), `${JSON.stringify(report, null, 2)}\n`);
   await writeFile(join(root, 'runtime-report.md'), markdownReport(report));
 }
 
 function markdownReport(report) {
-  const fixture = (value) => `| ${value.fixture} | ${value.status} | ${value.output.durationMs} | ${value.performance.rendererWallMs} | ${value.performance.ffmpegWallMs} | ${value.performance.containerPeakMemoryBytes} | ${value.performance.peakTmpBytes} | ${value.output.videoBytes} | ${value.output.coverBytes} |`;
+  const fixture = (value) => `| ${value.fixture} | ${value.status} | ${value.output?.durationMs ?? 'n/a'} | ${value.performance.rendererWallMs ?? 'n/a'} | ${value.performance.ffmpegWallMs ?? 'n/a'} | ${value.performance.containerPeakMemoryBytes} | ${value.performance.peakTmpBytes} | ${value.output?.videoBytes ?? 'n/a'} | ${value.output?.coverBytes ?? 'n/a'} |`;
   return `# ServiceScope Reel runtime qualification
 
 - Baseline: \`${report.baselineSha}\`
@@ -616,8 +666,8 @@ ${fixture(report.fixtures.worstNormal)}
 
 | Fixture | Duration margin ms | Memory margin bytes | /tmp margin bytes |
 | --- | ---: | ---: | ---: |
-| 13.8s | ${report.fixtures.nominal.margins.durationMs} | ${report.fixtures.nominal.margins.memoryBytes} | ${report.fixtures.nominal.margins.tmpBytes} |
-| 25s | ${report.fixtures.worstNormal.margins.durationMs} | ${report.fixtures.worstNormal.margins.memoryBytes} | ${report.fixtures.worstNormal.margins.tmpBytes} |
+| 13.8s | ${report.fixtures.nominal.margins?.durationMs ?? 'n/a'} | ${report.fixtures.nominal.margins?.memoryBytes ?? 'n/a'} | ${report.fixtures.nominal.margins?.tmpBytes ?? 'n/a'} |
+| 25s | ${report.fixtures.worstNormal.margins?.durationMs ?? 'n/a'} | ${report.fixtures.worstNormal.margins?.memoryBytes ?? 'n/a'} | ${report.fixtures.worstNormal.margins?.tmpBytes ?? 'n/a'} |
 `;
 }
 
