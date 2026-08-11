@@ -1,6 +1,6 @@
 export const reelRenderTopic = 'servicescope-reel-render-v1';
 export const reelRenderMessageSchema = 'reel-render-job-message-v1';
-export const reelRendererVersion = 'servicescope-reel-renderer-v1';
+export const reelRendererVersion = 'servicescope-reel-renderer-v2';
 export const reelRenderBucket = 'company-reel-renders';
 export const reelArtifactTtlSeconds = 300;
 export const reelRenderRequestMaxBytes = 2048;

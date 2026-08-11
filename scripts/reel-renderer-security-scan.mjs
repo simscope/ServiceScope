@@ -12,6 +12,7 @@ const rendererFiles = [
   'server/reel-renderer/probe.js',
   'server/reel-renderer/process.js',
   'server/reel-renderer/renderer.js',
+  'server/reel-renderer/runtimeSpec.js',
   'server/reel-renderer/textLayout.js',
 ];
 const browserFiles = [
@@ -30,7 +31,12 @@ const rendererSource = await readFile('server/reel-renderer/renderer.js', 'utf8'
 const overlays = await readFile('server/reel-renderer/overlays.js', 'utf8');
 const textLayout = await readFile('server/reel-renderer/textLayout.js', 'utf8');
 const errors = await readFile('server/reel-renderer/errors.js', 'utf8');
+const renderContracts = await readFile('server/reel-render-jobs/contracts.js', 'utf8');
 const packageJson = await readFile('package.json', 'utf8');
+const finalBuilder = rendererSource.slice(
+  rendererSource.indexOf('export function buildFinalComposeArgs'),
+  rendererSource.indexOf('function ffmpegBaseArgs'),
+);
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
 
@@ -44,7 +50,8 @@ check(() => assert.match(processSource, /shell:\s*false/));
 check(() => assert.match(processSource, /maxCapturedBytes/));
 check(() => assert.match(processSource, /child\.kill\('SIGKILL'\)/));
 check(() => assert.match(rendererSource, /finally\s*\{[\s\S]*rm\(workDir/));
-check(() => assert.match(rendererSource, /renderAuthorizedReel\(\{\s*authorized,/));
+check(() => assert.match(rendererSource, /buildManifest\s*=\s*buildReelRenderManifest/));
+check(() => assert.match(rendererSource, /buildManifest\(authorized, stagedAssets\)/));
 check(() => assert.doesNotMatch(rendererSource, /export async function renderReel\b|\{\s*plan,\s*stagedAssets/));
 check(() => assert.match(authorization, /parseReelPlanShape\(providerPlan\)[\s\S]*validateReelPlan\(canonicalPlan, context\)/));
 check(() => assert.match(authorization, /const authorizedPlans = new WeakMap\(\)/));
@@ -73,6 +80,21 @@ check(() => assert.doesNotMatch(packageJson, /ffmpeg-static|shotstack|remotion|c
 check(() => assert.match(rendererSource, /'-an'/));
 check(() => assert.match(rendererSource, /'libx264'/));
 check(() => assert.match(rendererSource, /'\+faststart'/));
+check(() => assert.match(rendererSource, /'-filter_complex_threads',\s*'1'/));
+check(() => assert.match(rendererSource, /'-threads',\s*'1'/));
+check(() => assert.doesNotMatch(rendererSource, /'-filter_threads'/));
+check(() => assert.doesNotMatch(renderer, /2160|3840/));
+check(() => assert.match(rendererSource, /for \(let index = 0; index < manifest\.scenes\.length; index \+= 1\)[\s\S]*await observeStage/));
+check(() => assert.doesNotMatch(rendererSource, /Promise\.all\s*\(/));
+check(() => assert.match(finalBuilder, /args\.push\('-threads', '1', '-i', clip\.path\)/));
+check(() => assert.doesNotMatch(finalBuilder, /normalizedPath|overlayPath|loopedInput|\.jpe?g|\.png/i));
+check(() => assert.match(rendererSource, /reelMaxAggregateIntermediateBytes = 180_000_000/));
+check(() => assert.match(rendererSource, /aggregateIntermediateBytes \+= size[\s\S]*assertIntermediateAggregate/));
+check(() => assert.match(rendererSource, /const deadline = now\(\) \+ timeoutMs/));
+check(() => assert.match(rendererSource, /remainingBudget\(deadline, now\)/));
+check(() => assert.doesNotMatch(rendererSource, /execute\(ffmpegBin, args, \{ timeoutMs \}\)/));
+check(() => assert.ok(rendererSource.includes('/^(?:https?|file):/i')));
+check(() => assert.match(renderContracts, /reelRendererVersion = 'servicescope-reel-renderer-v2'/));
 check(() => assert.doesNotMatch(renderer, /outputPath\s*[:=].*input|destinationDir|outputDir\s*=.*(?:request|options)/i));
 
 const trackedRendererMedia = execFileSync('git', ['ls-files', 'server', 'shared', 'scripts'], { encoding: 'utf8' })

@@ -6,8 +6,8 @@ import { runBinary } from './process.js';
 const minOutputBytes = 20_000;
 const maxOutputBytes = 64 * 1024 * 1024;
 
-export async function validateRenderedVideo(videoPath, expectedDurationMs, ffprobeBin, timeoutMs) {
-  const result = await runBinary(ffprobeBin, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', videoPath], { timeoutMs });
+export async function validateRenderedVideo(videoPath, expectedDurationMs, ffprobeBin, timeoutMs, execute = runBinary) {
+  const result = await execute(ffprobeBin, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', videoPath], { timeoutMs });
   let probe;
   try {
     probe = JSON.parse(result.stdout);

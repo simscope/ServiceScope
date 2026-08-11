@@ -8,10 +8,16 @@ import {
   parseRenderMessage,
   reelRenderBucket,
   reelRenderMaxAttempts,
+  reelRendererVersion,
   RenderJobError,
 } from './contracts.js';
 
-export function createRenderWorker({ repository, authorize = authorizeReelForRender, render = renderAuthorizedReel }) {
+export function createRenderWorker({
+  repository,
+  authorize = authorizeReelForRender,
+  render = renderAuthorizedReel,
+  createStagingRoot = () => mkdtemp(join(tmpdir(), 'servicescope-reel-stage-')),
+}) {
   return async function process(message) {
     const { renderJobId } = parseRenderMessage(message);
     const claim = await repository.claim(renderJobId);
@@ -22,12 +28,15 @@ export function createRenderWorker({ repository, authorize = authorizeReelForRen
       }
       throw new RenderJobError('REEL_RENDER_BUSY', 409);
     }
+    if (claim.renderer_version !== reelRendererVersion) {
+      return failRendererVersionMismatch(repository, claim);
+    }
     let stagingRoot;
     let output;
     try {
       const authority = await repository.loadAuthority(claim);
       const authorized = authorize({ plan: authority.plan, context: authority.context });
-      stagingRoot = await mkdtemp(join(tmpdir(), 'servicescope-reel-stage-'));
+      stagingRoot = await createStagingRoot();
       const stagedAssets = [];
       let index = 0;
       for (const [attachmentId, bytes] of authority.assets) {
@@ -61,6 +70,18 @@ export function createRenderWorker({ repository, authorize = authorizeReelForRen
       if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true });
     }
   };
+}
+
+async function failRendererVersionMismatch(repository, claim) {
+  try {
+    const failed = await repository.fail(claim.id, claim.lease_token, 'REEL_RENDER_CONTEXT_STALE');
+    if (oneRow(failed)) {
+      return { status: 'failed', rendered: false, errorCode: 'REEL_RENDER_CONTEXT_STALE' };
+    }
+  } catch {
+    // The existing release/retry lifecycle below prevents a stuck claimed lease.
+  }
+  return retryOrFail(repository, claim);
 }
 
 async function retryOrFail(repository, claim) {

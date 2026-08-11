@@ -8079,7 +8079,7 @@ create table public.company_reel_render_jobs (
   constraint company_reel_render_jobs_fingerprint_check
     check (render_fingerprint ~ '^[0-9a-f]{64}$'),
   constraint company_reel_render_jobs_renderer_check
-    check (renderer_version = 'servicescope-reel-renderer-v1'),
+    check (renderer_version = 'servicescope-reel-renderer-v2'),
   constraint company_reel_render_jobs_attempt_check
     check (attempt_count between 0 and 5),
   constraint company_reel_render_jobs_error_check
@@ -8323,6 +8323,7 @@ as $$
 declare plan public.company_reel_creative_plans%rowtype;
 declare fingerprint text;
 declare result public.company_reel_render_jobs%rowtype;
+declare current_renderer_version constant text := 'servicescope-reel-renderer-v2';
 begin
   if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
   select * into plan from public.company_reel_creative_plans where id = p_creative_plan_id for key share;
@@ -8332,14 +8333,14 @@ begin
   end if;
   fingerprint := encode(sha256(convert_to(concat_ws(E'\n',
     'reel-render-fingerprint-v1', plan.plan_revision, plan.plan_json::text,
-    'servicescope-reel-renderer-v1', 'reel-presentation-v1', 'mp4-h264-yuv420p-faststart-v1'
+    current_renderer_version, 'reel-presentation-v1', 'mp4-h264-yuv420p-faststart-v1'
   ), 'UTF8')), 'hex');
   insert into public.company_reel_render_jobs (
     company_id, job_id, creative_plan_id, requested_by, status,
     render_fingerprint, renderer_version
   ) values (
     plan.company_id, plan.job_id, plan.id, auth.uid(), 'queued',
-    fingerprint, 'servicescope-reel-renderer-v1'
+    fingerprint, current_renderer_version
   ) on conflict (company_id, creative_plan_id, render_fingerprint) do nothing
   returning * into result;
   if result.id is null then
