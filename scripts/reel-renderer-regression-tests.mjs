@@ -414,7 +414,14 @@ async function verifyDurableRenderWorkflow(fixtureRoot) {
   for (const asset of stagedAssets) assets.set(asset.attachmentId, await readFile(join(fixtureRoot, asset.path)));
   const repository = {
     async claim() {
-      return { id: renderJobId, company_id: companyId, job_id: jobId, creative_plan_id: 'plan-1', lease_token: 'lease-1' };
+      return {
+        id: renderJobId,
+        company_id: companyId,
+        job_id: jobId,
+        creative_plan_id: 'plan-1',
+        lease_token: 'lease-1',
+        renderer_version: reelRendererVersion,
+      };
     },
     async status() { return 'rendering'; },
     async loadAuthority() { return { plan: validPlan, context: validContext, assets }; },
