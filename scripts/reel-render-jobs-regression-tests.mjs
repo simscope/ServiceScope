@@ -12,6 +12,7 @@ import {
   reelRenderMaxMediaBytes,
   reelRenderMaxAttempts,
   reelRenderMessageSchema,
+  reelRendererVersion,
   reelRenderTopic,
   reelWorkerLeaseSeconds,
   reelWorkerMaxDurationSeconds,
@@ -392,7 +393,7 @@ for (const contentLength of [undefined, '5000000']) {
 }
 
 function workerFixture(overrides = {}) {
-  const calls = { claim: 0, load: 0, authorize: 0, render: 0, uploads: [], complete: 0, fail: [], release: 0, disposed: 0 };
+  const calls = { claim: 0, load: 0, authorize: 0, staging: 0, render: 0, uploads: [], complete: 0, fail: [], release: 0, disposed: 0 };
   const claim = {
     id: renderJobId,
     company_id: companyId,
@@ -400,6 +401,7 @@ function workerFixture(overrides = {}) {
     creative_plan_id: creativePlanId,
     lease_token: 'lease-1',
     attempt_count: overrides.attemptCount ?? 1,
+    renderer_version: overrides.rendererVersion ?? reelRendererVersion,
   };
   const repository = {
     async claim() { calls.claim += 1; return overrides.claim === undefined ? claim : overrides.claim; },
@@ -418,7 +420,11 @@ function workerFixture(overrides = {}) {
       if (overrides.completeError && calls.complete <= overrides.completeError) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
       return [{ status: 'completed' }];
     },
-    async fail(_id, _token, code) { calls.fail.push(code); return [{ status: 'failed' }]; },
+    async fail(_id, _token, code) {
+      calls.fail.push(code);
+      if (overrides.failError) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+      return overrides.failRows ?? [{ status: 'failed' }];
+    },
     async release() { calls.release += 1; return [{ status: 'rendering' }]; },
   };
   const authorize = ({ plan, context }) => {
@@ -443,7 +449,11 @@ function workerFixture(overrides = {}) {
       async dispose() { calls.disposed += 1; await rm(outputRoot, { recursive: true, force: true }); },
     };
   };
-  return { calls, worker: createRenderWorker({ repository, authorize, render }) };
+  const createStagingRoot = () => {
+    calls.staging += 1;
+    return mkdtemp(join(tmpdir(), 'servicescope-reel-stage-test-'));
+  };
+  return { calls, worker: createRenderWorker({ repository, authorize, render, createStagingRoot }) };
 }
 
 const queueMessage = { schemaVersion: reelRenderMessageSchema, renderJobId };
@@ -451,6 +461,9 @@ const queueMessage = { schemaVersion: reelRenderMessageSchema, renderJobId };
   const { worker, calls } = workerFixture();
   const result = await worker(queueMessage);
   check(() => assert.deepEqual(result, { status: 'completed', rendered: true }));
+  check(() => assert.equal(calls.load, 1));
+  check(() => assert.equal(calls.authorize, 1));
+  check(() => assert.equal(calls.staging, 1));
   check(() => assert.equal(calls.render, 1));
   check(() => assert.equal(calls.complete, 1));
   check(() => assert.equal(calls.disposed, 1));
@@ -458,6 +471,31 @@ const queueMessage = { schemaVersion: reelRenderMessageSchema, renderJobId };
     [`${companyId}/${renderJobId}/reel.mp4`, 'video/mp4'],
     [`${companyId}/${renderJobId}/cover.jpg`, 'image/jpeg'],
   ]));
+}
+{
+  const { worker, calls } = workerFixture({ rendererVersion: 'servicescope-reel-renderer-v1' });
+  const result = await worker(queueMessage);
+  check(() => assert.deepEqual(result, { status: 'failed', rendered: false, errorCode: 'REEL_RENDER_CONTEXT_STALE' }));
+  check(() => assert.equal(calls.load, 0));
+  check(() => assert.equal(calls.authorize, 0));
+  check(() => assert.equal(calls.staging, 0));
+  check(() => assert.equal(calls.render, 0));
+  check(() => assert.equal(calls.uploads.length, 0));
+  check(() => assert.deepEqual(calls.fail, ['REEL_RENDER_CONTEXT_STALE']));
+  check(() => assert.equal(calls.release, 0));
+}
+for (const failure of [{ failError: true }, { failRows: [] }]) {
+  const { worker, calls } = workerFixture({
+    rendererVersion: 'servicescope-reel-renderer-v1',
+    ...failure,
+  });
+  await checkAsync(() => assert.rejects(worker(queueMessage), /REEL_RENDER_SERVICE_UNAVAILABLE/));
+  check(() => assert.equal(calls.load, 0));
+  check(() => assert.equal(calls.authorize, 0));
+  check(() => assert.equal(calls.staging, 0));
+  check(() => assert.equal(calls.render, 0));
+  check(() => assert.equal(calls.uploads.length, 0));
+  check(() => assert.equal(calls.release, 1));
 }
 {
   const { worker, calls } = workerFixture({ claim: null, status: 'completed' });

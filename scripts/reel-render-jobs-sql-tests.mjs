@@ -2,18 +2,36 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { extractExactMarkedBlock, normalizeSqlForParity } from './meta-canonical-schema.mjs';
+import { reelRendererVersion } from '../server/reel-render-jobs/contracts.js';
 
 const migration = await readFile('supabase/migrations/20260809234500_reel_render_jobs.sql', 'utf8');
+const upgradeMigration = await readFile('supabase/migrations/20260811022000_reel_renderer_v2_contract.sql', 'utf8');
 const schema = await readFile('supabase/schema.sql', 'utf8');
 const markers = { begin: '-- REEL_RENDER_JOBS_BEGIN', end: '-- REEL_RENDER_JOBS_END', label: 'Reel render jobs' };
 const block = extractExactMarkedBlock(migration, markers);
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 const checkAsync = async (fn) => { await fn(); checks += 1; };
-check(() => assert.equal(normalizeSqlForParity(block), normalizeSqlForParity(extractExactMarkedBlock(schema, markers))));
+const beginFunction = (sql) => sql.match(/create or replace function public\.begin_company_reel_render_request[\s\S]*?\$\$;/i)?.[0] ?? '';
+const constraintVersion = (sql) => sql.match(/company_reel_render_jobs_renderer_check\s+check \(renderer_version = '([^']+)'\)/i)?.[1];
+const rendererConstantVersion = (sql) => sql.match(/current_renderer_version constant text :=\s*'([^']+)'/i)?.[1];
+const currentSchemaBlock = extractExactMarkedBlock(schema, markers);
+const expectedCurrentBlock = block
+  .replace("check (renderer_version = 'servicescope-reel-renderer-v1')", "check (renderer_version = 'servicescope-reel-renderer-v2')")
+  .replace(beginFunction(block), () => beginFunction(upgradeMigration));
+check(() => assert.equal(reelRendererVersion, 'servicescope-reel-renderer-v2'));
+check(() => assert.equal(constraintVersion(migration), 'servicescope-reel-renderer-v1'));
+check(() => assert.doesNotMatch(migration, /servicescope-reel-renderer-v2/));
+check(() => assert.equal(constraintVersion(upgradeMigration), reelRendererVersion));
+check(() => assert.equal(constraintVersion(currentSchemaBlock), reelRendererVersion));
+check(() => assert.equal(rendererConstantVersion(upgradeMigration), reelRendererVersion));
+check(() => assert.equal(rendererConstantVersion(currentSchemaBlock), reelRendererVersion));
+check(() => assert.equal(normalizeSqlForParity(beginFunction(upgradeMigration)), normalizeSqlForParity(beginFunction(currentSchemaBlock))));
+check(() => assert.equal(normalizeSqlForParity(expectedCurrentBlock), normalizeSqlForParity(currentSchemaBlock)));
+check(() => assert.match(beginFunction(upgradeMigration), /current_renderer_version, 'reel-presentation-v1'/));
+check(() => assert.match(beginFunction(upgradeMigration), /fingerprint, current_renderer_version/));
 
-const db = new PGlite();
-await db.exec(`
+const baseDatabaseSql = `
   create role anon nologin; create role authenticated nologin; create role service_role nologin;
   create schema auth; create schema storage;
   create table auth.users(id uuid primary key);
@@ -32,8 +50,58 @@ await db.exec(`
   create function public.can_access_company(target uuid) returns boolean language sql stable as $$
     select target::text = current_setting('test.company_id',true)
   $$;
+`;
+
+async function historicalDatabase() {
+  const database = new PGlite();
+  await database.exec(baseDatabaseSql);
+  await database.exec(block);
+  return database;
+}
+
+const guardDb = await historicalDatabase();
+await guardDb.exec(`
+  insert into auth.users values ('00000000-0000-4000-8000-000000008001');
+  insert into public.companies values ('00000000-0000-4000-8000-000000008002','guard@example.com');
+  insert into public.jobs values ('00000000-0000-4000-8000-000000008003','00000000-0000-4000-8000-000000008002');
+  insert into public.company_reel_creative_plans (
+    id,company_id,job_id,created_by,schema_version,plan_revision,locale,planning_revision,local_facts,media_plan,plan_json
+  ) values (
+    '00000000-0000-4000-8000-000000008004','00000000-0000-4000-8000-000000008002',
+    '00000000-0000-4000-8000-000000008003','00000000-0000-4000-8000-000000008001',
+    'reel-creative-plan-v1','reel-v1-guard','en-US','reel-input-guard','{}',
+    '[{"attachmentId":"a","position":1},{"attachmentId":"b","position":2}]',
+    '{"schemaVersion":"reel-creative-plan-v1","revision":"reel-v1-guard","decision":"create_reel"}'
+  );
+  insert into public.company_reel_render_jobs (
+    company_id,job_id,creative_plan_id,requested_by,status,render_fingerprint,renderer_version
+  ) values (
+    '00000000-0000-4000-8000-000000008002','00000000-0000-4000-8000-000000008003',
+    '00000000-0000-4000-8000-000000008004','00000000-0000-4000-8000-000000008001',
+    'queued','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','servicescope-reel-renderer-v1'
+  );
 `);
-await db.exec(block);
+const guardBefore = (await guardDb.query('select renderer_version,render_fingerprint,count(*) over ()::int row_count from public.company_reel_render_jobs')).rows[0];
+await checkAsync(() => assert.rejects(
+  guardDb.exec(`begin; ${upgradeMigration} commit;`),
+  /REEL_RENDERER_V2_MIGRATION_REQUIRES_EMPTY_RENDER_JOBS/,
+));
+await guardDb.exec('rollback');
+const guardAfter = (await guardDb.query('select renderer_version,render_fingerprint,count(*) over ()::int row_count from public.company_reel_render_jobs')).rows[0];
+check(() => assert.deepEqual(guardAfter, guardBefore));
+const guardedConstraintVersion = await databaseConstraintVersion(guardDb);
+check(() => assert.equal(guardedConstraintVersion, 'servicescope-reel-renderer-v1'));
+await guardDb.close();
+
+const db = await historicalDatabase();
+await db.exec(`begin; ${upgradeMigration} commit;`);
+const upgradedConstraintVersion = await databaseConstraintVersion(db);
+check(() => assert.equal(upgradedConstraintVersion, reelRendererVersion));
+
+async function databaseConstraintVersion(database) {
+  const result = await database.query("select pg_get_constraintdef(oid) definition from pg_constraint where conname='company_reel_render_jobs_renderer_check'");
+  return result.rows[0]?.definition.match(/renderer_version = '([^']+)'/)?.[1];
+}
 
 const ids = {
   company: '00000000-0000-4000-8000-000000009001', otherCompany: '00000000-0000-4000-8000-000000009002',
@@ -101,6 +169,19 @@ await assert.rejects(() => persist({ ...plan, hook: 'changed' })); checks += 1;
 await assert.rejects(() => db.query(`select public.persist_company_reel_creative_plan($1,$2,$3,'reel-creative-plan-v1','reel-v1-badmedia','en-US','reel-input-12345678',$4::jsonb,$5::jsonb,$6::jsonb)`,
   [ids.company, ids.job, ids.user, JSON.stringify(localFacts), JSON.stringify([{ attachmentId: ids.attachment1, position: 2 }]), JSON.stringify({ ...plan, revision: 'reel-v1-badmedia' })])); checks += 1;
 
+await assert.rejects(() => db.query(`insert into public.company_reel_render_jobs (
+  company_id,job_id,creative_plan_id,requested_by,status,render_fingerprint,renderer_version
+) values ($1,$2,$3,$4,'queued',$5,'servicescope-reel-renderer-v1')`,
+  [ids.company, ids.job, planId, ids.user, 'b'.repeat(64)])); checks += 1;
+await db.exec('begin');
+await db.query(`insert into public.company_reel_render_jobs (
+  company_id,job_id,creative_plan_id,requested_by,status,render_fingerprint,renderer_version
+) values ($1,$2,$3,$4,'queued',$5,$6)`,
+  [ids.company, ids.job, planId, ids.user, 'c'.repeat(64), reelRendererVersion]);
+const directV2 = await db.query("select renderer_version from public.company_reel_render_jobs where render_fingerprint=$1", ['c'.repeat(64)]);
+check(() => assert.equal(directV2.rows[0].renderer_version, reelRendererVersion));
+await db.exec('rollback');
+
 async function begin(expected = plan.revision, creativePlanId = planId) {
   const result = await db.query('select * from public.begin_company_reel_render_request($1,$2)', [creativePlanId, expected]);
   return result.rows[0];
@@ -112,8 +193,15 @@ const repeatedBegin = await begin();
 check(() => assert.equal(repeatedBegin.render_job_id, first.render_job_id));
 const renderJobCount = await db.query('select count(*)::int count from public.company_reel_render_jobs');
 check(() => assert.equal(renderJobCount.rows[0].count, 1));
-const renderFingerprint = await db.query('select render_fingerprint from public.company_reel_render_jobs');
+const renderFingerprint = await db.query('select render_fingerprint,renderer_version from public.company_reel_render_jobs');
 check(() => assert.match(renderFingerprint.rows[0].render_fingerprint, /^[0-9a-f]{64}$/));
+check(() => assert.equal(renderFingerprint.rows[0].renderer_version, reelRendererVersion));
+const v1Fingerprint = await db.query(`select encode(sha256(convert_to(concat_ws(E'\\n',
+  'reel-render-fingerprint-v1', plan_revision, plan_json::text,
+  'servicescope-reel-renderer-v1', 'reel-presentation-v1', 'mp4-h264-yuv420p-faststart-v1'
+), 'UTF8')), 'hex') fingerprint from public.company_reel_creative_plans where id=$1`, [planId]);
+check(() => assert.match(v1Fingerprint.rows[0].fingerprint, /^[0-9a-f]{64}$/));
+check(() => assert.notEqual(v1Fingerprint.rows[0].fingerprint, renderFingerprint.rows[0].render_fingerprint));
 await assert.rejects(() => db.query('update public.company_reel_render_jobs set requested_by=$1 where id=$2', [ids.otherUser, first.render_job_id])); checks += 1;
 const workspace = await db.query('select * from public.get_company_reel_workspace($1)', [ids.job]);
 check(() => assert.equal(workspace.rows[0].creative_plan_id, planId));
@@ -203,14 +291,16 @@ const tableSecurity = await db.query(`select
   has_table_privilege('authenticated','public.company_reel_render_jobs','UPDATE') auth_job_update,
   has_function_privilege('authenticated','public.get_company_reel_workspace(uuid)','EXECUTE') auth_read,
   has_function_privilege('anon','public.get_company_reel_workspace(uuid)','EXECUTE') anon_read,
+  has_function_privilege('authenticated','public.begin_company_reel_render_request(uuid,text)','EXECUTE') auth_begin,
+  has_function_privilege('anon','public.begin_company_reel_render_request(uuid,text)','EXECUTE') anon_begin,
   has_function_privilege('authenticated','public.claim_company_reel_render_job(uuid,integer)','EXECUTE') auth_claim,
   has_function_privilege('service_role','public.claim_company_reel_render_job(uuid,integer)','EXECUTE') service_claim,
   has_function_privilege('authenticated','public.release_company_reel_render_job_for_retry(uuid,uuid)','EXECUTE') auth_release,
   has_function_privilege('service_role','public.release_company_reel_render_job_for_retry(uuid,uuid)','EXECUTE') service_release,
   has_function_privilege('authenticated','public.can_access_company_ai_assistant(uuid)','EXECUTE') auth_ai_helper,
   has_function_privilege('service_role','public.can_access_company_ai_assistant(uuid)','EXECUTE') service_ai_helper`);
-for (const key of ['plans_rls','jobs_rls','auth_read','service_claim','service_release','service_ai_helper']) check(() => assert.equal(tableSecurity.rows[0][key], true));
-for (const key of ['auth_plan_select','auth_job_update','auth_claim','auth_release','auth_ai_helper','anon_read']) check(() => assert.equal(tableSecurity.rows[0][key], false));
+for (const key of ['plans_rls','jobs_rls','auth_read','auth_begin','service_claim','service_release','service_ai_helper']) check(() => assert.equal(tableSecurity.rows[0][key], true));
+for (const key of ['auth_plan_select','auth_job_update','auth_claim','auth_release','auth_ai_helper','anon_read','anon_begin']) check(() => assert.equal(tableSecurity.rows[0][key], false));
 const functionSecurity = await db.query(`select proname, prosecdef, proconfig, pg_get_function_arguments(oid) arguments
   from pg_proc where oid in (
     'public.can_access_company_ai_assistant(uuid)'::regprocedure,
@@ -239,6 +329,9 @@ check(() => assert.equal(Number(bucket.rows[0].file_size_limit), 104857600));
 check(() => assert.deepEqual(bucket.rows[0].allowed_mime_types, ['video/mp4','image/jpeg']));
 check(() => assert.doesNotMatch(migration, /create policy[\s\S]*company-reel-renders/i));
 check(() => assert.doesNotMatch(migration, /\b(?:update|delete)\s+public\.(?:jobs|job_attachments|company_social)/i));
+check(() => assert.match(upgradeMigration, /lock table public\.company_reel_render_jobs in access exclusive mode/));
+check(() => assert.match(upgradeMigration, /if exists \(select 1 from public\.company_reel_render_jobs\)/));
+check(() => assert.doesNotMatch(upgradeMigration, /\b(?:update|delete)\s+public\.company_reel_render_jobs/i));
 
 await db.close();
 console.log(`Reel render job SQL regression tests passed (${checks}/${checks}).`);
