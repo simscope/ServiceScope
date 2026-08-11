@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import {
-  chmod,
   copyFile,
   mkdir,
   mkdtemp,
@@ -80,9 +79,6 @@ async function runFixture(name, outputDir) {
     assert.equal(manifest.scenes.length, fixture.expectedScenes);
 
     const timingFile = join(stagingRoot, 'ffmpeg-time.json');
-    const wrapperPath = join(stagingRoot, 'ffmpeg-measured.sh');
-    await writeFile(wrapperPath, `#!/bin/sh\nexec /usr/bin/time -f '{"wallSeconds":%e,"userSeconds":%U,"systemSeconds":%S,"maxRssKb":%M}' -o "$FFMPEG_METRICS_FILE" /usr/bin/ffmpeg "$@"\n`);
-    await chmod(wrapperPath, 0o755);
     process.env.FFMPEG_METRICS_FILE = timingFile;
 
     const rendererStarted = performance.now();
@@ -90,7 +86,7 @@ async function runFixture(name, outputDir) {
       authorized,
       stagedAssets: fixture.stagedAssets,
       stagingRoot,
-      ffmpegBin: wrapperPath,
+      ffmpegBin: '/workspace/qualification/reel-runtime/ffmpeg-measured.sh',
       ffprobeBin: '/usr/bin/ffprobe',
     });
     const rendererWallMs = performance.now() - rendererStarted;
