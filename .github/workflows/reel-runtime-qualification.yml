@@ -1,0 +1,175 @@
+name: Reel runtime qualification
+
+on:
+  push:
+    branches:
+      - codex/reel-runtime-qualification-ci
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      BASELINE_SHA: 792b74b71369eec49a9975d38f2cbecb12b8731c
+      IMAGE_NAME: servicescope-reel-runtime-qualification
+      ARTIFACT_ROOT: ${{ github.workspace }}/qualification-artifact
+    steps:
+      - name: Checkout qualification branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Record runner capability
+        shell: bash
+        run: |
+          set -euo pipefail
+          uname -a
+          uname -m
+          docker version
+          docker info
+          node --version
+          df -h
+          printf 'ImageOS=%s\nImageVersion=%s\nRUNNER_OS=%s\nRUNNER_ARCH=%s\n' \
+            "${ImageOS:-unknown}" "${ImageVersion:-unknown}" "$RUNNER_OS" "$RUNNER_ARCH"
+          mkdir -p "$ARTIFACT_ROOT"
+          {
+            uname -a
+            uname -m
+            docker version --format 'Docker client={{.Client.Version}} server={{.Server.Version}}'
+            node --version
+            printf 'ImageOS=%s\nImageVersion=%s\nRUNNER_OS=%s\nRUNNER_ARCH=%s\n' \
+              "${ImageOS:-unknown}" "${ImageVersion:-unknown}" "$RUNNER_OS" "$RUNNER_ARCH"
+          } > "$ARTIFACT_ROOT/runner-metadata.txt"
+
+      - name: Verify Production source integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code "$BASELINE_SHA" -- \
+            server/reel-renderer \
+            server/reel-render-jobs \
+            package.json \
+            package-lock.json
+
+      - name: Resolve official base image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull node:22-bookworm-slim
+          docker image inspect node:22-bookworm-slim \
+            --format '{{index .RepoDigests 0}}' | tee "$ARTIFACT_ROOT/base-image.txt"
+
+      - name: Build isolated qualification image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull \
+            --file qualification/reel-runtime/Dockerfile \
+            --tag "$IMAGE_NAME:$GITHUB_SHA" \
+            .
+
+      - name: Collect FFmpeg and Debian inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network none \
+            --cpus=1 \
+            --memory=2g \
+            --memory-swap=2g \
+            --tmpfs /tmp:rw,size=500m,mode=1777 \
+            --volume "$ARTIFACT_ROOT:/artifacts" \
+            "$IMAGE_NAME:$GITHUB_SHA" \
+            sh -ec '
+              ffmpeg -version > /artifacts/ffmpeg-version.txt
+              ffprobe -version > /artifacts/ffprobe-version.txt
+              ffmpeg -buildconf > /artifacts/ffmpeg-buildconf.txt 2>&1
+              ffmpeg -L > /artifacts/ffmpeg-license.txt 2>&1
+              ffmpeg -hide_banner -encoders > /artifacts/ffmpeg-encoders.txt 2>&1
+              {
+                dpkg-query -W ffmpeg
+                apt-cache policy ffmpeg
+                cat /etc/apt/sources.list 2>/dev/null || true
+                cat /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
+                dpkg-query -W -f="\${binary:Package}\t\${Version}\t\${source:Package}\n" \
+                  ffmpeg time fonts-dejavu-core fonts-liberation2 \
+                  libavcodec59 libavdevice59 libavfilter8 libavformat59 \
+                  libavutil57 libpostproc56 libswresample4 libswscale6 libx264-164
+                find /usr/share/doc -maxdepth 2 -type f -name copyright \
+                  | grep -E "/(ffmpeg|libav|libpostproc|libswresample|libswscale|libx264)" \
+                  | sort
+              } > /artifacts/debian-package-inventory.txt
+              grep -q -- "--enable-gpl" /artifacts/ffmpeg-buildconf.txt
+              grep -q "libx264" /artifacts/ffmpeg-encoders.txt
+            '
+
+      - name: Benchmark exact 13.8 second fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --name servicescope-reel-138 \
+            --network none \
+            --cpus=1 \
+            --memory=2g \
+            --memory-swap=2g \
+            --tmpfs /tmp:rw,size=500m,mode=1777 \
+            --volume "$ARTIFACT_ROOT:/artifacts" \
+            "$IMAGE_NAME:$GITHUB_SHA" \
+            node qualification/reel-runtime/benchmark.mjs \
+              --fixture=13.8s \
+              --output=/artifacts/13.8s
+
+      - name: Benchmark normal worst-case 25 second fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --name servicescope-reel-25 \
+            --network none \
+            --cpus=1 \
+            --memory=2g \
+            --memory-swap=2g \
+            --tmpfs /tmp:rw,size=500m,mode=1777 \
+            --volume "$ARTIFACT_ROOT:/artifacts" \
+            "$IMAGE_NAME:$GITHUB_SHA" \
+            node qualification/reel-runtime/benchmark.mjs \
+              --fixture=25s \
+              --output=/artifacts/25s
+
+      - name: Build qualification report
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network none \
+            --cpus=1 \
+            --memory=2g \
+            --memory-swap=2g \
+            --tmpfs /tmp:rw,size=500m,mode=1777 \
+            --volume "$ARTIFACT_ROOT:/artifacts" \
+            "$IMAGE_NAME:$GITHUB_SHA" \
+            node qualification/reel-runtime/benchmark.mjs \
+              --combine=/artifacts
+          find "$ARTIFACT_ROOT" -maxdepth 2 -type f -printf '%P\t%s bytes\n' | sort
+
+      - name: Upload qualification evidence
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-runtime-qualification
+          path: qualification-artifact
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+
+      - name: Record artifact receipt
+        shell: bash
+        run: |
+          printf 'artifact_id=%s\nartifact_digest=%s\nartifact_url=%s\n' \
+            '${{ steps.upload.outputs.artifact-id }}' \
+            '${{ steps.upload.outputs.artifact-digest }}' \
+            '${{ steps.upload.outputs.artifact-url }}'
