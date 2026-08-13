@@ -7,6 +7,7 @@ import { authorizeReelForRender } from '../server/reel-renderer/authorization.js
 import { buildReelRenderManifest } from '../server/reel-renderer/manifest.js';
 import { createProductionReelRenderer } from '../server/reel-sandbox-runtime/config.js';
 import {
+  assertImmutableSandboxImage,
   reelSandboxCoverPath,
   reelSandboxErrorPath,
   reelSandboxRenderTimeoutMs,
@@ -24,7 +25,9 @@ let checks = 0;
 function check(fn) { fn(); checks += 1; }
 async function checkAsync(fn) { await fn(); checks += 1; }
 
-const image = `servicescope-reel-renderer:v2-${'a'.repeat(40)}`;
+const imageDigest = 'a'.repeat(64);
+const image = `servicescope-reel-renderer@sha256:${imageDigest}`;
+const fullVcrImage = `vcr.vercel.com/team/project/servicescope-reel-renderer@sha256:${imageDigest}`;
 const serializedAuthority = JSON.stringify(sandboxFixtureAuthority);
 const authoritySha256 = sha256(serializedAuthority);
 const reauthorized = reauthorizeSerializedAuthority(serializedAuthority, authoritySha256);
@@ -48,9 +51,38 @@ for (const mutate of [
 
 check(() => assert.throws(() => createProductionReelRenderer({ REEL_RENDER_ENABLED: 'true' }), /REEL_RENDER_SERVICE_UNAVAILABLE/));
 check(() => assert.throws(() => createProductionReelRenderer({ REEL_RENDER_ENABLED: 'true', REEL_RENDER_RUNTIME: 'local' }), /REEL_RENDER_SERVICE_UNAVAILABLE/));
-check(() => assert.throws(() => createProductionReelRenderer({ REEL_RENDER_ENABLED: 'true', REEL_RENDER_RUNTIME: 'sandbox', REEL_RENDER_SANDBOX_IMAGE: 'servicescope-reel-renderer:latest' }), /REEL_RENDER_SERVICE_UNAVAILABLE/));
+check(() => assert.equal(assertImmutableSandboxImage(image), image));
+check(() => assert.equal(assertImmutableSandboxImage(fullVcrImage), fullVcrImage));
+for (const invalidImage of [
+  'servicescope-reel-renderer:latest',
+  `servicescope-reel-renderer:v2-${'b'.repeat(40)}`,
+  'servicescope-reel-renderer:arbitrary',
+  `vcr.vercel.com/team/project/servicescope-reel-renderer:v2-${'b'.repeat(40)}`,
+  'servicescope-reel-renderer',
+  `wrong-repository@sha256:${imageDigest}`,
+  `servicescope-reel-renderer@sha256:${'a'.repeat(63)}`,
+  `servicescope-reel-renderer@sha256:${'A'.repeat(64)}`,
+  `servicescope-reel-renderer@sha256:${'g'.repeat(64)}`,
+  'servicescope-reel-renderer@sha256:',
+  `registry.example.com/team/project/servicescope-reel-renderer@sha256:${imageDigest}`,
+  `https://vcr.vercel.com/team/project/servicescope-reel-renderer@sha256:${imageDigest}`,
+  ` ${image}`,
+  `${image}?tag=v2`,
+  `${image}#fragment`,
+]) {
+  let createCalls = 0;
+  check(() => assert.throws(() => createProductionReelRenderer({
+    REEL_RENDER_ENABLED: 'true',
+    REEL_RENDER_RUNTIME: 'sandbox',
+    REEL_RENDER_SANDBOX_IMAGE: invalidImage,
+  }, { createSandbox: async () => { createCalls += 1; } }), /REEL_RENDER_SERVICE_UNAVAILABLE/));
+  check(() => assert.equal(createCalls, 0));
+}
 check(() => assert.equal(typeof createProductionReelRenderer({
   REEL_RENDER_ENABLED: 'true', REEL_RENDER_RUNTIME: 'sandbox', REEL_RENDER_SANDBOX_IMAGE: image,
+}, { createSandbox: async () => ({}) }), 'function'));
+check(() => assert.equal(typeof createProductionReelRenderer({
+  REEL_RENDER_ENABLED: 'true', REEL_RENDER_RUNTIME: 'sandbox', REEL_RENDER_SANDBOX_IMAGE: fullVcrImage,
 }, { createSandbox: async () => ({}) }), 'function'));
 
 await sandboxSuccessAndIntegrity();

@@ -9,11 +9,15 @@ const entrypoint = read('server/reel-sandbox-runner/run.mjs');
 const dockerfile = read('infra/reel-render-sandbox/Dockerfile');
 const queue = read('api/queues/reel-render.js');
 const contracts = read('server/reel-render-jobs/contracts.js');
+const sandboxContracts = read('server/reel-sandbox-runtime/contracts.js');
+const ci = read('.github/workflows/ci.yml');
 let checks = 0;
 const check = (fn) => { fn(); checks += 1; };
 
 check(() => assert.match(config, /REEL_RENDER_RUNTIME !== 'sandbox'/));
 check(() => assert.match(config, /REEL_RENDER_SANDBOX_IMAGE/));
+check(() => assert.match(sandboxContracts, /servicescope-reel-renderer@sha256:\[0-9a-f\]\{64\}/));
+check(() => assert.doesNotMatch(sandboxContracts, /servicescope-reel-renderer:v2-/));
 check(() => assert.doesNotMatch(config, /FFMPEG_BIN|FFPROBE_BIN|runtime:\s*'node'/));
 check(() => assert.match(queue, /render: createProductionReelRenderer\(process\.env\)/));
 check(() => assert.match(adapter, /resources: \{ vcpus: 1 \}/));
@@ -41,5 +45,9 @@ check(() => assert.match(dockerfile, /^FROM node:22-bookworm-slim@sha256:[0-9a-f
 check(() => assert.match(dockerfile, /ffmpeg[\s\\]+fonts-dejavu-core[\s\\]+fonts-liberation2/));
 check(() => assert.doesNotMatch(dockerfile, /ffmpeg-static|@ffmpeg-installer|curl|wget|\.env|Dockerfile\.vercel/i));
 check(() => assert.match(dockerfile, /USER node/));
+check(() => assert.match(ci, /git diff --exit-code 97da68e07ad1723e75c28e02543b937b5b323778 HEAD -- server\/reel-renderer/));
+check(() => assert.doesNotMatch(ci, /HEAD\^1|HEAD\^2/));
+check(() => assert.match(ci, /fetch-depth: 0/));
+check(() => assert.match(ci, /--tag "servicescope-reel-renderer:v2-\$\{GITHUB_SHA\}"/));
 
 console.log(`Reel Sandbox runtime security scan passed (${checks}/${checks}).`);

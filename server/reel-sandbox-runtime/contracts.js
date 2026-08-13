@@ -18,6 +18,10 @@ export const reelSandboxVideoPath = `${reelSandboxOutputDir}/reel.mp4`;
 export const reelSandboxCoverPath = `${reelSandboxOutputDir}/cover.jpg`;
 export const reelSandboxAssetSchemaVersion = 'reel-sandbox-assets-v1';
 
+// Provisioning builds and tags v2-<source-sha>, pushes, resolves and verifies the VCR digest,
+// then configures this runtime with repository@sha256:<digest>; tags never become runtime authority.
+const reelSandboxImagePattern = /^(?:vcr\.vercel\.com\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?\/)?servicescope-reel-renderer@sha256:[0-9a-f]{64}$/;
+
 const authorityFields = ['context', 'plan'];
 const manifestFields = ['assets', 'authoritySha256', 'schemaVersion'];
 const assetFields = ['attachmentId', 'path', 'sha256', 'size'];
@@ -71,7 +75,7 @@ export function parseSandboxResultJson(text) {
 
 export function assertImmutableSandboxImage(value) {
   if (typeof value !== 'string' || value !== value.trim()
-    || !/^(?:vcr\.vercel\.com\/[a-z0-9._-]+\/[a-z0-9._-]+\/)?servicescope-reel-renderer:v2-[0-9a-f]{40}$/.test(value)) {
+    || !reelSandboxImagePattern.test(value)) {
     fail('REEL_RENDER_SERVICE_UNAVAILABLE');
   }
   return value;

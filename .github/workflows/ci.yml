@@ -190,7 +190,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -202,7 +202,7 @@ jobs:
         run: npm ci
 
       - name: Verify qualified renderer source unchanged
-        run: git diff --exit-code HEAD^1 HEAD^2 -- server/reel-renderer
+        run: git diff --exit-code 97da68e07ad1723e75c28e02543b937b5b323778 HEAD -- server/reel-renderer
 
       - name: Sandbox runtime regression and security
         run: npm run test:reel-sandbox-runtime && npm run test:reel-sandbox-runtime-scan
@@ -210,6 +210,7 @@ jobs:
       - name: Build qualified Sandbox image without push
         run: |
           BASE_IMAGE="node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436"
+          # This tag is a temporary build locator; runtime configuration accepts only the resolved OCI digest.
           docker pull "$BASE_IMAGE"
           docker image inspect "$BASE_IMAGE" --format 'base={{index .RepoDigests 0}}'
           docker build \
