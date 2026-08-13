@@ -7,7 +7,9 @@ import {
   normalizeRenderError,
   parseRenderMessage,
   reelRenderBucket,
+  reelRenderMaxAggregateMediaBytes,
   reelRenderMaxAttempts,
+  reelRenderMaxMediaItems,
   reelRendererVersion,
   RenderJobError,
 } from './contracts.js';
@@ -36,6 +38,7 @@ export function createRenderWorker({
     try {
       const authority = await repository.loadAuthority(claim);
       const authorized = authorize({ plan: authority.plan, context: authority.context });
+      assertAggregateAssets(authority.assets);
       stagingRoot = await createStagingRoot();
       const stagedAssets = [];
       let index = 0;
@@ -44,7 +47,12 @@ export function createRenderWorker({
         await writeFile(join(stagingRoot, relativePath), bytes);
         stagedAssets.push({ attachmentId, path: relativePath });
       }
-      output = await render({ authorized, stagedAssets, stagingRoot });
+      output = await render({
+        authorized,
+        authority: { plan: authority.plan, context: authority.context },
+        stagedAssets,
+        stagingRoot,
+      });
       const paths = {
         bucket: reelRenderBucket,
         video: `${claim.company_id}/${claim.id}/reel.mp4`,
@@ -101,4 +109,20 @@ function retryable(error) {
 
 function oneRow(value) {
   return Array.isArray(value) && value.length === 1;
+}
+
+function assertAggregateAssets(assets) {
+  if (!(assets instanceof Map) || assets.size < 1 || assets.size > reelRenderMaxMediaItems) {
+    throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
+  }
+  let aggregateBytes = 0;
+  for (const bytes of assets.values()) {
+    if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1) {
+      throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
+    }
+    aggregateBytes += bytes.byteLength;
+    if (aggregateBytes > reelRenderMaxAggregateMediaBytes) {
+      throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
+    }
+  }
 }

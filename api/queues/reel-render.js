@@ -3,11 +3,15 @@ import { reelQueueVisibilitySeconds } from '../../server/reel-render-jobs/contra
 import { createReelQueueConsumer, reelQueueRetry } from '../../server/reel-render-jobs/queueConsumer.js';
 import { createRenderRepository } from '../../server/reel-render-jobs/repository.js';
 import { createRenderWorker } from '../../server/reel-render-jobs/worker.js';
+import { createProductionReelRenderer } from '../../server/reel-sandbox-runtime/config.js';
 import { createSupabaseHttpClient } from '../../server/reel-render-jobs/supabaseHttp.js';
 
 let worker;
 const loadWorker = () => {
-  worker ??= createRenderWorker({ repository: createRenderRepository(createSupabaseHttpClient()) });
+  worker ??= createRenderWorker({
+    repository: createRenderRepository(createSupabaseHttpClient()),
+    render: createProductionReelRenderer(process.env),
+  });
   return worker;
 };
 
