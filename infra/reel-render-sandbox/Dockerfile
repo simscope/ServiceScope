@@ -21,6 +21,7 @@ COPY src/features/reel-director/presentationSpec.js ./src/features/reel-director
 COPY supabase/functions/_shared/reel-engine/contracts.js ./supabase/functions/_shared/reel-engine/contracts.js
 COPY supabase/functions/_shared/reel-engine/evidenceCapabilities.js ./supabase/functions/_shared/reel-engine/evidenceCapabilities.js
 COPY supabase/functions/_shared/reel-engine/schemas.js ./supabase/functions/_shared/reel-engine/schemas.js
+COPY supabase/functions/_shared/content-engine/contracts.js ./supabase/functions/_shared/content-engine/contracts.js
 COPY supabase/functions/_shared/content-engine/errors.js ./supabase/functions/_shared/content-engine/errors.js
 COPY supabase/functions/_shared/content-engine/schemas.js ./supabase/functions/_shared/content-engine/schemas.js
 
