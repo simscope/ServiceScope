@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - '.github/workflows/ci.yml'
+      - '.dockerignore'
       - 'package.json'
       - 'package-lock.json'
       - 'vercel.json'
@@ -13,9 +14,13 @@ on:
       - 'scripts/reel-director-*'
       - 'scripts/reel-renderer-*'
       - 'scripts/reel-render-jobs-*'
+      - 'scripts/reel-sandbox-*'
+      - 'infra/reel-render-sandbox/**'
       - 'api/**'
       - 'server/reel-render-jobs/**'
       - 'server/reel-renderer/**'
+      - 'server/reel-sandbox-runner/**'
+      - 'server/reel-sandbox-runtime/**'
       - 'src/components/portal/AiAssistantPage.tsx'
       - 'src/components/portal/ReelPreview.tsx'
       - 'src/features/reel-director/**'
@@ -178,3 +183,60 @@ jobs:
           path: ${{ runner.temp }}/ai-reel-renderer-fixture/
           if-no-files-found: error
           retention-days: 7
+
+  reel-sandbox-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Sandbox runtime regression and security
+        run: npm run test:reel-sandbox-runtime && npm run test:reel-sandbox-runtime-scan
+
+      - name: Build qualified Sandbox image without push
+        run: |
+          BASE_IMAGE="node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436"
+          docker pull "$BASE_IMAGE"
+          docker image inspect "$BASE_IMAGE" --format 'base={{index .RepoDigests 0}}'
+          docker build \
+            --file infra/reel-render-sandbox/Dockerfile \
+            --tag "servicescope-reel-renderer:v2-${GITHUB_SHA}" \
+            .
+          docker image inspect "servicescope-reel-renderer:v2-${GITHUB_SHA}" --format 'image_id={{.Id}}'
+
+      - name: Record FFmpeg package and license evidence
+        run: |
+          IMAGE="servicescope-reel-renderer:v2-${GITHUB_SHA}"
+          docker run --rm "$IMAGE" /usr/bin/ffmpeg -version
+          docker run --rm "$IMAGE" /usr/bin/ffmpeg -buildconf
+          docker run --rm "$IMAGE" /usr/bin/ffmpeg -L
+          docker run --rm "$IMAGE" /usr/bin/ffprobe -version
+          docker run --rm "$IMAGE" dpkg-query -W -f='${Package}=${Version}\n' ffmpeg
+          docker run --rm "$IMAGE" sh -c "dpkg-query -W -f='\${Package}=\${Version}\\n' 'libx264*'"
+          docker run --rm "$IMAGE" sh -c "ffmpeg -buildconf 2>&1 | grep -- '--enable-gpl'"
+          docker run --rm "$IMAGE" sh -c "test -f /usr/share/doc/ffmpeg/copyright && find /usr/share/doc -maxdepth 2 -path '*x264*/copyright' -print"
+
+      - name: Isolated synthetic runner end-to-end
+        run: |
+          FIXTURE_ROOT="${RUNNER_TEMP}/servicescope-reel-sandbox-fixture"
+          node scripts/reel-sandbox-container-tests.mjs prepare "$FIXTURE_ROOT"
+          chmod -R a+rwX "$FIXTURE_ROOT"
+          START_SECONDS=$SECONDS
+          docker run --rm \
+            --network none \
+            --cpus 1 \
+            --memory 2g \
+            --pids-limit 256 \
+            --volume "$FIXTURE_ROOT:/vercel/sandbox/reel" \
+            "servicescope-reel-renderer:v2-${GITHUB_SHA}"
+          echo "wall_seconds=$((SECONDS - START_SECONDS))"
+          node scripts/reel-sandbox-container-tests.mjs verify "$FIXTURE_ROOT"

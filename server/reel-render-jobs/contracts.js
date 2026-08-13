@@ -1,3 +1,5 @@
+import { reelLimits } from '../../supabase/functions/_shared/reel-engine/contracts.js';
+
 export const reelRenderTopic = 'servicescope-reel-render-v1';
 export const reelRenderMessageSchema = 'reel-render-job-message-v1';
 export const reelRendererVersion = 'servicescope-reel-renderer-v2';
@@ -12,6 +14,8 @@ export const reelQueueDisabledRetryDelaySeconds = 300;
 export const reelRenderMaxAttempts = 5;
 export const reelDispatchMaxAttempts = 2;
 export const reelRenderMaxMediaBytes = 12_000_000;
+export const reelRenderMaxMediaItems = reelLimits.maxMediaItems;
+export const reelRenderMaxAggregateMediaBytes = reelRenderMaxMediaBytes * reelRenderMaxMediaItems;
 
 const requestFields = new Set(['creativePlanId', 'expectedPlanRevision']);
 const messageFields = new Set(['schemaVersion', 'renderJobId']);

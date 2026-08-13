@@ -409,7 +409,11 @@ function workerFixture(overrides = {}) {
     async loadAuthority() {
       calls.load += 1;
       if (overrides.loadError) throw overrides.loadError;
-      return { plan: { revision }, context: { evidence: [] }, assets: new Map([['attachment-1', new Uint8Array([1, 2, 3])]]) };
+      return {
+        plan: { revision },
+        context: { evidence: [] },
+        assets: overrides.assets ?? new Map([['attachment-1', new Uint8Array([1, 2, 3])]]),
+      };
     },
     async upload(bucket, path, bytes, mime) {
       calls.uploads.push({ bucket, path, bytes: bytes.length, mime });
@@ -434,8 +438,10 @@ function workerFixture(overrides = {}) {
     check(() => assert.deepEqual(context, { evidence: [] }));
     return Object.freeze({ authorized: true });
   };
-  const render = async ({ stagedAssets, stagingRoot }) => {
+  const render = async ({ authorized, authority, stagedAssets, stagingRoot }) => {
     calls.render += 1;
+    check(() => assert.deepEqual(authorized, { authorized: true }));
+    check(() => assert.deepEqual(authority, { plan: { revision }, context: { evidence: [] } }));
     const bytes = await readFile(join(stagingRoot, stagedAssets[0].path));
     check(() => assert.deepEqual([...bytes], [1, 2, 3]));
     const outputRoot = await mkdtemp(join(tmpdir(), 'servicescope-render-job-test-'));
@@ -561,6 +567,17 @@ await checkAsync(() => assert.rejects(
   workerFixture().worker({ ...queueMessage, plan: {} }),
   /INVALID_REQUEST/,
 ));
+for (const forbidden of [{ runtime: 'local' }, { image: 'latest' }, { context: {} }]) {
+  await checkAsync(() => assert.rejects(workerFixture().worker({ ...queueMessage, ...forbidden }), /INVALID_REQUEST/));
+}
+{
+  const assets = new Map(Array.from({ length: 5 }, (_, index) => [`attachment-${index + 1}`, new Uint8Array([index + 1])]));
+  const { worker, calls } = workerFixture({ assets });
+  const result = await worker(queueMessage);
+  check(() => assert.deepEqual(result, { status: 'failed', rendered: false, errorCode: 'REEL_RENDER_MEDIA_INVALID' }));
+  check(() => assert.equal(calls.staging, 0));
+  check(() => assert.equal(calls.render, 0));
+}
 
 {
   const signed = [];

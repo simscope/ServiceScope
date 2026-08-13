@@ -1,0 +1,13 @@
+.git
+.github
+.tmp
+node_modules
+dist
+.env
+.env.*
+*.log
+*.sql
+src/components
+src/pages
+supabase/migrations
+supabase/.temp
