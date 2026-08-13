@@ -27,6 +27,8 @@ const IMAGE_REPOSITORY = 'servicescope-reel-renderer';
 const IMAGE_TAG_NAME = `v2-${MAIN_SOURCE_SHA}`;
 const FULL_IMAGE_TAG = `vcr.vercel.com/${TEAM_SLUG}/${PROJECT_SLUG}/${IMAGE_REPOSITORY}:${IMAGE_TAG_NAME}`;
 const BASE_IMAGE_DIGEST = 'sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436';
+const LIBX264_PACKAGE = 'libx264-164';
+const LIBX264_VERSION = '2:0.164.3095+gitbaee400-3';
 const BUILD_CONTEXT_ROOT = '/vercel/sandbox/build-context';
 const DOCKER_CONFIG = '/tmp/servicescope-vcr-docker-auth';
 const EXPECTED_DURATION_MS = 13_800;
@@ -56,6 +58,11 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ buildContextDirectoryPlanning: true })}\n`);
     return;
   }
+  if (process.argv.includes('--verify-libx264-package')) {
+    verifyLibx264PackageParserRegression();
+    process.stdout.write(`${JSON.stringify({ libx264PackageParser: true })}\n`);
+    return;
+  }
 
   if (process.env.VERCEL !== '1' || process.env.VERCEL_ENV !== 'preview') return;
   if (process.env.VERCEL_GIT_COMMIT_REF !== QUALIFICATION_BRANCH) {
@@ -80,6 +87,7 @@ async function main() {
   let imageId;
   let architecture;
   let ffmpegVersion;
+  let libx264Version;
   let rendererResult;
   let rendererExitCode;
   let rendererWallMs;
@@ -120,6 +128,7 @@ async function main() {
     imageId = built.imageId;
     architecture = built.architecture;
     ffmpegVersion = built.ffmpegVersion;
+    libx264Version = built.libx264Version;
 
     const push = await runChecked(builder, {
       sudo: true,
@@ -252,6 +261,7 @@ async function main() {
       imageId,
       architecture,
       ffmpegVersion,
+      libx264Version,
       rendererSandboxId,
       networkBlocked,
       sensitiveEnvAbsent,
@@ -561,13 +571,19 @@ async function buildAndValidateImage(builder) {
   if (!/^ffmpeg version 5\.1\.9-0\+deb12u1\b/.test(ffmpegVersion ?? '') || !/--enable-gpl\b/.test(ffmpegOutput) || !/--enable-libx264\b/.test(ffmpegOutput)) {
     throw new QualificationError('IMAGE_FFMPEG_INVALID', 'FFmpeg version, GPL flag, or libx264 support is invalid.');
   }
-  const x264 = await runChecked(builder, {
+  await runChecked(builder, {
     sudo: true,
     cmd: 'docker',
     args: ['run', '--rm', '--entrypoint', '/usr/bin/ffmpeg', FULL_IMAGE_TAG, '-hide_banner', '-loglevel', 'info', '-f', 'lavfi', '-i', 'color=size=16x16:rate=1', '-frames:v', '1', '-c:v', 'libx264', '-f', 'null', '-'],
     timeoutMs: 30_000,
   }, 'IMAGE_LIBX264_INVALID');
-  if (!/x264\s+-\s+core\s+\d+/i.test(await x264.stderr())) throw new QualificationError('IMAGE_LIBX264_INVALID', 'libx264 runtime version was not reported.');
+  const packageCommand = await runChecked(builder, {
+    sudo: true,
+    cmd: 'docker',
+    args: ['run', '--rm', '--entrypoint', '/usr/bin/dpkg-query', FULL_IMAGE_TAG, '-W', '-f=${Package}\t${Version}\n', LIBX264_PACKAGE],
+    timeoutMs: 30_000,
+  }, 'IMAGE_LIBX264_INVALID');
+  const libx264Version = parseLibx264PackageOutput(await packageCommand.stdout());
 
   const envCommand = await runChecked(builder, {
     sudo: true,
@@ -586,7 +602,30 @@ async function buildAndValidateImage(builder) {
     timeoutMs: 30_000,
   }, 'IMAGE_ENV_FILE_SCAN_FAILED');
   if ((await envFiles.stdout()).trim()) throw new QualificationError('IMAGE_ENV_FILE_PRESENT', 'Built image contains an .env file.');
-  return { ...local, ffmpegVersion };
+  return { ...local, ffmpegVersion, libx264Version };
+}
+
+function parseLibx264PackageOutput(output) {
+  const rows = String(output).split(/\r?\n/).filter((row) => row !== '');
+  if (rows.length !== 1) throw new QualificationError('IMAGE_LIBX264_INVALID', 'libx264 package query must return exactly one row.');
+  const fields = rows[0].split('\t');
+  if (fields.length !== 2 || fields[0] !== LIBX264_PACKAGE || fields[1] !== LIBX264_VERSION) {
+    throw new QualificationError('IMAGE_LIBX264_INVALID', 'libx264 package identity or qualified version is invalid.');
+  }
+  return fields[1];
+}
+
+function verifyLibx264PackageParserRegression() {
+  assert.equal(parseLibx264PackageOutput(`${LIBX264_PACKAGE}\t${LIBX264_VERSION}\n`), LIBX264_VERSION);
+  for (const invalid of [
+    '',
+    `libx264-wrong\t${LIBX264_VERSION}\n`,
+    `${LIBX264_PACKAGE}\t0:0.0.0-wrong\n`,
+    `${LIBX264_PACKAGE}\t${LIBX264_VERSION}\n${LIBX264_PACKAGE}\t${LIBX264_VERSION}\n`,
+    `${LIBX264_PACKAGE} ${LIBX264_VERSION}\n`,
+  ]) {
+    assert.throws(() => parseLibx264PackageOutput(invalid), QualificationError);
+  }
 }
 
 async function inspectLocalImage(builder, reference) {
