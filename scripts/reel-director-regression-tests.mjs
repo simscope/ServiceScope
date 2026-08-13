@@ -296,6 +296,69 @@ check(() => assert.equal(roleForContentFinding('replacement_part'), 'replacement
 check(() => assert.equal(roleForContentFinding('finished_result'), 'finished_result'));
 check(() => assert.equal(roleForContentFinding('unclear'), 'supporting_image'));
 
+// Per-attachment authority favors meaningful evidence, then confidence, then deterministic ties.
+const productionOverview = selectAuthoritativeFinding('4954c86a-a66a-4575-bbcb-e175c537ab96', [
+  finding('overview-finding', 'equipment_overview', .85, 'The equipment is visible.'),
+  finding('low-finding', 'low_information', .60, 'The image has limited information.'),
+]);
+check(() => assert.equal(productionOverview.evidenceCategory, 'equipment_overview'));
+check(() => assert.equal(productionOverview.confidence, .85));
+check(() => assert.equal(productionOverview.role, 'overview'));
+
+const productionDetail = selectAuthoritativeFinding('23ce123c-d0be-4259-86fb-dbf50a408ba6', [
+  finding('detail-finding', 'possible_problem_detail', .90, 'A possible problem detail is visible.'),
+  finding('overview-finding', 'equipment_overview', .80, 'The equipment is visible.'),
+]);
+check(() => assert.equal(productionDetail.evidenceCategory, 'possible_problem_detail'));
+check(() => assert.equal(productionDetail.confidence, .90));
+check(() => assert.equal(productionDetail.role, 'detail'));
+check(() => assert.equal(productionDetail.evidenceText, 'A possible problem detail is visible.'));
+check(() => assert.equal(productionDetail.analysisRunId, 'run-23ce123c-d0be-4259-86fb-dbf50a408ba6'));
+check(() => assert.equal(productionDetail.attachmentResultId, 'result-23ce123c-d0be-4259-86fb-dbf50a408ba6'));
+check(() => assert.equal(productionDetail.attachmentSha256, `\\x${'a'.repeat(64)}`));
+
+const meaningfulOverWeak = selectAuthoritativeFinding('meaningful-over-weak', [
+  finding('low-finding', 'low_information', .99, 'The image has limited information.'),
+  finding('overview-finding', 'equipment_overview', .70, 'The equipment is visible.'),
+]);
+check(() => assert.equal(meaningfulOverWeak.evidenceCategory, 'equipment_overview'));
+check(() => assert.equal(meaningfulOverWeak.meaningful, true));
+
+const higherConfidenceMeaningful = selectAuthoritativeFinding('meaningful-confidence', [
+  finding('detail-finding', 'possible_problem_detail', .89, 'A possible problem detail is visible.'),
+  finding('repair-finding', 'repair_process', .91, 'A repair process is visible.'),
+]);
+check(() => assert.equal(higherConfidenceMeaningful.evidenceCategory, 'repair_process'));
+
+const roleTieBreak = selectAuthoritativeFinding('role-tie', [
+  finding('detail-finding', 'possible_problem_detail', .90, 'A possible problem detail is visible.'),
+  finding('overview-finding', 'equipment_overview', .90, 'The equipment is visible.'),
+]);
+check(() => assert.equal(roleTieBreak.evidenceCategory, 'equipment_overview'));
+
+const findingIdTieBreak = selectAuthoritativeFinding('id-tie', [
+  finding('finding-z', 'possible_problem_detail', .90, 'Later finding.'),
+  finding('finding-a', 'possible_problem_detail', .90, 'Earlier finding.'),
+]);
+check(() => assert.equal(findingIdTieBreak.evidenceFindingId, 'finding-a'));
+
+const allWeak = selectAuthoritativeFinding('all-weak', [
+  finding('low-finding', 'low_information', .80, 'The image has limited information.'),
+  finding('unclear-finding', 'unclear', .95, 'The image is unclear.'),
+]);
+check(() => assert.equal(allWeak.evidenceCategory, 'unclear'));
+check(() => assert.equal(allWeak.meaningful, false));
+
+for (const [overrides, error] of [
+  [{ privacyReviewStatus: 'blocked', unresolvedPrivacyCount: 1 }, /REEL_PRIVACY_REVIEW_REQUIRED/],
+  [{ checksumMatches: false }, /REEL_ANALYSIS_STALE/],
+  [{ excluded: true }, /REEL_MEDIA_UNAVAILABLE/],
+]) {
+  rejects(() => selectAuthoritativeFinding('guarded', [
+    finding('detail-finding', 'possible_problem_detail', .90, 'A possible problem detail is visible.'),
+  ], overrides), error);
+}
+
 // Media selection/order and client approval state.
 const planning = {
   eligibleMedia: [], shortVideoScenes: [], orderedAttachmentIds: [], manualOrder: false,
@@ -761,6 +824,22 @@ function authoritativeMedia(attachmentId, position, role, category, findingId, e
     attachmentSha256: `\\x${'a'.repeat(64)}`,
     meaningful: !['low_information', 'duplicate_candidate', 'unclear'].includes(category),
   };
+}
+
+function finding(findingId, category, confidence, explanation) {
+  return { findingId, category, confidence, explanation };
+}
+
+function selectAuthoritativeFinding(attachmentId, findings, overrides = {}) {
+  const [authority] = authoritativeRows([media(attachmentId, 1)], overrides);
+  const rows = findings.map((item) => ({
+    ...authority,
+    finding_id: item.findingId,
+    finding_category: item.category,
+    confidence: item.confidence,
+    explanation: item.explanation,
+  }));
+  return reconstructAuthoritativeReelMedia([media(attachmentId, 1)], rows)[0];
 }
 
 function authoritativeRows(mediaPlan, overrides = {}) {

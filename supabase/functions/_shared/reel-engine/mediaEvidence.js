@@ -7,6 +7,13 @@ const rolePriority = Object.freeze({
   supporting_image: 5,
 });
 
+const meaningfulCategories = new Set([
+  'equipment_overview',
+  'possible_problem_detail',
+  'repair_process',
+  'replacement_part',
+  'finished_result',
+]);
 const weakCategories = new Set(['low_information', 'duplicate_candidate', 'unclear']);
 
 export function roleForContentFinding(category) {
@@ -67,7 +74,7 @@ export function reconstructAuthoritativeReelMedia(requestMedia, rows) {
       analysisRunId: String(authority.analysis_run_id),
       attachmentResultId: String(authority.attachment_result_id),
       attachmentSha256: String(authority.attachment_sha256),
-      meaningful: !weakCategories.has(finding.category),
+      meaningful: isMeaningfulCategory(finding.category),
     };
   });
 
@@ -76,9 +83,14 @@ export function reconstructAuthoritativeReelMedia(requestMedia, rows) {
 }
 
 function compareFindings(left, right) {
-  return rolePriority[roleForContentFinding(left.category)] - rolePriority[roleForContentFinding(right.category)]
+  return Number(isMeaningfulCategory(right.category)) - Number(isMeaningfulCategory(left.category))
     || right.confidence - left.confidence
+    || rolePriority[roleForContentFinding(left.category)] - rolePriority[roleForContentFinding(right.category)]
     || left.findingId.localeCompare(right.findingId);
+}
+
+function isMeaningfulCategory(category) {
+  return meaningfulCategories.has(category) && !weakCategories.has(category);
 }
 
 function mediaError(code) {
