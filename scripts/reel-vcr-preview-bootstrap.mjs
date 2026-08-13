@@ -51,6 +51,11 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ mainSourceSha: manifest.mainSourceSha, sourceManifestVerified: true, files: manifest.files.length })}\n`);
     return;
   }
+  if (process.argv.includes('--verify-directories')) {
+    verifyDirectoryPlanningRegression();
+    process.stdout.write(`${JSON.stringify({ buildContextDirectoryPlanning: true })}\n`);
+    return;
+  }
 
   if (process.env.VERCEL !== '1' || process.env.VERCEL_ENV !== 'preview') return;
   if (process.env.VERCEL_GIT_COMMIT_REF !== QUALIFICATION_BRANCH) {
@@ -366,13 +371,68 @@ async function filesUnder(directory) {
 }
 
 async function transferBuildContext(builder, manifest) {
-  const directories = [...new Set(manifest.files.map((entry) => dirname(`${BUILD_CONTEXT_ROOT}/${entry.path}`)))].sort();
+  const directories = planBuildContextDirectories(manifest.files.map((entry) => entry.path));
   await builder.mkDir(BUILD_CONTEXT_ROOT);
   for (const directory of directories) await builder.mkDir(directory);
   await builder.writeFiles(await Promise.all(manifest.files.map(async (entry) => ({
     path: `${BUILD_CONTEXT_ROOT}/${entry.path}`,
     content: await canonicalSourceBytes(resolve(entry.path)),
   }))));
+}
+
+function planBuildContextDirectories(sourcePaths) {
+  const directories = new Set();
+  for (const sourcePath of sourcePaths) {
+    if (typeof sourcePath !== 'string' || sourcePath === '' || sourcePath.includes('\\')
+      || sourcePath.startsWith('/') || /^[A-Za-z]:/.test(sourcePath)) {
+      throw new QualificationError('SOURCE_PATH_INVALID', 'Docker build input path is malformed or absolute.');
+    }
+    const segments = sourcePath.split('/');
+    if (segments.some((segment) => segment === '' || segment === '.' || segment === '..')) {
+      throw new QualificationError('SOURCE_PATH_INVALID', 'Docker build input path contains an unsafe segment.');
+    }
+    for (let length = 1; length < segments.length; length += 1) {
+      const directory = `${BUILD_CONTEXT_ROOT}/${segments.slice(0, length).join('/')}`;
+      if (!directory.startsWith(`${BUILD_CONTEXT_ROOT}/`)) {
+        throw new QualificationError('SOURCE_PATH_INVALID', 'Docker build input directory escapes the build context.');
+      }
+      directories.add(directory);
+    }
+  }
+  return [...directories].sort((left, right) => {
+    const depth = pathDepth(left) - pathDepth(right);
+    return depth || (left < right ? -1 : left > right ? 1 : 0);
+  });
+}
+
+function pathDepth(path) {
+  return path.slice(`${BUILD_CONTEXT_ROOT}/`.length).split('/').length;
+}
+
+function verifyDirectoryPlanningRegression() {
+  const planned = planBuildContextDirectories([
+    'server/reel-renderer/renderer.js',
+    'supabase/functions/_shared/reel-engine/contracts.js',
+    'infra/reel-render-sandbox/Dockerfile',
+  ]);
+  const expected = [
+    `${BUILD_CONTEXT_ROOT}/infra`,
+    `${BUILD_CONTEXT_ROOT}/server`,
+    `${BUILD_CONTEXT_ROOT}/supabase`,
+    `${BUILD_CONTEXT_ROOT}/infra/reel-render-sandbox`,
+    `${BUILD_CONTEXT_ROOT}/server/reel-renderer`,
+    `${BUILD_CONTEXT_ROOT}/supabase/functions`,
+    `${BUILD_CONTEXT_ROOT}/supabase/functions/_shared`,
+    `${BUILD_CONTEXT_ROOT}/supabase/functions/_shared/reel-engine`,
+  ];
+  assert.deepEqual(planned, expected);
+  for (const directory of planned) {
+    const parent = dirname(directory);
+    if (parent !== BUILD_CONTEXT_ROOT) assert.ok(planned.indexOf(parent) < planned.indexOf(directory));
+  }
+  for (const unsafePath of ['../escape/file', './relative/file', '/absolute/file', 'C:/absolute/file', 'server\\escape/file', 'server//file']) {
+    assert.throws(() => planBuildContextDirectories([unsafePath]), QualificationError);
+  }
 }
 
 async function canonicalSourceBytes(path) {
