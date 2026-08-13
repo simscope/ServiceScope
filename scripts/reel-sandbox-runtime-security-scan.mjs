@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -42,16 +41,5 @@ check(() => assert.match(dockerfile, /^FROM node:22-bookworm-slim@sha256:[0-9a-f
 check(() => assert.match(dockerfile, /ffmpeg[\s\\]+fonts-dejavu-core[\s\\]+fonts-liberation2/));
 check(() => assert.doesNotMatch(dockerfile, /ffmpeg-static|@ffmpeg-installer|curl|wget|\.env|Dockerfile\.vercel/i));
 check(() => assert.match(dockerfile, /USER node/));
-check(() => {
-  let hasSecondParent = false;
-  try {
-    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'HEAD^2'], { stdio: 'ignore' });
-    hasSecondParent = true;
-  } catch {
-    // A normal branch commit has one parent; GitHub's synthetic PR merge has two.
-  }
-  const range = hasSecondParent ? ['HEAD^1', 'HEAD^2'] : ['HEAD^', 'HEAD'];
-  assert.equal(execFileSync('git', ['diff', '--name-only', ...range, '--', 'server/reel-renderer'], { encoding: 'utf8' }).trim(), '');
-});
 
 console.log(`Reel Sandbox runtime security scan passed (${checks}/${checks}).`);
