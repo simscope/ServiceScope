@@ -281,6 +281,10 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     () => new Map((selectedJob?.attachments ?? []).map((attachment) => [attachment.id, attachment])),
     [selectedJob],
   );
+  const assistantMediaById = useMemo(
+    () => new Map((assistantContext?.publicSafe.media ?? []).map((item) => [item.id, item])),
+    [assistantContext?.publicSafe.media],
+  );
   const analysisResultAttachments = mediaAnalysisWorkspace.result?.attachments ?? [];
   const originalPlanningAttachmentIds = useMemo(() => {
     const assistantMediaIds = new Set(assistantContext?.publicSafe.media.map((item) => item.id) ?? []);
@@ -829,14 +833,23 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
 
           <section className="ai-assistant-media-browser" aria-label="Assistant media">
             {assistantContext.publicSafe.media.map((item, index) => (
-              <article className="ai-assistant-media-card" key={item.id}>
+              <article className="ai-assistant-media-card" data-attachment-id={item.id} key={item.id}>
                 {item.kind === 'photo' && attachmentUrl(attachmentById.get(item.id) ?? item) ? (
                   <img src={attachmentUrl(attachmentById.get(item.id) ?? item)} alt={item.name} />
                 ) : (
                   <div className="ai-assistant-media-placeholder">{/^video\//i.test(item.mimeType) ? 'Video' : 'Media'}</div>
                 )}
+                <div className="ai-assistant-media-identity">
+                  <strong>{item.name || 'Approved media'}</strong>
+                  <span>ID {shortAttachmentId(item.id)}</span>
+                </div>
                 <label className="ai-assistant-checkbox">
-                  <input type="checkbox" checked={item.selected} onChange={(event) => updateMediaItem(item.id, { selected: event.target.checked })} />
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${item.name || 'media'} (${item.id}) for AI`}
+                    checked={item.selected}
+                    onChange={(event) => updateMediaItem(item.id, { selected: event.target.checked })}
+                  />
                   Selected
                 </label>
                 <select value={item.label ?? ''} onChange={(event) => updateMediaItem(item.id, { label: event.target.value as AssistantMediaLabel })}>
@@ -880,6 +893,26 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                   <h2>Turn safe job media into a story</h2>
                 </div>
                 <span className={`ai-reel-status status-${reelWorkspace.status}`}>{reelStatusLabel(reelWorkspace.status)}</span>
+              </div>
+
+              <div className="ai-reel-media-selection" aria-label="Reel media selection">
+                <div className="ai-reel-media-selection-heading">
+                  <strong>Reel media selection</strong>
+                  <span>Reel media: {currentReelMediaPlan.length} selected</span>
+                </div>
+                {currentReelMediaPlan.length ? (
+                  <ol>
+                    {currentReelMediaPlan.map((media) => (
+                      <li key={media.attachmentId} data-attachment-id={media.attachmentId}>
+                        <span>{media.position}.</span>
+                        <span>
+                          {assistantMediaById.get(media.attachmentId)?.name || 'Approved media'}
+                          {' '}&middot;{' '}{shortAttachmentId(media.attachmentId)}
+                        </span>
+                      </li>
+                    ))}
+                  </ol>
+                ) : <p>No Reel media selected</p>}
               </div>
 
               <div className="ai-reel-actions">
@@ -1193,6 +1226,10 @@ function approvalLabel(value: MediaReviewApprovalState) {
 
 function safeProviderLabel(value: string) {
   return value.replace(/[^A-Za-z0-9_. -]/g, '').slice(0, 80);
+}
+
+function shortAttachmentId(value: string) {
+  return value.length > 12 ? `${value.slice(0, 8)}\u2026${value.slice(-4)}` : value;
 }
 
 function contentResultToDraftText(result: ContentGenerationResult) {

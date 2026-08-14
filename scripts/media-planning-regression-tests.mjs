@@ -17,8 +17,23 @@ execFileSync(process.execPath, [
   '--skipLibCheck',
 ], { stdio: 'pipe' });
 
+execFileSync(process.execPath, [
+  'node_modules/typescript/bin/tsc',
+  'src/features/reel-director/reelState.ts',
+  '--target',
+  'ES2020',
+  '--module',
+  'ESNext',
+  '--moduleResolution',
+  'Bundler',
+  '--outDir',
+  '.tmp/media-planning-reel-tests',
+  '--skipLibCheck',
+], { stdio: 'pipe' });
+
 const planning = await import('../.tmp/media-planning-tests/features/media-planning/planningState.js');
 const assistant = await import('../.tmp/media-planning-tests/features/ai-assistant/assistantModel.js');
+const reel = await import('../.tmp/media-planning-reel-tests/features/reel-director/reelState.js');
 const [planningSource, planningUiSource, aiPageSource] = await Promise.all([
   readFile('src/features/media-planning/planningState.ts', 'utf8'),
   readFile('src/components/portal/MediaPlanningWorkspace.tsx', 'utf8'),
@@ -27,6 +42,8 @@ const [planningSource, planningUiSource, aiPageSource] = await Promise.all([
 
 const jobId = 'job-planning-1';
 const originalIds = ['support', 'finish', 'detail', 'overview', 'repair', 'part'];
+const overviewAttachmentId = '4954c86a-a66a-4575-bbcb-e175c537ab96';
+const detailAttachmentId = '23ce123c-d0be-4259-86fb-dbf50a408ba6';
 
 function finding(id, category, confidence = 0.8, patch = {}) {
   return {
@@ -92,6 +109,11 @@ function reconcile(result, approvals, ids = result.attachments.map((item) => ite
       approvals,
     },
   );
+}
+
+function selectedPlanningSource(findings) {
+  const ranked = resultFor(jobId, [attachment('ranked', findings)]);
+  return reconcile(ranked, { ranked: 'approved' }, ['ranked']).eligibleMedia[0];
 }
 
 const basicResult = resultFor(jobId, [
@@ -354,7 +376,97 @@ assert.match(aiPageSource, /reelEditOpen && !unsupportedStatus/);
 assert.match(aiPageSource, /mediaAnalysisWorkspace\.result\?\.jobId === selectedJob\?\.id[\s\S]*<MediaPlanningWorkspace/);
 assert.match(aiPageSource, /Analyze media to edit the advanced media plan[\s\S]*onClick=\{analyzeMedia\}/);
 
-// 31. Planning has no persistence, Edge or provider boundary.
+// 31-37. Normal UI exposes safe identity and one authoritative Reel selection summary.
+assert.match(aiPageSource, /data-attachment-id=\{item\.id\}/);
+assert.match(aiPageSource, /<strong>\{item\.name \|\| 'Approved media'\}<\/strong>/);
+assert.match(aiPageSource, /ID \{shortAttachmentId\(item\.id\)\}/);
+assert.match(aiPageSource, /aria-label=\{`Select \$\{item\.name \|\| 'media'\} \(\$\{item\.id\}\) for AI`\}/);
+assert.match(aiPageSource, /Reel media: \{currentReelMediaPlan\.length\} selected/);
+assert.match(aiPageSource, /currentReelMediaPlan\.map\(\(media\) =>/);
+assert.match(aiPageSource, /const mediaPlan = currentReelMediaPlan;/);
+assert.doesNotMatch(aiPageSource, /useState[^;\n]*reelMediaSelection/i);
+
+// 38. Exact UI selection state produces the intended two-photo request in order.
+const exactReelMedia = [
+  { id: 'other-before', kind: 'photo', mimeType: 'image/jpeg', name: 'Other before', selected: false, order: 0 },
+  { id: overviewAttachmentId, kind: 'photo', mimeType: 'image/jpeg', name: 'Overview', selected: true, order: 1 },
+  { id: 'other-between', kind: 'photo', mimeType: 'image/png', name: 'Other between', selected: false, order: 2 },
+  { id: detailAttachmentId, kind: 'photo', mimeType: 'image/webp', name: 'Detail', selected: true, order: 3 },
+];
+assert.deepEqual(reel.reelMediaPlan(exactReelMedia, planning.createMediaPlanningState(jobId)), [
+  { attachmentId: overviewAttachmentId, position: 1 },
+  { attachmentId: detailAttachmentId, position: 2 },
+]);
+
+// 39-45. Frontend evidence selection mirrors the server comparator exactly.
+let rankedSource = selectedPlanningSource([
+  finding('detail-90', 'possible_problem_detail', 0.9),
+  finding('overview-80', 'equipment_overview', 0.8),
+]);
+assert.equal(rankedSource.suggestedRole, 'detail');
+assert.equal(rankedSource.confidence, 0.9);
+
+rankedSource = selectedPlanningSource([
+  finding('overview-85', 'equipment_overview', 0.85),
+  finding('weak-60', 'low_information', 0.6),
+]);
+assert.equal(rankedSource.suggestedRole, 'overview');
+assert.equal(rankedSource.confidence, 0.85);
+
+rankedSource = selectedPlanningSource([
+  finding('weak-99', 'low_information', 0.99),
+  finding('overview-70', 'equipment_overview', 0.7),
+]);
+assert.equal(rankedSource.suggestedRole, 'overview');
+assert.equal(rankedSource.confidence, 0.7);
+
+rankedSource = selectedPlanningSource([
+  finding('repair-80', 'repair_process', 0.8),
+  finding('detail-90', 'possible_problem_detail', 0.9),
+]);
+assert.equal(rankedSource.suggestedRole, 'detail');
+
+rankedSource = selectedPlanningSource([
+  finding('detail-equal', 'possible_problem_detail', 0.8),
+  finding('overview-equal', 'equipment_overview', 0.8),
+]);
+assert.equal(rankedSource.suggestedRole, 'overview');
+
+rankedSource = selectedPlanningSource([
+  finding('z-finding', 'equipment_overview', 0.8),
+  finding('a-finding', 'equipment_overview', 0.8),
+]);
+assert.equal(rankedSource.evidenceFindingId, 'a-finding');
+
+rankedSource = selectedPlanningSource([
+  finding('unclear-80', 'unclear', 0.8),
+  finding('weak-99', 'low_information', 0.99),
+]);
+assert.equal(rankedSource.suggestedRole, 'supporting_image');
+assert.equal(rankedSource.confidence, 0.99);
+
+// 46-47. Current Production-shaped fixtures resolve to overview then detail without hard-coded source behavior.
+const currentAcceptance = resultFor(jobId, [
+  attachment(overviewAttachmentId, [
+    finding('overview-current', 'equipment_overview', 0.85),
+    finding('overview-weak', 'low_information', 0.6),
+  ]),
+  attachment(detailAttachmentId, [
+    finding('detail-current', 'possible_problem_detail', 0.9),
+    finding('detail-overview', 'equipment_overview', 0.8),
+  ]),
+]);
+const currentAcceptanceState = reconcile(
+  currentAcceptance,
+  approvalsFor([overviewAttachmentId, detailAttachmentId]),
+  [overviewAttachmentId, detailAttachmentId],
+);
+assert.deepEqual(
+  currentAcceptanceState.eligibleMedia.map((item) => [item.attachmentId, item.suggestedRole]),
+  [[overviewAttachmentId, 'overview'], [detailAttachmentId, 'detail']],
+);
+
+// 48. Planning has no persistence, Edge or provider boundary.
 const planningBrowserSource = `${planningSource}\n${planningUiSource}`;
 assert.doesNotMatch(planningBrowserSource, /localStorage|sessionStorage|indexedDB|supabaseFunction|analyzeSelectedMedia|generateAiContent|api\.openai\.com|OPENAI_API_KEY|fetch\s*\(/i);
 assert.doesNotMatch(
@@ -362,4 +474,4 @@ assert.doesNotMatch(
   /companyId|storagePath|signedUrl|supabaseFunction|adminClient|callerClient|\.rpc\s*\(/i,
 );
 
-console.log('Media planning regression tests passed (31/31).');
+console.log('Media planning regression tests passed (48/48).');

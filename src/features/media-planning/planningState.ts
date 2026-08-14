@@ -86,6 +86,14 @@ const planningRolePriority: Record<MediaPlanningRole, number> = {
   supporting_image: 5,
 };
 
+const meaningfulFindingCategories = new Set([
+  'equipment_overview',
+  'possible_problem_detail',
+  'repair_process',
+  'replacement_part',
+  'finished_result',
+]);
+
 export function createMediaPlanningState(jobId?: string): MediaPlanningState {
   return {
     jobId,
@@ -389,8 +397,9 @@ function bestPlanningFinding(findings: MediaAnalysisFinding[]) {
   return findings
     .filter((finding) => !isPrivacyFinding(finding.category))
     .sort((left, right) => (
-      planningRolePriority[roleForFinding(left)] - planningRolePriority[roleForFinding(right)]
+      Number(meaningfulFindingCategories.has(right.category)) - Number(meaningfulFindingCategories.has(left.category))
         || right.confidence - left.confidence
+        || planningRolePriority[roleForFinding(left)] - planningRolePriority[roleForFinding(right)]
         || left.findingId.localeCompare(right.findingId)
     ))[0];
 }
