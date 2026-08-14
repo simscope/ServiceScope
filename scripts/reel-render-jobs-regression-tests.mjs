@@ -16,11 +16,13 @@ import {
   reelRenderTopic,
   reelWorkerLeaseSeconds,
   reelWorkerMaxDurationSeconds,
+  normalizeRenderError,
   RenderJobError,
 } from '../server/reel-render-jobs/contracts.js';
 import { asNodeHandler } from '../server/reel-render-jobs/nodeAdapter.js';
 import { createRenderRequestHandler } from '../server/reel-render-jobs/producer.js';
 import { createReelQueueConsumer, reelQueueRetry } from '../server/reel-render-jobs/queueConsumer.js';
+import { createRenderRepository } from '../server/reel-render-jobs/repository.js';
 import { createSupabaseHttpClient } from '../server/reel-render-jobs/supabaseHttp.js';
 import { createRenderWorker } from '../server/reel-render-jobs/worker.js';
 import { REEL_DISPATCH_RECOVERY_INTERVAL_MS, shouldRecoverReelDispatch } from '../src/features/reel-render-jobs/dispatchRecovery.js';
@@ -273,6 +275,107 @@ function readerResponse({ chunks, contentLength, onRead = () => {}, onCancel = (
     headers: new Headers(contentLength ? { 'content-length': contentLength } : undefined),
     body: { getReader: () => reader, cancel: () => reader.cancel() },
   };
+}
+
+function renderAuthorityClient(bytes, persistedChecksum) {
+  const attachmentId = '00000000-0000-4000-8000-000000000401';
+  const calls = { downloads: 0 };
+  return {
+    attachmentId,
+    calls,
+    client: {
+      async select(table, query) {
+        if (table === 'company_reel_creative_plans') return [{
+          id: creativePlanId,
+          company_id: companyId,
+          job_id: 'job-1',
+          created_by: 'owner-user',
+          locale: 'en-US',
+          local_facts: {
+            diagnosis: 'A failed relay prevented normal heating.',
+            repairPerformed: 'The failed relay was replaced and tested.',
+            finalResult: 'Normal heating operation was restored.',
+          },
+          media_plan: [{ attachmentId, position: 1 }],
+          planning_revision: 'planning-1',
+          plan_json: { revision },
+        }];
+        if (table === 'jobs') return [{
+          id: 'job-1', company_id: companyId, job_number: '248', status: 'Completed',
+          system: 'Oven', issue: 'No heat', notes: null, service_call_fee_cents: null,
+          labor_cents: null, customer_id: null, customer_location_id: null,
+        }];
+        if (table === 'companies') return [{ id: companyId, owner_email: 'owner@example.test' }];
+        if (table === 'company_profiles' && query.includes('select=access_rules')) return [{ access_rules: { aiAssistant: 'full' } }];
+        if (table === 'company_profiles') return [{ ai_voice_enabled: false }];
+        if (table === 'job_attachments') return [{
+          id: attachmentId, company_id: companyId, job_id: 'job-1', name: 'authority.jpg',
+          mime_type: 'image/jpeg', kind: 'photo', created_at: '2026-08-13T00:00:00Z',
+        }];
+        if (['job_materials', 'job_invoices', 'job_comments'].includes(table)) return [];
+        throw new Error(`Unexpected table ${table}`);
+      },
+      async adminRpc(name, body) {
+        assert.equal(name, 'list_company_reel_media_analysis_candidates');
+        assert.deepEqual(body.p_attachment_ids, [attachmentId]);
+        return [{
+          requested_position: 1,
+          attachment_id: attachmentId,
+          attachment_result_id: '00000000-0000-4000-8000-000000000402',
+          analysis_run_id: '00000000-0000-4000-8000-000000000403',
+          attachment_sha256: persistedChecksum,
+          analysis_status: 'analyzed',
+          privacy_review_status: 'passed',
+          unresolved_privacy_count: 0,
+          excluded: false,
+          storage_bucket: 'job-files',
+          storage_path: 'company/job/authority.jpg',
+          finding_id: 'finding-1',
+          finding_category: 'equipment_overview',
+          evidence_type: 'visual_suggestion',
+          confidence: 0.9,
+          explanation: 'The equipment overview is visible.',
+          risk_level: 'low',
+          requires_user_approval: true,
+        }];
+      },
+      async downloadBounded(bucket, path, maxBytes) {
+        calls.downloads += 1;
+        assert.equal(bucket, 'job-files');
+        assert.equal(path, 'company/job/authority.jpg');
+        assert.equal(maxBytes, reelRenderMaxMediaBytes);
+        return bytes;
+      },
+    },
+  };
+}
+
+{
+  const bytes = new TextEncoder().encode('servicescope-render-authority-checksum');
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const rpcChecksum = `\\\\x${digest}`;
+  const fixture = renderAuthorityClient(bytes, rpcChecksum);
+  const authority = await createRenderRepository(fixture.client).loadAuthority({
+    company_id: companyId, job_id: 'job-1', creative_plan_id: creativePlanId,
+  });
+  check(() => assert.equal(fixture.calls.downloads, 1));
+  check(() => assert.deepEqual(authority.assets.get(fixture.attachmentId), bytes));
+  check(() => assert.equal(authority.context.safeMedia[0].attachmentSha256, rpcChecksum));
+
+  const differentDigest = `${digest[0] === 'a' ? 'b' : 'a'}${digest.slice(1)}`;
+  const mismatch = renderAuthorityClient(bytes, `\\\\x${differentDigest}`);
+  await checkAsync(async () => {
+    let caught;
+    try {
+      await createRenderRepository(mismatch.client).loadAuthority({
+        company_id: companyId, job_id: 'job-1', creative_plan_id: creativePlanId,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    assert.equal(caught?.message, 'REEL_ANALYSIS_STALE');
+    assert.equal(normalizeRenderError(caught), 'REEL_RENDER_CONTEXT_STALE');
+  });
 }
 
 {

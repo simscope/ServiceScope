@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { buildAuthorizedContext } from '../../supabase/functions/_shared/content-engine/context.js';
+import { sha256DigestsEqual } from '../../supabase/functions/_shared/media-analysis/checksum.js';
 import { buildReelContext } from '../../supabase/functions/_shared/reel-engine/director.js';
 import { reelRenderMaxMediaBytes, reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
 
@@ -95,7 +96,7 @@ function contextRepository(client, assets) {
       }
       return (rows ?? []).map((row) => ({
         ...row,
-        current_checksum_matches: byId.get(row.attachment_id)?.checksum === String(row.attachment_sha256).toLowerCase(),
+        current_checksum_matches: sha256DigestsEqual(byId.get(row.attachment_id)?.checksum, row.attachment_sha256),
         storage_bucket: undefined,
         storage_path: undefined,
       }));
