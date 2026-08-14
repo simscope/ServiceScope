@@ -445,6 +445,9 @@ check(() => assert.doesNotMatch(previewSource, /fetch\(|supabaseFunction|graph\.
 check(() => assert.doesNotMatch(aiPage.slice(aiPage.indexOf('Approve Reel') - 800, aiPage.indexOf('Approve Reel') + 400), /supabaseFunction|facebook|publish/i));
 check(() => assert.match(edgeIndex, /handleReelGeneration/));
 check(() => assert.match(edgeIndex, /handleContentGeneration/));
+check(() => assert.match(edgeIndex, /import \{ attachmentSha256, sha256DigestsEqual \} from '\.\.\/_shared\/media-analysis\/checksum\.js'/));
+check(() => assert.match(edgeIndex, /current_checksum_matches:\s*sha256DigestsEqual\(currentHash, row\.attachment_sha256\)/));
+check(() => assert.doesNotMatch(edgeIndex, /currentHash\.toLowerCase\(\)\s*===/));
 check(() => assert.match(normalContentClient, /ContentGenerationResult/));
 check(() => assert.match(mediaPlanningSource, /Carousel Plan/));
 

@@ -3,7 +3,7 @@ import { handleContentGeneration, HttpError } from '../_shared/content-engine/ap
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createPreflightFromEnv, createProviderFromEnv } from '../_shared/content-engine/providers/openai.js';
 import { handleReelGeneration, ReelHttpError } from '../_shared/reel-engine/director.js';
-import { attachmentSha256 } from '../_shared/media-analysis/checksum.js';
+import { attachmentSha256, sha256DigestsEqual } from '../_shared/media-analysis/checksum.js';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -228,12 +228,11 @@ function createContextRepository(adminClient: ReturnType<typeof createClient<any
       }
       return rows.map((row) => {
         const currentHash = currentHashByAttachment.get(String(row.attachment_id ?? ''));
-        const persistedHash = String(row.attachment_sha256 ?? '').toLowerCase();
         return {
           ...row,
           storage_bucket: undefined,
           storage_path: undefined,
-          current_checksum_matches: Boolean(currentHash && persistedHash && currentHash.toLowerCase() === persistedHash),
+          current_checksum_matches: sha256DigestsEqual(currentHash, row.attachment_sha256),
         };
       });
     },

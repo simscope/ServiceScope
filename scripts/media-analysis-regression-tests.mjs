@@ -25,6 +25,10 @@ import {
   privacyFindingCategories,
 } from '../supabase/functions/_shared/media-analysis/contracts.js';
 import {
+  normalizeSha256Digest,
+  sha256DigestsEqual,
+} from '../supabase/functions/_shared/media-analysis/checksum.js';
+import {
   assertNoPrivateValues,
   buildKnownPrivateValues,
   collectPrivacyDiagnostics,
@@ -65,6 +69,33 @@ const assert = {
     throw new Error('Expected promise to reject');
   },
 };
+
+const productionDigestOverview = '59fb41d996dfaeace1e208d1cf7d4abd01440bf080aa957edb19818e2da68be6';
+const productionDigestDetail = '15de25bacb6b715e8479bcb354d76521783e4c957083ab014c684b29be2df3fd';
+const singleSlashDigest = (digest) => `\\x${digest}`;
+const doubleSlashDigest = (digest) => `\\\\x${digest}`;
+
+for (const digest of [productionDigestOverview, productionDigestDetail]) {
+  assert.equal(normalizeSha256Digest(singleSlashDigest(digest)), digest);
+  assert.equal(normalizeSha256Digest(doubleSlashDigest(digest)), digest);
+  assert.equal(normalizeSha256Digest(singleSlashDigest(digest.toUpperCase())), digest);
+  assert.equal(normalizeSha256Digest(doubleSlashDigest(digest.toUpperCase())), digest);
+  assert.equal(sha256DigestsEqual(singleSlashDigest(digest), doubleSlashDigest(digest)), true);
+  assert.equal(sha256DigestsEqual(singleSlashDigest(digest), singleSlashDigest(digest)), true);
+  assert.equal(sha256DigestsEqual(doubleSlashDigest(digest), doubleSlashDigest(digest)), true);
+}
+
+for (const invalid of [
+  '', null, undefined, singleSlashDigest('1234'), doubleSlashDigest('1234'),
+  'a'.repeat(64), `${'\\'.repeat(3)}x${'a'.repeat(64)}`,
+  singleSlashDigest('g'.repeat(64)), singleSlashDigest('a'.repeat(63)), singleSlashDigest('a'.repeat(65)),
+]) {
+  assert.equal(normalizeSha256Digest(invalid), null);
+  assert.equal(sha256DigestsEqual(invalid, singleSlashDigest('a'.repeat(64))), false);
+}
+assert.equal(sha256DigestsEqual(singleSlashDigest('a'.repeat(64)), doubleSlashDigest('b'.repeat(64))), false);
+assert.equal(sha256DigestsEqual(null, singleSlashDigest('a'.repeat(64))), false);
+assert.equal(sha256DigestsEqual(singleSlashDigest('a'.repeat(64)), null), false);
 
 const [edgeIndex, aiPage, publicContracts, openAiAdapter, appService, supabaseRest, appShell] = await Promise.all([
   readFile('supabase/functions/ai-media-analyze/index.ts', 'utf8'),

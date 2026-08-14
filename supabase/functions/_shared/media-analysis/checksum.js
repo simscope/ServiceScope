@@ -1,3 +1,16 @@
+const sha256ByteaTextPattern = /^(?:\\x|\\\\x)([0-9a-f]{64})$/i;
+
+export function normalizeSha256Digest(value) {
+  if (typeof value !== 'string') return null;
+  return value.match(sha256ByteaTextPattern)?.[1].toLowerCase() ?? null;
+}
+
+export function sha256DigestsEqual(left, right) {
+  const normalizedLeft = normalizeSha256Digest(left);
+  const normalizedRight = normalizeSha256Digest(right);
+  return normalizedLeft !== null && normalizedRight !== null && normalizedLeft === normalizedRight;
+}
+
 export async function attachmentSha256(adminClient, attachment) {
   const bucket = String(attachment.storageBucket ?? attachment.storage_bucket ?? '');
   const path = String(attachment.storagePath ?? attachment.storage_path ?? '');
