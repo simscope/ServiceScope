@@ -1120,6 +1120,25 @@ button {
   font-weight: 900;
 }
 
+.ai-assistant-media-identity {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.ai-assistant-media-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.ai-assistant-media-identity span {
+  color: #526158;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+
 .ai-assistant-checkbox {
   display: flex;
   align-items: center;
@@ -1354,6 +1373,50 @@ button {
 .ai-reel-actions {
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.ai-reel-media-selection {
+  display: grid;
+  gap: 8px;
+  border-block: 1px solid #d7dee8;
+  padding: 12px 0;
+}
+
+.ai-reel-media-selection-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-reel-media-selection-heading span,
+.ai-reel-media-selection p {
+  margin: 0;
+  color: #526158;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ai-reel-media-selection ol {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ai-reel-media-selection li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 6px;
+  color: #334155;
+  font-size: 13px;
+}
+
+.ai-reel-media-selection li span:last-child {
+  overflow-wrap: anywhere;
 }
 
 .ai-reel-generate {
