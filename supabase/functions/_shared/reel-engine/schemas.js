@@ -12,6 +12,7 @@ import {
   reelTransitions,
 } from './contracts.js';
 import { normalizeLocale } from '../content-engine/schemas.js';
+import { assertNoPrivateValues } from '../content-engine/privacy.js';
 import { reelEvidenceCapabilityForId, reelEvidenceCapabilities } from './evidenceCapabilities.js';
 
 const requestFields = new Set([
@@ -161,7 +162,7 @@ export function validateReelPlan(plan, context) {
   for (const evidenceIds of allEvidenceLists) {
     if (!evidenceIds.every((id) => evidenceById.has(id))) fail('REEL_GROUNDING_FAILED');
   }
-  assertNoPrivateOrForbiddenText(plan, context.privateValues);
+  assertNoPrivateOrForbiddenText(plan, context.privateValuesForLeakDetection);
 
   const scoreDecision = plan.qualityScore >= 70
     ? 'create_reel'
@@ -361,9 +362,10 @@ function parseAudio(value) {
 
 function assertNoPrivateOrForbiddenText(plan, privateValues) {
   const text = JSON.stringify(plan);
-  for (const privateValue of privateValues) {
-    const clean = String(privateValue ?? '').trim();
-    if (clean.length > 1 && new RegExp(escapeRegExp(clean), 'i').test(text)) fail('REEL_PRIVACY_FAILED');
+  try {
+    assertNoPrivateValues(plan, privateValues);
+  } catch {
+    fail('REEL_PRIVACY_FAILED');
   }
   const blockedPatterns = [
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
@@ -679,10 +681,6 @@ function wordCount(value) {
 
 function countHashtags(value) {
   return (value.match(/(?:^|\s)#[\p{L}\p{N}_-]+/gu) ?? []).length;
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function fail(code) {

@@ -63,7 +63,7 @@ const stagedAssets = [
   { attachmentId: 'photo-c', path: 'photo-c.webp' },
 ];
 const validContext = {
-  privateValues: [],
+  privateValuesForLeakDetection: [],
   companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
   evidence: [
     { id: 'diagnosis', text: 'See this service transformation. A clear service story built from the approved job media, from the starting view through the work and the finished equipment. Service transformation.' },
@@ -652,7 +652,7 @@ function mutatedPlan(mutate) {
 
 function createRelayContext() {
   return {
-    privateValues: ['Jane Customer'],
+    privateValuesForLeakDetection: [{ value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION' }],
     companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
     evidence: [
       { id: 'complaint', text: 'The oven stopped heating.' },

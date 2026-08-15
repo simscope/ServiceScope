@@ -8,15 +8,18 @@ import { promptVersionByChannel } from './contracts.js';
 
 export async function generateWithProvider({ request, context, provider, config, telemetry, clock = Date }) {
   const start = clock.now();
+  let attempts = 0;
   try {
-    assertNoPrivateValues(context.evidence, context.privateValues);
+    assertNoPrivateValues(context.evidence, context.privateValuesForLeakDetection);
     if (!provider) return fallback(request, context, 'ENGINE_NOT_CONFIGURED', 'AI provider is not configured; fallback draft was generated.');
     const providerRequest = buildPrompt(request, context);
-    assertNoPrivateValues(providerRequest, context.privateValues);
-    const { response, attempts } = await callWithRetry(provider, providerRequest, config);
+    assertNoPrivateValues(providerRequest, context.privateValuesForLeakDetection);
+    const providerResponse = await callWithRetry(provider, providerRequest, config);
+    attempts = providerResponse.attempts;
+    const { response } = providerResponse;
     const result = parseProviderResult(response.rawJson, request.channel, response.provider, response.model, response.usage, request.promptVersion);
     validateGrounding(result, context.evidence);
-    assertNoPrivateValues(result, context.privateValues);
+    assertNoPrivateValues(result, context.privateValuesForLeakDetection);
     result.missingInformation = context.missingInformation;
     emitTelemetry(telemetry, { correlationId: request.idempotencyKey, provider: result.provider, model: result.model, channel: request.channel, promptVersion: request.promptVersion, success: true, code: 'OK', latencyMs: clock.now() - start, attempts });
     return result;
@@ -31,7 +34,7 @@ export async function generateWithProvider({ request, context, provider, config,
       success: false,
       code,
       latencyMs: clock.now() - start,
-      attempts: error?.attempts ?? 1,
+      attempts: attempts || error?.attempts || 0,
       httpStatus: error?.httpStatus,
       providerRequestId: error?.providerRequestId,
       providerErrorType: error?.providerErrorType,
@@ -77,7 +80,7 @@ async function callWithRetry(provider, providerRequest, config) {
 function fallback(request, context, code, message) {
   const result = deterministicFallback(request, context, { code, message });
   try {
-    assertNoPrivateValues(result, context.privateValues);
+    assertNoPrivateValues(result, context.privateValuesForLeakDetection);
     return result;
   } catch {
     const safeRequest = { ...request, promptVersion: promptVersionByChannel[request.channel] };
@@ -86,7 +89,7 @@ function fallback(request, context, code, message) {
       code: 'PRIVACY_FAILED',
       message: 'Unsafe private data was detected; fallback draft was generated.',
     });
-    assertNoPrivateValues(safeResult, context.privateValues);
+    assertNoPrivateValues(safeResult, context.privateValuesForLeakDetection);
     return safeResult;
   }
 }

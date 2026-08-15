@@ -53,14 +53,14 @@ export async function generateReel({ request, context, provider, config, telemet
   const startedAt = clock.now();
   let attempts = 0;
   try {
-    assertNoPrivateValues(context.evidence, context.privateValues);
+    assertNoPrivateValues(context.evidence, context.privateValuesForLeakDetection);
     if (!provider) throw new ReelHttpError('ENGINE_NOT_CONFIGURED', 500);
     const providerRequest = buildReelPrompt(request, context);
-    assertNoPrivateValues(providerRequest, context.privateValues);
+    assertNoPrivateValues(providerRequest, context.privateValuesForLeakDetection);
     const response = await callProvider(provider, providerRequest, config);
     attempts = response.attempts;
     const plan = parseReelProviderResult(response.result.rawJson, context);
-    assertNoPrivateValues(plan, context.privateValues);
+    assertNoPrivateValues(plan, context.privateValuesForLeakDetection);
     telemetry?.record?.(safeTelemetryPayload({
       correlationId: request.idempotencyKey,
       provider: response.result.provider,
@@ -84,7 +84,7 @@ export async function generateReel({ request, context, provider, config, telemet
       success: false,
       code,
       latencyMs: clock.now() - startedAt,
-      attempts: attempts || error?.attempts || 1,
+      attempts: attempts || error?.attempts || 0,
     }));
     if (error instanceof ReelHttpError) throw error;
     throw new ReelHttpError(code, statusForReelCode(code));
