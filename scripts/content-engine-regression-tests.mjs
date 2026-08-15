@@ -586,8 +586,8 @@ function makeContext({ request }) {
     missingInformation: [],
     privateValuesForInputScrubbing: ['Jane Customer', '123 Market Street'],
     privateValuesForLeakDetection: [
-      { value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION' },
-      { value: '123 Market Street', classification: 'STRUCTURED_ADDRESS' },
+      { value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' },
+      { value: '123 Market Street', classification: 'STRUCTURED_ADDRESS', matchMode: 'phrase' },
     ],
     evidence: [
       { id: 'diagnosis', label: 'Diagnosis', text: request.localFacts.diagnosis, source: 'Technician-entered fact' },

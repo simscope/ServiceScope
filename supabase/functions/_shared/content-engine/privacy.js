@@ -1,4 +1,4 @@
-import { containsNormalizedPrivatePhrase, isMeaningfulKnownPrivateValue, normalizePrivateValue } from '../privacy/privateValues.js';
+import { containsNormalizedPrivatePhrase } from '../privacy/privateValues.js';
 
 export function scrubText(text, privateValues) {
   return privateValues.reduce((current, value) => {
@@ -75,36 +75,23 @@ function matchesPrivateEntry(text, entry) {
   }
   const clean = String(entry.value ?? '').trim();
   if (!clean) return false;
-  switch (entry.classification) {
-    case 'MONEY_NUMERIC':
-    case 'ENUM_OR_STATUS':
+  switch (entry.matchMode) {
+    case 'none':
       return false;
-    case 'PERSON_OR_ORGANIZATION':
-      return normalizePrivateValue(clean).length >= 3 && containsNormalizedPrivatePhrase(text, clean);
-    case 'JOB_IDENTIFIER':
-      return matchesIdentifier(text, clean, 'job');
-    case 'INVOICE_IDENTIFIER':
-      return matchesIdentifier(text, clean, 'invoice');
-    case 'FREE_TEXT_NOTE':
-    case 'FREE_TEXT_COMMENT':
-      return isMeaningfulKnownPrivateValue(clean) && containsNormalizedPrivatePhrase(text, clean);
-    case 'STRUCTURED_EMAIL':
-    case 'STRUCTURED_PHONE':
-    case 'STRUCTURED_ADDRESS':
+    case 'phrase':
       return containsNormalizedPrivatePhrase(text, clean);
+    case 'structured_job':
+      return matchesStructuredIdentifier(text, clean, 'job');
+    case 'structured_invoice':
+      return matchesStructuredIdentifier(text, clean, 'invoice');
     default:
-      return false;
+      return true;
   }
 }
 
-function matchesIdentifier(text, identifier, kind) {
-  const normalized = normalizePrivateValue(identifier);
-  if (!normalized) return false;
-  if (!/^\d+$/.test(normalized) || normalized.length >= 6) {
-    return isMeaningfulKnownPrivateValue(identifier) && containsNormalizedPrivatePhrase(text, identifier);
-  }
+function matchesStructuredIdentifier(text, identifier, kind) {
   const marker = kind === 'job' ? '(?:job|work order)' : '(?:invoice|inv)';
-  return new RegExp(`\\b${marker}\\s*(?:#|number|no\\.?)?\\s*${escapeRegExp(normalized)}\\b`, 'i').test(text);
+  return new RegExp(`\\b${marker}\\s*(?:#|number|no\\.?)?\\s*${escapeRegExp(identifier)}\\b`, 'i').test(text);
 }
 
 function collectStrings(value) {

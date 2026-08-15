@@ -796,12 +796,12 @@ function makeContext() {
     companyId: 'company-1', actorId: 'user-1', jobId: 'job-1', missingInformation: [],
     privateValuesForInputScrubbing: ['Jane Customer', 'Private Customer LLC', 'jane@example.test', '123 Market Street', 'AB-42'],
     privateValuesForLeakDetection: [
-      { value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION' },
-      { value: 'Private Customer LLC', classification: 'PERSON_OR_ORGANIZATION' },
-      { value: 'jane@example.test', classification: 'STRUCTURED_EMAIL' },
-      { value: '(212) 555-0199', classification: 'STRUCTURED_PHONE' },
-      { value: '123 Market Street', classification: 'STRUCTURED_ADDRESS' },
-      { value: 'AB-42', classification: 'JOB_IDENTIFIER' },
+      { value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' },
+      { value: 'Private Customer LLC', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' },
+      { value: 'jane@example.test', classification: 'STRUCTURED_EMAIL', matchMode: 'phrase' },
+      { value: '(212) 555-0199', classification: 'STRUCTURED_PHONE', matchMode: 'phrase' },
+      { value: '123 Market Street', classification: 'STRUCTURED_ADDRESS', matchMode: 'phrase' },
+      { value: 'AB-42', classification: 'JOB_IDENTIFIER', matchMode: 'phrase' },
     ],
     companyVoice: {
       enabled: true, publicDisplayName: 'Northstar Service', voiceGuidance: 'Clear, useful, confident.',

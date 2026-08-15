@@ -12,7 +12,6 @@ import {
   reelTransitions,
 } from './contracts.js';
 import { normalizeLocale } from '../content-engine/schemas.js';
-import { assertNoPrivateValues } from '../content-engine/privacy.js';
 import { reelEvidenceCapabilityForId, reelEvidenceCapabilities } from './evidenceCapabilities.js';
 
 const requestFields = new Set([
@@ -362,10 +361,9 @@ function parseAudio(value) {
 
 function assertNoPrivateOrForbiddenText(plan, privateValues) {
   const text = JSON.stringify(plan);
-  try {
-    assertNoPrivateValues(plan, privateValues);
-  } catch {
-    fail('REEL_PRIVACY_FAILED');
+  if (!Array.isArray(privateValues)) fail('REEL_PRIVACY_FAILED');
+  for (const privateValue of privateValues) {
+    if (collectStrings(plan).some((value) => matchesPrivateEntry(value, privateValue))) fail('REEL_PRIVACY_FAILED');
   }
   const blockedPatterns = [
     /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i,
@@ -376,6 +374,49 @@ function assertNoPrivateOrForbiddenText(plan, privateValues) {
     /\b(?:invoice|payment|credit card|customer name|customer company)\b/i,
   ];
   if (blockedPatterns.some((pattern) => pattern.test(text))) fail('REEL_PRIVACY_FAILED');
+}
+
+function matchesPrivateEntry(text, entry) {
+  if (!entry || typeof entry !== 'object') return true;
+  const clean = String(entry.value ?? '').trim();
+  if (!clean) return true;
+  if (entry.matchMode === 'none') return false;
+  if (entry.matchMode === 'phrase') return containsNormalizedPhrase(text, clean);
+  if (entry.matchMode === 'structured_job') return matchesStructuredIdentifier(text, clean, '(?:job|work order)');
+  if (entry.matchMode === 'structured_invoice') return matchesStructuredIdentifier(text, clean, '(?:invoice|inv)');
+  return true;
+}
+
+function matchesStructuredIdentifier(text, identifier, marker) {
+  return new RegExp(`\\b${marker}\\s*(?:#|number|no\\.?)?\\s*${escapeRegExp(identifier)}\\b`, 'i').test(text);
+}
+
+function containsNormalizedPhrase(text, privateValue) {
+  const normalizedText = normalizePrivateComparison(text);
+  const normalizedPrivateValue = normalizePrivateComparison(privateValue);
+  if (!normalizedText || !normalizedPrivateValue) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(normalizedPrivateValue)}(?:$|[^a-z0-9])`, 'i').test(normalizedText);
+}
+
+function normalizePrivateComparison(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .normalize('NFKC')
+    .replace(/['’]/g, '')
+    .replace(/[^a-z0-9@.]+/g, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function collectStrings(value) {
+  if (typeof value === 'string') return [value];
+  if (value == null || typeof value !== 'object') return [];
+  if (Array.isArray(value)) return value.flatMap(collectStrings);
+  return Object.values(value).flatMap(collectStrings);
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function assertClaimSupport(claims, evidenceById) {

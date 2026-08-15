@@ -652,7 +652,7 @@ function mutatedPlan(mutate) {
 
 function createRelayContext() {
   return {
-    privateValuesForLeakDetection: [{ value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION' }],
+    privateValuesForLeakDetection: [{ value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' }],
     companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
     evidence: [
       { id: 'complaint', text: 'The oven stopped heating.' },

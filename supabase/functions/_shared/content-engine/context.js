@@ -2,6 +2,7 @@ import { scrubText } from './privacy.js';
 import { cleanText } from './schemas.js';
 import { assertAiAssistantAccess } from './access.js';
 import { resolveCompanyVoiceContext } from './companyVoice.js';
+import { isMeaningfulKnownPrivateValue, normalizePrivateValue } from '../privacy/privateValues.js';
 
 export async function buildAuthorizedContext({ request, session, repository }) {
   const job = await repository.getJob(request.jobId);
@@ -115,7 +116,23 @@ function unique(values) {
 
 function descriptor(value, classification) {
   const clean = String(value ?? '').trim();
-  return clean ? { value: clean, classification } : undefined;
+  return clean ? { value: clean, classification, matchMode: leakMatchMode(clean, classification) } : undefined;
+}
+
+function leakMatchMode(value, classification) {
+  if (classification === 'MONEY_NUMERIC' || classification === 'ENUM_OR_STATUS') return 'none';
+  if (classification === 'PERSON_OR_ORGANIZATION') return normalizePrivateValue(value).length >= 3 ? 'phrase' : 'none';
+  if (classification === 'FREE_TEXT_NOTE' || classification === 'FREE_TEXT_COMMENT') {
+    return isMeaningfulKnownPrivateValue(value) ? 'phrase' : 'none';
+  }
+  if (classification === 'JOB_IDENTIFIER' || classification === 'INVOICE_IDENTIFIER') {
+    const normalized = normalizePrivateValue(value);
+    if (/^\d+$/.test(normalized) && normalized.length < 6) {
+      return classification === 'JOB_IDENTIFIER' ? 'structured_job' : 'structured_invoice';
+    }
+    return normalized.length >= 4 ? 'phrase' : 'none';
+  }
+  return 'phrase';
 }
 
 function uniqueDescriptors(values) {
