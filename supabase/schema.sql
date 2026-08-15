@@ -8188,6 +8188,26 @@ create trigger company_reel_render_jobs_identity_immutable
 before update on public.company_reel_render_jobs
 for each row execute function public.protect_company_reel_render_job_identity();
 
+create or replace function public.protect_company_reel_render_job_transition()
+returns trigger
+language plpgsql
+set search_path = ''
+as $$
+begin
+  if not (
+    (old.status = 'queued' and new.status = 'rendering')
+    or (old.status = 'rendering' and new.status in ('rendering', 'completed', 'failed'))
+  ) then
+    raise exception 'Reel render job transition is invalid';
+  end if;
+  return new;
+end;
+$$;
+
+create trigger company_reel_render_jobs_transition_guard
+before update on public.company_reel_render_jobs
+for each row execute function public.protect_company_reel_render_job_transition();
+
 create index company_reel_creative_plans_job_created_idx
   on public.company_reel_creative_plans (company_id, job_id, created_at desc);
 create index company_reel_render_jobs_job_created_idx
@@ -8357,6 +8377,45 @@ begin
 end;
 $$;
 
+create or replace function public.can_manage_company_ai_assistant(target_company_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = ''
+stable
+as $$
+  select auth.uid() is not null and (
+    exists (
+      select 1
+      from public.companies company
+      where company.id = target_company_id
+        and lower(company.owner_email::text) = lower(coalesce(auth.email(), ''))
+    )
+    or exists (
+      select 1
+      from public.company_users company_user
+      left join public.company_profiles profile on profile.company_id = company_user.company_id
+      where company_user.company_id = target_company_id
+        and company_user.status = 'active'
+        and (
+          company_user.auth_user_id = auth.uid()
+          or lower(company_user.email::text) = lower(coalesce(auth.email(), ''))
+        )
+        and case
+          when profile.access_rules->>'aiAssistant' in ('full', 'readonly', 'off')
+            then profile.access_rules->>'aiAssistant'
+          else 'full'
+        end = 'full'
+        and case
+          when company_user.portal_access_rules->>'aiAssistant' in ('full', 'readonly', 'off')
+            then company_user.portal_access_rules->>'aiAssistant'
+          when company_user.role::text = 'technician' then 'off'
+          else 'full'
+        end = 'full'
+    )
+  );
+$$;
+
 create or replace function public.approve_company_reel_creative_plan(
   p_creative_plan_id uuid,
   p_expected_plan_revision text
@@ -8373,7 +8432,7 @@ begin
   select * into plan from public.company_reel_creative_plans
   where id = p_creative_plan_id for key share;
   if not found or plan.plan_revision <> p_expected_plan_revision
-    or not public.can_access_company_ai_assistant(plan.company_id) then
+    or not public.can_manage_company_ai_assistant(plan.company_id) then
     raise exception 'REEL_RENDER_PLAN_UNAVAILABLE';
   end if;
   insert into public.company_reel_creative_plan_approvals (
@@ -8412,7 +8471,7 @@ begin
   if auth.uid() is null then raise exception 'AUTH_REQUIRED'; end if;
   select * into plan from public.company_reel_creative_plans where id = p_creative_plan_id for key share;
   if not found or plan.plan_revision <> p_expected_plan_revision
-    or not public.can_access_company_ai_assistant(plan.company_id) then
+    or not public.can_manage_company_ai_assistant(plan.company_id) then
     raise exception 'REEL_RENDER_PLAN_UNAVAILABLE';
   end if;
   if not exists (
@@ -8556,6 +8615,8 @@ revoke all on function public.get_company_reel_workspace(uuid) from public, anon
 grant execute on function public.get_company_reel_workspace(uuid) to authenticated;
 revoke all on function public.approve_company_reel_creative_plan(uuid,text) from public, anon;
 grant execute on function public.approve_company_reel_creative_plan(uuid,text) to authenticated;
+revoke all on function public.can_manage_company_ai_assistant(uuid) from public, anon, authenticated;
+grant execute on function public.can_manage_company_ai_assistant(uuid) to service_role;
 revoke all on function public.begin_company_reel_render_request(uuid,text) from public, anon;
 grant execute on function public.begin_company_reel_render_request(uuid,text) to authenticated;
 revoke all on function public.claim_company_reel_render_job(uuid,integer) from public, anon, authenticated;
@@ -8568,6 +8629,7 @@ grant execute on function public.complete_company_reel_render_job(uuid,uuid,text
 grant execute on function public.fail_company_reel_render_job(uuid,uuid,text) to service_role;
 revoke all on function public.prevent_company_reel_creative_plan_update() from public, anon, authenticated;
 revoke all on function public.protect_company_reel_creative_plan_approval() from public, anon, authenticated;
+revoke all on function public.protect_company_reel_render_job_transition() from public, anon, authenticated;
 revoke all on function public.protect_company_reel_render_job_identity() from public, anon, authenticated;
 
 -- REEL_RENDER_JOBS_END
