@@ -18,6 +18,7 @@ import {
   reelSandboxVideoPath,
 } from '../server/reel-sandbox-runtime/contracts.js';
 import { createSandboxRenderAdapter } from '../server/reel-sandbox-runtime/renderer.js';
+import { createRenderTelemetry } from '../server/reel-render-jobs/telemetry.js';
 import { reauthorizeSerializedAuthority } from '../server/reel-sandbox-runner/runner.js';
 import { sandboxFixtureAssets, sandboxFixtureAuthority } from './reel-sandbox-fixture.mjs';
 
@@ -114,6 +115,12 @@ async function sandboxSuccessAndIntegrity() {
     check(() => assert.doesNotMatch(JSON.stringify(fixture.calls.files), /SUPABASE|SERVICE_ROLE|https?:\/\//i));
     await checkAsync(async () => assert.equal((await readFile(output.videoPath)).length, fixture.video.length));
     await checkAsync(async () => assert.equal((await readFile(output.coverPath)).length, fixture.cover.length));
+    check(() => assert.equal(output.videoSha256, sha256(fixture.video)));
+    check(() => assert.equal(output.coverSha256, sha256(fixture.cover)));
+    check(() => assert.equal(output.coverFileSize, fixture.cover.length));
+    check(() => assert.deepEqual(fixture.events.map((event) => event.event), [
+      'sandbox_started', 'ffmpeg_started', 'ffmpeg_completed', 'output_validated', 'cleanup_completed',
+    ]));
     await output.dispose();
   } finally {
     await fixture.dispose();
@@ -181,6 +188,7 @@ async function adapterFixture({ failure } = {}) {
   if (failure === 'missing-cover') files.delete(reelSandboxCoverPath);
   if (failure === 'run-deterministic') files.set(reelSandboxErrorPath, Buffer.from('{"code":"REEL_RENDER_INVALID_PLAN"}'));
   const calls = { create: 0, write: 0, run: 0, stop: 0 };
+  const events = [];
   const sandbox = {
     async writeFiles(value) { calls.write += 1; calls.files = value; if (failure === 'write') throw new Error('transport'); },
     async runCommand(value) {
@@ -211,6 +219,7 @@ async function adapterFixture({ failure } = {}) {
   const render = createSandboxRenderAdapter({
     image,
     createSandbox,
+    telemetry: createRenderTelemetry((event) => events.push(event), { now: () => 0 }),
     createOutputRoot: async () => {
       const root = await mkdtemp(join(tmpdir(), 'servicescope-sandbox-download-test-'));
       outputRoots.push(root);
@@ -218,6 +227,7 @@ async function adapterFixture({ failure } = {}) {
     },
   });
   return {
+    events,
     calls, render, video, cover, stagingRoot,
     input: { authorized: {}, authority: sandboxFixtureAuthority, stagedAssets, stagingRoot },
     async dispose() {

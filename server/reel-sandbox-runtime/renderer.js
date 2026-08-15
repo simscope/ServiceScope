@@ -10,6 +10,7 @@ import {
   RenderJobError,
 } from '../reel-render-jobs/contracts.js';
 import { reelRenderErrorCodes } from '../reel-renderer/errors.js';
+import { recordRenderEvent } from '../reel-render-jobs/telemetry.js';
 import {
   assertImmutableSandboxImage,
   parseSandboxResultJson,
@@ -38,11 +39,12 @@ export function createSandboxRenderAdapter({
   image,
   createSandbox,
   createOutputRoot = () => mkdtemp(join(tmpdir(), 'servicescope-reel-sandbox-output-')),
+  telemetry,
 }) {
   const immutableImage = assertImmutableSandboxImage(image);
   if (typeof createSandbox !== 'function') throw serviceUnavailable();
 
-  return async function renderInSandbox({ authorized, authority, stagedAssets, stagingRoot }) {
+  return async function renderInSandbox({ authorized, authority, stagedAssets, stagingRoot, telemetryContext = {} }) {
     if (!authorized || typeof authorized !== 'object') throw new RenderJobError('REEL_RENDER_UNAUTHORIZED', 403);
     const transfer = await buildTransfer(authority, stagedAssets, stagingRoot);
     let sandbox;
@@ -57,7 +59,9 @@ export function createSandboxRenderAdapter({
         timeout: reelSandboxSessionTimeoutMs,
         networkPolicy: 'deny-all',
       });
+      recordRenderEvent(telemetry, 'sandbox_started', telemetryContext);
       await sandbox.writeFiles(transfer.files);
+      recordRenderEvent(telemetry, 'ffmpeg_started', telemetryContext);
       const command = await sandbox.runCommand({
         cmd: '/usr/local/bin/node',
         args: [reelSandboxRunnerPath],
@@ -66,6 +70,7 @@ export function createSandboxRenderAdapter({
       });
       outputRoot = await createOutputRoot();
       if (command.exitCode !== 0) throw await runnerFailure(sandbox, outputRoot);
+      recordRenderEvent(telemetry, 'ffmpeg_completed', telemetryContext);
 
       const resultPath = join(outputRoot, 'result.json');
       const videoPath = join(outputRoot, 'reel.mp4');
@@ -76,12 +81,13 @@ export function createSandboxRenderAdapter({
       await downloadRequired(sandbox, reelSandboxVideoPath, videoPath);
       await downloadRequired(sandbox, reelSandboxCoverPath, coverPath);
       const videoSize = await assertFileSize(videoPath, 20_000, reelSandboxVideoMaxBytes);
-      await assertFileSize(coverPath, 1, reelSandboxCoverMaxBytes);
+      const coverSize = await assertFileSize(coverPath, 1, reelSandboxCoverMaxBytes);
       if (videoSize !== result.fileSize
         || await sha256File(videoPath) !== result.videoSha256
         || await sha256File(coverPath) !== result.coverSha256) {
         throw new RenderJobError('REEL_RENDER_OUTPUT_INVALID', 400);
       }
+      recordRenderEvent(telemetry, 'output_validated', telemetryContext);
       succeeded = true;
       return {
         videoPath,
@@ -94,6 +100,9 @@ export function createSandboxRenderAdapter({
         pixelFormat: result.pixelFormat,
         audioStreams: result.audioStreams,
         fileSize: result.fileSize,
+        coverFileSize: coverSize,
+        videoSha256: result.videoSha256,
+        coverSha256: result.coverSha256,
         faststart: result.faststart,
         async dispose() {
           await rm(outputRoot, { recursive: true, force: true });
@@ -101,6 +110,11 @@ export function createSandboxRenderAdapter({
       };
     } catch (error) {
       operationError = mapSandboxError(error);
+      const code = operationError.code ?? 'REEL_RENDER_SERVICE_UNAVAILABLE';
+      if (code === 'REEL_RENDER_TIMEOUT') recordRenderEvent(telemetry, 'render_timeout', { ...telemetryContext, code });
+      else if (code === 'REEL_RENDER_OUTPUT_INVALID') recordRenderEvent(telemetry, 'output_rejected', { ...telemetryContext, code });
+      else if (sandbox) recordRenderEvent(telemetry, 'ffmpeg_failed', { ...telemetryContext, code });
+      else recordRenderEvent(telemetry, 'sandbox_failed', { ...telemetryContext, code });
       throw operationError;
     } finally {
       if (sandbox) {
@@ -114,6 +128,7 @@ export function createSandboxRenderAdapter({
         }
       }
       if (!succeeded && outputRoot) await rm(outputRoot, { recursive: true, force: true });
+      recordRenderEvent(telemetry, 'cleanup_completed', telemetryContext);
     }
   };
 }

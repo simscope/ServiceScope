@@ -24,6 +24,7 @@ export const safeRenderErrorCodes = Object.freeze([
   'REEL_RENDER_INVALID_PLAN', 'REEL_RENDER_UNAUTHORIZED', 'REEL_RENDER_AUDIO_UNSUPPORTED',
   'REEL_RENDER_MEDIA_INVALID', 'REEL_RENDER_MEDIA_MISSING', 'REEL_RENDER_TEXT_OVERFLOW',
   'REEL_RENDER_TIMEOUT', 'REEL_RENDER_FAILED', 'REEL_RENDER_OUTPUT_INVALID', 'REEL_RENDER_CONTEXT_STALE',
+  'REEL_PRIVACY_FAILED',
 ]);
 
 export function parseRenderRequest(value) {
@@ -51,6 +52,7 @@ export function renderMessage(renderJobId) {
 
 export function normalizeRenderError(error) {
   const message = error instanceof Error ? error.message : String(error ?? '');
+  if (message.includes('REEL_PRIVACY_FAILED')) return 'REEL_PRIVACY_FAILED';
   if (/REEL_(?:ANALYSIS|PRIVACY|GROUNDING|QUALITY|MEDIA_UNAVAILABLE)/.test(message)) return 'REEL_RENDER_CONTEXT_STALE';
   return safeRenderErrorCodes.find((code) => message.includes(code)) ?? 'REEL_RENDER_FAILED';
 }

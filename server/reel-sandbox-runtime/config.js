@@ -3,7 +3,7 @@ import { RenderJobError } from '../reel-render-jobs/contracts.js';
 import { createSandboxRenderAdapter } from './renderer.js';
 import { assertImmutableSandboxImage } from './contracts.js';
 
-export function createProductionReelRenderer(env, { createSandbox = (options) => Sandbox.create(options) } = {}) {
+export function createProductionReelRenderer(env, { createSandbox = (options) => Sandbox.create(options), telemetry } = {}) {
   if (env?.REEL_RENDER_RUNTIME !== 'sandbox') {
     throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
   }
@@ -13,5 +13,5 @@ export function createProductionReelRenderer(env, { createSandbox = (options) =>
   } catch {
     throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
   }
-  return createSandboxRenderAdapter({ image, createSandbox });
+  return createSandboxRenderAdapter({ image, createSandbox, telemetry });
 }

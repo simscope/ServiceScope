@@ -5,12 +5,15 @@ import { createRenderRepository } from '../../server/reel-render-jobs/repository
 import { createRenderWorker } from '../../server/reel-render-jobs/worker.js';
 import { createProductionReelRenderer } from '../../server/reel-sandbox-runtime/config.js';
 import { createSupabaseHttpClient } from '../../server/reel-render-jobs/supabaseHttp.js';
+import { createRenderTelemetry } from '../../server/reel-render-jobs/telemetry.js';
 
 let worker;
+const telemetry = createRenderTelemetry();
 const loadWorker = () => {
   worker ??= createRenderWorker({
     repository: createRenderRepository(createSupabaseHttpClient()),
-    render: createProductionReelRenderer(process.env),
+    render: createProductionReelRenderer(process.env, { telemetry }),
+    telemetry,
   });
   return worker;
 };

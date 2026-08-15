@@ -48,7 +48,10 @@ export function createRenderRepository(client) {
         p_output_bucket: paths.bucket, p_video_object_path: paths.video, p_cover_object_path: paths.cover,
         p_duration_ms: metadata.durationMs, p_width: metadata.width, p_height: metadata.height, p_fps: metadata.fps,
         p_video_codec: metadata.videoCodec, p_pixel_format: metadata.pixelFormat,
-        p_audio_streams: metadata.audioStreams, p_file_size: metadata.fileSize, p_faststart: metadata.faststart,
+        p_audio_streams: metadata.audioStreams, p_file_size: metadata.fileSize,
+        p_cover_file_size: metadata.coverFileSize,
+        p_video_sha256: metadata.videoSha256, p_cover_sha256: metadata.coverSha256,
+        p_faststart: metadata.faststart,
       });
     },
     fail(renderJobId, leaseToken, errorCode) {

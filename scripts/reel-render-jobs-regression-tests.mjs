@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createArtifactHandler } from '../server/reel-render-jobs/artifacts.js';
+import { createReelApprovalHandler } from '../server/reel-render-jobs/approval.js';
 import {
   reelDispatchMaxAttempts,
   reelQueueDisabledRetryDelaySeconds,
@@ -25,6 +26,7 @@ import { createReelQueueConsumer, reelQueueRetry } from '../server/reel-render-j
 import { createRenderRepository } from '../server/reel-render-jobs/repository.js';
 import { createSupabaseHttpClient } from '../server/reel-render-jobs/supabaseHttp.js';
 import { createRenderWorker } from '../server/reel-render-jobs/worker.js';
+import { createRenderTelemetry } from '../server/reel-render-jobs/telemetry.js';
 import { REEL_DISPATCH_RECOVERY_INTERVAL_MS, shouldRecoverReelDispatch } from '../src/features/reel-render-jobs/dispatchRecovery.js';
 import {
   idleReelRender,
@@ -82,6 +84,40 @@ function producerFixture({ enabled = true, status = 'queued', rpcError, publishF
 
 const validBody = { creativePlanId, expectedPlanRevision: revision };
 {
+  const calls = { auth: 0, rpc: 0 };
+  const handler = createReelApprovalHandler({
+    client: {
+      async authenticate(value) {
+        calls.auth += 1;
+        if (value !== 'Bearer user-token') throw new RenderJobError('AUTH_REQUIRED', 401);
+        return { token: 'user-token' };
+      },
+      async userRpc(name, body, token) {
+        calls.rpc += 1;
+        check(() => assert.equal(name, 'approve_company_reel_creative_plan'));
+        check(() => assert.deepEqual(body, { p_creative_plan_id: creativePlanId, p_expected_plan_revision: revision }));
+        check(() => assert.equal(token, 'user-token'));
+        return [{ creative_plan_id: creativePlanId, plan_revision: revision }];
+      },
+    },
+  });
+  const response = await handler(request(validBody));
+  const responseBody = await response.json();
+  check(() => assert.equal(response.status, 200));
+  check(() => assert.deepEqual(responseBody, { creativePlanId, planRevision: revision, approved: true }));
+  check(() => assert.deepEqual(calls, { auth: 1, rpc: 1 }));
+}
+{
+  const handler = createReelApprovalHandler({ client: {
+    authenticate: async () => ({ token: 'user-token' }),
+    userRpc: async () => { throw new RenderJobError('REEL_RENDER_PLAN_UNAVAILABLE', 409); },
+  } });
+  const response = await handler(request(validBody));
+  const responseBody = await response.json();
+  check(() => assert.equal(response.status, 409));
+  check(() => assert.deepEqual(responseBody, { code: 'REEL_RENDER_PLAN_UNAVAILABLE' }));
+}
+{
   const { handler, calls } = producerFixture();
   const response = await handler(request(validBody, { method: 'GET' }));
   check(() => assert.equal(response.status, 405));
@@ -105,13 +141,25 @@ for (const invalid of [
   check(() => assert.equal(calls.publish.length, 0));
 }
 {
-  const { handler, calls } = producerFixture({ enabled: false });
+  const events = [];
+  const fixture = producerFixture({ enabled: false });
+  const handler = createRenderRequestHandler({
+    client: {
+      authenticate: async () => ({ token: 'user-token' }),
+      userRpc: async () => { throw new Error('must not run'); },
+    },
+    enabled: () => false,
+    publish: async () => { throw new Error('must not run'); },
+    telemetry: createRenderTelemetry((event) => events.push(event), { now: () => 0 }),
+  });
   const response = await handler(request(validBody));
   const responseBody = await response.json();
   check(() => assert.equal(response.status, 503));
   check(() => assert.deepEqual(responseBody, { code: 'REEL_RENDER_NOT_CONFIGURED' }));
-  check(() => assert.equal(calls.rpc, 0));
-  check(() => assert.equal(calls.publish.length, 0));
+  check(() => assert.equal(fixture.calls.rpc, 0));
+  check(() => assert.equal(fixture.calls.publish.length, 0));
+  check(() => assert.deepEqual(events.map((event) => event.event), ['render_requested', 'render_blocked_feature_flag']));
+  check(() => assert.doesNotMatch(JSON.stringify(events), /user-token|creativePlanId|expectedPlanRevision/));
 }
 {
   const { handler, calls } = producerFixture();
@@ -496,7 +544,7 @@ for (const contentLength of [undefined, '5000000']) {
 }
 
 function workerFixture(overrides = {}) {
-  const calls = { claim: 0, load: 0, authorize: 0, staging: 0, render: 0, uploads: [], complete: 0, fail: [], release: 0, disposed: 0 };
+  const calls = { claim: 0, load: 0, authorize: 0, staging: 0, render: 0, uploads: [], complete: 0, completeMetadata: null, fail: [], release: 0, disposed: 0 };
   const claim = {
     id: renderJobId,
     company_id: companyId,
@@ -522,8 +570,9 @@ function workerFixture(overrides = {}) {
       calls.uploads.push({ bucket, path, bytes: bytes.length, mime });
       if (overrides.uploadErrorAt === calls.uploads.length) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
     },
-    async complete() {
+    async complete(_id, _token, _paths, metadata) {
       calls.complete += 1;
+      calls.completeMetadata = metadata;
       if (overrides.completeError && calls.complete <= overrides.completeError) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
       return [{ status: 'completed' }];
     },
@@ -562,7 +611,7 @@ function workerFixture(overrides = {}) {
     calls.staging += 1;
     return mkdtemp(join(tmpdir(), 'servicescope-reel-stage-test-'));
   };
-  return { calls, worker: createRenderWorker({ repository, authorize, render, createStagingRoot }) };
+  return { calls, worker: createRenderWorker({ repository, authorize, render, createStagingRoot, telemetry: overrides.telemetry }) };
 }
 
 const queueMessage = { schemaVersion: reelRenderMessageSchema, renderJobId };
@@ -576,6 +625,9 @@ const queueMessage = { schemaVersion: reelRenderMessageSchema, renderJobId };
   check(() => assert.equal(calls.render, 1));
   check(() => assert.equal(calls.complete, 1));
   check(() => assert.equal(calls.disposed, 1));
+  check(() => assert.equal(calls.completeMetadata.videoSha256, createHash('sha256').update('video').digest('hex')));
+  check(() => assert.equal(calls.completeMetadata.coverSha256, createHash('sha256').update('cover').digest('hex')));
+  check(() => assert.equal(calls.completeMetadata.coverFileSize, 5));
   check(() => assert.deepEqual(calls.uploads.map(({ path, mime }) => [path, mime]), [
     [`${companyId}/${renderJobId}/reel.mp4`, 'video/mp4'],
     [`${companyId}/${renderJobId}/cover.jpg`, 'image/jpeg'],
@@ -630,12 +682,22 @@ for (const [loadError, authorizeError] of [
   [new Error('REEL_RENDER_MEDIA_MISSING'), null],
   [null, new Error('REEL_PRIVACY_FAILED')],
 ]) {
-  const { worker, calls } = workerFixture({ loadError, authorizeError });
+  const events = [];
+  const { worker, calls } = workerFixture({
+    loadError,
+    authorizeError,
+    telemetry: createRenderTelemetry((event) => events.push(event), { now: () => 0 }),
+  });
   const result = await worker(queueMessage);
   check(() => assert.equal(result.status, 'failed'));
   check(() => assert.equal(calls.render, 0));
   check(() => assert.equal(calls.fail.length, 1));
   check(() => assert.equal(calls.release, 0));
+  if (String(loadError ?? authorizeError).includes('REEL_PRIVACY_FAILED')) {
+    check(() => assert.deepEqual(calls.fail, ['REEL_PRIVACY_FAILED']));
+    check(() => assert.equal(events.some((event) => event.event === 'render_blocked_privacy'), true));
+    check(() => assert.equal(events.some((event) => event.event === 'sandbox_started' || event.event === 'ffmpeg_started'), false));
+  }
 }
 for (const uploadErrorAt of [1, 2]) {
   const { worker, calls } = workerFixture({ uploadErrorAt });

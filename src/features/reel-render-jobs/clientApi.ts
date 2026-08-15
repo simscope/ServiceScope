@@ -13,6 +13,13 @@ export async function beginReelRender(creativePlanId: string, expectedPlanRevisi
   );
 }
 
+export async function approveReelPlan(creativePlanId: string, expectedPlanRevision: string) {
+  return serverRequest<{ creativePlanId: string; planRevision: string; approved: true }>(
+    '/api/reel-plan-approve',
+    { creativePlanId, expectedPlanRevision },
+  );
+}
+
 export async function loadReelArtifacts(renderJobId: string) {
   return serverRequest<{ videoUrl: string; coverUrl: string; expiresAt: string }>(
     '/api/reel-render-artifacts',

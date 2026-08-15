@@ -78,6 +78,7 @@ import {
 } from '../../features/reel-director/reelState';
 import { ReelPreview } from './ReelPreview';
 import {
+  approveReelPlan,
   beginReelRender,
   loadPersistedReelWorkspace,
   loadReelArtifacts,
@@ -579,7 +580,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
     const revision = reelWorkspace.plan?.revision;
     const identity = reelPlanIdentity(creativePlanId, revision);
     const startedScope = { ...reelPlanScopeRef.current };
-    if (!creativePlanId || !revision || !sameReelPlanIdentity(startedScope, identity) || ['queued', 'rendering'].includes(activeReelRender.status)) return;
+    if (!creativePlanId || !revision || !reelApproved || !sameReelPlanIdentity(startedScope, identity) || ['queued', 'rendering'].includes(activeReelRender.status)) return;
     try {
       const result = await beginReelRender(creativePlanId, revision);
       if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
@@ -597,6 +598,26 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
         }
       }
       setReelRender({ ...identity, status: code === 'REEL_RENDER_NOT_CONFIGURED' ? 'not_configured' : 'failed', errorCode: code });
+    }
+  }
+
+  async function approveReelForRendering() {
+    const creativePlanId = reelWorkspace.creativePlanId ?? reelWorkspace.plan?.creativePlanId;
+    const revision = reelWorkspace.plan?.revision;
+    const identity = reelPlanIdentity(creativePlanId, revision);
+    const startedScope = { ...reelPlanScopeRef.current };
+    if (!creativePlanId || !revision || !sameReelPlanIdentity(startedScope, identity)) return;
+    try {
+      await approveReelPlan(creativePlanId, revision);
+      if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
+      setReelWorkspace((current) => approveCurrentReel(current, currentReelInputRevision));
+    } catch (error) {
+      if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
+      setReelWorkspace((current) => ({
+        ...current,
+        approvedRevision: undefined,
+        error: renderErrorMessage(error instanceof Error ? error.message : 'REEL_RENDER_FAILED'),
+      }));
     }
   }
 
@@ -950,7 +971,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                     <button
                       className={reelApproved ? 'secondary-button ai-reel-approved' : 'primary-button'}
                       type="button"
-                      onClick={() => setReelWorkspace((current) => approveCurrentReel(current, currentReelInputRevision))}
+                      onClick={approveReelForRendering}
                       disabled={reelApproved}
                     >
                       <CheckCircle2 size={18} aria-hidden="true" />
@@ -958,7 +979,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                     </button>
                     {reelWorkspace.creativePlanId || reelWorkspace.plan.creativePlanId ? (
                       <div className="ai-reel-render-actions">
-                        <button className="primary-button" type="button" onClick={createMp4} disabled={['queued', 'rendering', 'completed', 'failed'].includes(activeReelRender.status)}>
+                        <button className="primary-button" type="button" onClick={createMp4} disabled={!reelApproved || ['queued', 'rendering', 'completed', 'failed'].includes(activeReelRender.status)}>
                           <Video size={18} aria-hidden="true" />
                           {activeReelRender.status === 'queued' ? 'Queued' : activeReelRender.status === 'rendering' ? 'Rendering' : activeReelRender.status === 'completed' ? 'MP4 ready' : activeReelRender.status === 'failed' ? 'MP4 failed' : 'Create MP4'}
                         </button>

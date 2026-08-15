@@ -24,7 +24,11 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
     } catch {
       throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
     }
-    if (!response.ok) throw new RenderJobError(response.status === 401 ? 'AUTH_REQUIRED' : 'REEL_RENDER_SERVICE_UNAVAILABLE', response.status);
+    if (!response.ok) {
+      const safeCode = await safeSupabaseErrorCode(response);
+      if (safeCode) throw new RenderJobError(safeCode, safeCode === 'AUTH_REQUIRED' ? 401 : 409);
+      throw new RenderJobError(response.status === 401 ? 'AUTH_REQUIRED' : 'REEL_RENDER_SERVICE_UNAVAILABLE', response.status);
+    }
     return response;
   }
 
@@ -106,6 +110,22 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
       return { signedURL: typeof signed === 'string' && signed.startsWith('/') ? `${url}${signed}` : signed };
     },
   };
+}
+
+const exposedDatabaseErrors = new Set([
+  'AUTH_REQUIRED',
+  'REEL_RENDER_PLAN_UNAVAILABLE',
+  'REEL_RENDER_APPROVAL_REQUIRED',
+  'REEL_RENDER_APPROVAL_CONFLICT',
+]);
+
+async function safeSupabaseErrorCode(response) {
+  try {
+    const payload = await response.clone().json();
+    return exposedDatabaseErrors.has(payload?.message) ? payload.message : null;
+  } catch {
+    return null;
+  }
 }
 
 function objectPath(value) {
