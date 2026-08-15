@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -13,23 +14,27 @@ import {
   reelRendererVersion,
   RenderJobError,
 } from './contracts.js';
+import { recordRenderEvent } from './telemetry.js';
 
 export function createRenderWorker({
   repository,
   authorize = authorizeReelForRender,
   render = renderAuthorizedReel,
   createStagingRoot = () => mkdtemp(join(tmpdir(), 'servicescope-reel-stage-')),
+  telemetry,
 }) {
   return async function process(message) {
     const { renderJobId } = parseRenderMessage(message);
     const claim = await repository.claim(renderJobId);
     if (!claim) {
+      recordRenderEvent(telemetry, 'claim_rejected', { renderJobId });
       const status = await repository.status(renderJobId);
       if (status === 'completed' || status === 'failed' || status === null) {
         return { status: status ?? 'missing', rendered: false };
       }
       throw new RenderJobError('REEL_RENDER_BUSY', 409);
     }
+    recordRenderEvent(telemetry, 'claim_acquired', { renderJobId, attempt: claim.attempt_count });
     if (claim.renderer_version !== reelRendererVersion) {
       return failRendererVersionMismatch(repository, claim);
     }
@@ -52,19 +57,35 @@ export function createRenderWorker({
         authority: { plan: authority.plan, context: authority.context },
         stagedAssets,
         stagingRoot,
+        telemetryContext: { renderJobId },
       });
       const paths = {
         bucket: reelRenderBucket,
         video: `${claim.company_id}/${claim.id}/reel.mp4`,
         cover: `${claim.company_id}/${claim.id}/cover.jpg`,
       };
-      await repository.upload(paths.bucket, paths.video, await readFile(output.videoPath), 'video/mp4');
-      await repository.upload(paths.bucket, paths.cover, await readFile(output.coverPath), 'image/jpeg');
-      const completed = await repository.complete(claim.id, claim.lease_token, paths, output);
+      const videoBytes = await readFile(output.videoPath);
+      const coverBytes = await readFile(output.coverPath);
+      if (videoBytes.byteLength !== output.fileSize || coverBytes.byteLength < 1) {
+        throw new RenderJobError('REEL_RENDER_OUTPUT_INVALID', 400);
+      }
+      const integrity = {
+        ...output,
+        coverFileSize: coverBytes.byteLength,
+        videoSha256: sha256(videoBytes),
+        coverSha256: sha256(coverBytes),
+      };
+      await repository.upload(paths.bucket, paths.video, videoBytes, 'video/mp4');
+      await repository.upload(paths.bucket, paths.cover, coverBytes, 'image/jpeg');
+      const completed = await repository.complete(claim.id, claim.lease_token, paths, integrity);
       if (!Array.isArray(completed) || completed.length !== 1) throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+      recordRenderEvent(telemetry, 'render_completed', { renderJobId });
       return { status: 'completed', rendered: true };
     } catch (error) {
       const code = normalizeRenderError(error);
+      if (String(error).includes('REEL_PRIVACY_FAILED')) {
+        recordRenderEvent(telemetry, 'render_blocked_privacy', { renderJobId, code: 'REEL_PRIVACY_FAILED' });
+      }
       if (retryable(error)) return await retryOrFail(repository, claim);
       try {
         const failed = await repository.fail(claim.id, claim.lease_token, code);
@@ -76,8 +97,13 @@ export function createRenderWorker({
     } finally {
       if (output) await output.dispose().catch(() => {});
       if (stagingRoot) await rm(stagingRoot, { recursive: true, force: true });
+      recordRenderEvent(telemetry, 'cleanup_completed', { renderJobId });
     }
   };
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
 }
 
 async function failRendererVersionMismatch(repository, claim) {

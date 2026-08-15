@@ -5,8 +5,9 @@ import {
   renderMessage,
   RenderJobError,
 } from './contracts.js';
+import { recordRenderEvent } from './telemetry.js';
 
-export function createRenderRequestHandler({ client, publish, enabled }) {
+export function createRenderRequestHandler({ client, publish, enabled, telemetry }) {
   return async function handle(request) {
     try {
       if (request.method !== 'POST') return json({ code: 'METHOD_NOT_ALLOWED' }, 405);
@@ -17,7 +18,11 @@ export function createRenderRequestHandler({ client, publish, enabled }) {
       const raw = await request.text();
       if (new TextEncoder().encode(raw).byteLength > reelRenderRequestMaxBytes) throw new RenderJobError('INVALID_REQUEST', 400);
       const input = parseJson(raw);
-      if (!enabled()) throw new RenderJobError('REEL_RENDER_NOT_CONFIGURED', 503);
+      recordRenderEvent(telemetry, 'render_requested');
+      if (!enabled()) {
+        recordRenderEvent(telemetry, 'render_blocked_feature_flag', { code: 'REEL_RENDER_NOT_CONFIGURED' });
+        throw new RenderJobError('REEL_RENDER_NOT_CONFIGURED', 503);
+      }
       const rows = await client.userRpc('begin_company_reel_render_request', {
         p_creative_plan_id: input.creativePlanId,
         p_expected_plan_revision: input.expectedPlanRevision,
