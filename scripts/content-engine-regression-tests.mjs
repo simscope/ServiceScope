@@ -4,6 +4,8 @@ import { createMemoryGuards } from '../supabase/functions/_shared/content-engine
 import { createOpenAiProvider, createProviderFromEnv, extractResponsesOutputText, mapOpenAiError, preflightOpenAiCredentials } from '../supabase/functions/_shared/content-engine/providers/openai.js';
 import { buildProviderOutputJsonSchema, buildProviderOutputResponseFormat, getProviderOutputSchemaName, parseProviderResult, validateProviderPayloadShape, validateRequestBody } from '../supabase/functions/_shared/content-engine/schemas.js';
 import { buildPrompt } from '../supabase/functions/_shared/content-engine/prompts.js';
+import { buildPrivateValues, buildPrivateValuesForLeakDetection } from '../supabase/functions/_shared/content-engine/context.js';
+import { assertNoPrivateValues, scrubText } from '../supabase/functions/_shared/content-engine/privacy.js';
 
 const assert = {
   equal(actual, expected, message = `Expected ${actual} to equal ${expected}`) {
@@ -88,6 +90,39 @@ const baseJob = {
   customer_id: 'customer-1',
   customer_location_id: 'location-1',
 };
+
+const typedPrivacySource = {
+  job: { ...baseJob, job_number: '248', notes: 'Customer requests access through rear loading entrance', service_call_fee_cents: 12000 },
+  customer: { organization: 'Private Customer LLC', primary_name: 'Ann', primary_email: 'ann@example.test', primary_phone: '(212) 555-0199', notes: 'open' },
+  location: { address: '123 Market Street' },
+  invoices: [
+    { invoice_number: 'INV-2026-00123', amount_cents: 12000, status: 'paid' },
+    { invoice_number: 'ABC123', amount_cents: 12000, status: 'paid' },
+  ],
+  comments: [{ message: 'Customer requests access through rear loading entrance' }, { message: 'open' }],
+};
+const fullPrivateValues = buildPrivateValues(typedPrivacySource);
+const typedPrivateValues = buildPrivateValuesForLeakDetection(typedPrivacySource);
+assert.match(scrubText('The invoice status is paid and the note says open.', fullPrivateValues), /\[private\]/);
+for (const safeText of [
+  'Open the access panel.',
+  'Paid maintenance plans are available.',
+  'The system is rated for 2480 BTU.',
+  'Reference measurement 9120009 is unrelated.',
+  'Annual service keeps equipment ready.',
+  'ABC1234 remains a different identifier.',
+]) assertNoPrivateValues(safeText, typedPrivateValues);
+for (const unsafeText of [
+  'Email ann@example.test for details.',
+  'Call 212.555.0199 today.',
+  'Visit 123 Market Street.',
+  'Private Customer LLC requested service.',
+  'Ann requested service.',
+  'Invoice INV-2026-00123 is ready.',
+  'Identifier ABC123 is private.',
+  'Customer requests access through rear loading entrance.',
+  'Job #248 is complete.',
+]) assert.throws(() => assertNoPrivateValues(unsafeText, typedPrivateValues), /PRIVACY_FAILED/);
 const validated = validateRequestBody(basePayload);
 assert.equal(validated.locale, 'en-US');
 assert.equal(validated.localFacts.diagnosis, 'Confirmed airflow issue.');
@@ -186,6 +221,7 @@ assert.equal(providerCalls, 1);
 assert.equal(result.provider, 'mock-provider');
 assert.equal(result.safety.ok, true);
 assert.equal(telemetryEvents.length, 1);
+assert.equal(telemetryEvents[0].attempts, 1);
 assert.doesNotMatch(JSON.stringify(telemetryEvents[0]), /Jane Customer|123 Market|Cooling issue reported|<evidence-data>/);
 
 const malformed = await handleContentGeneration(makeDependencies({
@@ -205,6 +241,46 @@ const leaking = await handleContentGeneration(makeDependencies({
 assert.equal(leaking.provider, 'deterministic-fallback');
 assert.match(leaking.warnings.map((warning) => warning.code).join(','), /PRIVACY_FAILED/);
 
+let lowEntropyProviderCalls = 0;
+const lowEntropyResult = await handleContentGeneration(makeDependencies({
+  job: { ...baseJob, job_number: '248', service_call_fee_cents: 12000 },
+  invoices: [{ invoice_number: 'INV-2026-00123', amount_cents: 12000, status: 'paid' }],
+  comments: [{ message: 'open' }],
+  provider: {
+    id: 'mock-provider',
+    async generate(providerRequest) {
+      lowEntropyProviderCalls += 1;
+      return providerResult(providerRequest.channel, [{ text: 'cooling issue', evidenceIds: ['complaint'] }], {
+        body: 'Paid maintenance plans are available. Open access supports equipment rated for 2480 BTU with reference 9120009.',
+      });
+    },
+  },
+}));
+assert.equal(lowEntropyProviderCalls, 1);
+assert.equal(lowEntropyResult.provider, 'mock-provider');
+
+let providerInputLeakCalls = 0;
+const providerInputTelemetry = [];
+const providerInputLeak = await handleContentGeneration(makeDependencies({
+  companyVoiceSettings: {
+    ai_voice_enabled: true,
+    ai_public_display_name: 'Jane Customer',
+    ai_default_tone: 'Professional',
+    ai_custom_voice_guidance: '',
+    ai_service_areas: [],
+    ai_public_location_wording: '',
+    ai_cta_guidance: '',
+    ai_hashtag_guidance: [],
+    ai_channel_defaults: {},
+  },
+  provider: { id: 'mock-provider', async generate() { providerInputLeakCalls += 1; } },
+  telemetry: { record: (event) => providerInputTelemetry.push(event) },
+}));
+assert.equal(providerInputLeakCalls, 0);
+assert.equal(providerInputLeak.provider, 'deterministic-fallback');
+assert.match(providerInputLeak.warnings.map((warning) => warning.code).join(','), /PRIVACY_FAILED/);
+assert.equal(providerInputTelemetry[0].attempts, 0);
+
 const unknownEvidence = await handleContentGeneration(makeDependencies({
   provider: {
     id: 'mock-provider',
@@ -217,6 +293,7 @@ assert.equal(unknownEvidence.provider, 'deterministic-fallback');
 assert.match(unknownEvidence.warnings.map((warning) => warning.code).join(','), /GROUNDING_FAILED/);
 
 let retryCalls = 0;
+const retryTelemetry = [];
 const retried = await handleContentGeneration(makeDependencies({
   provider: {
     id: 'mock-provider',
@@ -227,9 +304,11 @@ const retried = await handleContentGeneration(makeDependencies({
     },
   },
   config: { maxAttempts: 2 },
+  telemetry: { record: (event) => retryTelemetry.push(event) },
 }));
 assert.equal(retryCalls, 2);
 assert.equal(retried.provider, 'mock-provider');
+assert.equal(retryTelemetry[0].attempts, 2);
 
 let nonRetryCalls = 0;
 const nonRetry = await handleContentGeneration(makeDependencies({
@@ -414,12 +493,13 @@ function makeDependencies(overrides = {}) {
       async getJob() { return job; },
       async getCompany() { return company; },
       async getCompanyUser() { return companyUser; },
-      async getCustomer() { return { organization: 'Private Org', primary_name: 'Jane Customer', primary_email: 'jane@example.test', primary_phone: '555-1234', notes: 'VIP' }; },
-      async getLocation() { return { address: '123 Market Street' }; },
+      async getCompanyVoiceSettings() { return overrides.companyVoiceSettings ?? null; },
+      async getCustomer() { return overrides.customer ?? { organization: 'Private Org', primary_name: 'Jane Customer', primary_email: 'jane@example.test', primary_phone: '555-1234', notes: 'VIP' }; },
+      async getLocation() { return overrides.location ?? { address: '123 Market Street' }; },
       async listMaterials(companyId, jobId) { return [{ id: 'mat-1', company_id: companyId, job_id: jobId, name: 'Door gasket', status: 'Installed' }]; },
       async listAttachments(companyId, jobId) { return [{ id: 'photo-1', company_id: companyId, job_id: jobId, kind: 'photo', mime_type: 'image/jpeg' }]; },
-      async listInvoices() { return [{ invoice_number: 'INV-1', amount_cents: 25000, status: 'open' }]; },
-      async listComments() { return [{ message: 'Private comment' }]; },
+      async listInvoices() { return overrides.invoices ?? [{ invoice_number: 'INV-1', amount_cents: 25000, status: 'open' }]; },
+      async listComments() { return overrides.comments ?? [{ message: 'Private comment' }]; },
     },
     provider: overrides.provider ?? {
       id: 'mock-provider',
@@ -504,7 +584,11 @@ function makeContext({ request }) {
     actorId: 'user-1',
     status: 'Completed',
     missingInformation: [],
-    privateValues: ['Jane Customer', '123 Market Street'],
+    privateValuesForInputScrubbing: ['Jane Customer', '123 Market Street'],
+    privateValuesForLeakDetection: [
+      { value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' },
+      { value: '123 Market Street', classification: 'STRUCTURED_ADDRESS', matchMode: 'phrase' },
+    ],
     evidence: [
       { id: 'diagnosis', label: 'Diagnosis', text: request.localFacts.diagnosis, source: 'Technician-entered fact' },
       { id: 'repair-performed', label: 'Repair performed', text: request.localFacts.repairPerformed, source: 'Technician-entered fact' },

@@ -2,6 +2,7 @@ import { scrubText } from './privacy.js';
 import { cleanText } from './schemas.js';
 import { assertAiAssistantAccess } from './access.js';
 import { resolveCompanyVoiceContext } from './companyVoice.js';
+import { isMeaningfulKnownPrivateValue, normalizePrivateValue } from '../privacy/privateValues.js';
 
 export async function buildAuthorizedContext({ request, session, repository }) {
   const job = await repository.getJob(request.jobId);
@@ -21,17 +22,19 @@ export async function buildAuthorizedContext({ request, session, repository }) {
     repository.listInvoices(company.id, job.id),
     repository.listComments(company.id, job.id),
   ]);
-  const privateValues = buildPrivateValues({ job, customer, location, invoices, comments });
+  const privateSource = { job, customer, location, invoices, comments };
+  const privateValuesForInputScrubbing = buildPrivateValues(privateSource);
+  const privateValuesForLeakDetection = buildPrivateValuesForLeakDetection(privateSource);
   const mediaStateById = new Map(request.mediaState.map((item) => [item.id, item]));
   const evidence = [
-    claim('system-equipment', 'System/equipment', job.system, 'Job issue', privateValues),
-    claim('complaint', 'Complaint/issue', job.issue, 'Job issue', privateValues),
-    claim('diagnosis', 'Diagnosis', request.localFacts.diagnosis, 'Technician-entered fact', privateValues),
-    claim('repair-performed', 'Repair performed', request.localFacts.repairPerformed, 'Technician-entered fact', privateValues),
+    claim('system-equipment', 'System/equipment', job.system, 'Job issue', privateValuesForInputScrubbing),
+    claim('complaint', 'Complaint/issue', job.issue, 'Job issue', privateValuesForInputScrubbing),
+    claim('diagnosis', 'Diagnosis', request.localFacts.diagnosis, 'Technician-entered fact', privateValuesForInputScrubbing),
+    claim('repair-performed', 'Repair performed', request.localFacts.repairPerformed, 'Technician-entered fact', privateValuesForInputScrubbing),
     ...(materials ?? [])
       .filter((material) => String(material.company_id) === String(company.id) && String(material.job_id) === String(job.id) && material.status === 'Installed')
-      .map((material, index) => claim(`installed-material-${index}`, 'Installed material', material.name, 'Installed material', privateValues)),
-    claim('final-result', 'Final result', request.localFacts.finalResult, 'Technician-entered fact', privateValues),
+      .map((material, index) => claim(`installed-material-${index}`, 'Installed material', material.name, 'Installed material', privateValuesForInputScrubbing)),
+    claim('final-result', 'Final result', request.localFacts.finalResult, 'Technician-entered fact', privateValuesForInputScrubbing),
     ...(attachments ?? [])
       .filter((attachment) => String(attachment.company_id) === String(company.id) && String(attachment.job_id) === String(job.id))
       .filter((attachment) => /^photo$/i.test(String(attachment.kind)) || /^video\//i.test(String(attachment.mime_type)))
@@ -39,7 +42,7 @@ export async function buildAuthorizedContext({ request, session, repository }) {
       .sort((left, right) => (mediaStateById.get(String(left.id))?.order ?? 0) - (mediaStateById.get(String(right.id))?.order ?? 0))
       .map((attachment) => {
         const state = mediaStateById.get(String(attachment.id));
-        return claim(`attachment-${attachment.id}`, state?.label ? `Selected media: ${state.label}` : 'Selected media', `${attachment.kind} attachment metadata: ${attachment.mime_type}`, 'Attachment metadata', privateValues);
+        return claim(`attachment-${attachment.id}`, state?.label ? `Selected media: ${state.label}` : 'Selected media', `${attachment.kind} attachment metadata: ${attachment.mime_type}`, 'Attachment metadata', privateValuesForInputScrubbing);
       }),
   ].filter(Boolean);
   return {
@@ -54,7 +57,8 @@ export async function buildAuthorizedContext({ request, session, repository }) {
       request.localFacts.finalResult ? '' : 'Final result missing',
     ].filter(Boolean),
     evidence,
-    privateValues,
+    privateValuesForInputScrubbing,
+    privateValuesForLeakDetection,
     companyVoice: resolveCompanyVoiceContext(companyVoiceSettings, request.channel),
   };
 }
@@ -76,6 +80,27 @@ export function buildPrivateValues({ job, customer, location, invoices = [], com
   ]);
 }
 
+export function buildPrivateValuesForLeakDetection({ job, customer, location, invoices = [], comments = [] }) {
+  return uniqueDescriptors([
+    descriptor(job.job_number, 'JOB_IDENTIFIER'),
+    descriptor(job.notes, 'FREE_TEXT_NOTE'),
+    descriptor(job.service_call_fee_cents, 'MONEY_NUMERIC'),
+    descriptor(job.labor_cents, 'MONEY_NUMERIC'),
+    descriptor(customer?.organization, 'PERSON_OR_ORGANIZATION'),
+    descriptor(customer?.primary_name, 'PERSON_OR_ORGANIZATION'),
+    descriptor(customer?.primary_email, 'STRUCTURED_EMAIL'),
+    descriptor(customer?.primary_phone, 'STRUCTURED_PHONE'),
+    descriptor(customer?.notes, 'FREE_TEXT_NOTE'),
+    descriptor(location?.address, 'STRUCTURED_ADDRESS'),
+    ...invoices.flatMap((invoice) => [
+      descriptor(invoice.invoice_number, 'INVOICE_IDENTIFIER'),
+      descriptor(invoice.amount_cents, 'MONEY_NUMERIC'),
+      descriptor(invoice.status, 'ENUM_OR_STATUS'),
+    ]),
+    ...comments.map((comment) => descriptor(comment.message, 'FREE_TEXT_COMMENT')),
+  ].filter(Boolean));
+}
+
 function claim(id, label, value, source, privateValues) {
   const text = scrubText(cleanText(value, 700), privateValues);
   return text ? { id, label, text, source } : undefined;
@@ -87,4 +112,35 @@ function actorId(session) {
 
 function unique(values) {
   return Array.from(new Set(values.map((value) => String(value ?? '').trim()).filter(Boolean)));
+}
+
+function descriptor(value, classification) {
+  const clean = String(value ?? '').trim();
+  return clean ? { value: clean, classification, matchMode: leakMatchMode(clean, classification) } : undefined;
+}
+
+function leakMatchMode(value, classification) {
+  if (classification === 'MONEY_NUMERIC' || classification === 'ENUM_OR_STATUS') return 'none';
+  if (classification === 'PERSON_OR_ORGANIZATION') return normalizePrivateValue(value).length >= 3 ? 'phrase' : 'none';
+  if (classification === 'FREE_TEXT_NOTE' || classification === 'FREE_TEXT_COMMENT') {
+    return isMeaningfulKnownPrivateValue(value) ? 'phrase' : 'none';
+  }
+  if (classification === 'JOB_IDENTIFIER' || classification === 'INVOICE_IDENTIFIER') {
+    const normalized = normalizePrivateValue(value);
+    if (/^\d+$/.test(normalized) && normalized.length < 6) {
+      return classification === 'JOB_IDENTIFIER' ? 'structured_job' : 'structured_invoice';
+    }
+    return normalized.length >= 4 ? 'phrase' : 'none';
+  }
+  return 'phrase';
+}
+
+function uniqueDescriptors(values) {
+  const seen = new Set();
+  return values.filter((entry) => {
+    const key = `${entry.classification}:${entry.value.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

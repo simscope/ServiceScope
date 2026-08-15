@@ -28,7 +28,7 @@ export const sandboxFixturePlan = {
 };
 
 export const sandboxFixtureContext = {
-  privateValues: [],
+  privateValuesForLeakDetection: [],
   companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
   evidence: [
     { id: 'diagnosis', text: 'See this service transformation. A clear service story built from the approved job media, from the starting view through the work and the finished equipment. Service transformation.' },

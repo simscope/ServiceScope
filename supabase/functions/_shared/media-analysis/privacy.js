@@ -1,4 +1,5 @@
 import { MediaAnalysisError } from './errors.js';
+import { buildMeaningfulKnownPrivateValues, normalizePrivateValue } from '../privacy/privateValues.js';
 
 const allowedSubreasons = new Set([
   'KNOWN_PRIVATE_VALUE_MATCH',
@@ -12,46 +13,8 @@ const allowedSubreasons = new Set([
   'UNKNOWN_PRIVACY_REASON',
 ]);
 
-const commonPrivateValueTokens = new Set([
-  'a',
-  'about',
-  'air',
-  'all',
-  'and',
-  'appliance',
-  'closed',
-  'completed',
-  'connection',
-  'equipment',
-  'for',
-  'in',
-  'job',
-  'open',
-  'pipe',
-  'pending',
-  'repair',
-  'service',
-  'status',
-  'system',
-  'the',
-  'to',
-  'unpaid',
-  'warranty',
-  'with',
-]);
-
 export function buildKnownPrivateValues(values) {
-  const seen = new Set();
-  const cleaned = [];
-  for (const value of values) {
-    const text = String(value ?? '').trim();
-    if (!isMeaningfulKnownPrivateValue(text)) continue;
-    const normalized = normalizeComparable(text);
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    cleaned.push(text);
-  }
-  return cleaned;
+  return buildMeaningfulKnownPrivateValues(values);
 }
 
 export function assertNoPrivateValues(value, privateValues, options = {}) {
@@ -67,7 +30,7 @@ export function collectPrivacyDiagnostics(value, privateValues = [], options = {
   const strings = collectStrings(value, options.path ?? '$');
   const privateMatchers = buildKnownPrivateValues(privateValues).map((privateValue) => ({
     raw: privateValue,
-    normalized: normalizeComparable(privateValue),
+    normalized: normalizePrivateValue(privateValue),
   }));
   const diagnostics = [];
   for (const item of strings) {
@@ -98,7 +61,7 @@ export function sanitizePrivacyDiagnostic(diagnostic) {
 
 function detectUnsafeText(item, privateMatchers, options) {
   const text = item.text;
-  const normalizedText = normalizeComparable(text);
+  const normalizedText = normalizePrivateValue(text);
   const base = {
     path: item.path,
     stringLength: text.length,
@@ -132,26 +95,6 @@ function collectStrings(value, path) {
   if (value == null || typeof value !== 'object') return [];
   if (Array.isArray(value)) return value.flatMap((item, index) => collectStrings(item, `${path}[${index}]`));
   return Object.entries(value).flatMap(([key, item]) => collectStrings(item, `${path}.${key}`));
-}
-
-function isMeaningfulKnownPrivateValue(text) {
-  if (!text) return false;
-  const normalized = normalizeComparable(text);
-  if (!normalized || commonPrivateValueTokens.has(normalized)) return false;
-  if (normalized.length < 4) return false;
-  if (/^\d+$/.test(normalized) && normalized.length < 6) return false;
-  if (/^\d+(?:\.\d{1,2})?$/.test(normalized)) return false;
-  return true;
-}
-
-function normalizeComparable(value) {
-  return String(value ?? '')
-    .toLowerCase()
-    .normalize('NFKC')
-    .replace(/['’]/g, '')
-    .replace(/[^a-z0-9@.]+/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ');
 }
 
 function bucketStringLength(length) {

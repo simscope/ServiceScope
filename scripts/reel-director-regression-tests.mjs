@@ -581,7 +581,7 @@ const handlerBaseContext = await buildAuthorizedContext({
 });
 const handlerReelContext = await buildReelContext(validatedRequest, handlerBaseContext, handlerDependencies.repository);
 check(() => assert.equal(parseReelProviderResult(validPlan, handlerReelContext).decision, 'create_reel'));
-check(() => assert.doesNotThrow(() => assertNoPrivateValues(handlerReelContext.evidence, handlerReelContext.privateValues)));
+check(() => assert.doesNotThrow(() => assertNoPrivateValues(handlerReelContext.evidence, handlerReelContext.privateValuesForLeakDetection)));
 const handlerPrompt = buildReelPrompt(validatedRequest, handlerReelContext);
 const handlerPromptText = JSON.stringify(handlerPrompt);
 check(() => assert.match(handlerPromptText, /The burned relay is visible in this problem detail/));
@@ -594,7 +594,7 @@ check(() => assert.equal(handlerReelContext.evidence.find((item) => item.id === 
 check(() => assert.equal(authoritativeRows(request.mediaPlan)[0].requires_user_approval, true));
 check(() => assert.equal(handlerReelContext.safeMedia.length, 2));
 check(() => assert.deepEqual(
-  handlerReelContext.privateValues.filter((value) => handlerPromptText.toLowerCase().includes(String(value).toLowerCase())),
+  handlerReelContext.privateValuesForLeakDetection.filter((entry) => handlerPromptText.toLowerCase().includes(entry.value.toLowerCase())),
   [],
 ));
 const lowInformationRequest = validateReelRequestBody({
@@ -614,6 +614,59 @@ check(() => assert.equal(providerCalls, 1));
 check(() => assert.match(generated.revision, /^reel-v1-/));
 check(() => assert.equal(generated.creativePlanId, '00000000-0000-4000-8000-00000000d101'));
 check(() => assert.equal(persistenceCalls, 1));
+
+let job248ProviderCalls = 0;
+let job248PersistenceCalls = 0;
+const job248Request = validateReelRequestBody({
+  ...request,
+  localFacts: { diagnosis: '', repairPerformed: '', finalResult: '' },
+  mediaPlan: [media('detail-248', 1), media('overview-248', 2)],
+  planningRevision: 'planning-job-248',
+  idempotencyKey: 'reel-job-248-safe',
+});
+const job248Rows = authoritativeRows(job248Request.mediaPlan, {
+  detailExplanation: 'Visible opening around the component in the approved service detail.',
+}).map((row) => row.attachment_id === 'overview-248' ? {
+  ...row,
+  finding_id: 'overview-finding',
+  finding_category: 'equipment_overview',
+  explanation: 'Open component access panel shown in the approved service overview.',
+} : row);
+const safeJob248Plan = job248Plan();
+const job248Result = await handleReelGeneration(makeDependencies({
+  payload: job248Request,
+  job: { id: 'job-1', company_id: 'company-1', job_number: '248', status: 'Completed', system: 'Oven', issue: 'The oven stopped heating.', notes: '', service_call_fee_cents: 12000, labor_cents: 20000, customer_id: 'customer-1', customer_location_id: 'location-1' },
+  invoices: [{ invoice_number: 'INV-2026-00123', amount_cents: 12000, status: 'open' }],
+  comments: [{ message: 'open' }],
+  reelRows: job248Rows,
+  provider: { id: 'mock-reel', async generate() { job248ProviderCalls += 1; return { provider: 'mock-reel', model: 'test', rawJson: safeJob248Plan }; } },
+  async persistReelCreativePlan() { job248PersistenceCalls += 1; return '00000000-0000-4000-8000-00000000d248'; },
+}));
+check(() => assert.equal(job248Result.decision, 'create_reel'));
+check(() => assert.equal(job248ProviderCalls, 1));
+check(() => assert.equal(job248PersistenceCalls, 1));
+check(() => assert.deepEqual(job248Request.localFacts, { diagnosis: '', repairPerformed: '', finalResult: '' }));
+check(() => assert.deepEqual(job248Rows.map((row) => roleForContentFinding(row.finding_category)), ['detail', 'overview']));
+
+let privacyLeakProviderCalls = 0;
+let privacyLeakPersistenceCalls = 0;
+await assert.rejects(() => handleReelGeneration(makeDependencies({
+  payload: { ...job248Request, idempotencyKey: 'reel-job-248-private-leak' },
+  job: { id: 'job-1', company_id: 'company-1', job_number: '248', status: 'Completed', system: 'Oven', issue: 'The oven stopped heating.', notes: '', service_call_fee_cents: 12000, labor_cents: 20000, customer_id: 'customer-1', customer_location_id: 'location-1' },
+  invoices: [{ invoice_number: 'INV-2026-00123', amount_cents: 12000, status: 'open' }],
+  comments: [{ message: 'open' }],
+  reelRows: job248Rows,
+  provider: {
+    id: 'mock-reel',
+    async generate() {
+      privacyLeakProviderCalls += 1;
+      return { provider: 'mock-reel', model: 'test', rawJson: { ...safeJob248Plan, caption: { ...safeJob248Plan.caption, text: `${safeJob248Plan.caption.text} jane@example.test` } } };
+    },
+  },
+  async persistReelCreativePlan() { privacyLeakPersistenceCalls += 1; return 'must-not-persist'; },
+})), /REEL_PRIVACY_FAILED/);
+check(() => assert.equal(privacyLeakProviderCalls, 1));
+check(() => assert.equal(privacyLeakPersistenceCalls, 0));
 check(() => assert.deepEqual(persistedPlan.localFacts, request.localFacts));
 check(() => assert.deepEqual(persistedPlan.mediaPlan, request.mediaPlan));
 check(() => assert.equal(persistedPlan.plan.revision, generated.revision));
@@ -662,6 +715,47 @@ for (const code of ['PROVIDER_TIMEOUT', 'PROVIDER_RATE_LIMITED', 'PROVIDER_UNAVA
     telemetry: { record() {} },
   }), new RegExp(code));
 }
+
+let preProviderCalls = 0;
+const preProviderTelemetry = [];
+await assert.rejects(() => generateReel({
+  request: validatedRequest,
+  context: { ...context, evidence: [...context.evidence, { id: 'unsafe', text: 'Contact fake-private@example.test', source: 'Synthetic test' }] },
+  provider: { id: 'mock-reel', async generate() { preProviderCalls += 1; } },
+  config: { model: 'test', timeoutMs: 1000, maxAttempts: 1, maxOutputBytes: 5000 },
+  telemetry: { record: (event) => preProviderTelemetry.push(event) },
+}), /REEL_PRIVACY_FAILED/);
+check(() => assert.equal(preProviderCalls, 0));
+check(() => assert.equal(preProviderTelemetry[0].attempts, 0));
+
+const firstAttemptTelemetry = [];
+await generateReel({
+  request: validatedRequest,
+  context,
+  provider: { id: 'mock-reel', async generate() { return { provider: 'mock-reel', model: 'test', rawJson: validPlan }; } },
+  config: { model: 'test', timeoutMs: 1000, maxAttempts: 1, maxOutputBytes: 5000 },
+  telemetry: { record: (event) => firstAttemptTelemetry.push(event) },
+});
+check(() => assert.equal(firstAttemptTelemetry[0].attempts, 1));
+
+let retryAttemptCalls = 0;
+const retryAttemptTelemetry = [];
+await generateReel({
+  request: validatedRequest,
+  context,
+  provider: {
+    id: 'mock-reel',
+    async generate() {
+      retryAttemptCalls += 1;
+      if (retryAttemptCalls === 1) throw new Error('PROVIDER_UNAVAILABLE');
+      return { provider: 'mock-reel', model: 'test', rawJson: validPlan };
+    },
+  },
+  config: { model: 'test', timeoutMs: 1000, maxAttempts: 2, maxOutputBytes: 5000 },
+  telemetry: { record: (event) => retryAttemptTelemetry.push(event) },
+});
+check(() => assert.equal(retryAttemptCalls, 2));
+check(() => assert.equal(retryAttemptTelemetry[0].attempts, 2));
 await assert.rejects(() => generateReel({
   request: validatedRequest,
   context,
@@ -700,7 +794,15 @@ function media(attachmentId, position) {
 function makeContext() {
   return {
     companyId: 'company-1', actorId: 'user-1', jobId: 'job-1', missingInformation: [],
-    privateValues: ['Jane Customer', 'Private Customer LLC', 'jane@example.test', '123 Market Street', 'AB-42'],
+    privateValuesForInputScrubbing: ['Jane Customer', 'Private Customer LLC', 'jane@example.test', '123 Market Street', 'AB-42'],
+    privateValuesForLeakDetection: [
+      { value: 'Jane Customer', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' },
+      { value: 'Private Customer LLC', classification: 'PERSON_OR_ORGANIZATION', matchMode: 'phrase' },
+      { value: 'jane@example.test', classification: 'STRUCTURED_EMAIL', matchMode: 'phrase' },
+      { value: '(212) 555-0199', classification: 'STRUCTURED_PHONE', matchMode: 'phrase' },
+      { value: '123 Market Street', classification: 'STRUCTURED_ADDRESS', matchMode: 'phrase' },
+      { value: 'AB-42', classification: 'JOB_IDENTIFIER', matchMode: 'phrase' },
+    ],
     companyVoice: {
       enabled: true, publicDisplayName: 'Northstar Service', voiceGuidance: 'Clear, useful, confident.',
       resolvedChannelDefaults: { callToActionGuidance: 'Invite a message.', hashtagGuidance: ['OvenRepair'] },
@@ -746,6 +848,27 @@ function createPlan() {
   };
 }
 
+function job248Plan() {
+  const detailEvidenceId = 'media:detail-248:detail-finding';
+  const overviewEvidenceId = 'media:overview-248:overview-finding';
+  return {
+    schemaVersion: 'reel-creative-plan-v1', decision: 'create_reel', qualityScore: 82,
+    qualityReasons: ['The approved overview and detail show a specific visual service story.'],
+    marketingAngle: 'maintenance_tip',
+    hook: { text: 'VISIBLE OPENING AROUND THE COMPONENT', evidenceIds: [detailEvidenceId] },
+    cover: { title: 'VISIBLE COMPONENT OPENING', attachmentId: 'detail-248' },
+    scenes: [
+      { id: 'scene-1', position: 1, attachmentId: 'detail-248', sceneRole: 'detail', durationMs: 6000, overlayText: 'VISIBLE OPENING AROUND THE COMPONENT', secondaryText: null, motionPreset: 'focus_detail', cropStrategy: 'detail_crop', transitionOut: 'quick_fade', evidenceIds: [detailEvidenceId], voiceoverLine: null },
+      { id: 'scene-2', position: 2, attachmentId: 'overview-248', sceneRole: 'overview', durationMs: 6000, overlayText: 'APPROVED SERVICE OVERVIEW', secondaryText: null, motionPreset: 'slow_zoom_out', cropStrategy: 'subject_center', transitionOut: 'crossfade', evidenceIds: [overviewEvidenceId], voiceoverLine: null },
+    ],
+    caption: { text: 'Visible opening around the component in the approved service detail. Open component access panel shown in the approved service overview.', evidenceIds: [detailEvidenceId, overviewEvidenceId] },
+    voiceover: { enabled: false, script: '', evidenceIds: [] }, missingShots: [], claims: [],
+    safety: { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] },
+    brand: { enabled: false, displayName: '', cta: '', durationMs: 0, evidenceIds: [] },
+    audio: { musicMode: 'none' },
+  };
+}
+
 function needsMorePlan() {
   return { ...createPlan(), decision: 'needs_more_media', qualityScore: 55, qualityReasons: ['A finished-result visual is missing.'], hook: { text: 'A STRONGER STORY NEEDS MORE', evidenceIds: ['complaint'] }, cover: { title: '', attachmentId: null }, scenes: [], caption: { text: '', evidenceIds: [] }, voiceover: { enabled: false, script: '', evidenceIds: [] }, missingShots: ['Capture the finished result.'], claims: [], safety: { ok: false, privacy: 'passed', grounding: 'passed', quality: 'failed', blockedReasons: ['Insufficient media'] }, brand: { enabled: false, displayName: '', cta: '', durationMs: 0, evidenceIds: [] } };
 }
@@ -773,15 +896,15 @@ function makeDependencies(overrides = {}) {
     rawBody: JSON.stringify(payload), authorization: overrides.authorization ?? 'Bearer token',
     auth: { async resolveSession() { return { kind: 'company', company_id: 'company-1', user_id: 'user-1', auth_user_id: '00000000-0000-4000-8000-00000000d100', email: 'owner@example.test' }; } },
     repository: {
-      async getJob() { return { id: 'job-1', company_id: 'company-1', job_number: 'AB-42', status: 'Completed', system: 'Oven', issue: 'The oven stopped heating.', notes: 'Private note', service_call_fee_cents: 10000, labor_cents: 20000, customer_id: 'customer-1', customer_location_id: 'location-1' }; },
+      async getJob() { return overrides.job ?? { id: 'job-1', company_id: 'company-1', job_number: 'AB-42', status: 'Completed', system: 'Oven', issue: 'The oven stopped heating.', notes: 'Private note', service_call_fee_cents: 10000, labor_cents: 20000, customer_id: 'customer-1', customer_location_id: 'location-1' }; },
       async getCompany() { return { id: 'company-1', owner_email: 'owner@example.test', access_rules: { aiAssistant: 'full' } }; },
       async getCompanyUser() { return null; },
       async getCompanyVoiceSettings() { return { ai_voice_enabled: true, ai_public_display_name: 'Northstar Service', ai_default_tone: 'Marketing', ai_custom_voice_guidance: 'Clear, useful, confident.', ai_service_areas: [], ai_public_location_wording: '', ai_cta_guidance: 'Invite a message.', ai_hashtag_guidance: ['OvenRepair'], ai_channel_defaults: {} }; },
-      async getCustomer() { return { organization: 'Private Customer LLC', primary_name: 'Jane Customer', primary_email: 'jane@example.test', primary_phone: '(212) 555-0199' }; },
-      async getLocation() { return { address: '123 Market Street' }; },
+      async getCustomer() { return overrides.customer ?? { organization: 'Private Customer LLC', primary_name: 'Jane Customer', primary_email: 'jane@example.test', primary_phone: '(212) 555-0199' }; },
+      async getLocation() { return overrides.location ?? { address: '123 Market Street' }; },
       async listMaterials() { return []; },
       async listAttachments() { return payload.mediaPlan.map((item) => ({ id: item.attachmentId, company_id: 'company-1', job_id: 'job-1', kind: 'photo', mime_type: 'image/jpeg' })); },
-      async listInvoices() { return []; }, async listComments() { return []; },
+      async listInvoices() { return overrides.invoices ?? []; }, async listComments() { return overrides.comments ?? []; },
       async listReelMediaCandidates() { return overrides.reelRows ?? authoritativeRows(payload.mediaPlan); },
       ...(overrides.persistReelCreativePlan ? { persistReelCreativePlan: overrides.persistReelCreativePlan } : {}),
     },
@@ -855,7 +978,7 @@ function authoritativeRows(mediaPlan, overrides = {}) {
       ? 'The restored oven is shown after testing.'
       : isLow
         ? 'A low-information general image.'
-        : 'The burned relay is visible in this problem detail.';
+        : overrides.detailExplanation ?? 'The burned relay is visible in this problem detail.';
     return {
       requested_position: item.position,
       attachment_id: item.attachmentId,
