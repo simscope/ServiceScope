@@ -2,7 +2,10 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { reelSandboxAssetSchemaVersion } from '../server/reel-sandbox-runtime/contracts.js';
+import {
+  reelSandboxAssetSchemaVersion,
+  serializeSandboxAuthority,
+} from '../server/reel-sandbox-runtime/contracts.js';
 
 export const sandboxFixturePlan = {
   schemaVersion: 'reel-creative-plan-v1',
@@ -58,7 +61,7 @@ export async function writeSandboxContainerFixture(root) {
   const output = join(root, 'output');
   await mkdir(input, { recursive: true });
   await mkdir(output, { recursive: true });
-  const authorityJson = JSON.stringify(sandboxFixtureAuthority);
+  const authorityJson = serializeSandboxAuthority(sandboxFixtureAuthority);
   await writeFile(join(root, 'authority.json'), authorityJson);
   const rows = [];
   const imageFixtures = [

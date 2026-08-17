@@ -30,7 +30,8 @@ if (mode === 'prepare') {
   console.log(JSON.stringify({
     container_fixture: 'PASS', codec: result.videoCodec, width: result.width, height: result.height,
     fps: result.fps, durationMs: result.durationMs, audioStreams: result.audioStreams,
-    pixelFormat: result.pixelFormat, faststart: result.faststart, shaVerification: true,
+    pixelFormat: result.pixelFormat, faststart: result.faststart, fileSize: result.fileSize,
+    videoSha256: result.videoSha256, coverSha256: result.coverSha256, shaVerification: true,
   }));
 }
 

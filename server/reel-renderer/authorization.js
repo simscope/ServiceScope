@@ -8,9 +8,11 @@ const validationErrorCodes = new Set([
   'REEL_QUALITY_FAILED',
   'REEL_MEDIA_UNAVAILABLE',
 ]);
+const invalidPlanErrorCodes = new Set(['INVALID_REEL_PROVIDER_OUTPUT', 'INVALID_REQUEST']);
 
 export function authorizeReelForRender({ plan, context }) {
   try {
+    if (!validAuthorityContext(context)) throw new ReelRenderError('REEL_RENDER_CONTEXT_STALE');
     if (!plainObject(plan) || typeof plan.revision !== 'string' || !/^[A-Za-z0-9:_-]{1,180}$/.test(plan.revision)) {
       throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
     }
@@ -27,7 +29,8 @@ export function authorizeReelForRender({ plan, context }) {
   } catch (error) {
     if (error instanceof ReelRenderError) throw error;
     if (validationErrorCodes.has(error?.message)) throw new ReelRenderError(error.message);
-    throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
+    if (invalidPlanErrorCodes.has(error?.message)) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
+    throw new ReelRenderError('REEL_RENDER_FAILED');
   }
 }
 
@@ -47,4 +50,12 @@ function deepFreeze(value) {
 
 function plainObject(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function validAuthorityContext(value) {
+  return plainObject(value)
+    && Array.isArray(value.privateValuesForLeakDetection)
+    && Array.isArray(value.evidence)
+    && Array.isArray(value.safeMedia)
+    && plainObject(value.companyVoice);
 }
