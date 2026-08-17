@@ -19,6 +19,8 @@ import {
   normalizePublishingError,
 } from '../_shared/meta-publishing/service.js';
 
+type DynamicSupabaseClient = ReturnType<typeof createClient<any>>;
+
 Deno.serve(async (request) => {
   const cors = corsHeaders(request);
   if (!cors) return jsonResponse({ error: 'Meta publishing request was rejected.', code: 'FORBIDDEN' }, 403, baseHeaders());
@@ -48,7 +50,7 @@ function makeDependencies() {
   const serviceRoleKey = getServiceRoleKey();
   if (!supabaseUrl || !anonKey || !serviceRoleKey) throw new MetaPublishingError('META_PUBLISH_NOT_CONFIGURED');
   const adminClient = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false } });
-  const config = runtimePublishingConfig((key) => Deno.env.get(key));
+  const config = runtimePublishingConfig((key: string) => Deno.env.get(key));
   return {
     auth: createAuthRepository(supabaseUrl, anonKey),
     repository: createRepository(adminClient),
@@ -91,7 +93,7 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
         if (error instanceof MetaConnectionError) throw new MetaPublishingError(error.code);
         throw error;
       }
-      const callerClient = session.callerClient as ReturnType<typeof createClient>;
+      const callerClient = session.callerClient as DynamicSupabaseClient;
       const { data, error } = await callerClient.rpc('can_manage_company', { target_company_id: companyId });
       if (error || data !== true) throw new MetaPublishingError('FORBIDDEN');
       return {
@@ -103,7 +105,7 @@ function createAuthRepository(supabaseUrl: string, anonKey: string) {
   };
 }
 
-function createRepository(adminClient: ReturnType<typeof createClient>) {
+function createRepository(adminClient: DynamicSupabaseClient) {
   return {
     async getStatus(companyId: string, jobId?: string) {
       if (jobId) {
@@ -509,7 +511,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
 }
 
 async function listPhotoEligibility(
-  adminClient: ReturnType<typeof createClient>,
+  adminClient: DynamicSupabaseClient,
   companyId: string,
   jobId: string,
   onlyAttachmentId?: string,
@@ -553,7 +555,7 @@ async function listPhotoEligibility(
   return rows;
 }
 
-async function storageSha256(adminClient: ReturnType<typeof createClient>, attachment: Record<string, unknown>) {
+async function storageSha256(adminClient: DynamicSupabaseClient, attachment: Record<string, unknown>) {
   const bucket = String(attachment.storage_bucket ?? '');
   const path = String(attachment.storage_path ?? '');
   if (!bucket || !path) return null;
@@ -569,7 +571,7 @@ function safeDisplayName(value: unknown) {
   return clean;
 }
 
-async function oneRpcRow(client: ReturnType<typeof createClient>, name: string, params: Record<string, unknown>) {
+async function oneRpcRow(client: DynamicSupabaseClient, name: string, params: Record<string, unknown>) {
   const { data, error } = await client.rpc(name, params);
   const row = Array.isArray(data) ? data[0] : null;
   if (name === 'begin_company_facebook_publication') {
@@ -596,7 +598,7 @@ function reelRpcParams(input: Record<string, unknown>, extra: Record<string, unk
   };
 }
 
-async function scheduledRpcRow(client: ReturnType<typeof createClient>, name: string, params: Record<string, unknown>) {
+async function scheduledRpcRow(client: DynamicSupabaseClient, name: string, params: Record<string, unknown>) {
   const { data, error } = await client.rpc(name, params);
   const row = Array.isArray(data) ? data[0] : null;
   if (!error && row) return row;
