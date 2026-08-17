@@ -119,6 +119,19 @@ for (const context of [
     /REEL_RENDER_CONTEXT_STALE/,
   ));
 }
+const runtimeFailureContext = {
+  ...validContext,
+  evidence: new Proxy([], {
+    get(target, property, receiver) {
+      if (property === 'map') throw new TypeError('synthetic validator runtime failure');
+      return Reflect.get(target, property, receiver);
+    },
+  }),
+};
+check(() => assert.throws(
+  () => authorizeReelForRender({ plan: validPlan, context: runtimeFailureContext }),
+  (error) => error?.message === 'REEL_RENDER_FAILED' && !String(error).includes('synthetic validator runtime failure'),
+));
 check(() => assert.throws(() => buildReelRenderManifest(validPlan, stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
 check(() => assert.throws(() => buildReelRenderManifest({}, stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
 check(() => assert.throws(() => buildReelRenderManifest(JSON.parse(JSON.stringify(authorizedPlan)), stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
