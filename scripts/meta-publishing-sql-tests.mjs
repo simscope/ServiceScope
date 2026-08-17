@@ -27,6 +27,7 @@ const migrationNames = [
   '20260805223000_meta_facebook_scheduled_publication_foundation.sql',
   '20260807010000_meta_facebook_scheduled_worker_reconciliation.sql',
   '20260808235500_meta_facebook_single_active_schedule.sql',
+  '20260817034500_meta_facebook_reel_delivery.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -58,6 +59,30 @@ check(() => assert.match(singleActivePublicationMigration, /group by company_id,
 check(() => assert.match(singleActivePublicationMigration, /raise exception/i));
 check(() => assert.doesNotMatch(singleActivePublicationMigration, /\b(?:delete|update)\b/i));
 check(() => assert.doesNotMatch(singleActivePublicationMigration, /'published'|'failed'|'cancelled'/i));
+const reelDeliveryMigration = migrations[17];
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_REEL_DELIVERY_BEGIN',
+    end: '-- META_FACEBOOK_REEL_DELIVERY_END',
+    label: 'Meta Facebook Reel delivery',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(reelDeliveryMigration, {
+    begin: '-- META_FACEBOOK_REEL_DELIVERY_BEGIN',
+    end: '-- META_FACEBOOK_REEL_DELIVERY_END',
+    label: 'Meta Facebook Reel delivery',
+  })),
+));
+check(() => assert.match(reelDeliveryMigration, /publication_kind in \('text_only', 'single_photo', 'reel_video'\)/i));
+check(() => assert.match(reelDeliveryMigration, /foreign key \(render_job_id, company_id, job_id\)/i));
+check(() => assert.match(reelDeliveryMigration, /output_bucket='company-reel-renders'/i));
+check(() => assert.match(reelDeliveryMigration, /video_sha256=p_video_sha256/i));
+check(() => assert.match(reelDeliveryMigration, /storage\.buckets[\s\S]*public=false/i));
+check(() => assert.match(reelDeliveryMigration, /provider_call_count between 0 and 6/i));
+check(() => assert.match(reelDeliveryMigration, /provider_status_checks between 0 and 3/i));
+check(() => assert.match(reelDeliveryMigration, /exception when unique_violation[\s\S]*publication_intent_sha256=p_publication_intent_sha256[\s\S]*false/i));
+check(() => assert.match(reelDeliveryMigration, /meta_reel_publication_requested/i));
+check(() => assert.doesNotMatch(reelDeliveryMigration, /providerMediaId|providerPostId/i));
+check(() => assert.match(reelDeliveryMigration, /revoke all on function public\.begin_company_facebook_reel_publication[\s\S]*from public,anon,authenticated/i));
 check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.publishingAclFix),
   normalizeSqlForParity(extractExactMarkedBlock(migrations[4], META_FACEBOOK_PUBLISH_ACL_FIX_MARKERS)),

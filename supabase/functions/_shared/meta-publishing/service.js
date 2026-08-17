@@ -25,6 +25,7 @@ import {
   sha256Hex,
   validateFacebookPublicationPhotoAttachment,
 } from './photoPreparation.js';
+import { handleFacebookReelDelivery } from './reelDeliveryService.js';
 
 export async function handleMetaPublishing({ rawBody, authorization, deps }) {
   const startedAt = deps.now();
@@ -59,6 +60,13 @@ export async function handleMetaPublishing({ rawBody, authorization, deps }) {
         actorRole: access.actorRole,
       });
       const result = safeScheduledPublicationResult(cancelled);
+      deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
+      return result;
+    }
+
+    if (['publish_facebook_reel', 'reconcile_facebook_reel'].includes(action)) {
+      stage = action === 'publish_facebook_reel' ? 'reel_artifact_validation' : 'reel_status';
+      const result = await handleFacebookReelDelivery({ body, companyId, access, deps });
       deps.telemetry.record(safePublishingTelemetry({ action, success: true, code: 'OK', stage, attempts, latencyMs: deps.now() - startedAt }));
       return result;
     }

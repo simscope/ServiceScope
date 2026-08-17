@@ -128,7 +128,7 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       if (connectionError) throw new MetaPublishingError('INTERNAL_ERROR');
       let publicationQuery = adminClient
         .from('company_social_publications')
-        .select('id,status,approved_at,published_at,last_error_code,scheduled_for,scheduled_timezone,publication_kind')
+        .select('id,status,approved_at,published_at,last_error_code,scheduled_for,scheduled_timezone,publication_kind,provider_delivery_stage,render_job_id')
         .eq('company_id', companyId)
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
@@ -210,6 +210,49 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       if (error || !data) throw new MetaPublishingError('META_PUBLICATION_MEDIA_REQUIRED');
       if (data.size < 1 || data.size > maxBytes) throw new MetaPublishingError('META_PUBLICATION_MEDIA_TOO_LARGE');
       return new Uint8Array(await data.arrayBuffer());
+    },
+
+    async getCompletedReel(companyId: string, jobId: string, renderJobId: string) {
+      const { data, error } = await adminClient
+        .from('company_reel_render_jobs')
+        .select('id,company_id,job_id,status,output_bucket,video_object_path,duration_ms,width,height,fps,video_codec,pixel_format,audio_streams,file_size,video_sha256,faststart')
+        .eq('id', renderJobId)
+        .eq('company_id', companyId)
+        .eq('job_id', jobId)
+        .eq('status', 'completed')
+        .maybeSingle();
+      if (error) throw new MetaPublishingError('INTERNAL_ERROR');
+      return data;
+    },
+
+    async downloadReelBytes(input: Record<string, unknown>) {
+      const bucket = String(input.storageBucket ?? '');
+      const path = String(input.storagePath ?? '');
+      const maxBytes = Number(input.maxBytes) || 0;
+      if (bucket !== 'company-reel-renders' || !path || maxBytes < 1) throw new MetaPublishingError('META_REEL_RENDER_INVALID');
+      const { data, error } = await adminClient.storage.from(bucket).download(path);
+      if (error || !data) throw new MetaPublishingError('META_REEL_RENDER_REQUIRED');
+      if (data.size < 1 || data.size > maxBytes) throw new MetaPublishingError('META_REEL_RENDER_INVALID');
+      return new Uint8Array(await data.arrayBuffer());
+    },
+
+    async getReelPublication(companyId: string, publicationId: string) {
+      const { data: publication, error } = await adminClient
+        .from('company_social_publications')
+        .select('id,company_id,connection_id,status,publication_kind,reel_provider_media_id,provider_delivery_stage,provider_call_count,approved_at,published_at,last_error_code')
+        .eq('id', publicationId)
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (error) throw new MetaPublishingError('INTERNAL_ERROR');
+      if (!publication) return null;
+      const { data: connection, error: connectionError } = await adminClient
+        .from('company_social_connections')
+        .select('id,company_id,status,facebook_page_id,granted_scopes,token_envelope')
+        .eq('id', publication.connection_id)
+        .eq('company_id', companyId)
+        .maybeSingle();
+      if (connectionError) throw new MetaPublishingError('INTERNAL_ERROR');
+      return { ...publication, connection };
     },
 
     async approvePublicationPhoto(input: Record<string, unknown>) {
@@ -362,6 +405,62 @@ function createRepository(adminClient: ReturnType<typeof createClient>) {
       });
     },
 
+    async beginReelPublication(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'begin_company_facebook_reel_publication', {
+        p_publication_id: input.publicationId,
+        p_company_id: input.companyId,
+        p_connection_id: input.connectionId,
+        p_job_id: input.jobId,
+        p_render_job_id: input.renderJobId,
+        p_idempotency_key: input.idempotencyKey,
+        p_approved_message: input.message,
+        p_message_sha256: input.messageSha256,
+        p_publication_intent_sha256: input.publicationIntentSha256,
+        p_video_sha256: input.videoSha256,
+        p_video_bytes: input.videoBytes,
+        p_actor_id: input.actorAuthUserId,
+        p_actor_name: input.actorName,
+        p_actor_role: input.actorRole,
+        p_timestamp: input.timestamp,
+      });
+    },
+
+    async advanceReelPublication(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'advance_company_facebook_reel_publication', reelRpcParams(input, {
+        p_expected_stage: input.expectedStage,
+        p_next_stage: input.nextStage,
+        p_provider_media_id: input.providerMediaId,
+      }));
+    },
+
+    async recordReelProcessing(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'record_company_facebook_reel_processing', reelRpcParams(input));
+    },
+
+    async completeReelPublication(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'complete_company_facebook_reel_publication', reelRpcParams(input));
+    },
+
+    async failReelPublication(input: Record<string, unknown>) {
+      const diagnostic = input.diagnostic as Record<string, unknown>;
+      return oneRpcRow(adminClient, 'fail_company_facebook_reel_publication', reelRpcParams(input, {
+        p_provider_http_status: diagnostic.providerHttpStatus ?? null,
+        p_provider_error_code: diagnostic.providerCode ?? null,
+        p_provider_error_subcode: diagnostic.providerSubcode ?? null,
+        p_provider_error_category: diagnostic.providerCategory ?? 'PROVIDER_REJECTED',
+        p_provider_is_transient: diagnostic.providerIsTransient ?? null,
+        p_last_error_code: input.lastErrorCode,
+        p_call_was_sent: input.callWasSent === true,
+      }));
+    },
+
+    async markReelUnknown(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'mark_company_facebook_reel_unknown', reelRpcParams(input, {
+        p_provider_media_id: input.providerMediaId,
+        p_call_was_sent: input.callWasSent === true,
+      }));
+    },
+
     async completePublication(input: Record<string, unknown>) {
       return oneRpcRow(adminClient, 'complete_company_facebook_publication', {
         p_publication_id: input.publicationId,
@@ -477,8 +576,24 @@ async function oneRpcRow(client: ReturnType<typeof createClient>, name: string, 
     const activePublicationConflict = mapActivePublicationPersistenceError(error);
     if (activePublicationConflict) throw activePublicationConflict;
   }
+  if (name === 'begin_company_facebook_reel_publication') {
+    const activePublicationConflict = mapActivePublicationPersistenceError(error);
+    if (activePublicationConflict) throw activePublicationConflict;
+  }
   if (error || !row) throw new MetaPublishingError('INTERNAL_ERROR');
   return row;
+}
+
+function reelRpcParams(input: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+  return {
+    p_publication_id: input.publicationId,
+    p_company_id: input.companyId,
+    p_actor_id: input.actorAuthUserId,
+    p_actor_name: input.actorName,
+    p_actor_role: input.actorRole,
+    p_timestamp: input.timestamp,
+    ...extra,
+  };
 }
 
 async function scheduledRpcRow(client: ReturnType<typeof createClient>, name: string, params: Record<string, unknown>) {

@@ -1007,6 +1007,28 @@ button {
   box-shadow: 0 20px 60px rgb(0 0 0 / 25%);
 }
 
+.facebook-publish-modal video {
+  width: min(100%, 240px);
+  max-height: 360px;
+  margin: 0 auto;
+  background: #111;
+}
+
+.ai-reel-facebook-publish {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-reel-facebook-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #166534;
+  font-weight: 600;
+}
+
 .facebook-publish-modal header,
 .facebook-publish-modal footer {
   display: flex;

@@ -36,6 +36,10 @@ const [
   ciWorkflow,
   denoSanitizerTests,
   denoScheduledWorkerTests,
+  reelDeliveryService,
+  reelPreparation,
+  reelPanel,
+  reelDeliveryMigration,
 ] = await Promise.all([
   read('supabase/functions/meta-social-publish/index.ts'),
   read('supabase/functions/_shared/meta-publishing/service.js'),
@@ -67,12 +71,16 @@ const [
   read('.github/workflows/ci.yml'),
   read('scripts/meta-image-sanitizer-deno-tests.ts'),
   read('scripts/meta-scheduled-worker-deno-tests.ts'),
+  read('supabase/functions/_shared/meta-publishing/reelDeliveryService.js'),
+  read('supabase/functions/_shared/meta-publishing/reelPreparation.js'),
+  read('src/components/portal/FacebookReelPublishPanel.tsx'),
+  read('supabase/migrations/20260817034500_meta_facebook_reel_delivery.sql'),
 ]);
 
-const browserSources = `${client}\n${panel}\n${aiPage}`;
+const browserSources = `${client}\n${panel}\n${reelPanel}\n${aiPage}`;
 const scheduleClient = client.slice(client.indexOf('export function scheduleFacebookText'));
 const scheduleService = service.slice(service.indexOf('if (scheduledAction)'), service.indexOf("stage = 'decrypt_connection'"));
-const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${photoPreparation}\n${mediaAnalysisEdge}\n${scheduledWorkerEdge}\n${scheduledWorker}\n${scheduledRepository}\n${scheduledWorkerAuth}`;
+const serverSources = `${edge}\n${service}\n${provider}\n${contracts}\n${privacy}\n${imageProcessor}\n${photoPreparation}\n${reelDeliveryService}\n${reelPreparation}\n${mediaAnalysisEdge}\n${scheduledWorkerEdge}\n${scheduledWorker}\n${scheduledRepository}\n${scheduledWorkerAuth}`;
 const combinedMigrations = `${migration}\n${reviewMigration}\n${exactReviewMigration}\n${runtimeClosureMigration}\n${persistenceClosureMigration}\n${providerIdRedactionMigration}`;
 const providerIdRedactionFunction = providerIdRedactionMigration.match(/create or replace function private\.complete_company_facebook_publication_unvalidated_20260805[\s\S]+?revoke all on function private\.complete_company_facebook_publication_unvalidated_20260805/)?.[0] ?? '';
 let checks = 0;
@@ -84,6 +92,20 @@ check(() => assert.doesNotMatch(browserSources, /META_APP_SECRET|META_TOKEN_ENCR
 check(() => assert.doesNotMatch(browserSources, /company_social_publications/));
 check(() => assert.doesNotMatch(browserSources, /providerPostId|provider_post_id|facebookPageId|facebook_page_id/));
 check(() => assert.doesNotMatch(browserSources, /instagram_content_publish|publish_instagram/i));
+check(() => assert.doesNotMatch(reelPanel, /pageAccessToken|uploadUrl|storagePath|graphApiVersion|providerMediaId/));
+check(() => assert.match(reelPanel, /explicitApproval: true/));
+check(() => assert.match(reelPanel, /Publish this exact completed video and caption/));
+check(() => assert.match(reelPanel, /message: reviewedCaption/));
+check(() => assert.match(reelPanel, /facebook-publish-preview">\{reviewedCaption\}/));
+check(() => assert.match(reelDeliveryService, /assertPublicationPrivacy[\s\S]*prepareFacebookReel[\s\S]*decryptPageToken[\s\S]*beginReelPublication/));
+check(() => assert.match(reelPreparation, /video_object_path !== `\$\{companyId\}\/\$\{render\.id\}\/reel\.mp4`/));
+check(() => assert.match(reelPreparation, /actualSha256 !== String\(render\.video_sha256\)/));
+check(() => assert.doesNotMatch(`${reelDeliveryService}\n${reelPreparation}`, /signedUrl|createSignedUrl|publicUrl/));
+check(() => assert.match(provider, /https:\/\/rupload\.facebook\.com\/video-upload\/\$\{config\.graphApiVersion\}/));
+check(() => assert.doesNotMatch(reelDeliveryMigration, /providerMediaId|providerPostId/));
+check(() => assert.match(reelDeliveryMigration, /provider_call_count between 0 and 6/));
+check(() => assert.match(reelDeliveryMigration, /provider_status_checks between 0 and 3/));
+check(() => assert.match(reelDeliveryMigration, /grant execute on function public\.begin_company_facebook_reel_publication[\s\S]*to service_role/));
 check(() => assert.doesNotMatch(browserSources, /\bFormData\b|multipart\/form-data/i));
 check(() => assert.doesNotMatch(browserSources, /password/i));
 check(() => assert.match(client, /supabaseFunction<.*>\(functionName/s));
