@@ -219,7 +219,7 @@ jobs:
             --build-arg "REEL_RUNNER_CONTRACT_VERSION=reel-sandbox-authority-v1" \
             --tag "servicescope-reel-renderer:v2-${GITHUB_SHA}" \
             .
-          docker image inspect "servicescope-reel-renderer:v2-${GITHUB_SHA}" --format 'image_id={{.Id}}'
+          docker image inspect "servicescope-reel-renderer:v2-${GITHUB_SHA}" --format 'image_id={{.Id}} os={{.Os}} architecture={{.Architecture}}'
 
       - name: Verify Sandbox image source provenance
         run: |
@@ -238,6 +238,13 @@ jobs:
             test "$HOST_SHA" = "$IMAGE_SHA"
             echo "$FILE sha256=$HOST_SHA"
           done
+
+      - name: Verify Sandbox image contains no secret material
+        run: |
+          IMAGE="servicescope-reel-renderer:v2-${GITHUB_SHA}"
+          IMAGE_ENV="$(docker image inspect "$IMAGE" --format '{{json .Config.Env}}')"
+          ! printf '%s' "$IMAGE_ENV" | grep -Eiq '(TOKEN|SECRET|PASSWORD|PRIVATE_KEY|SUPABASE|OPENAI|META_)'
+          docker run --rm --entrypoint sh "$IMAGE" -c 'test -z "$(find /app -type f \( -name ".env" -o -name ".env.*" -o -name "id_rsa" -o -name "id_ed25519" -o -name "credentials" -o -path "*/.git/*" -o -path "*/.ssh/*" \) -print -quit)"'
 
       - name: Record FFmpeg package and license evidence
         run: |

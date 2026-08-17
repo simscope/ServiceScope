@@ -57,6 +57,9 @@ check(() => assert.match(dockerfile, /io\.servicescope\.reel\.runner-contract/))
 check(() => assert.match(ci, /REEL_SOURCE_SHA=\$\{GITHUB_SHA\}/));
 check(() => assert.match(ci, /REEL_RUNNER_CONTRACT_VERSION=reel-sandbox-authority-v1/));
 check(() => assert.match(ci, /Verify Sandbox image source provenance/));
+check(() => assert.match(ci, /Verify Sandbox image contains no secret material/));
+check(() => assert.match(ci, /TOKEN\|SECRET\|PASSWORD\|PRIVATE_KEY\|SUPABASE\|OPENAI\|META_/));
+check(() => assert.match(ci, /-name "\.env"[\s\S]*-path "\*\/\.ssh\/\*"/));
 check(() => assert.match(ci, /server\/reel-sandbox-runner\/runner\.js[\s\S]*supabase\/functions\/_shared\/reel-engine\/schemas\.js/));
 check(() => assert.match(ci, /test "\$HOST_SHA" = "\$IMAGE_SHA"/));
 
