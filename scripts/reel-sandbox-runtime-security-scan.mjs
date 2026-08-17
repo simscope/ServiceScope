@@ -17,6 +17,9 @@ const check = (fn) => { fn(); checks += 1; };
 check(() => assert.match(config, /REEL_RENDER_RUNTIME !== 'sandbox'/));
 check(() => assert.match(config, /REEL_RENDER_SANDBOX_IMAGE/));
 check(() => assert.match(sandboxContracts, /servicescope-reel-renderer@sha256:\[0-9a-f\]\{64\}/));
+check(() => assert.match(sandboxContracts, /reelSandboxAuthoritySchemaVersion = 'reel-sandbox-authority-v1'/));
+check(() => assert.match(sandboxContracts, /value\.schemaVersion !== reelSandboxAuthoritySchemaVersion[\s\S]*REEL_RENDER_CONTEXT_STALE/));
+check(() => assert.match(adapter, /serializeSandboxAuthority\(authority\)/));
 check(() => assert.doesNotMatch(sandboxContracts, /servicescope-reel-renderer:v2-/));
 check(() => assert.doesNotMatch(config, /FFMPEG_BIN|FFPROBE_BIN|runtime:\s*'node'/));
 check(() => assert.match(queue, /render: createProductionReelRenderer\(process\.env, \{ telemetry \}\)/));
@@ -45,9 +48,16 @@ check(() => assert.match(dockerfile, /^FROM node:22-bookworm-slim@sha256:[0-9a-f
 check(() => assert.match(dockerfile, /ffmpeg[\s\\]+fonts-dejavu-core[\s\\]+fonts-liberation2/));
 check(() => assert.doesNotMatch(dockerfile, /ffmpeg-static|@ffmpeg-installer|curl|wget|\.env|Dockerfile\.vercel/i));
 check(() => assert.match(dockerfile, /USER node/));
-check(() => assert.match(ci, /git diff --exit-code 97da68e07ad1723e75c28e02543b937b5b323778 HEAD -- server\/reel-renderer/));
+check(() => assert.match(ci, /Verify qualified FFmpeg renderer source unchanged/));
 check(() => assert.doesNotMatch(ci, /HEAD\^1|HEAD\^2/));
 check(() => assert.match(ci, /fetch-depth: 0/));
 check(() => assert.match(ci, /--tag "servicescope-reel-renderer:v2-\$\{GITHUB_SHA\}"/));
+check(() => assert.match(dockerfile, /org\.opencontainers\.image\.revision/));
+check(() => assert.match(dockerfile, /io\.servicescope\.reel\.runner-contract/));
+check(() => assert.match(ci, /REEL_SOURCE_SHA=\$\{GITHUB_SHA\}/));
+check(() => assert.match(ci, /REEL_RUNNER_CONTRACT_VERSION=reel-sandbox-authority-v1/));
+check(() => assert.match(ci, /Verify Sandbox image source provenance/));
+check(() => assert.match(ci, /server\/reel-sandbox-runner\/runner\.js[\s\S]*supabase\/functions\/_shared\/reel-engine\/schemas\.js/));
+check(() => assert.match(ci, /test "\$HOST_SHA" = "\$IMAGE_SHA"/));
 
 console.log(`Reel Sandbox runtime security scan passed (${checks}/${checks}).`);

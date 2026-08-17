@@ -201,8 +201,8 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Verify qualified renderer source unchanged
-        run: git diff --exit-code 97da68e07ad1723e75c28e02543b937b5b323778 HEAD -- server/reel-renderer
+      - name: Verify qualified FFmpeg renderer source unchanged
+        run: git diff --exit-code 97da68e07ad1723e75c28e02543b937b5b323778 HEAD -- server/reel-renderer ':!server/reel-renderer/authorization.js' ':!server/reel-renderer/errors.js'
 
       - name: Sandbox runtime regression and security
         run: npm run test:reel-sandbox-runtime && npm run test:reel-sandbox-runtime-scan
@@ -215,9 +215,29 @@ jobs:
           docker image inspect "$BASE_IMAGE" --format 'base={{index .RepoDigests 0}}'
           docker build \
             --file infra/reel-render-sandbox/Dockerfile \
+            --build-arg "REEL_SOURCE_SHA=${GITHUB_SHA}" \
+            --build-arg "REEL_RUNNER_CONTRACT_VERSION=reel-sandbox-authority-v1" \
             --tag "servicescope-reel-renderer:v2-${GITHUB_SHA}" \
             .
           docker image inspect "servicescope-reel-renderer:v2-${GITHUB_SHA}" --format 'image_id={{.Id}}'
+
+      - name: Verify Sandbox image source provenance
+        run: |
+          IMAGE="servicescope-reel-renderer:v2-${GITHUB_SHA}"
+          test "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+          test "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "io.servicescope.reel.runner-contract" }}')" = "reel-sandbox-authority-v1"
+          for FILE in \
+            server/reel-sandbox-runner/runner.js \
+            server/reel-renderer/authorization.js \
+            server/reel-renderer/errors.js \
+            server/reel-sandbox-runtime/contracts.js \
+            supabase/functions/_shared/reel-engine/schemas.js
+          do
+            HOST_SHA="$(sha256sum "$FILE" | cut -d ' ' -f 1)"
+            IMAGE_SHA="$(docker run --rm --entrypoint sha256sum "$IMAGE" "/app/$FILE" | cut -d ' ' -f 1)"
+            test "$HOST_SHA" = "$IMAGE_SHA"
+            echo "$FILE sha256=$HOST_SHA"
+          done
 
       - name: Record FFmpeg package and license evidence
         run: |

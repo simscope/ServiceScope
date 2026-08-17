@@ -15,7 +15,6 @@ import {
   assertImmutableSandboxImage,
   parseSandboxResultJson,
   reelSandboxAssetSchemaVersion,
-  reelSandboxAuthorityMaxBytes,
   reelSandboxAuthorityPath,
   reelSandboxCoverMaxBytes,
   reelSandboxCoverPath,
@@ -31,6 +30,7 @@ import {
   reelSandboxSessionTimeoutMs,
   reelSandboxVideoMaxBytes,
   reelSandboxVideoPath,
+  serializeSandboxAuthority,
 } from './contracts.js';
 
 const deterministicErrors = new Set(reelRenderErrorCodes);
@@ -139,10 +139,7 @@ async function buildTransfer(authority, stagedAssets, stagingRoot) {
     || typeof stagingRoot !== 'string') {
     throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
   }
-  const authorityJson = JSON.stringify(authority);
-  if (Buffer.byteLength(authorityJson, 'utf8') > reelSandboxAuthorityMaxBytes) {
-    throw new RenderJobError('REEL_RENDER_INVALID_PLAN', 400);
-  }
+  const authorityJson = serializeSandboxAuthority(authority);
   const assets = [];
   const files = [{ path: reelSandboxAuthorityPath, content: authorityJson }];
   let aggregateBytes = 0;

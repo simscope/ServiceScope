@@ -8,6 +8,9 @@ import { buildReelRenderManifest } from '../server/reel-renderer/manifest.js';
 import { createProductionReelRenderer } from '../server/reel-sandbox-runtime/config.js';
 import {
   assertImmutableSandboxImage,
+  parseSandboxAuthorityJson,
+  reelSandboxAuthorityPath,
+  reelSandboxAuthoritySchemaVersion,
   reelSandboxCoverPath,
   reelSandboxErrorPath,
   reelSandboxRenderTimeoutMs,
@@ -16,6 +19,7 @@ import {
   reelSandboxSessionTimeoutMs,
   reelSandboxVideoMaxBytes,
   reelSandboxVideoPath,
+  serializeSandboxAuthority,
 } from '../server/reel-sandbox-runtime/contracts.js';
 import { createSandboxRenderAdapter } from '../server/reel-sandbox-runtime/renderer.js';
 import { createRenderTelemetry } from '../server/reel-render-jobs/telemetry.js';
@@ -29,11 +33,38 @@ async function checkAsync(fn) { await fn(); checks += 1; }
 const imageDigest = 'a'.repeat(64);
 const image = `servicescope-reel-renderer@sha256:${imageDigest}`;
 const fullVcrImage = `vcr.vercel.com/team/project/servicescope-reel-renderer@sha256:${imageDigest}`;
-const serializedAuthority = JSON.stringify(sandboxFixtureAuthority);
+const serializedAuthority = serializeSandboxAuthority(sandboxFixtureAuthority);
 const authoritySha256 = sha256(serializedAuthority);
 const reauthorized = reauthorizeSerializedAuthority(serializedAuthority, authoritySha256);
+check(() => assert.equal(JSON.parse(serializedAuthority).schemaVersion, reelSandboxAuthoritySchemaVersion));
+check(() => assert.deepEqual(parseSandboxAuthorityJson(serializedAuthority), sandboxFixtureAuthority));
 check(() => assert.doesNotThrow(() => buildReelRenderManifest(reauthorized, sandboxFixtureAssets)));
 check(() => assert.throws(() => buildReelRenderManifest(sandboxFixtureAuthority.plan, sandboxFixtureAssets), /REEL_RENDER_UNAUTHORIZED/));
+
+for (const stale of [
+  JSON.stringify(sandboxFixtureAuthority),
+  JSON.stringify({ schemaVersion: 'reel-sandbox-authority-v0', ...sandboxFixtureAuthority }),
+  JSON.stringify({ schemaVersion: 'reel-sandbox-authority-v2', ...sandboxFixtureAuthority }),
+]) {
+  check(() => assert.throws(
+    () => reauthorizeSerializedAuthority(stale, sha256(stale)),
+    /REEL_RENDER_CONTEXT_STALE/,
+  ));
+}
+
+const staleContextAuthority = serializeSandboxAuthority({
+  plan: sandboxFixtureAuthority.plan,
+  context: { ...sandboxFixtureAuthority.context, privateValuesForLeakDetection: undefined },
+});
+check(() => assert.throws(
+  () => reauthorizeSerializedAuthority(staleContextAuthority, sha256(staleContextAuthority)),
+  /REEL_RENDER_CONTEXT_STALE/,
+));
+const malformedPlanAuthority = serializeSandboxAuthority({ plan: {}, context: sandboxFixtureAuthority.context });
+check(() => assert.throws(
+  () => reauthorizeSerializedAuthority(malformedPlanAuthority, sha256(malformedPlanAuthority)),
+  /REEL_RENDER_INVALID_PLAN/,
+));
 
 for (const mutate of [
   (value) => { value.plan.claims[0].text = 'Unsupported replacement claim'; },
@@ -45,7 +76,7 @@ for (const mutate of [
   const value = structuredClone(sandboxFixtureAuthority);
   mutate(value);
   check(() => assert.throws(
-    () => reauthorizeSerializedAuthority(JSON.stringify(value), authoritySha256),
+    () => reauthorizeSerializedAuthority(serializeSandboxAuthority(value), authoritySha256),
     /REEL_RENDER_INVALID_PLAN/,
   ));
 }
@@ -110,6 +141,10 @@ async function sandboxSuccessAndIntegrity() {
     check(() => assert.equal(fixture.calls.run, 1));
     check(() => assert.equal(fixture.calls.stop, 1));
     check(() => assert.equal(fixture.calls.write, 1));
+    check(() => assert.equal(
+      JSON.parse(fixture.calls.files.find((file) => file.path === reelSandboxAuthorityPath).content).schemaVersion,
+      reelSandboxAuthoritySchemaVersion,
+    ));
     check(() => assert.equal(Object.hasOwn(fixture.calls.createOptions, 'ports'), false));
     check(() => assert.equal(Object.hasOwn(fixture.calls.createOptions, 'env'), false));
     check(() => assert.doesNotMatch(JSON.stringify(fixture.calls.files), /SUPABASE|SERVICE_ROLE|https?:\/\//i));

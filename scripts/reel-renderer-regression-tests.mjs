@@ -109,6 +109,16 @@ for (const mutate of [
   ));
 }
 check(() => assert.doesNotThrow(() => authorizeReelForRender({ plan: validPlan, context: validContext })));
+for (const context of [
+  {},
+  { ...validContext, privateValuesForLeakDetection: undefined },
+  { ...validContext, privateValuesForLeakDetection: 'legacy-private-values' },
+]) {
+  check(() => assert.throws(
+    () => authorizeReelForRender({ plan: validPlan, context }),
+    /REEL_RENDER_CONTEXT_STALE/,
+  ));
+}
 check(() => assert.throws(() => buildReelRenderManifest(validPlan, stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
 check(() => assert.throws(() => buildReelRenderManifest({}, stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
 check(() => assert.throws(() => buildReelRenderManifest(JSON.parse(JSON.stringify(authorizedPlan)), stagedAssets), /REEL_RENDER_UNAUTHORIZED/));
