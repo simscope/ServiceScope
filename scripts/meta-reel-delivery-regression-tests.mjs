@@ -328,11 +328,11 @@ for (const scenario of [
   check(() => assert.equal(fixture.provider.calls.length, callsBefore));
 }
 
-for (const scenario of [
-  { states: ['published'], finalStatus: 'published', statusCalls: 1 },
-  { states: ['processing', 'failed'], finalStatus: 'failed', statusCalls: 2 },
-  { states: ['processing', 'processing', 'published'], finalStatus: 'published', statusCalls: 3 },
-]) {
+for (const scenario of ['published', 'failed'].flatMap((finalStatus) => [1, 2, 3].map((statusCalls) => ({
+  states: [...Array(statusCalls - 1).fill('processing'), finalStatus],
+  finalStatus,
+  statusCalls,
+})))) {
   const fixture = await makeFixture({ statusStates: scenario.states });
   let result;
   try {
@@ -358,12 +358,14 @@ for (const scenario of [
     body: { action: 'reconcile_facebook_reel', companyId: ids.company, publicationId: ids.publication, explicitApproval: true },
     companyId: ids.company, access: fixture.access, deps: fixture.deps,
   });
-  const concurrent = await Promise.allSettled([0, 1].map(() => handleFacebookReelDelivery({
+  const concurrent = await Promise.allSettled([0, 1, 2, 3, 4].map(() => handleFacebookReelDelivery({
     body: { action: 'reconcile_facebook_reel', companyId: ids.company, publicationId: ids.publication, explicitApproval: true },
     companyId: ids.company, access: fixture.access, deps: fixture.deps,
   })));
   check(() => assert.equal(concurrent.filter((entry) => entry.status === 'fulfilled').length, 1));
-  check(() => assert.equal(concurrent.filter((entry) => entry.status === 'rejected').length, 1));
+  check(() => assert.equal(concurrent.filter((entry) => entry.status === 'rejected').length, 4));
+  check(() => assert.equal(concurrent.filter((entry) => entry.status === 'rejected')
+    .every((entry) => entry.reason?.code === 'META_REEL_STATUS_CHECK_LIMIT_REACHED'), true));
   check(() => assert.equal(fixture.provider.calls.filter((value) => value === 'status').length, 3));
   check(() => assert.equal(fixture.repository.row.provider_status_checks, 3));
   check(() => assert.equal(fixture.repository.row.provider_call_count, 6));
