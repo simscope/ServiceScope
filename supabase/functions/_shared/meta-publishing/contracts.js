@@ -13,6 +13,8 @@ export const FACEBOOK_PUBLISH_ACTIONS = Object.freeze([
   'resolve_facebook_publication_photo_false_positive',
   'publish_facebook_text',
   'publish_facebook_single_photo',
+  'publish_facebook_reel',
+  'reconcile_facebook_reel',
   'schedule_facebook_text',
   'schedule_facebook_single_photo',
   'cancel_facebook_scheduled_publication',
@@ -24,6 +26,11 @@ export const FACEBOOK_PUBLISH_STAGES = Object.freeze([
   'idempotency_begin',
   'decrypt_connection',
   'facebook_publish',
+  'reel_artifact_validation',
+  'reel_initialize',
+  'reel_upload',
+  'reel_finalize',
+  'reel_status',
   'persist_result',
   'schedule_persist',
   'cancel_schedule',
@@ -38,6 +45,7 @@ export const FACEBOOK_PROVIDER_CATEGORIES = Object.freeze([
   'DELIVERY_UNKNOWN',
   'RESPONSE_MISSING_POST_ID',
   'RESPONSE_MISSING_MEDIA_ID',
+  'REEL_PROCESSING_FAILED',
 ]);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -60,6 +68,9 @@ const SAFE_CODES = new Set([
   'META_PUBLICATION_MEDIA_TOO_LARGE',
   'META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED',
   'META_PUBLICATION_ACTIVE_CONFLICT',
+  'META_REEL_RENDER_REQUIRED',
+  'META_REEL_RENDER_INVALID',
+  'META_REEL_STATUS_CHECK_LIMIT_REACHED',
   'META_SCHEDULE_CANCELLATION_UNAVAILABLE',
   'INTERNAL_ERROR',
 ]);
@@ -99,6 +110,10 @@ export function parsePublishingRequest(rawBody, maxBytes = 24_000) {
             ? ['action', 'companyId', 'jobId', 'attachmentId', 'analysisRunId', 'attachmentResultId', 'findingIds', 'explicitApproval', 'resolutionReason']
             : value.action === 'cancel_facebook_scheduled_publication'
               ? ['action', 'companyId', 'publicationId', 'explicitApproval']
+              : value.action === 'reconcile_facebook_reel'
+                ? ['action', 'companyId', 'publicationId', 'explicitApproval']
+                : value.action === 'publish_facebook_reel'
+                  ? ['action', 'companyId', 'jobId', 'renderJobId', 'message', 'idempotencyKey', 'explicitApproval']
               : value.action === 'publish_facebook_single_photo'
               ? ['action', 'companyId', 'jobId', 'attachmentId', 'message', 'idempotencyKey', 'explicitApproval']
               : value.action === 'schedule_facebook_single_photo'
@@ -215,6 +230,7 @@ export function publicationIntentSource({
   publicationKind,
   approvedMessage,
   attachmentId,
+  renderJobId,
 }) {
   return [
     'facebook_publication_intent_v1',
@@ -227,10 +243,12 @@ export function publicationIntentSource({
     publicationKind,
     approvedMessage,
     publicationKind === 'single_photo' ? attachmentId : '',
+    ...(publicationKind === 'reel_video' ? [renderJobId] : []),
   ].join('\n');
 }
 
 export function publicationKindForAction(action) {
+  if (action === 'publish_facebook_reel') return 'reel_video';
   return ['publish_facebook_single_photo', 'schedule_facebook_single_photo'].includes(action) ? 'single_photo' : 'text_only';
 }
 
@@ -286,6 +304,20 @@ export function safePublicationResult(row) {
   };
 }
 
+export function safeReelPublicationResult(row) {
+  const status = safePublicationStatus(row?.publication_status ?? row?.status);
+  return {
+    ok: status === 'published' || status === 'publishing',
+    status,
+    publicationId: safeUuid(row?.publication_id ?? row?.id),
+    publicationKind: 'reel_video',
+    providerStage: safeReelProviderStage(row?.provider_delivery_stage),
+    approvedAt: safeTimestamp(row?.publication_approved_at ?? row?.approved_at),
+    publishedAt: safeTimestamp(row?.publication_published_at ?? row?.published_at),
+    errorCode: safeCode(row?.publication_last_error_code ?? row?.last_error_code),
+  };
+}
+
 export function sanitizeProviderDiagnostic(value) {
   return {
     providerHttpStatus: safeInteger(value?.providerHttpStatus, 100, 599),
@@ -322,15 +354,18 @@ export { META_PROVIDER, PINNED_GRAPH_API_VERSION };
 
 function safePublicationSummary(value) {
   const status = safePublicationStatus(value?.status);
+  const publicationKind = safePublicationKind(value?.publication_kind);
   return {
     status,
     approvedAt: safeTimestamp(value?.approved_at),
     publishedAt: safeTimestamp(value?.published_at),
     errorCode: safeCode(value?.last_error_code),
-    publicationId: status === 'scheduled' ? safeUuid(value?.id) : null,
+    publicationId: status === 'scheduled' || publicationKind === 'reel_video' ? safeUuid(value?.id) : null,
     scheduledFor: safeTimestamp(value?.scheduled_for),
     scheduledTimezone: safeTimezone(value?.scheduled_timezone),
-    publicationKind: safePublicationKind(value?.publication_kind),
+    publicationKind,
+    providerStage: publicationKind === 'reel_video' ? safeReelProviderStage(value?.provider_delivery_stage) : null,
+    renderJobId: publicationKind === 'reel_video' ? safeUuid(value?.render_job_id) : null,
   };
 }
 
@@ -369,7 +404,13 @@ function safeTimezone(value) {
 }
 
 function safePublicationKind(value) {
-  return ['text_only', 'single_photo'].includes(value) ? value : null;
+  return ['text_only', 'single_photo', 'reel_video'].includes(value) ? value : null;
+}
+
+function safeReelProviderStage(value) {
+  return ['upload_initializing', 'uploading', 'finalizing', 'provider_processing', 'published', 'failed', 'delivery_unknown'].includes(value)
+    ? value
+    : null;
 }
 
 function safeLabel(value, maxLength) {

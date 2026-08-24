@@ -118,6 +118,9 @@ jobs:
       - name: Check scheduled worker Edge entrypoint
         run: deno check supabase/functions/meta-social-publish-scheduled-worker/index.ts
 
+      - name: Check Meta publishing Edge entrypoint
+        run: deno check supabase/functions/meta-social-publish/index.ts
+
       - name: Check AI Reel Director Edge entrypoint
         run: deno check supabase/functions/ai-content-generate/index.ts
 

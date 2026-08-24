@@ -1,5 +1,5 @@
 import { supabaseFunction } from '../../services/supabaseRest';
-import type { FacebookPublishingSnapshot, FacebookPublishResult, FacebookScheduledPublicationResult } from './contracts';
+import type { FacebookPublishingSnapshot, FacebookPublishResult, FacebookReelPublishResult, FacebookScheduledPublicationResult } from './contracts';
 
 const functionName = 'meta-social-publish';
 
@@ -93,6 +93,31 @@ export function publishFacebookSinglePhoto(input: {
 }) {
   return supabaseFunction<FacebookPublishResult>(functionName, {
     action: 'publish_facebook_single_photo',
+    ...input,
+  }, { timeoutMs: 20_000 });
+}
+
+export function publishFacebookReel(input: {
+  companyId: string;
+  jobId: string;
+  renderJobId: string;
+  message: string;
+  idempotencyKey: string;
+  explicitApproval: true;
+}) {
+  return supabaseFunction<FacebookReelPublishResult>(functionName, {
+    action: 'publish_facebook_reel',
+    ...input,
+  }, { timeoutMs: 60_000 });
+}
+
+export function reconcileFacebookReel(input: {
+  companyId: string;
+  publicationId: string;
+  explicitApproval: true;
+}) {
+  return supabaseFunction<FacebookReelPublishResult>(functionName, {
+    action: 'reconcile_facebook_reel',
     ...input,
   }, { timeoutMs: 20_000 });
 }

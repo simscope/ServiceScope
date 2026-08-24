@@ -74,7 +74,135 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       }
       return { providerPostId: null, providerMediaId };
     },
+
+    async initializeReel({ pageId, pageAccessToken, signal }) {
+      const endpoint = `https://graph.facebook.com/${config.graphApiVersion}/${encodeURIComponent(pageId)}/video_reels`;
+      const proof = await appSecretProof(pageAccessToken, config.appSecret, cryptoApi);
+      const payload = await requestProviderJson(fetchImpl, endpoint, {
+        method: 'POST',
+        redirect: 'error',
+        headers: providerFormHeaders(pageAccessToken),
+        body: new URLSearchParams({ upload_phase: 'start', appsecret_proof: proof }),
+        signal,
+      });
+      const providerMediaId = safeProviderId(payload?.video_id);
+      if (!providerMediaId) {
+        throw new MetaPublishingError('META_PUBLICATION_FAILED', undefined, {
+          providerCategory: 'RESPONSE_MISSING_MEDIA_ID',
+        });
+      }
+      return { providerMediaId };
+    },
+
+    async uploadReel({ providerMediaId, pageAccessToken, videoBytes, signal }) {
+      const endpoint = `https://rupload.facebook.com/video-upload/${config.graphApiVersion}/${encodeURIComponent(providerMediaId)}`;
+      const response = await requestProviderJson(fetchImpl, endpoint, {
+        method: 'POST',
+        redirect: 'error',
+        headers: {
+          Authorization: `OAuth ${pageAccessToken}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/octet-stream',
+          offset: '0',
+          file_size: String(videoBytes.byteLength),
+        },
+        body: videoBytes,
+        signal,
+      });
+      if (response?.success !== true) {
+        throw new MetaPublishingError('META_PUBLICATION_FAILED', undefined, {
+          providerCategory: 'PROVIDER_REJECTED',
+        });
+      }
+      return { uploaded: true };
+    },
+
+    async finalizeReel({ pageId, pageAccessToken, providerMediaId, message, signal }) {
+      const endpoint = `https://graph.facebook.com/${config.graphApiVersion}/${encodeURIComponent(pageId)}/video_reels`;
+      const proof = await appSecretProof(pageAccessToken, config.appSecret, cryptoApi);
+      const payload = await requestProviderJson(fetchImpl, endpoint, {
+        method: 'POST',
+        redirect: 'error',
+        headers: providerFormHeaders(pageAccessToken),
+        body: new URLSearchParams({
+          upload_phase: 'finish',
+          video_state: 'PUBLISHED',
+          video_id: providerMediaId,
+          description: message,
+          appsecret_proof: proof,
+        }),
+        signal,
+      });
+      if (payload?.success !== true) {
+        throw new MetaPublishingError('META_PUBLICATION_FAILED', undefined, {
+          providerCategory: 'PROVIDER_REJECTED',
+        });
+      }
+      return { finalized: true };
+    },
+
+    async getReelStatus({ providerMediaId, pageAccessToken, signal }) {
+      const proof = await appSecretProof(pageAccessToken, config.appSecret, cryptoApi);
+      const endpoint = new URL(`https://graph.facebook.com/${config.graphApiVersion}/${encodeURIComponent(providerMediaId)}`);
+      endpoint.search = new URLSearchParams({ fields: 'status', appsecret_proof: proof }).toString();
+      const payload = await requestProviderJson(fetchImpl, endpoint.toString(), {
+        method: 'GET',
+        redirect: 'error',
+        headers: { Authorization: `Bearer ${pageAccessToken}`, Accept: 'application/json' },
+        signal,
+      });
+      return normalizeReelStatus(payload?.status);
+    },
   };
+}
+
+function providerFormHeaders(pageAccessToken) {
+  return {
+    Authorization: `Bearer ${pageAccessToken}`,
+    Accept: 'application/json',
+    'Content-Type': 'application/x-www-form-urlencoded',
+  };
+}
+
+async function requestProviderJson(fetchImpl, endpoint, init) {
+  let response;
+  try {
+    response = await fetchImpl(endpoint, init);
+  } catch {
+    throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN', undefined, {
+      providerCategory: 'DELIVERY_UNKNOWN',
+    });
+  }
+  const payload = await readBoundedJson(response);
+  if (!response.ok) {
+    const diagnostic = providerDiagnostic(payload, response.status);
+    const code = diagnostic.providerCategory === 'INVALID_TOKEN'
+      ? 'META_CONNECTION_NEEDS_REAUTHORIZATION'
+      : diagnostic.providerCategory === 'MISSING_PERMISSION'
+        ? 'META_PUBLISHING_PERMISSION_MISSING'
+        : diagnostic.providerCategory === 'PROVIDER_TEMPORARY_ERROR'
+          ? 'META_PUBLICATION_DELIVERY_UNKNOWN'
+          : 'META_PUBLICATION_PROVIDER_REJECTED';
+    throw new MetaPublishingError(code, undefined, diagnostic);
+  }
+  return payload;
+}
+
+function normalizeReelStatus(value) {
+  const publishing = String(value?.publishing_phase?.status ?? '').toLowerCase();
+  const processing = String(value?.processing_phase?.status ?? '').toLowerCase();
+  const video = String(value?.video_status ?? '').toLowerCase();
+  const hasError = Boolean(value?.publishing_phase?.error || value?.processing_phase?.error || value?.uploading_phase?.error);
+  if (hasError || ['error', 'failed'].includes(publishing) || ['error', 'failed'].includes(processing) || ['error', 'failed'].includes(video)) {
+    return { state: 'failed' };
+  }
+  if (publishing === 'complete' || ['published', 'ready'].includes(video)) return { state: 'published' };
+  return { state: 'processing' };
+}
+
+function safeProviderId(value) {
+  const clean = typeof value === 'string' ? value.trim() : '';
+  return clean && clean.length <= 200 && !/[\u0000-\u001f]/.test(clean) ? clean : null;
 }
 
 function providerDiagnostic(payload, httpStatus) {

@@ -1,5 +1,6 @@
 export type FacebookPublicationStatus = 'scheduled' | 'publishing' | 'published' | 'failed' | 'delivery_unknown' | 'cancelled';
-export type FacebookPublicationKind = 'text_only' | 'single_photo';
+export type FacebookPublicationKind = 'text_only' | 'single_photo' | 'reel_video';
+export type FacebookReelProviderStage = 'upload_initializing' | 'uploading' | 'finalizing' | 'provider_processing' | 'published' | 'failed' | 'delivery_unknown';
 
 export type FacebookPublicationSummary = {
   status: FacebookPublicationStatus;
@@ -10,6 +11,8 @@ export type FacebookPublicationSummary = {
   scheduledFor?: string | null;
   scheduledTimezone?: string | null;
   publicationKind?: FacebookPublicationKind | null;
+  providerStage?: FacebookReelProviderStage | null;
+  renderJobId?: string | null;
 };
 
 export type FacebookActiveScheduledPublication = {
@@ -51,6 +54,12 @@ export type FacebookPublishResult = FacebookPublicationSummary & {
   ok: boolean;
 };
 
+export type FacebookReelPublishResult = FacebookPublishResult & {
+  publicationId: string | null;
+  publicationKind: 'reel_video';
+  providerStage: FacebookReelProviderStage | null;
+};
+
 export type FacebookScheduledPublicationResult = FacebookPublicationSummary & {
   ok: true;
   publicationId: string | null;
@@ -72,6 +81,9 @@ export const FACEBOOK_PUBLISH_ERROR_MESSAGES: Record<string, string> = {
   META_PUBLICATION_MEDIA_TOO_LARGE: 'The selected photo exceeds the publishing limit.',
   META_PUBLICATION_MEDIA_PRIVACY_REVIEW_REQUIRED: 'The selected photo needs privacy review before publishing.',
   META_PUBLICATION_ACTIVE_CONFLICT: 'Another Facebook publication for this job is already scheduled, publishing, or awaiting delivery confirmation.',
+  META_REEL_RENDER_REQUIRED: 'A completed Reel render is required before publishing.',
+  META_REEL_RENDER_INVALID: 'The completed Reel no longer matches its verified artifact.',
+  META_REEL_STATUS_CHECK_LIMIT_REACHED: 'Facebook processing still needs manual review. No additional automatic checks will run.',
   META_SCHEDULE_CANCELLATION_UNAVAILABLE: 'This scheduled publication can no longer be cancelled.',
 };
 

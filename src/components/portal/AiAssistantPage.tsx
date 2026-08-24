@@ -50,6 +50,7 @@ import {
 } from '../../features/media-planning/planningState';
 import { MediaPlanningWorkspace } from './MediaPlanningWorkspace';
 import { FacebookPublishPanel } from './FacebookPublishPanel';
+import { FacebookReelPublishPanel } from './FacebookReelPublishPanel';
 import {
   approveFacebookPublicationPhoto,
   excludeFacebookPublicationPhoto,
@@ -998,6 +999,16 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                       <a className="primary-button" href={activeReelRender.videoUrl} download><Download size={18} aria-hidden="true" />Download MP4</a>
                       <button className="secondary-button" type="button" onClick={refreshReelArtifacts}>Refresh link</button>
                     </div>
+                    {activeReelRender.renderJobId ? (
+                      <FacebookReelPublishPanel
+                        companyId={companyId}
+                        jobId={selectedJob.id}
+                        renderJobId={activeReelRender.renderJobId}
+                        caption={reelWorkspace.plan.caption.text}
+                        videoUrl={activeReelRender.videoUrl}
+                        coverUrl={activeReelRender.coverUrl}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
                 </>
