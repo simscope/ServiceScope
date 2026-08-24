@@ -28,6 +28,7 @@ const migrationNames = [
   '20260807010000_meta_facebook_scheduled_worker_reconciliation.sql',
   '20260808235500_meta_facebook_single_active_schedule.sql',
   '20260817034500_meta_facebook_reel_delivery.sql',
+  '20260824040000_meta_facebook_reel_reconciliation_claim.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -86,6 +87,27 @@ check(() => assert.match(reelDeliveryMigration, /exception when unique_violation
 check(() => assert.match(reelDeliveryMigration, /meta_reel_publication_requested/i));
 check(() => assert.doesNotMatch(reelDeliveryMigration, /providerMediaId|providerPostId/i));
 check(() => assert.match(reelDeliveryMigration, /revoke all on function public\.begin_company_facebook_reel_publication[\s\S]*from public,anon,authenticated/i));
+const reelReconciliationMigration = migrations[18];
+check(() => assert.equal(reelReconciliationMigration.trimStart().startsWith('begin;'), true));
+check(() => assert.equal(reelReconciliationMigration.trimEnd().endsWith('commit;'), true));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_REEL_RECONCILIATION_CLAIM_BEGIN',
+    end: '-- META_FACEBOOK_REEL_RECONCILIATION_CLAIM_END',
+    label: 'Meta Facebook Reel reconciliation claim',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(reelReconciliationMigration, {
+    begin: '-- META_FACEBOOK_REEL_RECONCILIATION_CLAIM_BEGIN',
+    end: '-- META_FACEBOOK_REEL_RECONCILIATION_CLAIM_END',
+    label: 'Meta Facebook Reel reconciliation claim',
+  })),
+));
+check(() => assert.match(reelReconciliationMigration, /create or replace function public\.claim_company_facebook_reel_status_check/i));
+check(() => assert.match(reelReconciliationMigration, /status='delivery_unknown'[\s\S]*provider_call_count<6 and provider_status_checks<3/i));
+check(() => assert.match(reelReconciliationMigration, /provider_call_count=provider_call_count\+1,provider_status_checks=provider_status_checks\+1/i));
+check(() => assert.match(reelReconciliationMigration, /create or replace function public\.complete_company_facebook_reel_reconciliation/i));
+check(() => assert.match(reelReconciliationMigration, /reconciliationExhausted',updated\.provider_status_checks=3/i));
+check(() => assert.doesNotMatch(reelReconciliationMigration, /providerMediaId|providerPostId/i));
 check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.publishingAclFix),
   normalizeSqlForParity(extractExactMarkedBlock(migrations[4], META_FACEBOOK_PUBLISH_ACL_FIX_MARKERS)),
@@ -1430,6 +1452,7 @@ await canonicalDb.exec(`insert into storage.buckets values ('company-reel-render
 await canonicalDb.query(`insert into storage.objects values ('company-reel-renders',$1::text||'/'||$2::text||'/reel.mp4')`,
   [reelReplayIds.company, reelReplayIds.render]);
 await canonicalDb.exec(migrations[17]);
+await canonicalDb.exec(migrations[18]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const preservedPublications = await canonicalDb.query(`select publication_kind,status from public.company_social_publications order by publication_kind`);
@@ -1452,10 +1475,58 @@ for (const [expectedStage, nextStage] of [
     $1,$2,$3,'Reel reviewer','owner',$4,$5,'mock-reel-media',now()
   )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor, expectedStage, nextStage]);
 }
-for (let attempt = 0; attempt < 3; attempt += 1) {
+await canonicalDb.query(`select * from public.mark_company_facebook_reel_unknown(
+  $1,$2,$3,'Reel reviewer','owner','mock-reel-media',true,true,'2026-08-24T04:00:00Z'
+)`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
+const idempotentBefore = await canonicalDb.query(`select provider_call_count,provider_status_checks,
+  (select count(*)::integer from public.audit_events where resource_id=$1::text and action='meta_publication_delivery_unknown') as unknown_audits
+  from public.company_social_publications where id=$1::uuid`, [reelReplayIds.publication]);
+await canonicalDb.query(`select * from public.mark_company_facebook_reel_unknown(
+  $1,$2,$3,'Reel reviewer','owner','mock-reel-media',true,true,'2026-08-24T04:00:00Z'
+)`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
+const idempotentAfter = await canonicalDb.query(`select provider_call_count,provider_status_checks,
+  (select count(*)::integer from public.audit_events where resource_id=$1::text and action='meta_publication_delivery_unknown') as unknown_audits
+  from public.company_social_publications where id=$1::uuid`, [reelReplayIds.publication]);
+check(() => assert.deepEqual(idempotentAfter.rows, idempotentBefore.rows));
+const beforeCrossTenantClaim = await canonicalDb.query(`select status,provider_call_count,provider_status_checks
+  from public.company_social_publications where id=$1`, [reelReplayIds.publication]);
+let crossTenantClaimRejected = false;
+try {
+  await canonicalDb.query(`select * from public.claim_company_facebook_reel_status_check(
+    $1,'00000000-0000-4000-8000-000000008299',$2,'Other tenant','owner',now()
+  )`, [reelReplayIds.publication, reelReplayIds.actor]);
+} catch {
+  crossTenantClaimRejected = true;
+}
+check(() => assert.equal(crossTenantClaimRejected, true));
+const afterCrossTenantClaim = await canonicalDb.query(`select status,provider_call_count,provider_status_checks
+  from public.company_social_publications where id=$1`, [reelReplayIds.publication]);
+check(() => assert.deepEqual(afterCrossTenantClaim.rows, beforeCrossTenantClaim.rows));
+const claimPrivileges = await canonicalDb.query(`select
+  has_function_privilege('anon','public.claim_company_facebook_reel_status_check(uuid,uuid,uuid,text,text,timestamptz)','execute') as anon_execute,
+  has_function_privilege('authenticated','public.claim_company_facebook_reel_status_check(uuid,uuid,uuid,text,text,timestamptz)','execute') as authenticated_execute,
+  has_function_privilege('service_role','public.claim_company_facebook_reel_status_check(uuid,uuid,uuid,text,text,timestamptz)','execute') as service_execute`);
+check(() => assert.deepEqual(claimPrivileges.rows[0], {
+  anon_execute: false, authenticated_execute: false, service_execute: true,
+}));
+for (let attempt = 0; attempt < 2; attempt += 1) {
+  const claimed = await canonicalDb.query(`select * from public.claim_company_facebook_reel_status_check(
+    $1,$2,$3,'Reel reviewer','owner',($4::timestamptz + $5 * interval '1 second')
+  )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor, '2026-08-24T04:01:00Z', attempt]);
+  check(() => assert.equal(claimed.rows[0].status, 'publishing'));
+  check(() => assert.equal(claimed.rows[0].provider_delivery_stage, 'provider_processing'));
+  let concurrentClaimRejected = false;
+  try {
+    await canonicalDb.query(`select * from public.claim_company_facebook_reel_status_check(
+      $1,$2,$3,'Reel reviewer','owner',now()
+    )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
+  } catch {
+    concurrentClaimRejected = true;
+  }
+  check(() => assert.equal(concurrentClaimRejected, true));
   await canonicalDb.query(`select * from public.mark_company_facebook_reel_unknown(
-    $1,$2,$3,'Reel reviewer','owner','mock-reel-media',true,true,now()
-  )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
+    $1,$2,$3,'Reel reviewer','owner','mock-reel-media',false,false,($4::timestamptz + $5 * interval '1 second')
+  )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor, '2026-08-24T04:01:00Z', attempt]);
 }
 const boundedStatus = await canonicalDb.query(`select status,provider_call_count,provider_status_checks
   from public.company_social_publications where id=$1`, [reelReplayIds.publication]);
@@ -1464,8 +1535,8 @@ check(() => assert.deepEqual(boundedStatus.rows[0], {
 }));
 let fourthStatusRejected = false;
 try {
-  await canonicalDb.query(`select * from public.mark_company_facebook_reel_unknown(
-    $1,$2,$3,'Reel reviewer','owner','mock-reel-media',true,true,now()
+  await canonicalDb.query(`select * from public.claim_company_facebook_reel_status_check(
+    $1,$2,$3,'Reel reviewer','owner',now()
   )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
 } catch {
   fourthStatusRejected = true;

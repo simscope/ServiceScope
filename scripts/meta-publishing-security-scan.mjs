@@ -40,6 +40,7 @@ const [
   reelPreparation,
   reelPanel,
   reelDeliveryMigration,
+  reelReconciliationMigration,
 ] = await Promise.all([
   read('supabase/functions/meta-social-publish/index.ts'),
   read('supabase/functions/_shared/meta-publishing/service.js'),
@@ -75,6 +76,7 @@ const [
   read('supabase/functions/_shared/meta-publishing/reelPreparation.js'),
   read('src/components/portal/FacebookReelPublishPanel.tsx'),
   read('supabase/migrations/20260817034500_meta_facebook_reel_delivery.sql'),
+  read('supabase/migrations/20260824040000_meta_facebook_reel_reconciliation_claim.sql'),
 ]);
 
 const browserSources = `${client}\n${panel}\n${reelPanel}\n${aiPage}`;
@@ -112,6 +114,15 @@ check(() => assert.equal((reelDeliveryMigration.match(/provider_status_checks=pr
 check(() => assert.match(reelDeliveryService, /provider_status_checks\) >= MAX_REEL_STATUS_CHECKS/));
 check(() => assert.match(reelDeliveryService, /statusWasChecked \|\|[\s\S]*markReelUnknown/));
 check(() => assert.match(reelDeliveryMigration, /grant execute on function public\.begin_company_facebook_reel_publication[\s\S]*to service_role/));
+check(() => assert.doesNotMatch(reelReconciliationMigration, /providerMediaId|providerPostId|access[_-]?token|authorization/i));
+check(() => assert.match(reelReconciliationMigration, /create or replace function public\.claim_company_facebook_reel_status_check/i));
+check(() => assert.match(reelReconciliationMigration, /status='delivery_unknown'[\s\S]*provider_delivery_stage='delivery_unknown'/i));
+check(() => assert.match(reelReconciliationMigration, /provider_call_count=provider_call_count\+1,provider_status_checks=provider_status_checks\+1/i));
+check(() => assert.match(reelReconciliationMigration, /revoke all on function public\.claim_company_facebook_reel_status_check[\s\S]*from public,anon,authenticated/i));
+check(() => assert.match(reelReconciliationMigration, /grant execute on function public\.claim_company_facebook_reel_status_check[\s\S]*to service_role/i));
+check(() => assert.match(reelDeliveryService, /claimReelStatusCheck[\s\S]*providerCall/));
+check(() => assert.match(reelDeliveryService, /callAlreadyCounted: true/));
+check(() => assert.doesNotMatch(reelDeliveryService, /for\s*\([^)]*retry|while\s*\([^)]*provider/i));
 check(() => assert.doesNotMatch(browserSources, /\bFormData\b|multipart\/form-data/i));
 check(() => assert.doesNotMatch(browserSources, /password/i));
 check(() => assert.match(client, /supabaseFunction<.*>\(functionName/s));
