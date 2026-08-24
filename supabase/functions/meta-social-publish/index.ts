@@ -241,7 +241,7 @@ function createRepository(adminClient: DynamicSupabaseClient) {
     async getReelPublication(companyId: string, publicationId: string) {
       const { data: publication, error } = await adminClient
         .from('company_social_publications')
-        .select('id,company_id,connection_id,status,publication_kind,reel_provider_media_id,provider_delivery_stage,provider_call_count,approved_at,published_at,last_error_code')
+        .select('id,company_id,connection_id,status,publication_kind,reel_provider_media_id,provider_delivery_stage,provider_call_count,provider_status_checks,approved_at,published_at,last_error_code')
         .eq('id', publicationId)
         .eq('company_id', companyId)
         .maybeSingle();
@@ -453,6 +453,7 @@ function createRepository(adminClient: DynamicSupabaseClient) {
         p_provider_is_transient: diagnostic.providerIsTransient ?? null,
         p_last_error_code: input.lastErrorCode,
         p_call_was_sent: input.callWasSent === true,
+        p_status_was_checked: input.statusWasChecked === true,
       }));
     },
 
@@ -460,6 +461,7 @@ function createRepository(adminClient: DynamicSupabaseClient) {
       return oneRpcRow(adminClient, 'mark_company_facebook_reel_unknown', reelRpcParams(input, {
         p_provider_media_id: input.providerMediaId,
         p_call_was_sent: input.callWasSent === true,
+        p_status_was_checked: input.statusWasChecked === true,
       }));
     },
 

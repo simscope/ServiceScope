@@ -66,6 +66,33 @@ for (const unsafe of [
   check(() => assert.match(calls[3].url, /^https:\/\/graph\.facebook\.com\/v25\.0\/mock-video-1\?fields=status/));
   check(() => assert.equal(status.state, 'published'));
   check(() => assert.doesNotMatch(calls[1].url, /attacker\.invalid/));
+  check(() => assert.equal(calls.every((call) => call.init.redirect === 'error'), true));
+}
+
+for (const scenario of [
+  [401, { error: { code: 190 } }, 'META_CONNECTION_NEEDS_REAUTHORIZATION', 'INVALID_TOKEN'],
+  [403, { error: { code: 200 } }, 'META_PUBLISHING_PERMISSION_MISSING', 'MISSING_PERMISSION'],
+  [429, { error: { code: 613 } }, 'META_PUBLICATION_PROVIDER_REJECTED', 'RATE_LIMITED'],
+  [400, { error: { code: 100 } }, 'META_PUBLICATION_PROVIDER_REJECTED', 'PAGE_UNAVAILABLE'],
+  [500, { error: { code: 2 } }, 'META_PUBLICATION_DELIVERY_UNKNOWN', 'PROVIDER_TEMPORARY_ERROR'],
+  [400, { error: { code: 2, is_transient: true } }, 'META_PUBLICATION_DELIVERY_UNKNOWN', 'PROVIDER_TEMPORARY_ERROR'],
+]) {
+  const [status, payload, expectedCode, expectedCategory] = scenario;
+  const provider = createFacebookPublishingProvider({
+    config: { graphApiVersion: 'v25.0', appSecret: 'app-secret' },
+    cryptoApi: webcrypto,
+    fetchImpl: async (_url, init) => {
+      assert.equal(init.redirect, 'error');
+      return jsonResponse(payload, status);
+    },
+  });
+  await assert.rejects(
+    () => provider.initializeReel({
+      pageId: '10001', pageAccessToken: 'page-token', signal: new AbortController().signal,
+    }),
+    (error) => error?.code === expectedCode && error?.diagnostic?.providerCategory === expectedCategory,
+  );
+  checks += 1;
 }
 
 {
@@ -117,17 +144,17 @@ for (const unsafe of [
 }
 
 for (const scenario of [
-  ['initialize', 'META_CONNECTION_NEEDS_REAUTHORIZATION', 'INVALID_TOKEN'],
-  ['initialize', 'META_PUBLISHING_PERMISSION_MISSING', 'MISSING_PERMISSION'],
-  ['upload', 'META_PUBLICATION_PROVIDER_REJECTED', 'PROVIDER_REJECTED'],
-  ['initialize', 'META_PUBLICATION_PROVIDER_REJECTED', 'RATE_LIMITED'],
-  ['initialize', 'META_PUBLICATION_PROVIDER_REJECTED', 'PROVIDER_TEMPORARY_ERROR'],
+  ['initialize', 'META_CONNECTION_NEEDS_REAUTHORIZATION', 'INVALID_TOKEN', 'failed'],
+  ['initialize', 'META_PUBLISHING_PERMISSION_MISSING', 'MISSING_PERMISSION', 'failed'],
+  ['upload', 'META_PUBLICATION_PROVIDER_REJECTED', 'PROVIDER_REJECTED', 'failed'],
+  ['initialize', 'META_PUBLICATION_PROVIDER_REJECTED', 'RATE_LIMITED', 'failed'],
+  ['initialize', 'META_PUBLICATION_DELIVERY_UNKNOWN', 'PROVIDER_TEMPORARY_ERROR', 'delivery_unknown'],
 ]) {
-  const [failStage, failureCode, providerCategory] = scenario;
+  const [failStage, failureCode, providerCategory, expectedStatus] = scenario;
   const fixture = await makeFixture({ failStage, failureCode, providerCategory });
   await assert.rejects(() => publish(fixture), hasCode(failureCode));
   checks += 1;
-  check(() => assert.equal(fixture.repository.row.status, 'failed'));
+  check(() => assert.equal(fixture.repository.row.status, expectedStatus));
   check(() => assert.equal(fixture.provider.calls.filter((value) => value === failStage).length, 1));
 }
 
@@ -147,6 +174,7 @@ for (const scenario of [
   await assert.rejects(() => publish(fixture), hasCode('META_PUBLICATION_DELIVERY_UNKNOWN'));
   checks += 1;
   check(() => assert.equal(fixture.repository.row.status, 'delivery_unknown'));
+  check(() => assert.equal(fixture.repository.row.provider_status_checks, 1));
   check(() => assert.deepEqual(fixture.provider.calls, ['initialize', 'upload', 'finalize', 'status']));
   await assert.rejects(() => publish(fixture), hasCode('META_PUBLICATION_DELIVERY_UNKNOWN'));
   checks += 1;
@@ -193,7 +221,38 @@ for (const scenario of [
   await assert.rejects(() => publish(fixture), hasCode('META_PUBLICATION_DELIVERY_UNKNOWN'));
   checks += 1;
   check(() => assert.equal(fixture.repository.row.status, 'delivery_unknown'));
+  check(() => assert.equal(fixture.repository.row.provider_status_checks, 1));
   check(() => assert.deepEqual(fixture.provider.calls, ['initialize', 'upload', 'finalize', 'status']));
+}
+
+{
+  const fixture = await makeFixture({ failStage: 'status', failureCode: 'META_CONNECTION_NEEDS_REAUTHORIZATION', providerCategory: 'INVALID_TOKEN' });
+  await assert.rejects(() => publish(fixture), hasCode('META_CONNECTION_NEEDS_REAUTHORIZATION'));
+  checks += 1;
+  check(() => assert.equal(fixture.repository.row.status, 'delivery_unknown'));
+  check(() => assert.equal(fixture.repository.row.provider_status_checks, 1));
+}
+
+{
+  const fixture = await makeFixture({ failStage: 'status', failureCode: 'META_PUBLICATION_DELIVERY_UNKNOWN' });
+  await assert.rejects(() => publish(fixture), hasCode('META_PUBLICATION_DELIVERY_UNKNOWN'));
+  checks += 1;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(() => handleFacebookReelDelivery({
+      body: { action: 'reconcile_facebook_reel', companyId: ids.company, publicationId: ids.publication, explicitApproval: true },
+      companyId: ids.company, access: fixture.access, deps: fixture.deps,
+    }), hasCode('META_PUBLICATION_DELIVERY_UNKNOWN'));
+    checks += 1;
+  }
+  check(() => assert.equal(fixture.repository.row.provider_call_count, 6));
+  check(() => assert.equal(fixture.repository.row.provider_status_checks, 3));
+  const callsBeforeLimit = fixture.provider.calls.length;
+  await assert.rejects(() => handleFacebookReelDelivery({
+    body: { action: 'reconcile_facebook_reel', companyId: ids.company, publicationId: ids.publication, explicitApproval: true },
+    companyId: ids.company, access: fixture.access, deps: fixture.deps,
+  }), hasCode('META_REEL_STATUS_CHECK_LIMIT_REACHED'));
+  checks += 1;
+  check(() => assert.equal(fixture.provider.calls.length, callsBeforeLimit));
 }
 
 console.log(`Meta Reel delivery regression tests passed: ${checks}`);
@@ -302,6 +361,7 @@ function fakeRepository(connection, render, storedBytes) {
       const row = this.row;
       row.status = 'failed'; row.provider_delivery_stage = 'failed'; row.last_error_code = input.lastErrorCode;
       row.provider_error_category = input.diagnostic.providerCategory; row.provider_call_count += input.callWasSent ? 1 : 0;
+      row.provider_status_checks += input.statusWasChecked ? 1 : 0;
       return row;
     },
     async markReelUnknown(input) {
@@ -309,6 +369,7 @@ function fakeRepository(connection, render, storedBytes) {
       row.status = 'delivery_unknown'; row.provider_delivery_stage = 'delivery_unknown';
       row.last_error_code = 'META_PUBLICATION_DELIVERY_UNKNOWN'; row.reel_provider_media_id ||= input.providerMediaId;
       row.provider_call_count += input.callWasSent ? 1 : 0;
+      row.provider_status_checks += input.statusWasChecked ? 1 : 0;
       return row;
     },
     async getReelPublication() { return { ...this.row, connection }; },

@@ -79,6 +79,9 @@ check(() => assert.match(reelDeliveryMigration, /video_sha256=p_video_sha256/i))
 check(() => assert.match(reelDeliveryMigration, /storage\.buckets[\s\S]*public=false/i));
 check(() => assert.match(reelDeliveryMigration, /provider_call_count between 0 and 6/i));
 check(() => assert.match(reelDeliveryMigration, /provider_status_checks between 0 and 3/i));
+check(() => assert.match(reelDeliveryMigration, /p_status_was_checked boolean/i));
+check(() => assert.equal((reelDeliveryMigration.match(/provider_status_checks=provider_status_checks\+case when p_status_was_checked then 1 else 0 end/gi) ?? []).length, 2));
+check(() => assert.equal((reelDeliveryMigration.match(/provider_status_checks\+case when p_status_was_checked then 1 else 0 end<=3/gi) ?? []).length, 2));
 check(() => assert.match(reelDeliveryMigration, /exception when unique_violation[\s\S]*publication_intent_sha256=p_publication_intent_sha256[\s\S]*false/i));
 check(() => assert.match(reelDeliveryMigration, /meta_reel_publication_requested/i));
 check(() => assert.doesNotMatch(reelDeliveryMigration, /providerMediaId|providerPostId/i));
@@ -1355,8 +1358,122 @@ await canonicalDb.exec(migrations[13]);
 await canonicalDb.exec(migrations[14]);
 await canonicalDb.exec(migrations[15]);
 await canonicalDb.exec(migrations[16]);
+await canonicalDb.exec(`
+  create schema storage;
+  create table storage.buckets (id text primary key, public boolean not null);
+  create table storage.objects (bucket_id text not null, name text not null, primary key (bucket_id, name));
+  create table public.company_reel_render_jobs (
+    id uuid primary key,
+    company_id uuid not null,
+    job_id uuid not null,
+    status text not null,
+    output_bucket text,
+    video_object_path text,
+    duration_ms integer,
+    width integer,
+    height integer,
+    fps integer,
+    video_codec text,
+    pixel_format text,
+    audio_streams integer,
+    file_size bigint,
+    video_sha256 text,
+    faststart boolean,
+    created_at timestamptz not null default now()
+  );
+`);
+const reelReplayIds = {
+  company: '00000000-0000-4000-8000-000000008201',
+  actor: '00000000-0000-4000-8000-000000008202',
+  connection: '00000000-0000-4000-8000-000000008203',
+  textJob: '00000000-0000-4000-8000-000000008204',
+  photoJob: '00000000-0000-4000-8000-000000008205',
+  attachment: '00000000-0000-4000-8000-000000008206',
+  reelJob: '00000000-0000-4000-8000-000000008207',
+  render: '00000000-0000-4000-8000-000000008208',
+  publication: '00000000-0000-4000-8000-000000008209',
+};
+await canonicalDb.query(`insert into auth.users (id,email) values ($1,'reel-replay@example.test')`, [reelReplayIds.actor]);
+await canonicalDb.query(`insert into public.companies (id,name,owner_email) values ($1,'Reel replay','reel-replay@example.test')`, [reelReplayIds.company]);
+await canonicalDb.query(`insert into public.jobs (id,company_id,status,job_number) values
+  ($1,$4,'Completed','REPLAY-TEXT'),($2,$4,'Completed','REPLAY-PHOTO'),($3,$4,'Completed','REPLAY-REEL')`,
+  [reelReplayIds.textJob, reelReplayIds.photoJob, reelReplayIds.reelJob, reelReplayIds.company]);
+await canonicalDb.query(`insert into public.job_attachments
+  (id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path)
+  values ($1,$2,$3,'existing.jpg','image/jpeg',128,'photo','job-files','existing.jpg')`,
+  [reelReplayIds.attachment, reelReplayIds.company, reelReplayIds.photoJob]);
+await canonicalDb.query(`insert into public.company_social_connections (
+  id,company_id,provider,status,facebook_page_id,facebook_page_name,granted_scopes,token_envelope,connected_by,connected_at
+) values ($1,$2,'meta-facebook-login','connected','10001','Replay Page',
+  array['pages_show_list','pages_read_engagement','pages_manage_posts'],$3::jsonb,$4,now())`,
+  [reelReplayIds.connection, reelReplayIds.company, envelope, reelReplayIds.actor]);
+await canonicalDb.query(`insert into public.company_social_publications (
+  id,company_id,connection_id,job_id,provider,channel,status,idempotency_key,
+  approved_message,message_sha256,publication_intent_sha256,publication_kind,
+  attachment_id,safe_mime_type,media_count,provider_post_id,provider_media_id,
+  attempts,approved_by,approved_at,published_at,created_at,updated_at
+) values
+  ('00000000-0000-4000-8000-000000008210',$1,$2,$3,'meta-facebook-login','Facebook','published',
+    '00000000-0000-4000-8000-000000008211','Existing text',decode(repeat('11',32),'hex'),decode(repeat('12',32),'hex'),
+    'text_only',null,null,0,'existing-text-post',null,1,$5,now(),now(),now(),now()),
+  ('00000000-0000-4000-8000-000000008212',$1,$2,$4,'meta-facebook-login','Facebook','published',
+    '00000000-0000-4000-8000-000000008213','Existing photo',decode(repeat('21',32),'hex'),decode(repeat('22',32),'hex'),
+    'single_photo',$6,'image/jpeg',1,null,'existing-photo-media',1,$5,now(),now(),now(),now())`,
+  [reelReplayIds.company, reelReplayIds.connection, reelReplayIds.textJob, reelReplayIds.photoJob, reelReplayIds.actor, reelReplayIds.attachment]);
+await canonicalDb.query(`insert into public.company_reel_render_jobs (
+  id,company_id,job_id,status,output_bucket,video_object_path,duration_ms,width,height,fps,
+  video_codec,pixel_format,audio_streams,file_size,video_sha256,faststart
+) values ($1::uuid,$2::uuid,$3::uuid,'completed','company-reel-renders',$2::uuid::text||'/'||$1::uuid::text||'/reel.mp4',
+  12000,1080,1920,30,'h264','yuv420p',0,631574,repeat('a',64),true)`,
+  [reelReplayIds.render, reelReplayIds.company, reelReplayIds.reelJob]);
+await canonicalDb.exec(`insert into storage.buckets values ('company-reel-renders',false)`);
+await canonicalDb.query(`insert into storage.objects values ('company-reel-renders',$1::text||'/'||$2::text||'/reel.mp4')`,
+  [reelReplayIds.company, reelReplayIds.render]);
+await canonicalDb.exec(migrations[17]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
+const preservedPublications = await canonicalDb.query(`select publication_kind,status from public.company_social_publications order by publication_kind`);
+check(() => assert.deepEqual(preservedPublications.rows, [
+  { publication_kind: 'single_photo', status: 'published' },
+  { publication_kind: 'text_only', status: 'published' },
+]));
+const reelBeginning = await canonicalDb.query(`select * from public.begin_company_facebook_reel_publication(
+  $1,$2,$3,$4,$5,'00000000-0000-4000-8000-000000008214','Reviewed Reel caption',
+  decode(repeat('31',32),'hex'),decode(repeat('32',32),'hex'),repeat('a',64),631574,
+  $6,'Reel reviewer','owner',now()
+)`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.connection, reelReplayIds.reelJob, reelReplayIds.render, reelReplayIds.actor]);
+check(() => assert.equal(reelBeginning.rows[0].should_publish, true));
+for (const [expectedStage, nextStage] of [
+  ['upload_initializing', 'uploading'],
+  ['uploading', 'finalizing'],
+  ['finalizing', 'provider_processing'],
+]) {
+  await canonicalDb.query(`select * from public.advance_company_facebook_reel_publication(
+    $1,$2,$3,'Reel reviewer','owner',$4,$5,'mock-reel-media',now()
+  )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor, expectedStage, nextStage]);
+}
+for (let attempt = 0; attempt < 3; attempt += 1) {
+  await canonicalDb.query(`select * from public.mark_company_facebook_reel_unknown(
+    $1,$2,$3,'Reel reviewer','owner','mock-reel-media',true,true,now()
+  )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
+}
+const boundedStatus = await canonicalDb.query(`select status,provider_call_count,provider_status_checks
+  from public.company_social_publications where id=$1`, [reelReplayIds.publication]);
+check(() => assert.deepEqual(boundedStatus.rows[0], {
+  status: 'delivery_unknown', provider_call_count: 6, provider_status_checks: 3,
+}));
+let fourthStatusRejected = false;
+try {
+  await canonicalDb.query(`select * from public.mark_company_facebook_reel_unknown(
+    $1,$2,$3,'Reel reviewer','owner','mock-reel-media',true,true,now()
+  )`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor]);
+} catch {
+  fourthStatusRejected = true;
+}
+check(() => assert.equal(fourthStatusRejected, true));
+const leakedProviderAuditKeys = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
+  where action like 'meta_%publication_%' and metadata ?| array['providerMediaId','providerPostId']`);
+check(() => assert.equal(leakedProviderAuditKeys.rows[0].count, 0));
 const canonicalDirectPrivileges = await directTablePrivileges(canonicalDb, 'service_role');
 check(() => assert.deepEqual(canonicalDirectPrivileges, ['INSERT', 'SELECT', 'UPDATE']));
 await canonicalDb.close();

@@ -102,9 +102,15 @@ check(() => assert.match(reelPreparation, /video_object_path !== `\$\{companyId\
 check(() => assert.match(reelPreparation, /actualSha256 !== String\(render\.video_sha256\)/));
 check(() => assert.doesNotMatch(`${reelDeliveryService}\n${reelPreparation}`, /signedUrl|createSignedUrl|publicUrl/));
 check(() => assert.match(provider, /https:\/\/rupload\.facebook\.com\/video-upload\/\$\{config\.graphApiVersion\}/));
+check(() => assert.equal((provider.match(/redirect: 'error'/g) ?? []).length, 4));
+check(() => assert.match(provider, /PROVIDER_TEMPORARY_ERROR'[\s\S]*META_PUBLICATION_DELIVERY_UNKNOWN/));
 check(() => assert.doesNotMatch(reelDeliveryMigration, /providerMediaId|providerPostId/));
 check(() => assert.match(reelDeliveryMigration, /provider_call_count between 0 and 6/));
 check(() => assert.match(reelDeliveryMigration, /provider_status_checks between 0 and 3/));
+check(() => assert.match(reelDeliveryMigration, /p_status_was_checked boolean/));
+check(() => assert.equal((reelDeliveryMigration.match(/provider_status_checks=provider_status_checks\+case when p_status_was_checked then 1 else 0 end/g) ?? []).length, 2));
+check(() => assert.match(reelDeliveryService, /provider_status_checks\) >= MAX_REEL_STATUS_CHECKS/));
+check(() => assert.match(reelDeliveryService, /statusWasChecked \|\|[\s\S]*markReelUnknown/));
 check(() => assert.match(reelDeliveryMigration, /grant execute on function public\.begin_company_facebook_reel_publication[\s\S]*to service_role/));
 check(() => assert.doesNotMatch(browserSources, /\bFormData\b|multipart\/form-data/i));
 check(() => assert.doesNotMatch(browserSources, /password/i));

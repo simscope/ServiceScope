@@ -8928,18 +8928,22 @@ create or replace function public.fail_company_facebook_reel_publication(
   p_publication_id uuid,p_company_id uuid,p_actor_id uuid,p_actor_name text,p_actor_role text,
   p_provider_http_status integer,p_provider_error_code integer,p_provider_error_subcode integer,
   p_provider_error_category text,p_provider_is_transient boolean,p_last_error_code text,
-  p_call_was_sent boolean,p_timestamp timestamptz
+  p_call_was_sent boolean,p_status_was_checked boolean,p_timestamp timestamptz
 )
 returns setof public.company_social_publications language plpgsql security definer set search_path=''
 as $$ declare updated public.company_social_publications%rowtype;
 begin
   update public.company_social_publications set status='failed',attempts=1,provider_media_id=null,reel_provider_media_id=null,
     provider_delivery_stage='failed',provider_call_count=provider_call_count+case when p_call_was_sent then 1 else 0 end,
+    provider_status_checks=provider_status_checks+case when p_status_was_checked then 1 else 0 end,
+    provider_last_checked_at=case when p_status_was_checked then p_timestamp else provider_last_checked_at end,
     provider_http_status=p_provider_http_status,provider_error_code=p_provider_error_code,
     provider_error_subcode=p_provider_error_subcode,provider_error_category=coalesce(p_provider_error_category,'PROVIDER_REJECTED'),
     provider_is_transient=p_provider_is_transient,last_error_code=p_last_error_code,published_at=null,updated_at=p_timestamp
   where id=p_publication_id and company_id=p_company_id and approved_by=p_actor_id and publication_kind='reel_video'
-    and status in ('publishing','delivery_unknown') and provider_call_count+case when p_call_was_sent then 1 else 0 end<=6
+    and status in ('publishing','delivery_unknown')
+    and provider_call_count+case when p_call_was_sent then 1 else 0 end<=6
+    and provider_status_checks+case when p_status_was_checked then 1 else 0 end<=3
   returning * into updated;
   if not found then raise exception 'invalid reel failure'; end if;
   insert into public.audit_events (company_id,actor_user_id,actor_name,actor_role,category,action,
@@ -8955,7 +8959,7 @@ end; $$;
 
 create or replace function public.mark_company_facebook_reel_unknown(
   p_publication_id uuid,p_company_id uuid,p_actor_id uuid,p_actor_name text,p_actor_role text,
-  p_provider_media_id text,p_call_was_sent boolean,p_timestamp timestamptz
+  p_provider_media_id text,p_call_was_sent boolean,p_status_was_checked boolean,p_timestamp timestamptz
 )
 returns setof public.company_social_publications language plpgsql security definer set search_path=''
 as $$ declare updated public.company_social_publications%rowtype;
@@ -8963,11 +8967,15 @@ begin
   update public.company_social_publications set status='delivery_unknown',attempts=1,provider_media_id=null,
     reel_provider_media_id=coalesce(reel_provider_media_id,nullif(btrim(p_provider_media_id),'')),
     provider_delivery_stage='delivery_unknown',provider_call_count=provider_call_count+case when p_call_was_sent then 1 else 0 end,
+    provider_status_checks=provider_status_checks+case when p_status_was_checked then 1 else 0 end,
+    provider_last_checked_at=case when p_status_was_checked then p_timestamp else provider_last_checked_at end,
     provider_http_status=null,provider_error_code=null,provider_error_subcode=null,
     provider_error_category='DELIVERY_UNKNOWN',provider_is_transient=null,
     last_error_code='META_PUBLICATION_DELIVERY_UNKNOWN',published_at=null,updated_at=p_timestamp
   where id=p_publication_id and company_id=p_company_id and approved_by=p_actor_id and publication_kind='reel_video'
-    and status in ('publishing','delivery_unknown') and provider_call_count+case when p_call_was_sent then 1 else 0 end<=6
+    and status in ('publishing','delivery_unknown')
+    and provider_call_count+case when p_call_was_sent then 1 else 0 end<=6
+    and provider_status_checks+case when p_status_was_checked then 1 else 0 end<=3
   returning * into updated;
   if not found then raise exception 'invalid reel unknown transition'; end if;
   insert into public.audit_events (company_id,actor_user_id,actor_name,actor_role,category,action,
@@ -8985,13 +8993,13 @@ revoke all on function public.begin_company_facebook_reel_publication(uuid,uuid,
 revoke all on function public.advance_company_facebook_reel_publication(uuid,uuid,uuid,text,text,text,text,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.record_company_facebook_reel_processing(uuid,uuid,uuid,text,text,timestamptz) from public,anon,authenticated;
 revoke all on function public.complete_company_facebook_reel_publication(uuid,uuid,uuid,text,text,timestamptz) from public,anon,authenticated;
-revoke all on function public.fail_company_facebook_reel_publication(uuid,uuid,uuid,text,text,integer,integer,integer,text,boolean,text,boolean,timestamptz) from public,anon,authenticated;
-revoke all on function public.mark_company_facebook_reel_unknown(uuid,uuid,uuid,text,text,text,boolean,timestamptz) from public,anon,authenticated;
+revoke all on function public.fail_company_facebook_reel_publication(uuid,uuid,uuid,text,text,integer,integer,integer,text,boolean,text,boolean,boolean,timestamptz) from public,anon,authenticated;
+revoke all on function public.mark_company_facebook_reel_unknown(uuid,uuid,uuid,text,text,text,boolean,boolean,timestamptz) from public,anon,authenticated;
 grant execute on function public.begin_company_facebook_reel_publication(uuid,uuid,uuid,uuid,uuid,uuid,text,bytea,bytea,text,bigint,uuid,text,text,timestamptz) to service_role;
 grant execute on function public.advance_company_facebook_reel_publication(uuid,uuid,uuid,text,text,text,text,text,timestamptz) to service_role;
 grant execute on function public.record_company_facebook_reel_processing(uuid,uuid,uuid,text,text,timestamptz) to service_role;
 grant execute on function public.complete_company_facebook_reel_publication(uuid,uuid,uuid,text,text,timestamptz) to service_role;
-grant execute on function public.fail_company_facebook_reel_publication(uuid,uuid,uuid,text,text,integer,integer,integer,text,boolean,text,boolean,timestamptz) to service_role;
-grant execute on function public.mark_company_facebook_reel_unknown(uuid,uuid,uuid,text,text,text,boolean,timestamptz) to service_role;
+grant execute on function public.fail_company_facebook_reel_publication(uuid,uuid,uuid,text,text,integer,integer,integer,text,boolean,text,boolean,boolean,timestamptz) to service_role;
+grant execute on function public.mark_company_facebook_reel_unknown(uuid,uuid,uuid,text,text,text,boolean,boolean,timestamptz) to service_role;
 
 -- META_FACEBOOK_REEL_DELIVERY_END

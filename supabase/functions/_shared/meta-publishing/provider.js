@@ -80,6 +80,7 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       const proof = await appSecretProof(pageAccessToken, config.appSecret, cryptoApi);
       const payload = await requestProviderJson(fetchImpl, endpoint, {
         method: 'POST',
+        redirect: 'error',
         headers: providerFormHeaders(pageAccessToken),
         body: new URLSearchParams({ upload_phase: 'start', appsecret_proof: proof }),
         signal,
@@ -97,6 +98,7 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       const endpoint = `https://rupload.facebook.com/video-upload/${config.graphApiVersion}/${encodeURIComponent(providerMediaId)}`;
       const response = await requestProviderJson(fetchImpl, endpoint, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           Authorization: `OAuth ${pageAccessToken}`,
           Accept: 'application/json',
@@ -120,6 +122,7 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       const proof = await appSecretProof(pageAccessToken, config.appSecret, cryptoApi);
       const payload = await requestProviderJson(fetchImpl, endpoint, {
         method: 'POST',
+        redirect: 'error',
         headers: providerFormHeaders(pageAccessToken),
         body: new URLSearchParams({
           upload_phase: 'finish',
@@ -144,6 +147,7 @@ export function createFacebookPublishingProvider({ config, fetchImpl = globalThi
       endpoint.search = new URLSearchParams({ fields: 'status', appsecret_proof: proof }).toString();
       const payload = await requestProviderJson(fetchImpl, endpoint.toString(), {
         method: 'GET',
+        redirect: 'error',
         headers: { Authorization: `Bearer ${pageAccessToken}`, Accept: 'application/json' },
         signal,
       });
@@ -171,7 +175,15 @@ async function requestProviderJson(fetchImpl, endpoint, init) {
   }
   const payload = await readBoundedJson(response);
   if (!response.ok) {
-    throw new MetaPublishingError('META_PUBLICATION_PROVIDER_REJECTED', undefined, providerDiagnostic(payload, response.status));
+    const diagnostic = providerDiagnostic(payload, response.status);
+    const code = diagnostic.providerCategory === 'INVALID_TOKEN'
+      ? 'META_CONNECTION_NEEDS_REAUTHORIZATION'
+      : diagnostic.providerCategory === 'MISSING_PERMISSION'
+        ? 'META_PUBLISHING_PERMISSION_MISSING'
+        : diagnostic.providerCategory === 'PROVIDER_TEMPORARY_ERROR'
+          ? 'META_PUBLICATION_DELIVERY_UNKNOWN'
+          : 'META_PUBLICATION_PROVIDER_REJECTED';
+    throw new MetaPublishingError(code, undefined, diagnostic);
   }
   return payload;
 }
