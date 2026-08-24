@@ -439,8 +439,16 @@ function createRepository(adminClient: DynamicSupabaseClient) {
       return oneRpcRow(adminClient, 'record_company_facebook_reel_processing', reelRpcParams(input));
     },
 
+    async claimReelStatusCheck(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'claim_company_facebook_reel_status_check', reelRpcParams(input));
+    },
+
     async completeReelPublication(input: Record<string, unknown>) {
       return oneRpcRow(adminClient, 'complete_company_facebook_reel_publication', reelRpcParams(input));
+    },
+
+    async completeReelReconciliation(input: Record<string, unknown>) {
+      return oneRpcRow(adminClient, 'complete_company_facebook_reel_reconciliation', reelRpcParams(input));
     },
 
     async failReelPublication(input: Record<string, unknown>) {
@@ -583,6 +591,12 @@ async function oneRpcRow(client: DynamicSupabaseClient, name: string, params: Re
   if (name === 'begin_company_facebook_reel_publication') {
     const activePublicationConflict = mapActivePublicationPersistenceError(error);
     if (activePublicationConflict) throw activePublicationConflict;
+  }
+  if (name === 'claim_company_facebook_reel_status_check' && error) {
+    const message = String(error.message ?? '').toLowerCase();
+    if (message.includes('reel status check limit reached')) {
+      throw new MetaPublishingError('META_REEL_STATUS_CHECK_LIMIT_REACHED', 409);
+    }
   }
   if (error || !row) throw new MetaPublishingError('INTERNAL_ERROR');
   return row;

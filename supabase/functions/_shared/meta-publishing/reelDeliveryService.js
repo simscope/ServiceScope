@@ -82,6 +82,7 @@ async function publishFacebookReel({ body, companyId, access, deps }) {
     providerMediaId = initialized.providerMediaId;
     await deps.repository.advanceReelPublication({
       publicationId, companyId, actorAuthUserId: access.actorAuthUserId,
+      actorName: access.actorName, actorRole: access.actorRole,
       expectedStage: 'upload_initializing', nextStage: 'uploading', providerMediaId,
       timestamp: new Date(deps.now()).toISOString(),
     });
@@ -94,6 +95,7 @@ async function publishFacebookReel({ body, companyId, access, deps }) {
     }));
     await deps.repository.advanceReelPublication({
       publicationId, companyId, actorAuthUserId: access.actorAuthUserId,
+      actorName: access.actorName, actorRole: access.actorRole,
       expectedStage: 'uploading', nextStage: 'finalizing', providerMediaId,
       timestamp: new Date(deps.now()).toISOString(),
     });
@@ -107,6 +109,7 @@ async function publishFacebookReel({ body, companyId, access, deps }) {
     }));
     await deps.repository.advanceReelPublication({
       publicationId, companyId, actorAuthUserId: access.actorAuthUserId,
+      actorName: access.actorName, actorRole: access.actorRole,
       expectedStage: 'finalizing', nextStage: 'provider_processing', providerMediaId,
       timestamp: new Date(deps.now()).toISOString(),
     });
@@ -131,7 +134,10 @@ async function reconcileFacebookReel({ body, companyId, access, deps }) {
   const snapshot = await deps.repository.getReelPublication(companyId, publicationId);
   if (!snapshot || snapshot.publication_kind !== 'reel_video') throw new MetaPublishingError('FORBIDDEN');
   if (snapshot.status === 'published') return safeReelPublicationResult(snapshot);
-  if (!['publishing', 'delivery_unknown'].includes(snapshot.status)) {
+  if (snapshot.status === 'publishing' && snapshot.provider_delivery_stage === 'provider_processing') {
+    throw new MetaPublishingError('META_REEL_STATUS_CHECK_LIMIT_REACHED', 409);
+  }
+  if (snapshot.status !== 'delivery_unknown') {
     throw new MetaPublishingError(snapshot.last_error_code ?? 'META_PUBLICATION_FAILED');
   }
   if (!snapshot.reel_provider_media_id) throw new MetaPublishingError('META_PUBLICATION_DELIVERY_UNKNOWN');
@@ -141,25 +147,38 @@ async function reconcileFacebookReel({ body, companyId, access, deps }) {
   }
   assertEligibleConnection(snapshot.connection);
   const pageAccessToken = await decryptPageToken({ connection: snapshot.connection, companyId, deps });
+  await deps.repository.claimReelStatusCheck({
+    publicationId,
+    companyId,
+    actorAuthUserId: access.actorAuthUserId,
+    actorName: access.actorName,
+    actorRole: access.actorRole,
+    timestamp: new Date(deps.now()).toISOString(),
+  });
+  let providerStatus;
   try {
-    const providerStatus = await providerCall(deps, (signal) => deps.provider.getReelStatus({
+    providerStatus = await providerCall(deps, (signal) => deps.provider.getReelStatus({
       providerMediaId: snapshot.reel_provider_media_id,
       pageAccessToken,
       signal,
     }));
-    return persistReelStatus({ providerStatus, publicationId, companyId, access, deps });
   } catch (error) {
     if (error?.reelStatePersisted !== true) {
       await persistProviderFailure({
         error, publicationId, companyId, providerMediaId: snapshot.reel_provider_media_id,
-        statusWasChecked: true, access, deps,
+        statusWasChecked: true, callAlreadyCounted: true, access, deps,
       });
     }
     throw error;
   }
+  return persistReelStatus({
+    providerStatus, publicationId, companyId, access, deps, callAlreadyCounted: true,
+  });
 }
 
-async function persistReelStatus({ providerStatus, publicationId, companyId, access, deps }) {
+async function persistReelStatus({
+  providerStatus, publicationId, companyId, access, deps, callAlreadyCounted = false,
+}) {
   const base = {
     publicationId,
     companyId,
@@ -170,9 +189,12 @@ async function persistReelStatus({ providerStatus, publicationId, companyId, acc
   };
   if (providerStatus.state === 'published') {
     try {
-      return safeReelPublicationResult(await deps.repository.completeReelPublication(base));
+      const completed = callAlreadyCounted
+        ? await deps.repository.completeReelReconciliation(base)
+        : await deps.repository.completeReelPublication(base);
+      return safeReelPublicationResult(completed);
     } catch {
-      await markUnknownAfterStatus(base, deps);
+      await markUnknownAfterStatus(base, deps, callAlreadyCounted);
       throw persistedError('META_PUBLICATION_DELIVERY_UNKNOWN');
     }
   }
@@ -182,26 +204,32 @@ async function persistReelStatus({ providerStatus, publicationId, companyId, acc
         ...base,
         diagnostic: { providerCategory: 'REEL_PROCESSING_FAILED' },
         lastErrorCode: 'META_PUBLICATION_PROVIDER_REJECTED',
-        callWasSent: true,
-        statusWasChecked: true,
+        callWasSent: !callAlreadyCounted,
+        statusWasChecked: !callAlreadyCounted,
       });
       throw persistedError(failed.last_error_code ?? 'META_PUBLICATION_PROVIDER_REJECTED');
     } catch (error) {
       if (error?.reelStatePersisted === true) throw error;
-      await markUnknownAfterStatus(base, deps);
+      await markUnknownAfterStatus(base, deps, callAlreadyCounted);
       throw persistedError('META_PUBLICATION_DELIVERY_UNKNOWN');
     }
   }
   try {
-    return safeReelPublicationResult(await deps.repository.recordReelProcessing(base));
+    return safeReelPublicationResult(await deps.repository.markReelUnknown({
+      ...base,
+      providerMediaId: null,
+      callWasSent: !callAlreadyCounted,
+      statusWasChecked: !callAlreadyCounted,
+    }));
   } catch {
-    await markUnknownAfterStatus(base, deps);
+    await markUnknownAfterStatus(base, deps, callAlreadyCounted);
     throw persistedError('META_PUBLICATION_DELIVERY_UNKNOWN');
   }
 }
 
 async function persistProviderFailure({
-  error, publicationId, companyId, providerMediaId, statusWasChecked = false, access, deps,
+  error, publicationId, companyId, providerMediaId, statusWasChecked = false,
+  callAlreadyCounted = false, access, deps,
 }) {
   const input = {
     publicationId,
@@ -212,8 +240,8 @@ async function persistProviderFailure({
     providerMediaId,
     diagnostic: error?.diagnostic ?? {},
     timestamp: new Date(deps.now()).toISOString(),
-    callWasSent: true,
-    statusWasChecked,
+    callWasSent: !callAlreadyCounted,
+    statusWasChecked: statusWasChecked && !callAlreadyCounted,
   };
   try {
     if (statusWasChecked || !error?.code || ['META_PUBLICATION_DELIVERY_UNKNOWN', 'INTERNAL_ERROR'].includes(error.code)) {
@@ -231,10 +259,13 @@ async function persistProviderFailure({
   }
 }
 
-async function markUnknownAfterStatus(base, deps) {
+async function markUnknownAfterStatus(base, deps, callAlreadyCounted = false) {
   try {
     await deps.repository.markReelUnknown({
-      ...base, providerMediaId: null, callWasSent: true, statusWasChecked: true,
+      ...base,
+      providerMediaId: null,
+      callWasSent: !callAlreadyCounted,
+      statusWasChecked: !callAlreadyCounted,
     });
   } catch {}
 }
