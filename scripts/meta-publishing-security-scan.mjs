@@ -135,6 +135,7 @@ check(() => assert.match(reelLocalClosureFunction, /localClosure',true,'provider
 check(() => assert.match(reelLocalClosureFunction, /providerAuthorityRetained',true,'published',false,'repeatBlocked',true/i));
 check(() => assert.doesNotMatch(reelLocalClosureUpdate, /reel_provider_media_id\s*=|provider_call_count\s*=|provider_status_checks\s*=|provider_last_checked_at\s*=/i));
 check(() => assert.doesNotMatch(reelLocalClosureMigration, /providerMediaId|providerPostId|access[_-]?token|authorization/i));
+check(() => assert.match(contracts, /'META_REEL_PUBLICATION_ABANDONED'/));
 check(() => assert.match(reelLocalClosureMigration, /revoke all on function public\.close_exhausted_company_facebook_reel_publication[\s\S]*from public,anon,authenticated/i));
 check(() => assert.match(reelLocalClosureMigration, /grant execute on function public\.close_exhausted_company_facebook_reel_publication[\s\S]*to service_role/i));
 check(() => assert.doesNotMatch(browserSources, /\bFormData\b|multipart\/form-data/i));

@@ -32,6 +32,7 @@ const {
   resetFacebookPublishWorkspace,
 } = await import(pathToFileURL(join(compiledRoot, 'workspaceState.js')).href);
 const {
+  normalizePublishingError,
   normalizeFacebookPublishingMessage,
 } = await import(pathToFileURL(join(compiledRoot, 'contracts.js')).href);
 
@@ -91,6 +92,11 @@ function configurationAndAccessChecks() {
     check(() => assert.throws(() => assertMetaAccessRole({ kind: 'owner', role }, ids.company), /FORBIDDEN/));
   }
   check(() => assert.throws(() => assertMetaAccessRole({ kind: 'company', role: 'admin', company_id: ids.otherCompany }, ids.company), /FORBIDDEN/));
+  check(() => assert.equal(new MetaPublishingError('META_REEL_PUBLICATION_ABANDONED').code, 'META_REEL_PUBLICATION_ABANDONED'));
+  check(() => assert.match(
+    normalizePublishingError({ code: 'META_REEL_PUBLICATION_ABANDONED' }),
+    /closed locally.*fresh approval/i,
+  ));
 
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));

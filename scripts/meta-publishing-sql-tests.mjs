@@ -1616,6 +1616,29 @@ check(() => assert.equal(exactBeginning.rows[0].should_publish, true));
 await canonicalDb.query(`select * from public.advance_company_facebook_reel_publication(
   $1,$2,$3,'Reel reviewer','owner','upload_initializing','uploading','mock-exhausted-media','2026-08-24T05:01:00Z'
 )`, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor]);
+for (const [publicationId, companyId, actorId] of [
+  [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor],
+  [reelReplayIds.exactClosurePublication, '00000000-0000-4000-8000-000000008250', reelReplayIds.actor],
+  ['00000000-0000-4000-8000-000000008251', reelReplayIds.company, reelReplayIds.actor],
+  [reelReplayIds.exactClosurePublication, reelReplayIds.company, '00000000-0000-4000-8000-000000008252'],
+]) {
+  let rejected = false;
+  try {
+    await canonicalDb.query(`select * from public.close_exhausted_company_facebook_reel_publication(
+      $1,$2,$3,'Reel reviewer','owner','2026-08-24T05:01:00Z','2026-08-24T05:02:00Z'
+    )`, [publicationId, companyId, actorId]);
+  } catch {
+    rejected = true;
+  }
+  check(() => assert.equal(rejected, true));
+}
+const rejectedClosureState = await canonicalDb.query(`select status,provider_delivery_stage,
+  provider_call_count,provider_status_checks,reel_provider_media_id
+  from public.company_social_publications where id=$1`, [reelReplayIds.exactClosurePublication]);
+check(() => assert.deepEqual(rejectedClosureState.rows[0], {
+  status: 'publishing', provider_delivery_stage: 'uploading', provider_call_count: 1,
+  provider_status_checks: 0, reel_provider_media_id: 'mock-exhausted-media',
+}));
 await canonicalDb.query(`update public.company_social_publications set
   provider_delivery_stage='provider_processing',provider_call_count=4,provider_status_checks=3,
   provider_last_checked_at='2026-08-24T05:03:00Z',updated_at='2026-08-24T05:03:00Z'
