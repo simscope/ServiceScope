@@ -41,6 +41,7 @@ const [
   reelPanel,
   reelDeliveryMigration,
   reelReconciliationMigration,
+  reelLocalClosureMigration,
 ] = await Promise.all([
   read('supabase/functions/meta-social-publish/index.ts'),
   read('supabase/functions/_shared/meta-publishing/service.js'),
@@ -77,6 +78,7 @@ const [
   read('src/components/portal/FacebookReelPublishPanel.tsx'),
   read('supabase/migrations/20260817034500_meta_facebook_reel_delivery.sql'),
   read('supabase/migrations/20260824040000_meta_facebook_reel_reconciliation_claim.sql'),
+  read('supabase/migrations/20260829014000_meta_facebook_reel_local_closure.sql'),
 ]);
 
 const browserSources = `${client}\n${panel}\n${reelPanel}\n${aiPage}`;
@@ -123,6 +125,18 @@ check(() => assert.match(reelReconciliationMigration, /grant execute on function
 check(() => assert.match(reelDeliveryService, /claimReelStatusCheck[\s\S]*providerCall/));
 check(() => assert.match(reelDeliveryService, /callAlreadyCounted: true/));
 check(() => assert.doesNotMatch(reelDeliveryService, /for\s*\([^)]*retry|while\s*\([^)]*provider/i));
+const reelLocalClosureFunction = reelLocalClosureMigration.match(/create or replace function public\.close_exhausted_company_facebook_reel_publication[\s\S]*?\n\$\$;/i)?.[0] ?? '';
+const reelLocalClosureUpdate = reelLocalClosureFunction.match(/update public\.company_social_publications set([\s\S]*?)\n  where id=p_publication_id/i)?.[1] ?? '';
+check(() => assert.ok(reelLocalClosureFunction));
+check(() => assert.ok(reelLocalClosureUpdate));
+check(() => assert.match(reelLocalClosureFunction, /status='failed',attempts=1,provider_delivery_stage='failed'/i));
+check(() => assert.match(reelLocalClosureFunction, /provider_status_checks=3 and updated_at=p_expected_updated_at/i));
+check(() => assert.match(reelLocalClosureFunction, /localClosure',true,'providerCallMade',false,'statusCheckMade',false/i));
+check(() => assert.match(reelLocalClosureFunction, /providerAuthorityRetained',true,'published',false,'repeatBlocked',true/i));
+check(() => assert.doesNotMatch(reelLocalClosureUpdate, /reel_provider_media_id\s*=|provider_call_count\s*=|provider_status_checks\s*=|provider_last_checked_at\s*=/i));
+check(() => assert.doesNotMatch(reelLocalClosureMigration, /providerMediaId|providerPostId|access[_-]?token|authorization/i));
+check(() => assert.match(reelLocalClosureMigration, /revoke all on function public\.close_exhausted_company_facebook_reel_publication[\s\S]*from public,anon,authenticated/i));
+check(() => assert.match(reelLocalClosureMigration, /grant execute on function public\.close_exhausted_company_facebook_reel_publication[\s\S]*to service_role/i));
 check(() => assert.doesNotMatch(browserSources, /\bFormData\b|multipart\/form-data/i));
 check(() => assert.doesNotMatch(browserSources, /password/i));
 check(() => assert.match(client, /supabaseFunction<.*>\(functionName/s));
