@@ -29,6 +29,7 @@ const migrationNames = [
   '20260808235500_meta_facebook_single_active_schedule.sql',
   '20260817034500_meta_facebook_reel_delivery.sql',
   '20260824040000_meta_facebook_reel_reconciliation_claim.sql',
+  '20260829014000_meta_facebook_reel_local_closure.sql',
 ];
 const migrations = await Promise.all(migrationNames.map((name) => readFile(new URL(`../supabase/migrations/${name}`, import.meta.url), 'utf8')));
 const canonicalSchema = await readFile(new URL('../supabase/schema.sql', import.meta.url), 'utf8');
@@ -108,6 +109,26 @@ check(() => assert.match(reelReconciliationMigration, /provider_call_count=provi
 check(() => assert.match(reelReconciliationMigration, /create or replace function public\.complete_company_facebook_reel_reconciliation/i));
 check(() => assert.match(reelReconciliationMigration, /reconciliationExhausted',updated\.provider_status_checks=3/i));
 check(() => assert.doesNotMatch(reelReconciliationMigration, /providerMediaId|providerPostId/i));
+const reelLocalClosureMigration = migrations[19];
+check(() => assert.equal(reelLocalClosureMigration.trimStart().startsWith('begin;'), true));
+check(() => assert.equal(reelLocalClosureMigration.trimEnd().endsWith('commit;'), true));
+check(() => assert.equal(
+  normalizeSqlForParity(extractExactMarkedBlock(canonicalSchema, {
+    begin: '-- META_FACEBOOK_REEL_LOCAL_CLOSURE_BEGIN',
+    end: '-- META_FACEBOOK_REEL_LOCAL_CLOSURE_END',
+    label: 'Meta Facebook Reel local closure',
+  })),
+  normalizeSqlForParity(extractExactMarkedBlock(reelLocalClosureMigration, {
+    begin: '-- META_FACEBOOK_REEL_LOCAL_CLOSURE_BEGIN',
+    end: '-- META_FACEBOOK_REEL_LOCAL_CLOSURE_END',
+    label: 'Meta Facebook Reel local closure',
+  })),
+));
+check(() => assert.match(reelLocalClosureMigration, /create or replace function public\.close_exhausted_company_facebook_reel_publication/i));
+check(() => assert.match(reelLocalClosureMigration, /status='failed',attempts=1,provider_delivery_stage='failed'/i));
+check(() => assert.match(reelLocalClosureMigration, /provider_error_category='DELIVERY_UNKNOWN',last_error_code='META_REEL_PUBLICATION_ABANDONED'/i));
+check(() => assert.match(reelLocalClosureMigration, /provider_status_checks=3 and updated_at=p_expected_updated_at/i));
+check(() => assert.doesNotMatch(reelLocalClosureMigration, /providerMediaId|providerPostId|access[_-]?token|authorization/i));
 check(() => assert.equal(
   normalizeSqlForParity(canonicalBlocks.publishingAclFix),
   normalizeSqlForParity(extractExactMarkedBlock(migrations[4], META_FACEBOOK_PUBLISH_ACL_FIX_MARKERS)),
@@ -1414,6 +1435,8 @@ const reelReplayIds = {
   reelJob: '00000000-0000-4000-8000-000000008207',
   render: '00000000-0000-4000-8000-000000008208',
   publication: '00000000-0000-4000-8000-000000008209',
+  exactClosurePublication: '00000000-0000-4000-8000-000000008230',
+  freshPublication: '00000000-0000-4000-8000-000000008240',
 };
 await canonicalDb.query(`insert into auth.users (id,email) values ($1,'reel-replay@example.test')`, [reelReplayIds.actor]);
 await canonicalDb.query(`insert into public.companies (id,name,owner_email) values ($1,'Reel replay','reel-replay@example.test')`, [reelReplayIds.company]);
@@ -1453,6 +1476,7 @@ await canonicalDb.query(`insert into storage.objects values ('company-reel-rende
   [reelReplayIds.company, reelReplayIds.render]);
 await canonicalDb.exec(migrations[17]);
 await canonicalDb.exec(migrations[18]);
+await canonicalDb.exec(migrations[19]);
 const canonicalPublication = await canonicalDb.query(`select to_regclass('public.company_social_publications') as relation`);
 check(() => assert.equal(canonicalPublication.rows[0].relation, 'company_social_publications'));
 const preservedPublications = await canonicalDb.query(`select publication_kind,status from public.company_social_publications order by publication_kind`);
@@ -1542,6 +1566,153 @@ try {
   fourthStatusRejected = true;
 }
 check(() => assert.equal(fourthStatusRejected, true));
+const exhaustedBeforeClosure = await canonicalDb.query(`select
+  company_id::text,job_id::text,render_job_id::text,approved_by::text,
+  encode(message_sha256,'hex') as message_sha256,encode(publication_intent_sha256,'hex') as publication_intent_sha256,
+  encode(reel_video_sha256,'hex') as reel_video_sha256,reel_video_bytes,reel_provider_media_id,
+  provider_call_count,provider_status_checks,provider_last_checked_at,updated_at
+  from public.company_social_publications where id=$1`, [reelReplayIds.publication]);
+const exhaustedExpectedUpdatedAt = new Date(exhaustedBeforeClosure.rows[0].updated_at).toISOString();
+const exhaustedAuditBefore = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
+  where resource_id=$1::text and action='meta_publication_failed'`, [reelReplayIds.publication]);
+const closedExhausted = await canonicalDb.query(`select * from public.close_exhausted_company_facebook_reel_publication(
+  $1,$2,$3,'Reel reviewer','owner',$4::timestamptz,'2026-08-24T04:02:00Z'
+)`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor, exhaustedExpectedUpdatedAt]);
+check(() => assert.equal(closedExhausted.rows[0].status, 'failed'));
+check(() => assert.equal(closedExhausted.rows[0].provider_delivery_stage, 'failed'));
+check(() => assert.equal(closedExhausted.rows[0].provider_error_category, 'DELIVERY_UNKNOWN'));
+check(() => assert.equal(closedExhausted.rows[0].last_error_code, 'META_REEL_PUBLICATION_ABANDONED'));
+const exhaustedAfterClosure = await canonicalDb.query(`select
+  company_id::text,job_id::text,render_job_id::text,approved_by::text,
+  encode(message_sha256,'hex') as message_sha256,encode(publication_intent_sha256,'hex') as publication_intent_sha256,
+  encode(reel_video_sha256,'hex') as reel_video_sha256,reel_video_bytes,reel_provider_media_id,
+  provider_call_count,provider_status_checks,provider_last_checked_at
+  from public.company_social_publications where id=$1`, [reelReplayIds.publication]);
+const { updated_at: _exhaustedUpdatedAt, ...expectedExhaustedEvidence } = exhaustedBeforeClosure.rows[0];
+check(() => assert.deepEqual(exhaustedAfterClosure.rows[0], expectedExhaustedEvidence));
+const exhaustedAuditAfter = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
+  where resource_id=$1::text and action='meta_publication_failed'`, [reelReplayIds.publication]);
+check(() => assert.equal(exhaustedAuditAfter.rows[0].count - exhaustedAuditBefore.rows[0].count, 1));
+const closureAudit = await canonicalDb.query(`select metadata from public.audit_events
+  where resource_id=$1::text and action='meta_publication_failed' order by created_at desc limit 1`, [reelReplayIds.publication]);
+check(() => assert.equal(closureAudit.rows[0].metadata.localClosure, true));
+check(() => assert.equal(closureAudit.rows[0].metadata.providerCallMade, false));
+check(() => assert.equal(closureAudit.rows[0].metadata.statusCheckMade, false));
+check(() => assert.equal(closureAudit.rows[0].metadata.providerAuthorityRetained, true));
+await canonicalDb.query(`select * from public.close_exhausted_company_facebook_reel_publication(
+  $1,$2,$3,'Reel reviewer','owner',$4::timestamptz,'2026-08-24T04:02:00Z'
+)`, [reelReplayIds.publication, reelReplayIds.company, reelReplayIds.actor, exhaustedExpectedUpdatedAt]);
+const exhaustedAuditAfterRepeat = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
+  where resource_id=$1::text and action='meta_publication_failed'`, [reelReplayIds.publication]);
+check(() => assert.deepEqual(exhaustedAuditAfterRepeat.rows, exhaustedAuditAfter.rows));
+
+const exactBeginning = await canonicalDb.query(`select * from public.begin_company_facebook_reel_publication(
+  $1,$2,$3,$4,$5,'00000000-0000-4000-8000-000000008231','Reviewed Reel caption',
+  decode(repeat('31',32),'hex'),decode(repeat('33',32),'hex'),repeat('a',64),631574,
+  $6,'Reel reviewer','owner','2026-08-24T05:00:00Z'
+)`, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.connection,
+  reelReplayIds.reelJob, reelReplayIds.render, reelReplayIds.actor]);
+check(() => assert.equal(exactBeginning.rows[0].should_publish, true));
+await canonicalDb.query(`select * from public.advance_company_facebook_reel_publication(
+  $1,$2,$3,'Reel reviewer','owner','upload_initializing','uploading','mock-exhausted-media','2026-08-24T05:01:00Z'
+)`, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor]);
+for (const [publicationId, companyId, actorId] of [
+  [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor],
+  [reelReplayIds.exactClosurePublication, '00000000-0000-4000-8000-000000008250', reelReplayIds.actor],
+  ['00000000-0000-4000-8000-000000008251', reelReplayIds.company, reelReplayIds.actor],
+  [reelReplayIds.exactClosurePublication, reelReplayIds.company, '00000000-0000-4000-8000-000000008252'],
+]) {
+  let rejected = false;
+  try {
+    await canonicalDb.query(`select * from public.close_exhausted_company_facebook_reel_publication(
+      $1,$2,$3,'Reel reviewer','owner','2026-08-24T05:01:00Z','2026-08-24T05:02:00Z'
+    )`, [publicationId, companyId, actorId]);
+  } catch {
+    rejected = true;
+  }
+  check(() => assert.equal(rejected, true));
+}
+const rejectedClosureState = await canonicalDb.query(`select status,provider_delivery_stage,
+  provider_call_count,provider_status_checks,reel_provider_media_id
+  from public.company_social_publications where id=$1`, [reelReplayIds.exactClosurePublication]);
+check(() => assert.deepEqual(rejectedClosureState.rows[0], {
+  status: 'publishing', provider_delivery_stage: 'uploading', provider_call_count: 1,
+  provider_status_checks: 0, reel_provider_media_id: 'mock-exhausted-media',
+}));
+await canonicalDb.query(`update public.company_social_publications set
+  provider_delivery_stage='provider_processing',provider_call_count=4,provider_status_checks=3,
+  provider_last_checked_at='2026-08-24T05:03:00Z',updated_at='2026-08-24T05:03:00Z'
+  where id=$1`, [reelReplayIds.exactClosurePublication]);
+const exactBeforeClosure = await canonicalDb.query(`select
+  company_id::text,job_id::text,render_job_id::text,approved_by::text,
+  encode(message_sha256,'hex') as message_sha256,encode(publication_intent_sha256,'hex') as publication_intent_sha256,
+  encode(reel_video_sha256,'hex') as reel_video_sha256,reel_video_bytes,reel_provider_media_id,
+  provider_call_count,provider_status_checks,provider_last_checked_at
+  from public.company_social_publications where id=$1`, [reelReplayIds.exactClosurePublication]);
+const exactClosed = await canonicalDb.query(`select * from public.close_exhausted_company_facebook_reel_publication(
+  $1,$2,$3,'Reel reviewer','owner','2026-08-24T05:03:00Z','2026-08-24T05:04:00Z'
+)`, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor]);
+check(() => assert.equal(exactClosed.rows[0].status, 'failed'));
+check(() => assert.equal(exactClosed.rows[0].provider_delivery_stage, 'failed'));
+check(() => assert.equal(exactClosed.rows[0].provider_call_count, 4));
+check(() => assert.equal(exactClosed.rows[0].provider_status_checks, 3));
+check(() => assert.equal(exactClosed.rows[0].reel_provider_media_id, 'mock-exhausted-media'));
+const exactAfterClosure = await canonicalDb.query(`select
+  company_id::text,job_id::text,render_job_id::text,approved_by::text,
+  encode(message_sha256,'hex') as message_sha256,encode(publication_intent_sha256,'hex') as publication_intent_sha256,
+  encode(reel_video_sha256,'hex') as reel_video_sha256,reel_video_bytes,reel_provider_media_id,
+  provider_call_count,provider_status_checks,provider_last_checked_at
+  from public.company_social_publications where id=$1`, [reelReplayIds.exactClosurePublication]);
+check(() => assert.deepEqual(exactAfterClosure.rows, exactBeforeClosure.rows));
+const exactClosureAuditBeforeRepeat = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
+  where resource_id=$1::text and action='meta_publication_failed'`, [reelReplayIds.exactClosurePublication]);
+await canonicalDb.query(`select * from public.close_exhausted_company_facebook_reel_publication(
+  $1,$2,$3,'Reel reviewer','owner','2026-08-24T05:03:00Z','2026-08-24T05:04:00Z'
+)`, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor]);
+const exactClosureAuditAfterRepeat = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
+  where resource_id=$1::text and action='meta_publication_failed'`, [reelReplayIds.exactClosurePublication]);
+check(() => assert.deepEqual(exactClosureAuditAfterRepeat.rows, exactClosureAuditBeforeRepeat.rows));
+for (const attempt of [
+  `select * from public.claim_company_facebook_reel_status_check($1,$2,$3,'Reel reviewer','owner',now())`,
+  `select * from public.advance_company_facebook_reel_publication($1,$2,$3,'Reel reviewer','owner','uploading','finalizing','mock-exhausted-media',now())`,
+  `select * from public.complete_company_facebook_reel_reconciliation($1,$2,$3,'Reel reviewer','owner',now())`,
+  `select * from public.mark_company_facebook_reel_unknown($1,$2,$3,'Reel reviewer','owner','mock-exhausted-media',false,false,now())`,
+]) {
+  let rejected = false;
+  try {
+    await canonicalDb.query(attempt, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.actor]);
+  } catch {
+    rejected = true;
+  }
+  check(() => assert.equal(rejected, true));
+}
+const replayClosedIntent = await canonicalDb.query(`select * from public.begin_company_facebook_reel_publication(
+  $1,$2,$3,$4,$5,'00000000-0000-4000-8000-000000008231','Reviewed Reel caption',
+  decode(repeat('31',32),'hex'),decode(repeat('33',32),'hex'),repeat('a',64),631574,
+  $6,'Reel reviewer','owner','2026-08-24T05:05:00Z'
+)`, [reelReplayIds.exactClosurePublication, reelReplayIds.company, reelReplayIds.connection,
+  reelReplayIds.reelJob, reelReplayIds.render, reelReplayIds.actor]);
+check(() => assert.equal(replayClosedIntent.rows[0].should_publish, false));
+check(() => assert.equal(replayClosedIntent.rows[0].publication_status, 'failed'));
+const freshDistinctIntent = await canonicalDb.query(`select * from public.begin_company_facebook_reel_publication(
+  $1,$2,$3,$4,$5,'00000000-0000-4000-8000-000000008241','Reviewed Reel caption',
+  decode(repeat('31',32),'hex'),decode(repeat('34',32),'hex'),repeat('a',64),631574,
+  $6,'Reel reviewer','owner','2026-08-24T05:06:00Z'
+)`, [reelReplayIds.freshPublication, reelReplayIds.company, reelReplayIds.connection,
+  reelReplayIds.reelJob, reelReplayIds.render, reelReplayIds.actor]);
+check(() => assert.equal(freshDistinctIntent.rows[0].should_publish, true));
+const freshDistinctState = await canonicalDb.query(`select status,provider_delivery_stage,reel_provider_media_id
+  from public.company_social_publications where id=$1`, [reelReplayIds.freshPublication]);
+check(() => assert.deepEqual(freshDistinctState.rows[0], {
+  status: 'publishing', provider_delivery_stage: 'upload_initializing', reel_provider_media_id: null,
+}));
+const closurePrivileges = await canonicalDb.query(`select
+  has_function_privilege('anon','public.close_exhausted_company_facebook_reel_publication(uuid,uuid,uuid,text,text,timestamptz,timestamptz)','execute') as anon_execute,
+  has_function_privilege('authenticated','public.close_exhausted_company_facebook_reel_publication(uuid,uuid,uuid,text,text,timestamptz,timestamptz)','execute') as authenticated_execute,
+  has_function_privilege('service_role','public.close_exhausted_company_facebook_reel_publication(uuid,uuid,uuid,text,text,timestamptz,timestamptz)','execute') as service_execute`);
+check(() => assert.deepEqual(closurePrivileges.rows[0], {
+  anon_execute: false, authenticated_execute: false, service_execute: true,
+}));
 const leakedProviderAuditKeys = await canonicalDb.query(`select count(*)::integer as count from public.audit_events
   where action like 'meta_%publication_%' and metadata ?| array['providerMediaId','providerPostId']`);
 check(() => assert.equal(leakedProviderAuditKeys.rows[0].count, 0));

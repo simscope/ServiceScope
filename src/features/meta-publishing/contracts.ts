@@ -84,6 +84,7 @@ export const FACEBOOK_PUBLISH_ERROR_MESSAGES: Record<string, string> = {
   META_REEL_RENDER_REQUIRED: 'A completed Reel render is required before publishing.',
   META_REEL_RENDER_INVALID: 'The completed Reel no longer matches its verified artifact.',
   META_REEL_STATUS_CHECK_LIMIT_REACHED: 'Facebook processing still needs manual review. No additional automatic checks will run.',
+  META_REEL_PUBLICATION_ABANDONED: 'This Reel attempt was closed locally after delivery could not be confirmed. A new publication requires fresh approval.',
   META_SCHEDULE_CANCELLATION_UNAVAILABLE: 'This scheduled publication can no longer be cancelled.',
 };
 
