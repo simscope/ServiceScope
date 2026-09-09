@@ -139,6 +139,19 @@ function createRepository(adminClient: DynamicSupabaseClient) {
       const { data: lastPublication, error: publicationError } = await publicationQuery.maybeSingle();
       if (publicationError) throw new MetaPublishingError('INTERNAL_ERROR');
 
+      let activeReelQuery = adminClient
+        .from('company_social_publications')
+        .select('id,status,approved_at,published_at,last_error_code,scheduled_for,scheduled_timezone,publication_kind,provider_delivery_stage,render_job_id')
+        .eq('company_id', companyId)
+        .eq('publication_kind', 'reel_video')
+        .in('status', ['publishing', 'delivery_unknown'])
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+        .limit(1);
+      if (jobId) activeReelQuery = activeReelQuery.eq('job_id', jobId);
+      const { data: activeReelPublication, error: activeReelError } = await activeReelQuery.maybeSingle();
+      if (activeReelError) throw new MetaPublishingError('INTERNAL_ERROR');
+
       let activeScheduleQuery = adminClient
         .from('company_social_publications')
         .select('id,status,last_error_code,scheduled_for,scheduled_timezone,publication_kind')
@@ -152,7 +165,7 @@ function createRepository(adminClient: DynamicSupabaseClient) {
       const { data: activeScheduledPublication, error: activeScheduleError } = await activeScheduleQuery.maybeSingle();
       if (activeScheduleError) throw new MetaPublishingError('INTERNAL_ERROR');
       const eligiblePhotos = jobId ? await listPhotoEligibility(adminClient, companyId, jobId) : [];
-      return { connection, lastPublication, activeScheduledPublication, eligiblePhotos };
+      return { connection, lastPublication, activeReelPublication, activeScheduledPublication, eligiblePhotos };
     },
 
     async getPublicationContext(companyId: string, jobId: string) {
