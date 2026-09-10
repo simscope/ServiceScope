@@ -15,6 +15,7 @@ import {
   parsePublishingRequest,
   publicationIntentSource,
   runtimePublishingConfig,
+  safePublishingStatus,
   safePublishingTelemetry,
 } from '../supabase/functions/_shared/meta-publishing/contracts.js';
 import { assertPublicationPrivacy } from '../supabase/functions/_shared/meta-publishing/privacy.js';
@@ -25,8 +26,13 @@ const compiledRoot = process.env.META_PUBLISHING_COMPILED_ROOT;
 if (!compiledRoot) throw new Error('META_PUBLISHING_COMPILED_ROOT is required');
 const {
   beginFacebookPublishSubmission,
+  canPrepareFreshFacebookReel,
+  facebookActiveReelPublication,
+  facebookHistoricalReelPublication,
   facebookPublicationInProgress,
   facebookPublicationNeedsPageCheck,
+  facebookReelFailureMessage,
+  facebookReelPublicationForRender,
   invalidateFacebookPublishApproval,
   openFacebookPublishConfirmation,
   resetFacebookPublishWorkspace,
@@ -97,6 +103,42 @@ function configurationAndAccessChecks() {
     normalizePublishingError({ code: 'META_REEL_PUBLICATION_ABANDONED' }),
     /closed locally.*fresh approval/i,
   ));
+
+  const activeReelStatus = safePublishingStatus({
+    config,
+    connection: { status: 'connected', facebook_page_name: 'Synthetic Page', granted_scopes: publishingScopes() },
+    lastPublication: { status: 'published', publication_kind: 'text_only' },
+    lastReelPublication: {
+      id: '00000000-0000-4000-8000-000000008092',
+      status: 'failed',
+      publication_kind: 'reel_video',
+      provider_delivery_stage: 'failed',
+      render_job_id: '00000000-0000-4000-8000-000000008091',
+      reel_provider_media_id: 'historical-provider-id-must-not-leave-the-server',
+    },
+    activeReelPublication: {
+      id: '00000000-0000-4000-8000-000000008090',
+      status: 'delivery_unknown',
+      publication_kind: 'reel_video',
+      provider_delivery_stage: 'delivery_unknown',
+      render_job_id: '00000000-0000-4000-8000-000000008091',
+      reel_provider_media_id: 'must-not-leave-the-server',
+    },
+    activeScheduledPublication: null,
+  });
+  check(() => assert.equal(activeReelStatus.activeReelPublication.status, 'delivery_unknown'));
+  check(() => assert.equal(activeReelStatus.activeReelPublication.publicationKind, 'reel_video'));
+  check(() => assert.equal(activeReelStatus.lastPublication.publicationKind, 'text_only'));
+  check(() => assert.equal(activeReelStatus.lastReelPublication.status, 'failed'));
+  check(() => assert.doesNotMatch(JSON.stringify(activeReelStatus), /must-not-leave-the-server|providerMediaId/));
+  check(() => assert.equal(safePublishingStatus({
+    config,
+    connection: null,
+    lastPublication: null,
+    lastReelPublication: null,
+    activeReelPublication: { status: 'failed', publication_kind: 'reel_video' },
+    activeScheduledPublication: null,
+  }).activeReelPublication, null));
 
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company })).action, 'status'));
   check(() => assert.equal(parsePublishingRequest(JSON.stringify({ action: 'status', companyId: ids.company, jobId: ids.job })).jobId, ids.job));
@@ -229,6 +271,35 @@ function workspaceChecks() {
   check(() => assert.equal(jobB.confirmationOpen, false));
   const jobBOpened = openFacebookPublishConfirmation(multiline, '00000000-0000-4000-8000-000000008012');
   check(() => assert.notEqual(jobBOpened.idempotencyKey, jobA.idempotencyKey));
+
+  const renderJobId = '00000000-0000-4000-8000-000000008099';
+  const abandoned = {
+    status: 'failed', publicationKind: 'reel_video', renderJobId,
+    errorCode: 'META_REEL_PUBLICATION_ABANDONED', publicationId: '00000000-0000-4000-8000-000000008098',
+  };
+  const rejected = { ...abandoned, errorCode: 'META_PUBLICATION_PROVIDER_REJECTED' };
+  const published = { ...abandoned, status: 'published', errorCode: null };
+  const activeReel = { ...abandoned, status: 'delivery_unknown', providerStage: 'delivery_unknown', errorCode: 'META_PUBLICATION_DELIVERY_UNKNOWN' };
+  const snapshot = { lastPublication: abandoned, lastReelPublication: abandoned, activeReelPublication: null };
+  const newerTextPublication = { ...published, publicationKind: 'text_only', renderJobId: null };
+  check(() => assert.equal(facebookReelPublicationForRender(abandoned, renderJobId), abandoned));
+  check(() => assert.equal(facebookReelPublicationForRender(abandoned, ids.job), null));
+  check(() => assert.equal(facebookHistoricalReelPublication({ ...snapshot, lastPublication: newerTextPublication }, renderJobId), abandoned));
+  check(() => assert.equal(facebookActiveReelPublication(snapshot, renderJobId), null));
+  check(() => assert.equal(canPrepareFreshFacebookReel(abandoned, null), true));
+  check(() => assert.equal(canPrepareFreshFacebookReel(rejected, null), true));
+  check(() => assert.equal(canPrepareFreshFacebookReel(null, null), true));
+  check(() => assert.equal(canPrepareFreshFacebookReel(published, null), false));
+  check(() => assert.equal(canPrepareFreshFacebookReel(abandoned, activeReel), false));
+  check(() => assert.equal(facebookActiveReelPublication({ ...snapshot, activeReelPublication: activeReel }, renderJobId), activeReel));
+  check(() => assert.match(facebookReelFailureMessage(abandoned), /closed without publishing.*prepare a new publication/i));
+  check(() => assert.doesNotMatch(facebookReelFailureMessage(abandoned), /Facebook rejected/i));
+  check(() => assert.match(facebookReelFailureMessage(rejected), /Facebook rejected this Reel publication/));
+  check(() => assert.match(facebookReelFailureMessage({ ...abandoned, errorCode: 'META_PUBLICATION_FAILED' }), /previous Reel publication failed/i));
+  const creativePlanCaption = 'Synthetic service overview with geometric shapes only. Synthetic process sequence with geometric shapes only. Synthetic finish confirmed with geometric shapes only.';
+  const facebookCaption = 'ServiceScope synthetic Facebook Reel delivery verification — no customer content.';
+  check(() => assert.notEqual(facebookCaption, creativePlanCaption));
+  check(() => assert.equal(normalizeFacebookPublishingMessage(facebookCaption), facebookCaption));
 }
 
 async function providerChecks() {
@@ -559,6 +630,8 @@ async function sourceChecks() {
   const contracts = await readFile(new URL('../supabase/functions/_shared/meta-publishing/contracts.js', import.meta.url), 'utf8');
   const client = await readFile(new URL('../src/features/meta-publishing/clientApi.ts', import.meta.url), 'utf8');
   const panel = await readFile(new URL('../src/components/portal/FacebookPublishPanel.tsx', import.meta.url), 'utf8');
+  const reelPanel = await readFile(new URL('../src/components/portal/FacebookReelPublishPanel.tsx', import.meta.url), 'utf8');
+  const workspaceState = await readFile(new URL('../src/features/meta-publishing/workspaceState.ts', import.meta.url), 'utf8');
   const assistant = await readFile(new URL('../src/components/portal/AiAssistantPage.tsx', import.meta.url), 'utf8');
   check(() => assert.match(edge, /auth\.getUser\(jwt\)/));
   check(() => assert.match(edge, /app_current_session/));
@@ -586,6 +659,25 @@ async function sourceChecks() {
   check(() => assert.match(assistant, /privacyFindings\.length \? \(/));
   check(() => assert.doesNotMatch(panel, /retry/i));
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
+  check(() => assert.match(edge, /activeReelQuery[\s\S]*\.eq\('publication_kind', 'reel_video'\)[\s\S]*\.in\('status', \['publishing', 'delivery_unknown'\]\)/));
+  check(() => assert.match(edge, /lastReelPublication, activeReelPublication, activeScheduledPublication/));
+  check(() => assert.match(reelPanel, /Prepare new Reel publication/));
+  check(() => assert.match(reelPanel, /Previous attempt/));
+  check(() => assert.match(workspaceState, /closed without publishing.*prepare a new publication/i));
+  check(() => assert.match(workspaceState, /Facebook rejected this Reel publication/));
+  check(() => assert.match(reelPanel, /<textarea value=\{reviewedCaption\}/));
+  check(() => assert.match(reelPanel, /message: normalizedCaption/));
+  check(() => assert.doesNotMatch(assistant, /caption=\{reelWorkspace\.plan\.caption\.text\}/));
+  check(() => assert.doesNotMatch(reelPanel, /caption: string|useState\(caption\)|setCaptionDraft\(caption\)/));
+  check(() => assert.match(reelPanel, /const \[captionDraft, setCaptionDraft\] = useState\(''\)/));
+  check(() => assert.match(reelPanel, /Facebook Page: \{facebookPageName/));
+  check(() => assert.match(reelPanel, /publishingReady\s*&& canPrepareFreshFacebookReel/));
+  check(() => assert.match(reelPanel, /resultIsActive = result && \['publishing', 'delivery_unknown'\]\.includes\(result\.status\)/));
+  check(() => assert.match(reelPanel, /currentPublication = result \? \(resultIsActive \? result : null\) : activePublication/));
+  check(() => assert.doesNotMatch(reelPanel, /providerMediaId|reel_provider_media_id|pageId|connectionId/));
+  const freshReviewSource = reelPanel.slice(reelPanel.indexOf('function openReview'), reelPanel.indexOf('async function confirmPublish'));
+  check(() => assert.doesNotMatch(freshReviewSource, /publishFacebookReel|reconcileFacebookReel|provider|initialize|upload|finalize/));
+  check(() => assert.match(assistant, /canPublish=\{currentUserRole === 'Admin' \|\| currentUserRole === 'Manager'\}/));
 }
 
 async function makeDependencies({ providerError = null, markUnknownError = null, beginPersistenceError = null, activePublicationStatus = null, attachment = undefined, attachmentPatch = {}, photoApproved = true, latestAnalysisInvalid = false } = {}) {

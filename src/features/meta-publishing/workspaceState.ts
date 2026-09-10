@@ -56,6 +56,57 @@ export function facebookPublicationNeedsPageCheck(
   return lastPublication?.status === 'delivery_unknown' || errorCode === 'META_PUBLICATION_DELIVERY_UNKNOWN';
 }
 
+export function facebookReelPublicationForRender(
+  publication: FacebookPublicationSummary | null | undefined,
+  renderJobId: string,
+) {
+  return publication?.publicationKind === 'reel_video' && publication.renderJobId === renderJobId
+    ? publication
+    : null;
+}
+
+export function facebookHistoricalReelPublication(
+  snapshot: FacebookPublishingSnapshot,
+  renderJobId: string,
+) {
+  return facebookReelPublicationForRender(
+    snapshot.lastReelPublication ?? snapshot.lastPublication,
+    renderJobId,
+  );
+}
+
+export function facebookActiveReelPublication(
+  snapshot: FacebookPublishingSnapshot,
+  renderJobId: string,
+) {
+  const active = snapshot.activeReelPublication;
+  if (active?.publicationKind === 'reel_video' && ['publishing', 'delivery_unknown'].includes(active.status)) {
+    return active;
+  }
+  const latestForRender = facebookReelPublicationForRender(snapshot.lastPublication, renderJobId);
+  return latestForRender && ['publishing', 'delivery_unknown'].includes(latestForRender.status)
+    ? latestForRender
+    : null;
+}
+
+export function canPrepareFreshFacebookReel(
+  history: FacebookPublicationSummary | null | undefined,
+  active: FacebookPublicationSummary | null | undefined,
+) {
+  return !active && history?.status !== 'published';
+}
+
+export function facebookReelFailureMessage(publication: FacebookPublicationSummary | null | undefined) {
+  if (publication?.status !== 'failed') return '';
+  if (publication.errorCode === 'META_REEL_PUBLICATION_ABANDONED') {
+    return 'The previous Reel delivery attempt was closed without publishing. You can prepare a new publication.';
+  }
+  if (publication.errorCode === 'META_PUBLICATION_PROVIDER_REJECTED') {
+    return 'Facebook rejected this Reel publication.';
+  }
+  return 'The previous Reel publication failed. You can prepare a new publication.';
+}
+
 export function currentFacebookPublication(
   state: FacebookPublishWorkspaceState,
   snapshot: FacebookPublishingSnapshot | null,

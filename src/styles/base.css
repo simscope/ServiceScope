@@ -1051,6 +1051,28 @@ button {
   background: var(--surface-muted, #f6f7f8);
 }
 
+.facebook-reel-caption-field {
+  display: grid;
+  gap: 6px;
+  margin: 18px 0;
+}
+
+.ai-reel-publication-history {
+  display: grid;
+  gap: 4px;
+}
+
+.facebook-reel-caption-field textarea {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+}
+
+.facebook-reel-caption-field small {
+  justify-self: end;
+  color: var(--text-muted);
+}
+
 .facebook-publish-review-status {
   margin-bottom: 12px;
 }

@@ -39,6 +39,7 @@ const [
   reelDeliveryService,
   reelPreparation,
   reelPanel,
+  reelWorkspaceState,
   reelDeliveryMigration,
   reelReconciliationMigration,
   reelLocalClosureMigration,
@@ -76,6 +77,7 @@ const [
   read('supabase/functions/_shared/meta-publishing/reelDeliveryService.js'),
   read('supabase/functions/_shared/meta-publishing/reelPreparation.js'),
   read('src/components/portal/FacebookReelPublishPanel.tsx'),
+  read('src/features/meta-publishing/workspaceState.ts'),
   read('supabase/migrations/20260817034500_meta_facebook_reel_delivery.sql'),
   read('supabase/migrations/20260824040000_meta_facebook_reel_reconciliation_claim.sql'),
   read('supabase/migrations/20260829014000_meta_facebook_reel_local_closure.sql'),
@@ -99,8 +101,23 @@ check(() => assert.doesNotMatch(browserSources, /instagram_content_publish|publi
 check(() => assert.doesNotMatch(reelPanel, /pageAccessToken|uploadUrl|storagePath|graphApiVersion|providerMediaId/));
 check(() => assert.match(reelPanel, /explicitApproval: true/));
 check(() => assert.match(reelPanel, /Publish this exact completed video and caption/));
-check(() => assert.match(reelPanel, /message: reviewedCaption/));
-check(() => assert.match(reelPanel, /facebook-publish-preview">\{reviewedCaption\}/));
+check(() => assert.match(reelPanel, /message: normalizedCaption/));
+check(() => assert.match(reelPanel, /<textarea value=\{reviewedCaption\}/));
+check(() => assert.match(reelPanel, /Prepare new Reel publication/));
+check(() => assert.doesNotMatch(aiPage, /caption=\{reelWorkspace\.plan\.caption\.text\}/));
+check(() => assert.doesNotMatch(reelPanel, /caption: string|useState\(caption\)|setCaptionDraft\(caption\)/));
+check(() => assert.match(reelWorkspaceState, /closed without publishing.*prepare a new publication/i));
+check(() => assert.match(reelPanel, /publishingReady\s*&& canPrepareFreshFacebookReel/));
+check(() => assert.match(reelPanel, /resultIsActive = result && \['publishing', 'delivery_unknown'\]\.includes\(result\.status\)/));
+check(() => assert.match(reelPanel, /currentPublication = result \? \(resultIsActive \? result : null\) : activePublication/));
+check(() => assert.doesNotMatch(reelPanel, /providerMediaId|reel_provider_media_id|pageId|connectionId/));
+const reelFreshReviewSource = reelPanel.slice(reelPanel.indexOf('function openReview'), reelPanel.indexOf('async function confirmPublish'));
+check(() => assert.doesNotMatch(reelFreshReviewSource, /publishFacebookReel|reconcileFacebookReel|provider|initialize|upload|finalize/));
+check(() => assert.match(aiPage, /canPublish=\{currentUserRole === 'Admin' \|\| currentUserRole === 'Manager'\}/));
+check(() => assert.match(edge, /activeReelQuery[\s\S]*\.eq\('publication_kind', 'reel_video'\)[\s\S]*\.in\('status', \['publishing', 'delivery_unknown'\]\)/));
+check(() => assert.match(edge, /reelPublicationQuery[\s\S]*\.eq\('publication_kind', 'reel_video'\)[\s\S]*\.order\('created_at', \{ ascending: false \}\)/));
+check(() => assert.match(contracts, /activeReelPublication: safeActiveReelPublication/));
+check(() => assert.match(contracts, /lastReelPublication: lastReelPublication \? safePublicationSummary/));
 check(() => assert.match(reelDeliveryService, /assertPublicationPrivacy[\s\S]*prepareFacebookReel[\s\S]*decryptPageToken[\s\S]*beginReelPublication/));
 check(() => assert.match(reelPreparation, /video_object_path !== `\$\{companyId\}\/\$\{render\.id\}\/reel\.mp4`/));
 check(() => assert.match(reelPreparation, /actualSha256 !== String\(render\.video_sha256\)/));

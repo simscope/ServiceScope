@@ -163,6 +163,7 @@ export function ClientBusinessPageRenderer({
         companyId={selectedCompanyId}
         selectedJob={allJobsRows.find((job) => job.id === aiAssistantJobId) ?? null}
         materials={materials}
+        currentUserRole={currentPortalUser.role}
       />
     );
   }

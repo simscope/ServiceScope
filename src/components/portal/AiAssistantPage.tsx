@@ -108,6 +108,7 @@ type AiAssistantPageProps = {
   companyId: string;
   selectedJob: ServiceJob | null;
   materials: MaterialRow[];
+  currentUserRole: 'Admin' | 'Manager' | 'Technician';
 };
 
 function renderWorkspaceFromSaved(saved: PersistedReelWorkspace): ReelRenderWorkspace {
@@ -123,7 +124,7 @@ function renderWorkspaceFromSaved(saved: PersistedReelWorkspace): ReelRenderWork
   };
 }
 
-export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssistantPageProps) {
+export function AiAssistantPage({ companyId, selectedJob, materials, currentUserRole }: AiAssistantPageProps) {
   const [selectedChannels, setSelectedChannels] = useState<AssistantChannel[]>(['Instagram']);
   const [localFacts, setLocalFacts] = useState<AssistantLocalFacts>({});
   const [mediaState, setMediaState] = useState<AssistantMediaState[]>([]);
@@ -1004,9 +1005,9 @@ export function AiAssistantPage({ companyId, selectedJob, materials }: AiAssista
                         companyId={companyId}
                         jobId={selectedJob.id}
                         renderJobId={activeReelRender.renderJobId}
-                        caption={reelWorkspace.plan.caption.text}
                         videoUrl={activeReelRender.videoUrl}
                         coverUrl={activeReelRender.coverUrl}
+                        canPublish={currentUserRole === 'Admin' || currentUserRole === 'Manager'}
                       />
                     ) : null}
                   </div>

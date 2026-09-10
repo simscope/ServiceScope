@@ -32,6 +32,8 @@ export type FacebookPublishingSnapshot = {
   facebookPublishingEnabled: boolean;
   missingPermissions: string[];
   lastPublication: FacebookPublicationSummary | null;
+  lastReelPublication: FacebookPublicationSummary | null;
+  activeReelPublication: FacebookPublicationSummary | null;
   activeScheduledPublication: FacebookActiveScheduledPublication | null;
   eligiblePhotos: Array<{
     attachmentId: string;
