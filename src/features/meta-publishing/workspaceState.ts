@@ -65,6 +65,16 @@ export function facebookReelPublicationForRender(
     : null;
 }
 
+export function facebookHistoricalReelPublication(
+  snapshot: FacebookPublishingSnapshot,
+  renderJobId: string,
+) {
+  return facebookReelPublicationForRender(
+    snapshot.lastReelPublication ?? snapshot.lastPublication,
+    renderJobId,
+  );
+}
+
 export function facebookActiveReelPublication(
   snapshot: FacebookPublishingSnapshot,
   renderJobId: string,

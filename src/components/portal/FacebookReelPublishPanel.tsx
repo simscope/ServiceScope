@@ -6,21 +6,20 @@ import type { FacebookReelPublishResult } from '../../features/meta-publishing/c
 import {
   canPrepareFreshFacebookReel,
   facebookActiveReelPublication,
+  facebookHistoricalReelPublication,
   facebookReelFailureMessage,
-  facebookReelPublicationForRender,
 } from '../../features/meta-publishing/workspaceState';
 
 type FacebookReelPublishPanelProps = {
   companyId: string;
   jobId: string;
   renderJobId: string;
-  caption: string;
   videoUrl: string;
   coverUrl?: string | null;
   canPublish: boolean;
 };
 
-export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, caption, videoUrl, coverUrl, canPublish }: FacebookReelPublishPanelProps) {
+export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoUrl, coverUrl, canPublish }: FacebookReelPublishPanelProps) {
   const [open, setOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -30,7 +29,7 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, captio
   const [publishingReady, setPublishingReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [facebookPageName, setFacebookPageName] = useState<string | null>(null);
-  const [captionDraft, setCaptionDraft] = useState(caption);
+  const [captionDraft, setCaptionDraft] = useState('');
   const [reviewedCaption, setReviewedCaption] = useState('');
   const idempotencyKey = useRef<string | null>(null);
 
@@ -41,13 +40,13 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, captio
       if (!active) return;
       setFacebookPageName(snapshot.facebookPageName);
       setPublishingReady(snapshot.configured && snapshot.connected && snapshot.facebookPublishingEnabled && Boolean(snapshot.facebookPageName));
-      const historicalPublication = facebookReelPublicationForRender(snapshot.lastPublication, renderJobId);
+      const historicalPublication = facebookHistoricalReelPublication(snapshot, renderJobId);
       const currentPublication = facebookActiveReelPublication(snapshot, renderJobId);
       setHistory(historicalPublication ? asReelResult(historicalPublication) : null);
       setActivePublication(currentPublication ? asReelResult(currentPublication) : null);
     }).catch(() => {});
     return () => { active = false; };
-  }, [canPublish, caption, companyId, jobId, renderJobId]);
+  }, [canPublish, companyId, jobId, renderJobId]);
 
   useEffect(() => {
     idempotencyKey.current = null;
@@ -58,21 +57,16 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, captio
     setActivePublication(null);
     setPublishingReady(false);
     setFacebookPageName(null);
-    setCaptionDraft(caption);
+    setCaptionDraft('');
     setReviewedCaption('');
-  }, [companyId, jobId, renderJobId, caption]);
+  }, [companyId, jobId, renderJobId]);
 
   function openReview() {
-    try {
-      const snapshot = normalizeFacebookPublishingMessage(captionDraft);
-      idempotencyKey.current = crypto.randomUUID();
-      setReviewedCaption(snapshot);
-      setConfirmed(false);
-      setError(null);
-      setOpen(true);
-    } catch (nextError) {
-      setError(normalizePublishingError(nextError));
-    }
+    idempotencyKey.current = crypto.randomUUID();
+    setReviewedCaption(captionDraft);
+    setConfirmed(false);
+    setError(null);
+    setOpen(true);
   }
 
   function updateReviewedCaption(value: string) {
@@ -142,7 +136,7 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, captio
   }
 
   const resultIsActive = result && ['publishing', 'delivery_unknown'].includes(result.status);
-  const currentPublication = resultIsActive ? result : activePublication;
+  const currentPublication = result ? (resultIsActive ? result : null) : activePublication;
   const historicalPublication = result && !resultIsActive ? result : history;
   const historicalFailure = historicalPublication?.status === 'failed'
     ? facebookReelFailureMessage(historicalPublication)
@@ -210,7 +204,7 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, captio
   );
 }
 
-function asReelResult(publication: NonNullable<ReturnType<typeof facebookReelPublicationForRender>>): FacebookReelPublishResult {
+function asReelResult(publication: NonNullable<ReturnType<typeof facebookHistoricalReelPublication>>): FacebookReelPublishResult {
   return {
     ...publication,
     ok: publication.status === 'published' || publication.status === 'publishing',

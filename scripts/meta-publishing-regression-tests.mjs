@@ -28,6 +28,7 @@ const {
   beginFacebookPublishSubmission,
   canPrepareFreshFacebookReel,
   facebookActiveReelPublication,
+  facebookHistoricalReelPublication,
   facebookPublicationInProgress,
   facebookPublicationNeedsPageCheck,
   facebookReelFailureMessage,
@@ -106,7 +107,15 @@ function configurationAndAccessChecks() {
   const activeReelStatus = safePublishingStatus({
     config,
     connection: { status: 'connected', facebook_page_name: 'Synthetic Page', granted_scopes: publishingScopes() },
-    lastPublication: null,
+    lastPublication: { status: 'published', publication_kind: 'text_only' },
+    lastReelPublication: {
+      id: '00000000-0000-4000-8000-000000008092',
+      status: 'failed',
+      publication_kind: 'reel_video',
+      provider_delivery_stage: 'failed',
+      render_job_id: '00000000-0000-4000-8000-000000008091',
+      reel_provider_media_id: 'historical-provider-id-must-not-leave-the-server',
+    },
     activeReelPublication: {
       id: '00000000-0000-4000-8000-000000008090',
       status: 'delivery_unknown',
@@ -119,11 +128,14 @@ function configurationAndAccessChecks() {
   });
   check(() => assert.equal(activeReelStatus.activeReelPublication.status, 'delivery_unknown'));
   check(() => assert.equal(activeReelStatus.activeReelPublication.publicationKind, 'reel_video'));
+  check(() => assert.equal(activeReelStatus.lastPublication.publicationKind, 'text_only'));
+  check(() => assert.equal(activeReelStatus.lastReelPublication.status, 'failed'));
   check(() => assert.doesNotMatch(JSON.stringify(activeReelStatus), /must-not-leave-the-server|providerMediaId/));
   check(() => assert.equal(safePublishingStatus({
     config,
     connection: null,
     lastPublication: null,
+    lastReelPublication: null,
     activeReelPublication: { status: 'failed', publication_kind: 'reel_video' },
     activeScheduledPublication: null,
   }).activeReelPublication, null));
@@ -268,9 +280,11 @@ function workspaceChecks() {
   const rejected = { ...abandoned, errorCode: 'META_PUBLICATION_PROVIDER_REJECTED' };
   const published = { ...abandoned, status: 'published', errorCode: null };
   const activeReel = { ...abandoned, status: 'delivery_unknown', providerStage: 'delivery_unknown', errorCode: 'META_PUBLICATION_DELIVERY_UNKNOWN' };
-  const snapshot = { lastPublication: abandoned, activeReelPublication: null };
+  const snapshot = { lastPublication: abandoned, lastReelPublication: abandoned, activeReelPublication: null };
+  const newerTextPublication = { ...published, publicationKind: 'text_only', renderJobId: null };
   check(() => assert.equal(facebookReelPublicationForRender(abandoned, renderJobId), abandoned));
   check(() => assert.equal(facebookReelPublicationForRender(abandoned, ids.job), null));
+  check(() => assert.equal(facebookHistoricalReelPublication({ ...snapshot, lastPublication: newerTextPublication }, renderJobId), abandoned));
   check(() => assert.equal(facebookActiveReelPublication(snapshot, renderJobId), null));
   check(() => assert.equal(canPrepareFreshFacebookReel(abandoned, null), true));
   check(() => assert.equal(canPrepareFreshFacebookReel(rejected, null), true));
@@ -646,16 +660,20 @@ async function sourceChecks() {
   check(() => assert.doesNotMatch(panel, /retry/i));
   check(() => assert.doesNotMatch(`${client}\n${panel}`, /providerPostId|facebookPageId|token_envelope|service_role/));
   check(() => assert.match(edge, /activeReelQuery[\s\S]*\.eq\('publication_kind', 'reel_video'\)[\s\S]*\.in\('status', \['publishing', 'delivery_unknown'\]\)/));
-  check(() => assert.match(edge, /activeReelPublication, activeScheduledPublication/));
+  check(() => assert.match(edge, /lastReelPublication, activeReelPublication, activeScheduledPublication/));
   check(() => assert.match(reelPanel, /Prepare new Reel publication/));
   check(() => assert.match(reelPanel, /Previous attempt/));
   check(() => assert.match(workspaceState, /closed without publishing.*prepare a new publication/i));
   check(() => assert.match(workspaceState, /Facebook rejected this Reel publication/));
   check(() => assert.match(reelPanel, /<textarea value=\{reviewedCaption\}/));
   check(() => assert.match(reelPanel, /message: normalizedCaption/));
+  check(() => assert.doesNotMatch(assistant, /caption=\{reelWorkspace\.plan\.caption\.text\}/));
+  check(() => assert.doesNotMatch(reelPanel, /caption: string|useState\(caption\)|setCaptionDraft\(caption\)/));
+  check(() => assert.match(reelPanel, /const \[captionDraft, setCaptionDraft\] = useState\(''\)/));
   check(() => assert.match(reelPanel, /Facebook Page: \{facebookPageName/));
   check(() => assert.match(reelPanel, /publishingReady\s*&& canPrepareFreshFacebookReel/));
   check(() => assert.match(reelPanel, /resultIsActive = result && \['publishing', 'delivery_unknown'\]\.includes\(result\.status\)/));
+  check(() => assert.match(reelPanel, /currentPublication = result \? \(resultIsActive \? result : null\) : activePublication/));
   check(() => assert.doesNotMatch(reelPanel, /providerMediaId|reel_provider_media_id|pageId|connectionId/));
   const freshReviewSource = reelPanel.slice(reelPanel.indexOf('function openReview'), reelPanel.indexOf('async function confirmPublish'));
   check(() => assert.doesNotMatch(freshReviewSource, /publishFacebookReel|reconcileFacebookReel|provider|initialize|upload|finalize/));

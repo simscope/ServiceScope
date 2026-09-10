@@ -1005,7 +1005,6 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
                         companyId={companyId}
                         jobId={selectedJob.id}
                         renderJobId={activeReelRender.renderJobId}
-                        caption={reelWorkspace.plan.caption.text}
                         videoUrl={activeReelRender.videoUrl}
                         coverUrl={activeReelRender.coverUrl}
                         canPublish={currentUserRole === 'Admin' || currentUserRole === 'Manager'}

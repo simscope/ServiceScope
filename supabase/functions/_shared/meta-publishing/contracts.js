@@ -266,7 +266,7 @@ export function runtimePublishingConfig(getEnv) {
   };
 }
 
-export function safePublishingStatus({ config, connection, lastPublication, activeReelPublication, activeScheduledPublication, eligiblePhotos = [] }) {
+export function safePublishingStatus({ config, connection, lastPublication, lastReelPublication, activeReelPublication, activeScheduledPublication, eligiblePhotos = [] }) {
   const enabled = facebookPublishingEnabled(connection);
   return {
     ok: true,
@@ -276,6 +276,7 @@ export function safePublishingStatus({ config, connection, lastPublication, acti
     facebookPublishingEnabled: enabled,
     missingPermissions: enabled ? [] : [META_FACEBOOK_PUBLISHING_SCOPE],
     lastPublication: lastPublication ? safePublicationSummary(lastPublication) : null,
+    lastReelPublication: lastReelPublication ? safePublicationSummary(lastReelPublication) : null,
     activeReelPublication: safeActiveReelPublication(activeReelPublication),
     activeScheduledPublication: safeActiveScheduledPublication(activeScheduledPublication),
     eligiblePhotos: Array.isArray(eligiblePhotos) ? eligiblePhotos.map(safeEligiblePhoto).filter(Boolean) : [],
