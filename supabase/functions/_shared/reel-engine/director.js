@@ -252,7 +252,7 @@ async function callProvider(provider, providerRequest, config) {
   throw lastError;
 }
 
-function finalizePlan(plan, request, context) {
+export function finalizePlan(plan, request, context) {
   const safePlan = JSON.parse(JSON.stringify(plan));
   return {
     ...safePlan,
@@ -277,7 +277,7 @@ function finalizePlan(plan, request, context) {
   };
 }
 
-async function persistCreativePlan(plan, request, context, repository) {
+export async function persistCreativePlan(plan, request, context, repository) {
   if (plan.decision !== 'create_reel' || typeof repository.persistReelCreativePlan !== 'function') return plan;
   const creativePlanId = await repository.persistReelCreativePlan({
     companyId: context.companyId,

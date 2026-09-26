@@ -3,6 +3,7 @@ import { handleContentGeneration, HttpError } from '../_shared/content-engine/ap
 import { createMemoryGuards } from '../_shared/content-engine/rateLimit.js';
 import { createPreflightFromEnv, createProviderFromEnv } from '../_shared/content-engine/providers/openai.js';
 import { handleReelGeneration, ReelHttpError } from '../_shared/reel-engine/director.js';
+import { handleManualReelGeneration } from '../_shared/reel-engine/manualPlan.js';
 import { attachmentSha256, sha256DigestsEqual } from '../_shared/media-analysis/checksum.js';
 
 const corsHeaders = {
@@ -24,7 +25,9 @@ Deno.serve(async (request) => {
     const dependencies = makeDependencies();
     const handler = parsedBody?.schemaVersion === 'reel-creative-request-v1'
       ? handleReelGeneration
-      : handleContentGeneration;
+      : parsedBody?.schemaVersion === 'reel-manual-plan-request-v1'
+        ? handleManualReelGeneration
+        : handleContentGeneration;
     const result = await handler({
       rawBody,
       authorization: request.headers.get('Authorization') ?? '',

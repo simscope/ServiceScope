@@ -2,6 +2,7 @@ import type { AssistantLocalFacts } from '../ai-assistant/assistantModel';
 import type { MediaPlanningRole } from '../media-planning/planningState';
 
 export const REEL_REQUEST_SCHEMA_VERSION = 'reel-creative-request-v1';
+export const REEL_MANUAL_REQUEST_SCHEMA_VERSION = 'reel-manual-plan-request-v1';
 export const REEL_PLAN_SCHEMA_VERSION = 'reel-creative-plan-v1';
 
 export type ReelDecision = 'create_reel' | 'needs_more_media' | 'skip';
@@ -15,10 +16,13 @@ export type ReelMarketingAngle =
   | 'transformation'
   | 'maintenance_tip'
   | 'technician_insight'
-  | 'unusual_failure';
+  | 'unusual_failure'
+  | 'manual_selection';
 export type ReelMotionPreset = 'slow_zoom_in' | 'slow_zoom_out' | 'pan_left' | 'pan_right' | 'focus_detail' | 'static';
 export type ReelCropStrategy = 'cover_center' | 'subject_center' | 'detail_crop';
 export type ReelTransition = 'cut' | 'crossfade' | 'quick_fade';
+export type ReelSceneCategoryLabel = 'PROBLEM' | 'DETAIL' | 'SERVICE' | 'PROCESS' | 'RESULT' | 'FIELD NOTE' | 'SUPPORTING';
+export type ManualReelRole = 'problem' | 'process' | 'result' | 'supporting';
 
 export type ReelCreativeRequestV1 = {
   schemaVersion: typeof REEL_REQUEST_SCHEMA_VERSION;
@@ -72,14 +76,35 @@ export type ReelSceneV1 = {
   position: number;
   attachmentId: string;
   sceneRole: MediaPlanningRole;
+  categoryLabel?: ReelSceneCategoryLabel;
   durationMs: number;
   overlayText: string;
-  secondaryText?: string;
+  secondaryText?: string | null;
   motionPreset: ReelMotionPreset;
   cropStrategy: ReelCropStrategy;
   transitionOut: ReelTransition;
   evidenceIds: string[];
-  voiceoverLine?: string;
+  voiceoverLine?: string | null;
+};
+
+export type ManualReelSceneInput = {
+  attachmentId: string;
+  position: number;
+  role: ManualReelRole;
+  categoryLabel: ReelSceneCategoryLabel;
+  primaryText: string;
+  supportingText: string;
+};
+
+export type ManualReelPlanRequestV1 = {
+  schemaVersion: typeof REEL_MANUAL_REQUEST_SCHEMA_VERSION;
+  operation: 'preview' | 'create';
+  jobId: string;
+  locale: string;
+  mediaPlan: ReelMediaPlanItem[];
+  scenes: ManualReelSceneInput[];
+  planningRevision: string;
+  idempotencyKey: string;
 };
 
 export const REEL_ERROR_MESSAGES: Record<string, string> = {

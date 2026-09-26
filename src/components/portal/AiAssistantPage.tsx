@@ -64,8 +64,9 @@ import {
   updateChannelGenerationPreference,
   type CompanyVoiceSummary,
 } from '../../features/company-voice/contracts';
-import { generateAiReel } from '../../features/reel-director/clientApi';
-import { reelErrorMessage } from '../../features/reel-director/contracts';
+import { generateAiReel, generateManualReelPlan } from '../../features/reel-director/clientApi';
+import { reelErrorMessage, type ManualReelSceneInput, type ReelCreativePlanV1 } from '../../features/reel-director/contracts';
+import { manualReelFacts, manualReelScenesFromPlan } from '../../features/reel-director/manualPlan';
 import { runOneClickReel } from '../../features/reel-director/oneClickReel';
 import {
   applyReelPlan,
@@ -78,6 +79,7 @@ import {
   reelStatusLabel,
 } from '../../features/reel-director/reelState';
 import { ReelPreview } from './ReelPreview';
+import { ManualReelPlanEditor } from './ManualReelPlanEditor';
 import {
   approveReelPlan,
   beginReelRender,
@@ -148,6 +150,10 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
   const [reelWorkspace, setReelWorkspace] = useState(() => createReelWorkspaceState(selectedJob?.id));
   const [reelRender, setReelRender] = useState<ReelRenderWorkspace>({ status: 'idle' });
   const [manualReelSelection, setManualReelSelection] = useState<ReelMediaSelectionResponse | null>(null);
+  const [manualReelPreview, setManualReelPreview] = useState<ReelCreativePlanV1 | null>(null);
+  const [manualReelDraft, setManualReelDraft] = useState<ManualReelSceneInput[]>([]);
+  const [manualReelPending, setManualReelPending] = useState<'preview' | 'create' | null>(null);
+  const [manualReelError, setManualReelError] = useState('');
   const reelDispatchRecoveryAtRef = useRef(new Map<string, number>());
   const selectedJobIdRef = useRef(selectedJob?.id);
   const reelPlanScopeRef = useRef({
@@ -204,6 +210,10 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     setReelWorkspace(createReelWorkspaceState(selectedJob?.id));
     setReelRender({ status: 'idle' });
     setManualReelSelection(null);
+    setManualReelPreview(null);
+    setManualReelDraft([]);
+    setManualReelPending(null);
+    setManualReelError('');
     reelDispatchRecoveryAtRef.current.clear();
     setReelEditOpen(false);
     setFacebookStatusRefreshToken((current) => current + 1);
@@ -611,6 +621,86 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     }
   }
 
+  async function openManualReelPlan() {
+    if (!selectedJob || !manualReelSelection?.ready || !manualReelSelection.canManage || manualReelPending) return;
+    const requestJobId = selectedJob.id;
+    setManualReelPending('preview');
+    setManualReelError('');
+    try {
+      const plan = await generateManualReelPlan({
+        operation: 'preview',
+        jobId: requestJobId,
+        locale: generationPreferencesByChannel['Short Video'].locale,
+        mediaPlan: savedManualReelMediaPlan,
+        scenes: [],
+        planningRevision: currentReelInputRevision,
+        idempotencyKey: `${requestJobId}:manual-reel:preview:${manualReelSelectionRevision}`,
+      });
+      if (selectedJobIdRef.current !== requestJobId) return;
+      setManualReelPreview(plan);
+      setManualReelDraft(manualReelScenesFromPlan(plan));
+    } catch (error) {
+      setManualReelError(reelErrorMessage(error));
+    } finally {
+      if (selectedJobIdRef.current === requestJobId) setManualReelPending(null);
+    }
+  }
+
+  async function createManualReel() {
+    if (!selectedJob || !assistantContext || !manualReelPreview || !manualReelSelection?.ready || !manualReelSelection.canManage || manualReelPending) return;
+    const requestJobId = selectedJob.id;
+    const nextLocalFacts = { ...localFacts, ...manualReelFacts(manualReelDraft) };
+    const requestRevision = reelInputRevision({
+      jobId: requestJobId,
+      localFacts: nextLocalFacts,
+      media: assistantContext.publicSafe.media,
+      planning: mediaPlanningState,
+      analysis: mediaAnalysisWorkspace.result,
+      excludedAttachmentIds: excludedReelAttachmentIds,
+      companyVoiceRevision: JSON.stringify(companyVoiceSummary),
+      authoritativeMediaPlan: savedManualReelMediaPlan,
+      authoritativeMediaRevision: manualReelSelectionRevision,
+    });
+    setManualReelPending('create');
+    setManualReelError('');
+    try {
+      const plan = await generateManualReelPlan({
+        operation: 'create',
+        jobId: requestJobId,
+        locale: generationPreferencesByChannel['Short Video'].locale,
+        mediaPlan: savedManualReelMediaPlan,
+        scenes: manualReelDraft,
+        planningRevision: requestRevision,
+        idempotencyKey: `${requestJobId}:manual-reel:create:${requestRevision}`,
+      });
+      if (selectedJobIdRef.current !== requestJobId) return;
+      const nextIdentity = reelPlanIdentity(plan.creativePlanId, plan.revision);
+      const previousScope = reelPlanScopeRef.current;
+      activateReelPlanScope(nextIdentity);
+      setLocalFacts(nextLocalFacts);
+      setReelWorkspace((current) => applyReelPlan(current, plan, requestRevision));
+      if (!sameReelPlanIdentity(previousScope, nextIdentity)) {
+        setReelRender((current) => {
+          if (current.renderJobId) reelDispatchRecoveryAtRef.current.delete(current.renderJobId);
+          return idleReelRender(nextIdentity);
+        });
+      }
+      setManualReelPreview(null);
+      setManualReelDraft([]);
+    } catch (error) {
+      setManualReelError(reelErrorMessage(error));
+    } finally {
+      if (selectedJobIdRef.current === requestJobId) setManualReelPending(null);
+    }
+  }
+
+  function closeManualReelPlan() {
+    if (manualReelPending) return;
+    setManualReelPreview(null);
+    setManualReelDraft([]);
+    setManualReelError('');
+  }
+
   async function createMp4() {
     const creativePlanId = reelWorkspace.creativePlanId ?? reelWorkspace.plan?.creativePlanId;
     const revision = reelWorkspace.plan?.revision;
@@ -977,16 +1067,35 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
                   className="primary-button ai-reel-generate"
                   type="button"
                   onClick={generateReel}
-                  disabled={['analyzing', 'creating_story'].includes(reelWorkspace.status)}
+                  disabled={['analyzing', 'creating_story'].includes(reelWorkspace.status) || manualReelPending !== null || (reelWorkspace.status === 'failed' && Boolean(manualReelSelection?.ready))}
                 >
                   <Sparkles size={18} aria-hidden="true" />
                   {['analyzing', 'creating_story'].includes(reelWorkspace.status) ? reelStatusLabel(reelWorkspace.status) : 'Generate Reel'}
                 </button>
+                {manualReelSelection?.ready && manualReelSelection.canManage ? (
+                  <button className="secondary-button" type="button" onClick={openManualReelPlan} disabled={manualReelPending !== null}>
+                    <Film size={17} aria-hidden="true" />
+                    {manualReelPending === 'preview' ? 'Preparing simple plan' : 'Create simple plan from selected media'}
+                  </button>
+                ) : null}
                 <button className="secondary-button" type="button" onClick={() => setReelEditOpen((current) => !current)} aria-expanded={reelEditOpen}>
                   <SlidersHorizontal size={17} aria-hidden="true" />
                   Edit
                 </button>
               </div>
+
+              {manualReelPreview ? (
+                <ManualReelPlanEditor
+                  plan={manualReelPreview}
+                  scenes={manualReelDraft}
+                  mediaUrls={reelMediaUrls}
+                  pending={manualReelPending === 'create'}
+                  error={manualReelError}
+                  onChange={setManualReelDraft}
+                  onCreate={createManualReel}
+                  onCancel={closeManualReelPlan}
+                />
+              ) : manualReelError ? <p className="ai-assistant-analysis-error" role="alert">{manualReelError}</p> : null}
 
               {reelWorkspace.status === 'reel_ready' && reelWorkspace.plan ? (
                 <>
@@ -1068,7 +1177,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
                 </div>
               ) : null}
               {reelWorkspace.status === 'failed' ? (
-                <div className="ai-reel-decision-state error"><AlertTriangle size={24} aria-hidden="true" /><div><h3>Reel generation failed</h3><p>{reelWorkspace.error}</p></div></div>
+                <div className="ai-reel-decision-state error"><AlertTriangle size={24} aria-hidden="true" /><div><h3>Reel generation failed</h3><p>{reelWorkspace.error}</p>{manualReelSelection?.ready ? <p>AI plan could not be created from this evidence. Create a simple plan from your selected media instead.</p> : null}</div></div>
               ) : null}
             </section>
           ) : null}

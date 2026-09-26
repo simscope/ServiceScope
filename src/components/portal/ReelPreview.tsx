@@ -53,7 +53,11 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
   const asset = scene ? mediaUrls.get(scene.attachmentId) : undefined;
   const sceneProgress = scene ? Math.min(1, frame.elapsedInItemMs / scene.durationMs) : 0;
   const motion = scene ? reelMotionFrame(scene.motionPreset, scene.cropStrategy, sceneProgress) : undefined;
-  const treatment = scene ? reelSceneTreatment(scene.sceneRole, { marketingAngle: plan.marketingAngle, position: scene.position }) : undefined;
+  const treatment = scene ? reelSceneTreatment(scene.sceneRole, {
+    marketingAngle: plan.marketingAngle,
+    position: scene.position,
+    categoryLabel: scene.categoryLabel,
+  }) : undefined;
   const nextScene = frame.transition?.nextItem?.kind === 'scene' ? frame.transition.nextItem.scene : undefined;
   const nextAsset = nextScene ? mediaUrls.get(nextScene.attachmentId) : undefined;
   const nextMotion = nextScene ? reelMotionFrame(nextScene.motionPreset, nextScene.cropStrategy, 0) : undefined;

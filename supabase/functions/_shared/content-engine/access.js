@@ -5,12 +5,14 @@ export function assertAiAssistantAccess({ session, company, companyUser }) {
   if (session.kind !== 'company') throw new Error('FORBIDDEN');
   if (String(session.company_id ?? '') !== String(company.id ?? '')) throw new Error('FORBIDDEN');
   const isCompanyOwner = String(session.email ?? '').trim().toLowerCase() === String(company.owner_email ?? '').trim().toLowerCase();
-  if (isCompanyOwner) return;
+  if (isCompanyOwner) return 'full';
   if (!companyUser || companyUser.status !== 'active') throw new Error('FORBIDDEN');
   if (String(companyUser.company_id) !== String(company.id)) throw new Error('FORBIDDEN');
   const companyLevel = levelFor(company.access_rules, 'aiAssistant', 'full');
   const userLevel = levelFor(companyUser.portal_access_rules, 'aiAssistant', companyUser.role === 'technician' ? 'off' : 'full');
-  if (combineAccessLevels(companyLevel, userLevel) === 'off') throw new Error('FORBIDDEN');
+  const accessLevel = combineAccessLevels(companyLevel, userLevel);
+  if (accessLevel === 'off') throw new Error('FORBIDDEN');
+  return accessLevel;
 }
 
 export function combineAccessLevels(companyLevel, userLevel) {

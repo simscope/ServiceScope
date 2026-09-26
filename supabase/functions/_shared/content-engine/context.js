@@ -11,7 +11,7 @@ export async function buildAuthorizedContext({ request, session, repository }) {
   const company = await repository.getCompany(job.company_id);
   if (!company) throw new Error('JOB_NOT_FOUND');
   const companyUser = await repository.getCompanyUser(session, company.id);
-  assertAiAssistantAccess({ session, company, companyUser });
+  const accessLevel = assertAiAssistantAccess({ session, company, companyUser });
   if (String(job.company_id) !== String(company.id)) throw new Error('FORBIDDEN');
   const [companyVoiceSettings, customer, location, materials, attachments, invoices, comments] = await Promise.all([
     repository.getCompanyVoiceSettings ? repository.getCompanyVoiceSettings(company.id) : null,
@@ -50,6 +50,7 @@ export async function buildAuthorizedContext({ request, session, repository }) {
     companyId: company.id,
     actorId: actorId(session),
     actorAuthUserId: String(session.auth_user_id ?? ''),
+    accessLevel,
     status: job.status,
     missingInformation: [
       request.localFacts.diagnosis ? '' : 'Diagnosis missing',

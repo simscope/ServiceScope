@@ -37,7 +37,11 @@ export function buildReelRenderManifest(authorization, stagedAssets) {
       durationMs: scene.durationMs,
       overlayText: scene.overlayText,
       secondaryText: scene.secondaryText ?? '',
-      treatment: reelSceneTreatment(scene.sceneRole, { marketingAngle: canonicalPlan.marketingAngle, position: scene.position }),
+      treatment: reelSceneTreatment(scene.sceneRole, {
+        marketingAngle: canonicalPlan.marketingAngle,
+        position: scene.position,
+        categoryLabel: scene.categoryLabel,
+      }),
       motionPreset: scene.motionPreset,
       cropStrategy: scene.cropStrategy,
       transitionOut: scene.transitionOut,
