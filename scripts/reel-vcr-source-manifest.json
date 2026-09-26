@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "servicescope-reel-vcr-source-manifest-v1",
+  "mainSourceSha": "4dd0eb40e15b71a7aa058de8aa60bf6362af18ce",
+  "files": [
+    { "path": "infra/reel-render-sandbox/Dockerfile", "sha256": "98f5337ab357270cdb1a78ae7a7c0bed4d6acbec48236f66961033e7814afdbf", "bytes": 1938 },
+    { "path": "server/reel-renderer/assets.js", "sha256": "a1eb9b5296a9d403c5dd2a377bfa98cf387d2847091ba1c6f9ad62160644cd1f", "bytes": 2626 },
+    { "path": "server/reel-renderer/authorization.js", "sha256": "3ec2c3911b54404b4a1697867da4f9356a85199df09d0f4b97fb3b4e82b373b6", "bytes": 2557 },
+    { "path": "server/reel-renderer/errors.js", "sha256": "8fb6e9e19ed2151c0ca933ffac5ba5c9edef20ebed0ae09c265769783f7b2ad2", "bytes": 840 },
+    { "path": "server/reel-renderer/index.js", "sha256": "1e1881567110480e4b7d07d96ac099346b4001d616336af02b3a0d84e7aa8f9c", "bytes": 724 },
+    { "path": "server/reel-renderer/manifest.js", "sha256": "d9d55cf7caaf70d1b8ba05fdcb6b159b80d7aca52ab0c0f85e9161a0294d4ba2", "bytes": 3776 },
+    { "path": "server/reel-renderer/overlays.js", "sha256": "b3c0ce3c44f47d374b87b819e0d44e10a517bd1b005f38932b5cf5264b561403", "bytes": 9276 },
+    { "path": "server/reel-renderer/probe.js", "sha256": "b76d003413aeff8259d46d67d8a32c2829276b5c46efca7ce0010c51db0860bd", "bytes": 2401 },
+    { "path": "server/reel-renderer/process.js", "sha256": "e062802b8a921a084620d512f4294daba67656f5ce4de0893f2c8de95623dbab", "bytes": 1543 },
+    { "path": "server/reel-renderer/renderer.js", "sha256": "a9afa1f8a731b4cf67e96a22a23425bc1f825dca1196c51a4a4d87be81853007", "bytes": 13650 },
+    { "path": "server/reel-renderer/runtimeSpec.js", "sha256": "b301eb5a173b667b64f3a0d16caaaa79c81cd7d4c54d6a77811933eca5b6a755", "bytes": 2239 },
+    { "path": "server/reel-renderer/textLayout.js", "sha256": "6f3b3dd8138df0b9e97f5f0bb979a1641b4a245b97432fbcaaa206f17cb4766f", "bytes": 4354 },
+    { "path": "server/reel-render-jobs/contracts.js", "sha256": "9f435c7ea1db7bd449a5a761597fb4293b2eb219c753c46f9faadbbf9268dd68", "bytes": 3711 },
+    { "path": "server/reel-sandbox-runner/package.json", "sha256": "69f39512bbfa02da2d99368c4117ea6b998a5af292b6f218de8a86f40e7e3b7d", "bytes": 157 },
+    { "path": "server/reel-sandbox-runner/package-lock.json", "sha256": "1f60d9268b863cc8e60077116cf5bb31df3f77e3ac0a34c62018e89e427da49f", "bytes": 19009 },
+    { "path": "server/reel-sandbox-runner/run.mjs", "sha256": "e2bf15da96b87ecdb59abab408744f8568ed13dd5ba4cd41c3f48f221af61058", "bytes": 194 },
+    { "path": "server/reel-sandbox-runner/runner.js", "sha256": "606b3d7b96dd3d777538c2f78ba7249d3402b4d5fca59f100c032659dee30900", "bytes": 5035 },
+    { "path": "server/reel-sandbox-runtime/contracts.js", "sha256": "f1af4b730e26df5d719167c960f826608bb536c6106e5309f86123d7f92a241a", "bytes": 5924 },
+    { "path": "src/features/reel-director/presentationSpec.js", "sha256": "0c401a43eb186681c077aabeda0c4fbb73cccc6486fd1075745cecc26c0582c1", "bytes": 6327 },
+    { "path": "supabase/functions/_shared/content-engine/contracts.js", "sha256": "5999328288b2a3b284eadaffa18283c201973c23fa10540b849679cce2d8d364", "bytes": 1143 },
+    { "path": "supabase/functions/_shared/content-engine/errors.js", "sha256": "c73b235207fff6e6649995e32545d1f16e27b28f93a619acb062554ae76140c2", "bytes": 974 },
+    { "path": "supabase/functions/_shared/content-engine/schemas.js", "sha256": "87f97700c7d51523aa397014243d70d90b7b038b9794a240d8e042924106f217", "bytes": 12056 },
+    { "path": "supabase/functions/_shared/reel-engine/contracts.js", "sha256": "3ebec51caab85b2c97e2123c4e8b0462d0fcb9eca5b31405a8fcfefcc086b4ab", "bytes": 2122 },
+    { "path": "supabase/functions/_shared/reel-engine/evidenceCapabilities.js", "sha256": "036dd63b672101e1a77c72dffb4b934cbbd9ebae4a28597e60361521430e62f8", "bytes": 836 },
+    { "path": "supabase/functions/_shared/reel-engine/schemas.js", "sha256": "28fed24c9b0c669e2fa082b9ecd91178bad04c7c4cb440e956b6f713f9a4e190", "bytes": 36955 }
+  ]
+}

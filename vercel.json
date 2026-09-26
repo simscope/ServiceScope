@@ -1,4 +1,5 @@
 {
+  "buildCommand": "node scripts/reel-vcr-preview-bootstrap.mjs && npm run build",
   "functions": {
     "api/queues/reel-render.js": {
       "maxDuration": 300,
