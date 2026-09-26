@@ -23,7 +23,10 @@ on:
       - 'server/reel-sandbox-runtime/**'
       - 'src/components/portal/AiAssistantPage.tsx'
       - 'src/components/portal/ReelPreview.tsx'
+      - 'src/components/JobDetailPanel.tsx'
+      - 'src/components/ReelMediaSelector.tsx'
       - 'src/features/reel-director/**'
+      - 'src/features/reel-media-selection/**'
       - 'src/features/reel-render-jobs/**'
       - 'src/styles/base.css'
       - 'src/components/portal/FacebookPublishPanel.tsx'
@@ -71,6 +74,9 @@ jobs:
       - name: AI Reel Director regression and security
         run: npm run test:reel-director
 
+      - name: Reel media selector regression
+        run: npm run test:reel-media-selector
+
       - name: Durable Reel render jobs regression and security
         run: npm run test:reel-render-jobs && npm run test:reel-render-jobs-scan
 
@@ -93,7 +99,7 @@ jobs:
         run: npm ci
 
       - name: Meta publishing SQL
-        run: npm run test:meta-publishing-sql && npm run test:reel-director-sql && npm run test:reel-render-jobs-sql
+        run: npm run test:meta-publishing-sql && npm run test:reel-media-selector-sql && npm run test:reel-director-sql && npm run test:reel-render-jobs-sql
 
   meta-image-sanitizer-deno:
     runs-on: ubuntu-latest

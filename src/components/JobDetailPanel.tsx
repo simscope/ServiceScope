@@ -8,6 +8,7 @@ import { deleteJobFile } from '../services/jobFiles';
 import { downloadSupabaseStorageFile, getSupabasePublicStorageUrl, sqlEq, supabaseRequest, uploadSupabaseStorageFile } from '../services/supabaseRest';
 import { canOpenJobInAiAssistant } from '../features/ai-assistant/assistantModel';
 import { attachmentUrl, downloadJobAttachment } from '../features/job-attachments/jobAttachmentFiles';
+import { ReelMediaSelector } from './ReelMediaSelector';
 
 type PaymentMethodOption = {
   value: string;
@@ -1250,6 +1251,10 @@ export function JobDetailPanel({
           </button>
         </div>
       </section>
+
+      {aiAssistantReady ? (
+        <ReelMediaSelector jobId={draft.id} attachments={draft.attachments ?? []} />
+      ) : null}
 
       <section className="job-detail-card job-files-card">
         <div className="job-files-header">

@@ -143,6 +143,10 @@ export class ReelHttpError extends Error {
 }
 
 export async function buildReelContext(request, baseContext, repository) {
+  const manualSelection = typeof repository.listReelMediaSelection === 'function'
+    ? await repository.listReelMediaSelection(baseContext.companyId, request.jobId)
+    : [];
+  const manualRoleByAttachment = validateManualSelection(request.mediaPlan, manualSelection);
   const authoritativeRows = await repository.listReelMediaCandidates(
     baseContext.companyId,
     request.jobId,
@@ -153,7 +157,7 @@ export async function buildReelContext(request, baseContext, repository) {
   }
   let safeMedia;
   try {
-    safeMedia = reconstructAuthoritativeReelMedia(request.mediaPlan, authoritativeRows);
+    safeMedia = reconstructAuthoritativeReelMedia(request.mediaPlan, authoritativeRows, manualRoleByAttachment);
   } catch (error) {
     const code = reelErrorCode(error);
     throw new ReelHttpError(code, statusForReelCode(code));
@@ -181,6 +185,41 @@ export async function buildReelContext(request, baseContext, repository) {
     ...companyVoiceEvidence,
   ];
   return { ...baseContext, evidence, safeMedia };
+}
+
+export function validateManualSelection(requestMedia, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return new Map();
+  if (rows.length < 3 || rows.length > reelLimits.maxMediaItems || rows.length !== requestMedia.length) {
+    throw new ReelHttpError('REEL_MEDIA_SELECTION_NOT_READY', 409);
+  }
+  const roleMap = new Map();
+  const roles = new Set();
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const attachmentId = String(row.attachment_id ?? row.attachmentId ?? '');
+    const role = String(row.role ?? '');
+    const position = Number(row.selection_position ?? row.position);
+    if (!['problem', 'process', 'result', 'supporting'].includes(role)
+      || position !== index + 1
+      || requestMedia[index]?.attachmentId !== attachmentId
+      || requestMedia[index]?.position !== position
+      || roleMap.has(attachmentId)) {
+      throw new ReelHttpError('REEL_MEDIA_SELECTION_CONFLICT', 409);
+    }
+    roleMap.set(attachmentId, manualRoleToSceneRole(role));
+    roles.add(role);
+  }
+  if (!roles.has('result') || !roles.has('process') || !roles.has('problem')) {
+    throw new ReelHttpError('REEL_MEDIA_SELECTION_NOT_READY', 409);
+  }
+  return roleMap;
+}
+
+function manualRoleToSceneRole(role) {
+  if (role === 'problem') return 'detail';
+  if (role === 'process') return 'repair_process';
+  if (role === 'result') return 'finished_result';
+  return 'supporting_image';
 }
 
 async function callProvider(provider, providerRequest, config) {
@@ -276,6 +315,8 @@ function reelErrorCode(error) {
     'REEL_GROUNDING_FAILED',
     'REEL_QUALITY_FAILED',
     'REEL_MEDIA_UNAVAILABLE',
+    'REEL_MEDIA_SELECTION_NOT_READY',
+    'REEL_MEDIA_SELECTION_CONFLICT',
     'INVALID_REEL_PROVIDER_OUTPUT',
     'ENGINE_NOT_CONFIGURED',
     'PROVIDER_TIMEOUT',
@@ -289,7 +330,10 @@ function reelErrorCode(error) {
 }
 
 function statusForReelCode(code) {
-  if (code === 'REEL_PRIVACY_REVIEW_REQUIRED' || code === 'REEL_MEDIA_UNAVAILABLE') return 409;
+  if (code === 'REEL_PRIVACY_REVIEW_REQUIRED'
+    || code === 'REEL_MEDIA_UNAVAILABLE'
+    || code === 'REEL_MEDIA_SELECTION_NOT_READY'
+    || code === 'REEL_MEDIA_SELECTION_CONFLICT') return 409;
   if (code === 'REEL_ANALYSIS_REQUIRED' || code === 'REEL_ANALYSIS_STALE') return 428;
   if (code === 'PROVIDER_RATE_LIMITED' || code === 'RATE_LIMITED') return 429;
   if (code === 'ENGINE_NOT_CONFIGURED') return 500;

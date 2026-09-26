@@ -384,7 +384,7 @@ assert.match(aiPageSource, /aria-label=\{`Select \$\{item\.name \|\| 'media'\} \
 assert.match(aiPageSource, /Reel media: \{currentReelMediaPlan\.length\} selected/);
 assert.match(aiPageSource, /currentReelMediaPlan\.map\(\(media\) =>/);
 assert.match(aiPageSource, /const mediaPlan = currentReelMediaPlan;/);
-assert.doesNotMatch(aiPageSource, /useState[^;\n]*reelMediaSelection/i);
+assert.match(aiPageSource, /manualReelSelection[\s\S]*hasManualReelSelection[\s\S]*savedManualReelMediaPlan/);
 
 // 38. Exact UI selection state produces the intended two-photo request in order.
 const exactReelMedia = [
