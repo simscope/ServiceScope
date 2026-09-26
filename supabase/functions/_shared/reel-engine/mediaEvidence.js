@@ -25,7 +25,7 @@ export function roleForContentFinding(category) {
   return 'supporting_image';
 }
 
-export function reconstructAuthoritativeReelMedia(requestMedia, rows) {
+export function reconstructAuthoritativeReelMedia(requestMedia, rows, manualRoleByAttachment = new Map()) {
   const rowsByAttachment = new Map();
   for (const row of rows) {
     const attachmentId = String(row.attachment_id ?? row.attachmentId ?? '');
@@ -60,7 +60,7 @@ export function reconstructAuthoritativeReelMedia(requestMedia, rows) {
       .sort(compareFindings);
     if (!findings.length) throw mediaError('REEL_ANALYSIS_REQUIRED');
     const finding = findings[0];
-    const role = roleForContentFinding(finding.category);
+    const role = manualRoleByAttachment.get(requested.attachmentId) ?? roleForContentFinding(finding.category);
     return {
       attachmentId: requested.attachmentId,
       position: requested.position,

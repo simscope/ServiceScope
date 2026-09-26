@@ -60,13 +60,16 @@ export function reelInputRevision(input: {
   analysis?: MediaAnalysisResult;
   excludedAttachmentIds?: readonly string[];
   companyVoiceRevision: string;
+  authoritativeMediaPlan?: ReelMediaPlanItem[];
+  authoritativeMediaRevision?: string;
 }) {
   return stableFingerprint({
     jobId: input.jobId,
     localFacts: input.localFacts,
     planningRevision: input.planning.revision,
     planningResultRevision: input.planning.resultRevision,
-    media: reelMediaPlan(input.media, input.planning, input.excludedAttachmentIds),
+    media: input.authoritativeMediaPlan ?? reelMediaPlan(input.media, input.planning, input.excludedAttachmentIds),
+    authoritativeMediaRevision: input.authoritativeMediaRevision,
     analysisVersion: input.analysis?.analysisVersion,
     analysisAuthority: input.analysis?.attachments.map((attachment) => [
       attachment.id,

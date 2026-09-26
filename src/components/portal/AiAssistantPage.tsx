@@ -86,6 +86,12 @@ import {
 } from '../../features/reel-render-jobs/clientApi';
 import { shouldRecoverReelDispatch } from '../../features/reel-render-jobs/dispatchRecovery';
 import { renderErrorMessage, type PersistedReelWorkspace, type ReelRenderWorkspace } from '../../features/reel-render-jobs/contracts';
+import { loadReelMediaSelection } from '../../features/reel-media-selection/clientApi';
+import type { ReelMediaSelectionResponse } from '../../features/reel-media-selection/contracts';
+import {
+  manualReelMediaPlan,
+  reelMediaSelectionRevision,
+} from '../../features/reel-media-selection/selectionState';
 import {
   idleReelRender,
   isReelAsyncScopeCurrent,
@@ -141,6 +147,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
   const [mediaPlanningState, setMediaPlanningState] = useState(() => createMediaPlanningState(selectedJob?.id));
   const [reelWorkspace, setReelWorkspace] = useState(() => createReelWorkspaceState(selectedJob?.id));
   const [reelRender, setReelRender] = useState<ReelRenderWorkspace>({ status: 'idle' });
+  const [manualReelSelection, setManualReelSelection] = useState<ReelMediaSelectionResponse | null>(null);
   const reelDispatchRecoveryAtRef = useRef(new Map<string, number>());
   const selectedJobIdRef = useRef(selectedJob?.id);
   const reelPlanScopeRef = useRef({
@@ -196,9 +203,19 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     setMediaPlanningState(createMediaPlanningState(selectedJob?.id));
     setReelWorkspace(createReelWorkspaceState(selectedJob?.id));
     setReelRender({ status: 'idle' });
+    setManualReelSelection(null);
     reelDispatchRecoveryAtRef.current.clear();
     setReelEditOpen(false);
     setFacebookStatusRefreshToken((current) => current + 1);
+  }, [selectedJob?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedJob?.id) return () => { active = false; };
+    loadReelMediaSelection(selectedJob.id)
+      .then((value) => { if (active) setManualReelSelection(value); })
+      .catch(() => { if (active) setManualReelSelection(null); });
+    return () => { active = false; };
   }, [selectedJob?.id]);
 
   useEffect(() => {
@@ -317,6 +334,12 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
       .sort(),
     [mediaAnalysisWorkspace.approvals],
   );
+  const savedManualReelMediaPlan = useMemo(() => manualReelMediaPlan(manualReelSelection), [manualReelSelection]);
+  const hasManualReelSelection = savedManualReelMediaPlan.length > 0;
+  const manualReelSelectionRevision = useMemo(
+    () => reelMediaSelectionRevision(manualReelSelection),
+    [manualReelSelection],
+  );
 
   const currentReelInputRevision = useMemo(() => reelInputRevision({
     jobId: selectedJob?.id,
@@ -326,10 +349,14 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     analysis: mediaAnalysisWorkspace.result,
     excludedAttachmentIds: excludedReelAttachmentIds,
     companyVoiceRevision: JSON.stringify(companyVoiceSummary),
-  }), [selectedJob?.id, localFacts, assistantContext?.publicSafe.media, mediaPlanningState, mediaAnalysisWorkspace.result, excludedReelAttachmentIds, companyVoiceSummary]);
+    authoritativeMediaPlan: hasManualReelSelection ? savedManualReelMediaPlan : undefined,
+    authoritativeMediaRevision: hasManualReelSelection ? manualReelSelectionRevision : undefined,
+  }), [selectedJob?.id, localFacts, assistantContext?.publicSafe.media, mediaPlanningState, mediaAnalysisWorkspace.result, excludedReelAttachmentIds, companyVoiceSummary, hasManualReelSelection, savedManualReelMediaPlan, manualReelSelectionRevision]);
   const currentReelMediaPlan = useMemo(
-    () => reelMediaPlan(assistantContext?.publicSafe.media ?? [], mediaPlanningState, excludedReelAttachmentIds),
-    [assistantContext?.publicSafe.media, mediaPlanningState, excludedReelAttachmentIds],
+    () => hasManualReelSelection
+      ? savedManualReelMediaPlan
+      : reelMediaPlan(assistantContext?.publicSafe.media ?? [], mediaPlanningState, excludedReelAttachmentIds),
+    [assistantContext?.publicSafe.media, mediaPlanningState, excludedReelAttachmentIds, hasManualReelSelection, savedManualReelMediaPlan],
   );
   const reelMediaUrls = useMemo(() => new Map(
     (selectedJob?.attachments ?? []).flatMap((attachment) => {
@@ -508,6 +535,10 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
       setReelWorkspace((current) => ({ ...current, status: 'failed', error: 'Select at least one supported job photo.', approvedRevision: undefined }));
       return;
     }
+    if (hasManualReelSelection && !manualReelSelection?.ready) {
+      setReelWorkspace((current) => ({ ...current, status: 'failed', error: 'Complete the saved Reel Media selection before generating.', approvedRevision: undefined }));
+      return;
+    }
     setReelWorkspace((current) => ({
       ...current,
       status: 'creating_story',
@@ -518,6 +549,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     try {
       const workflow = await runOneClickReel({
         mediaPlan,
+        allowAnalysisRefresh: !hasManualReelSelection,
         currentAnalysis: mediaAnalysisWorkspace.result,
         analyze: runMediaAnalysis,
         privacyReviewCount: (analysis) => unresolvedPrivacyAttachmentCount(
@@ -535,6 +567,8 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
             analysis: analysisResult,
             excludedAttachmentIds: excludedReelAttachmentIds,
             companyVoiceRevision: JSON.stringify(companyVoiceSummary),
+            authoritativeMediaPlan: hasManualReelSelection ? mediaPlan : undefined,
+            authoritativeMediaRevision: hasManualReelSelection ? manualReelSelectionRevision : undefined,
           });
           const plan = await generateAiReel({
             jobId: requestJobId,

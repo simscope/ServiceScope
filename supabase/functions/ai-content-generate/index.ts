@@ -236,6 +236,14 @@ function createContextRepository(adminClient: ReturnType<typeof createClient<any
         };
       });
     },
+    async listReelMediaSelection(companyId: string, jobId: string) {
+      const { data, error } = await adminClient.rpc('list_company_reel_media_selection_for_planning', {
+        p_company_id: companyId,
+        p_job_id: jobId,
+      });
+      if (error) throw new ReelHttpError('REEL_MEDIA_UNAVAILABLE', 409);
+      return Array.isArray(data) ? data : [];
+    },
     async persistReelCreativePlan(input: Record<string, unknown>) {
       const { data, error } = await adminClient.rpc('persist_company_reel_creative_plan', {
         p_company_id: input.companyId,

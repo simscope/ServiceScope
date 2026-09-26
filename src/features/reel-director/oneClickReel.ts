@@ -12,6 +12,7 @@ export async function runOneClickReel<T>(input: {
   analyze: (attachmentIds: string[]) => Promise<MediaAnalysisResult>;
   generate: (analysis?: MediaAnalysisResult) => Promise<T>;
   privacyReviewCount: (analysis: MediaAnalysisResult) => number;
+  allowAnalysisRefresh?: boolean;
   onStage?: (status: Extract<ReelGenerationStatus, 'analyzing' | 'creating_story'>) => void;
 }): Promise<OneClickReelResult<T>> {
   const attachmentIds = input.mediaPlan.map((item) => item.attachmentId);
@@ -27,7 +28,7 @@ export async function runOneClickReel<T>(input: {
     return { kind: 'generated', value: await input.generate(analysis), analysis };
   } catch (error) {
     if (isReelPrivacyReviewError(error)) return { kind: 'privacy_review_required', count: 1, analysis };
-    if (!isReelAnalysisRefreshError(error)) throw error;
+    if (!isReelAnalysisRefreshError(error) || input.allowAnalysisRefresh === false) throw error;
     input.onStage?.('analyzing');
     analysis = await input.analyze(attachmentIds);
     const retryBlockedCount = input.privacyReviewCount(analysis);

@@ -89,6 +89,8 @@ export const REEL_ERROR_MESSAGES: Record<string, string> = {
   UNSUPPORTED_STATUS: 'AI Reel is available for Completed and Warranty jobs.',
   INVALID_REQUEST: 'The Reel request needs to be refreshed.',
   REEL_MEDIA_UNAVAILABLE: 'Approved media changed. Review the current media before generating again.',
+  REEL_MEDIA_SELECTION_NOT_READY: 'Complete the saved Reel Media selection before generating.',
+  REEL_MEDIA_SELECTION_CONFLICT: 'The saved Reel Media selection changed. Refresh and try again.',
   REEL_ANALYSIS_REQUIRED: 'Current media analysis is required before creating this Reel.',
   REEL_ANALYSIS_STALE: 'Selected media changed and must be analyzed again.',
   REEL_PRIVACY_REVIEW_REQUIRED: 'Selected photos need privacy review before AI Reel can use them.',
