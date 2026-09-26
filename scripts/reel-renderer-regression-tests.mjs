@@ -81,8 +81,8 @@ const validContext = {
     { attachmentId: 'photo-c', role: 'finished_result' },
   ],
 };
-const russianPrimary = '\u041d\u0415 \u041e\u0425\u041b\u0410\u0416\u0414\u0410\u0415\u0422?';
-const spanishPrimary = '\u00bfNO ENFR\u00cdA?';
+const russianPrimary = '\u041a\u041e\u041d\u0414\u0418\u0426\u0418\u041e\u041d\u0415\u0420 \u041d\u0415 \u041e\u0425\u041b\u0410\u0416\u0414\u0410\u0415\u0422?';
+const spanishPrimary = '\u00bfEL AIRE NO EST\u00c1 ENFRIANDO?';
 
 const authorizedPlan = authorizeReelForRender({ plan: validPlan, context: validContext });
 const { manifest, sourcePaths } = buildReelRenderManifest(authorizedPlan, stagedAssets);
@@ -360,6 +360,9 @@ await checkAsync(() => assert.rejects(runBinary(process.execPath, ['-e', 'setTim
 
 await verifyStagedRendererOrchestration();
 
+if (process.env.VERCEL === '1') {
+  console.log('Reel raster fixtures skipped in Vercel build; qualified CI renderer jobs require them.');
+} else {
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-'));
 let rendered;
 try {
@@ -434,6 +437,7 @@ try {
 } finally {
   await rendered?.dispose();
   await rm(fixtureRoot, { recursive: true, force: true });
+}
 }
 
 console.log(`Reel renderer regression tests passed (${checks}/${checks}).`);
@@ -785,18 +789,18 @@ async function createStressFixtures(root) {
   const overlayCases = [
     {
       name: 'fixture-long-text-frame.jpg',
-      primary: 'AIR CONDITIONING SERVICE',
-      secondary: 'SYSTEM CHECK COMPLETED WITH VERIFIED STEPS',
+      primary: 'AIR-CONDITIONING SYSTEM TROUBLESHOOTING',
+      secondary: 'ELECTROMECHANICAL REFRIGERATION TROUBLESHOOTING WITH VERIFIED SERVICE STEPS',
     },
     {
       name: 'fixture-russian-frame.jpg',
       primary: russianPrimary,
-      secondary: '\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410 \u0412\u042b\u041f\u041e\u041b\u041d\u0415\u041d\u0410',
+      secondary: '\u041f\u0420\u041e\u0412\u0415\u0420\u041a\u0410 \u0421\u0418\u0421\u0422\u0415\u041c\u042b \u0412\u042b\u041f\u041e\u041b\u041d\u0415\u041d\u0410',
     },
     {
       name: 'fixture-spanish-frame.jpg',
       primary: spanishPrimary,
-      secondary: 'SERVICIO COMPLETADO',
+      secondary: '\u00bfNECESITA SERVICIO DE REFRIGERACI\u00d3N?',
     },
   ];
   for (const [index, fixture] of overlayCases.entries()) {
@@ -813,14 +817,14 @@ async function createStressFixtures(root) {
   }
 
   const coverPath = join(root, 'fixture-long-cover.jpg');
-  const coverReport = await renderCover(join(root, 'photo-b.png'), 'REFRIGERATION SERVICE', coverPath);
+  const coverReport = await renderCover(join(root, 'photo-b.png'), 'REFRIGERATION TROUBLESHOOTING SERVICE', coverPath);
   artifactFiles.push({ name: 'fixture-long-cover.jpg', path: coverPath });
   layoutChecks.push({ layout: coverReport.layout, bounds: coverReport.textBounds, zone: coverReport.zone });
 
   const brandPng = join(root, 'stress-brand.png');
   const brandReport = await renderBrandCard({
-    displayName: 'International Refrigeration Services',
-    cta: 'Schedule air conditioning service with our team',
+    displayName: 'International Electromechanical Refrigeration Services',
+    cta: 'Schedule AIR-CONDITIONING and REFRIGERATION TROUBLESHOOTING with our service team',
   }, brandPng);
   const brandPath = join(root, 'fixture-long-brand-frame.jpg');
   await sharp(brandPng).jpeg({ quality: 92 }).toFile(brandPath);
