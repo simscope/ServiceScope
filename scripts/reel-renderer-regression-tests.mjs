@@ -334,7 +334,7 @@ check(() => assert.ok(longWordLayout.lines[0].length > 22));
 check(() => assert.ok(longWordLayout.fontSize >= reelPresentationSpec.text.scenePrimary.minFontSize));
 check(() => assert.ok(longWordLayout.fontSize < reelPresentationSpec.text.scenePrimary.maxFontSize));
 check(() => assert.ok(longWordLayout.width <= longWordLayout.maxWidth && longWordLayout.height <= longWordLayout.maxHeight));
-for (const text of ['AC SYSTEM NOT COOLING?', russianPrimary, spanishPrimary]) {
+for (const text of ['AC SERVICE', '\u0421\u0415\u0420\u0412\u0418\u0421', '\u00bfSERVICIO?']) {
   const unicodeLayout = await layoutReelText(text, 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
   check(() => assert.ok(unicodeLayout.width > 0 && unicodeLayout.height > 0 && !text.includes('\ufffd')));
 }
