@@ -3,12 +3,22 @@ import { reelPresentationSpec, reelSafeZonePixels } from '../../src/features/ree
 import { ReelRenderError } from './errors.js';
 import { escapeXml, layoutReelText } from './textLayout.js';
 
-const sceneHorizontalPadding = 22;
+const sceneHorizontalPadding = 28;
 
 export async function renderSceneOverlay(scene, outputPath) {
   const zone = reelSafeZonePixels();
   const primaryBoxWidth = Math.round(zone.width * reelPresentationSpec.text.scenePrimary.widthRatio);
   const secondaryBoxWidth = Math.round(zone.width * reelPresentationSpec.text.sceneSecondary.widthRatio);
+  const labelBoxWidth = Math.round(zone.width * reelPresentationSpec.text.sceneLabel.widthRatio);
+  const treatment = scene.treatment;
+  if (!treatment || typeof treatment.label !== 'string' || !/^#[0-9a-f]{6}$/i.test(treatment.accent)) {
+    throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
+  }
+  const label = await layoutReelText(treatment.label, 'sceneLabel', {
+    maxWidth: labelBoxWidth - 32,
+    maxHeight: Math.round(zone.height * reelPresentationSpec.text.sceneLabel.maxHeightRatio),
+    fontWeight: 800,
+  });
   const primary = await layoutReelText(scene.overlayText, 'scenePrimary', {
     maxWidth: primaryBoxWidth - sceneHorizontalPadding * 2,
     maxHeight: Math.round(zone.height * reelPresentationSpec.text.scenePrimary.maxHeightRatio),
@@ -21,27 +31,40 @@ export async function renderSceneOverlay(scene, outputPath) {
       fontWeight: 700,
     })
     : null;
-  const primaryBoxHeight = primary.height + 44;
-  const secondaryBoxHeight = secondary ? secondary.height + 32 : 0;
-  const gap = secondary ? 18 : 0;
-  const startY = zone.bottom - primaryBoxHeight - secondaryBoxHeight - gap;
+  const labelBoxHeight = label.height + 18;
+  const primaryBoxHeight = primary.height;
+  const secondaryBoxHeight = secondary ? secondary.height : 0;
+  const primaryGap = 22;
+  const secondaryGap = secondary ? 18 : 0;
+  const verticalPadding = 30;
+  const blockHeight = verticalPadding + labelBoxHeight + primaryGap + primaryBoxHeight + secondaryGap + secondaryBoxHeight + verticalPadding;
+  const startY = zone.bottom - blockHeight;
   if (startY < zone.top) throw new ReelRenderError('REEL_RENDER_TEXT_OVERFLOW');
+  const labelX = zone.left + sceneHorizontalPadding;
+  const labelY = startY + verticalPadding;
+  const labelTextX = labelX + 16;
+  const labelTextY = labelY + 9;
   const primaryTextX = zone.left + sceneHorizontalPadding;
-  const primaryTextY = startY + 22;
-  const secondaryY = startY + primaryBoxHeight + gap;
+  const primaryTextY = labelY + labelBoxHeight + primaryGap;
   const secondaryTextX = zone.left + sceneHorizontalPadding;
-  const secondaryTextY = secondaryY + 16;
+  const secondaryTextY = primaryTextY + primaryBoxHeight + secondaryGap;
+  const labelBounds = boundsFor(label, labelTextX, labelTextY);
   const primaryBounds = boundsFor(primary, primaryTextX, primaryTextY);
   const secondaryBounds = secondary ? boundsFor(secondary, secondaryTextX, secondaryTextY) : null;
+  assertBounds(labelBounds, zone);
   assertBounds(primaryBounds, zone);
   if (secondaryBounds) assertBounds(secondaryBounds, zone);
   const svg = svgDocument(`
-    <rect x="${zone.left}" y="${startY}" width="${primaryBoxWidth}" height="${primaryBoxHeight}" rx="18" fill="#101820" fill-opacity="0.72"/>
+    <rect x="0" y="${Math.max(0, startY - 80)}" width="1080" height="${1920 - Math.max(0, startY - 80)}" fill="#08110d" fill-opacity="0.38"/>
+    <rect x="${zone.left}" y="${startY}" width="${primaryBoxWidth}" height="${blockHeight}" rx="18" fill="#101820" fill-opacity="0.84"/>
+    <rect x="${zone.left}" y="${startY}" width="8" height="${blockHeight}" rx="4" fill="${treatment.accent}"/>
+    <rect x="${labelX}" y="${labelY}" width="${labelBoxWidth}" height="${labelBoxHeight}" rx="${Math.round(labelBoxHeight / 2)}" fill="${treatment.accent}"/>
+    ${textLines(label, labelTextX, labelTextY, 800, '#101820')}
     ${textLines(primary, primaryTextX, primaryTextY, 800, '#ffffff')}
-    ${secondary ? `<rect x="${zone.left}" y="${secondaryY}" width="${secondaryBoxWidth}" height="${secondaryBoxHeight}" rx="14" fill="#101820" fill-opacity="0.84"/>${textLines(secondary, secondaryTextX, secondaryTextY, 700, '#f8fafc')}` : ''}
+    ${secondary ? textLines(secondary, secondaryTextX, secondaryTextY, 700, '#e2e8f0') : ''}
   `);
   await rasterize(svg, outputPath);
-  return Object.freeze({ primary, secondary, primaryBounds, secondaryBounds, zone });
+  return Object.freeze({ label, primary, secondary, labelBounds, primaryBounds, secondaryBounds, zone, treatment });
 }
 
 export async function renderBrandCard(brand, outputPath) {
@@ -70,9 +93,12 @@ export async function renderBrandCard(brand, outputPath) {
   const accentY = Math.max(zone.top, displayTop - 100);
   const svg = svgDocument(`
     <rect width="1080" height="1920" fill="#101820"/>
-    <rect x="${zone.left}" y="${accentY}" width="${zone.width}" height="8" rx="4" fill="#d7f49a"/>
+    <rect x="0" y="0" width="1080" height="560" fill="#173827"/>
+    <rect x="${zone.left}" y="${accentY}" width="180" height="10" rx="5" fill="#d7f49a"/>
+    <text x="${centerX}" y="${Math.max(zone.top + 28, accentY - 48)}" text-anchor="middle" font-family="${reelPresentationSpec.text.fontFamily}" font-size="24" font-weight="800" fill="#d7f49a">SERVICE STORY</text>
     ${textLines(displayName, centerX, displayTop, 800, '#ffffff', 'middle')}
     ${textLines(cta, centerX, ctaTop, 700, '#d7f49a', 'middle')}
+    <rect x="${centerX - 32}" y="${Math.min(zone.bottom - 8, ctaTop + cta.height + 90)}" width="64" height="8" rx="4" fill="#93c5fd"/>
   `);
   await rasterize(svg, outputPath);
   return Object.freeze({ displayName, cta, displayBounds, ctaBounds, zone });
@@ -95,6 +121,7 @@ export async function renderCover(normalizedImagePath, title, outputPath) {
   const overlaySvg = svgDocument(`
     <rect width="1080" height="1920" fill="#000000" fill-opacity="0.16"/>
     <rect x="${zone.left}" y="${boxY}" width="${boxWidth}" height="${boxHeight}" rx="20" fill="#101820" fill-opacity="0.76"/>
+    <rect x="${zone.left}" y="${boxY}" width="8" height="${boxHeight}" rx="4" fill="#b8f28a"/>
     ${textLines(layout, textX, textY, 800, '#ffffff')}
   `);
   await sharp(normalizedImagePath)

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Pause, Play, RotateCcw } from 'lucide-react';
 import type { ReelCreativePlanV1 } from '../../features/reel-director/contracts';
-import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec } from '../../features/reel-director/presentationSpec.js';
+import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSceneTreatment } from '../../features/reel-director/presentationSpec.js';
 
 type ReelPreviewProps = {
   plan: ReelCreativePlanV1;
@@ -53,6 +53,7 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
   const asset = scene ? mediaUrls.get(scene.attachmentId) : undefined;
   const sceneProgress = scene ? Math.min(1, frame.elapsedInItemMs / scene.durationMs) : 0;
   const motion = scene ? reelMotionFrame(scene.motionPreset, scene.cropStrategy, sceneProgress) : undefined;
+  const treatment = scene ? reelSceneTreatment(scene.sceneRole, { marketingAngle: plan.marketingAngle, position: scene.position }) : undefined;
   const nextScene = frame.transition?.nextItem?.kind === 'scene' ? frame.transition.nextItem.scene : undefined;
   const nextAsset = nextScene ? mediaUrls.get(nextScene.attachmentId) : undefined;
   const nextMotion = nextScene ? reelMotionFrame(nextScene.motionPreset, nextScene.cropStrategy, 0) : undefined;
@@ -96,12 +97,14 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
         ) : null}
         {nextBrand && frame.transition ? (
           <div className="reel-preview-brand-frame reel-preview-transition-next" style={{ ...reelPreviewBrandFrameStyle(), opacity: nextOpacity }}>
+            <small>Service story</small>
             <strong style={reelPreviewTextStyle('brandDisplayName')}>{plan.brand.displayName}</strong>
             <span style={reelPreviewTextStyle('brandCta')}>{plan.brand.cta}</span>
           </div>
         ) : null}
         {active?.kind === 'brand' ? (
           <div className="reel-preview-brand-frame" style={reelPreviewBrandFrameStyle()}>
+            <small>Service story</small>
             <strong style={reelPreviewTextStyle('brandDisplayName')}>{plan.brand.displayName}</strong>
             <span style={reelPreviewTextStyle('brandCta')}>{plan.brand.cta}</span>
           </div>
@@ -115,7 +118,8 @@ export function ReelPreview({ plan, mediaUrls }: ReelPreviewProps) {
             opacity: textOpacity * outgoingTextOpacity,
             transform: `translateY(${(1 - textOpacity) * 10}px)`,
           }}>
-            <div className="reel-preview-copy">
+            <div className={`reel-preview-copy${treatment?.emphasis === 'result' ? ' reel-preview-copy-result' : ''}${treatment?.emphasis === 'before' ? ' reel-preview-copy-before' : ''}`} style={{ borderLeftColor: treatment?.accent }}>
+              <small className="reel-preview-role-label" style={{ background: treatment?.accent }}>{treatment?.label}</small>
               <strong style={reelPreviewTextStyle('scenePrimary')}>{scene.overlayText}</strong>
               {scene.secondaryText ? <span style={reelPreviewTextStyle('sceneSecondary')}>{scene.secondaryText}</span> : null}
             </div>

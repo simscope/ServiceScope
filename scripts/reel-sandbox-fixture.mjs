@@ -9,11 +9,11 @@ import {
 
 export const sandboxFixturePlan = {
   schemaVersion: 'reel-creative-plan-v1',
-  revision: 'reel-sandbox-fixture-v2',
+  revision: 'reel-sandbox-fixture-v2-visual',
   decision: 'create_reel',
   qualityScore: 88,
   qualityReasons: ['Clear service story with distinct visual coverage.'],
-  marketingAngle: 'repair_process',
+  marketingAngle: 'before_after',
   hook: { text: 'See this service transformation', evidenceIds: ['diagnosis'] },
   cover: { title: 'Service transformation', attachmentId: 'photo-a' },
   scenes: [
@@ -26,21 +26,22 @@ export const sandboxFixturePlan = {
   missingShots: [],
   claims: [{ id: 'claim-1', text: 'Service transformation', evidenceIds: ['diagnosis'] }],
   safety: { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] },
-  brand: { enabled: true, displayName: 'Northstar Service', cta: 'Book dependable service', durationMs: 1_800, evidenceIds: ['company-public-display-name', 'company-voice-cta'] },
+  brand: { enabled: true, displayName: 'ServiceScope', cta: 'See the service story', durationMs: 1_800, evidenceIds: ['company-public-display-name', 'company-voice-cta'] },
   audio: { musicMode: 'none' },
 };
 
 export const sandboxFixtureContext = {
   privateValuesForLeakDetection: [],
-  companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
+  companyVoice: { enabled: true, publicDisplayName: 'ServiceScope' },
   evidence: [
     { id: 'diagnosis', text: 'See this service transformation. A clear service story built from the approved job media, from the starting view through the work and the finished equipment. Service transformation.' },
     { id: 'repair-performed', text: 'Careful work in progress through a controlled service sequence.' },
+    { id: 'final-result', text: 'The finished equipment view is ready for the next call.' },
     { id: 'media:photo-a:finding', text: 'See this service transformation. A clear starting point.' },
     { id: 'media:photo-b:finding', text: 'Careful work in progress. A controlled service sequence.' },
     { id: 'media:photo-c:finding', text: 'Ready for the next call. The finished equipment view.' },
-    { id: 'company-public-display-name', text: 'Northstar Service' },
-    { id: 'company-voice-cta', text: 'Book dependable service' },
+    { id: 'company-public-display-name', text: 'ServiceScope' },
+    { id: 'company-voice-cta', text: 'See the service story' },
   ],
   safeMedia: [
     { attachmentId: 'photo-a', role: 'overview' },

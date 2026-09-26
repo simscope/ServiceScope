@@ -79,7 +79,12 @@ check(() => assert.match(authorization, /invalidPlanErrorCodes\.has\(error\?\.me
 check(() => assert.match(authorization, /throw new ReelRenderError\('REEL_RENDER_FAILED'\)/));
 check(() => assert.match(errors, /REEL_RENDER_TEXT_OVERFLOW/));
 check(() => assert.match(authorization, /canonicalPlan\.voiceover\.enabled[\s\S]*REEL_RENDER_AUDIO_UNSUPPORTED/));
-check(() => assert.doesNotMatch(`${manifest}\n${overlays}`, /sceneRoleLabel|reel-preview-role|Overview|Detail|Process|Part|Result|Context/));
+check(() => assert.match(manifest, /treatment:\s*reelSceneTreatment\(scene\.sceneRole, \{ marketingAngle: canonicalPlan\.marketingAngle, position: scene\.position \}\)/));
+check(() => assert.doesNotMatch(overlays, /sceneRole|sceneRoleLabel|reel-preview-role/));
+check(() => assert.match(browser, /const reelSceneTreatments = Object\.freeze/));
+check(() => assert.match(browser, /marketingAngle === 'before_after'[\s\S]*position === 1[\s\S]*sceneRole === 'overview'/));
+check(() => assert.match(browser, /finished_result:[\s\S]*label:\s*'RESULT'[\s\S]*emphasis:\s*'result'/));
+check(() => assert.doesNotMatch(browser, /treatment\s*[:=].*(?:request|provider|browser)/i));
 check(() => assert.doesNotMatch(packageJson, /ffmpeg-static|shotstack|remotion|creatomate|canva|runway|kling|sora/i));
 check(() => assert.match(rendererSource, /'-an'/));
 check(() => assert.match(rendererSource, /'libx264'/));
