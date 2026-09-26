@@ -57,7 +57,7 @@ export function reelSceneTreatment(sceneRole, { marketingAngle, position, catego
     && (sceneRole === 'overview' || sceneRole === 'detail');
   const treatment = isSupportedBefore ? reelBeforeTreatment : reelSceneTreatments[sceneRole];
   if (!treatment) throw new Error('REEL_PRESENTATION_INVALID');
-  if (marketingAngle !== 'manual_selection') return treatment;
+  if (marketingAngle !== 'manual_selection' || categoryLabel === undefined) return treatment;
   if (!manualLabelsBySceneRole[sceneRole]?.has(categoryLabel)) throw new Error('REEL_PRESENTATION_INVALID');
   return Object.freeze({ ...treatment, label: categoryLabel });
 }
