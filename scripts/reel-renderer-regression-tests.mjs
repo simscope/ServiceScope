@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
-import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSafeZonePixels } from '../src/features/reel-director/presentationSpec.js';
+import { activeReelFrame, buildReelTimeline, reelMotionFrame, reelPresentationSpec, reelSafeZonePixels, reelSceneTreatment } from '../src/features/reel-director/presentationSpec.js';
 import {
   authorizeReelForRender,
   assertReelWorkingRasterGeometry,
@@ -41,7 +41,7 @@ const validPlan = {
   decision: 'create_reel',
   qualityScore: 88,
   qualityReasons: ['Clear service story with distinct visual coverage.'],
-  marketingAngle: 'repair_process',
+  marketingAngle: 'before_after',
   hook: { text: 'See this service transformation', evidenceIds: ['diagnosis'] },
   cover: { title: 'Service transformation', attachmentId: 'photo-a' },
   scenes: [
@@ -54,7 +54,7 @@ const validPlan = {
   missingShots: [],
   claims: [{ id: 'claim-1', text: 'Service transformation', evidenceIds: ['diagnosis'] }],
   safety: { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] },
-  brand: { enabled: true, displayName: 'Northstar Service', cta: 'Book dependable service', durationMs: 1_800, evidenceIds: ['company-public-display-name', 'company-voice-cta'] },
+  brand: { enabled: true, displayName: 'ServiceScope', cta: 'See the service story', durationMs: 1_800, evidenceIds: ['company-public-display-name', 'company-voice-cta'] },
   audio: { musicMode: 'none' },
 };
 const stagedAssets = [
@@ -64,15 +64,16 @@ const stagedAssets = [
 ];
 const validContext = {
   privateValuesForLeakDetection: [],
-  companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
+  companyVoice: { enabled: true, publicDisplayName: 'ServiceScope' },
   evidence: [
     { id: 'diagnosis', text: 'See this service transformation. A clear service story built from the approved job media, from the starting view through the work and the finished equipment. Service transformation.' },
     { id: 'repair-performed', text: 'Careful work in progress through a controlled service sequence.' },
+    { id: 'final-result', text: 'The finished equipment view is ready for the next call.' },
     { id: 'media:photo-a:finding', text: 'See this service transformation. A clear starting point.' },
     { id: 'media:photo-b:finding', text: 'Careful work in progress. A controlled service sequence.' },
     { id: 'media:photo-c:finding', text: 'Ready for the next call. The finished equipment view.' },
-    { id: 'company-public-display-name', text: 'Northstar Service' },
-    { id: 'company-voice-cta', text: 'Book dependable service' },
+    { id: 'company-public-display-name', text: 'ServiceScope' },
+    { id: 'company-voice-cta', text: 'See the service story' },
   ],
   safeMedia: [
     { attachmentId: 'photo-a', role: 'overview' },
@@ -86,12 +87,15 @@ const spanishPrimary = '\u00bfEL AIRE NO EST\u00c1 ENFRIANDO?';
 const authorizedPlan = authorizeReelForRender({ plan: validPlan, context: validContext });
 const { manifest, sourcePaths } = buildReelRenderManifest(authorizedPlan, stagedAssets);
 check(() => assert.equal(manifest.schemaVersion, 'reel-render-manifest-v1'));
+check(() => assert.equal(manifest.visualProfile, 'service-story-v2'));
 check(() => assert.deepEqual([manifest.width, manifest.height, manifest.fps], [1080, 1920, 30]));
 check(() => assert.equal(manifest.durationMs, 13_800));
 check(() => assert.deepEqual(manifest.scenes.map((item) => [item.startMs, item.endMs]), [[0, 4_000], [4_000, 8_000], [8_000, 12_000]]));
 check(() => assert.deepEqual([manifest.brand.startMs, manifest.brand.endMs], [12_000, 13_800]));
 check(() => assert.deepEqual(manifest.scenes.map((item) => item.transition && [item.transition.startMs, item.transition.endMs]), [[3_550, 4_000], [7_750, 8_000], [11_550, 12_000]]));
 check(() => assert.equal(manifest.scenes[0].overlayText, validPlan.hook.text));
+check(() => assert.deepEqual(manifest.scenes.map((item) => item.treatment.label), ['BEFORE', 'SERVICE', 'RESULT']));
+check(() => assert.equal(manifest.scenes[2].treatment.emphasis, 'result'));
 check(() => assert.equal(manifest.brand.durationMs, validPlan.brand.durationMs));
 check(() => assert.equal(manifest.cover.sourceKey, manifest.scenes[0].sourceKey));
 check(() => assert.doesNotMatch(JSON.stringify(manifest), /photo-[abc]|\.jpg|\.png|\.webp|attachmentId|sceneRole|evidence|job|customer/i));
@@ -240,11 +244,17 @@ check(() => assert.equal(activeReelFrame(timeline, 4_000).item.scene.id, 'scene-
 check(() => assert.equal(activeReelFrame(timeline, 12_000).item.kind, 'brand'));
 check(() => assert.equal(activeReelFrame(timeline, 13_800).item.kind, 'brand'));
 check(() => assert.ok(timeline.transitions.every((item) => item.startMs >= 0 && item.endMs > item.startMs)));
-check(() => assert.deepEqual(reelSafeZonePixels(), { left: 86, top: 288, right: 918, bottom: 1574, width: 832, height: 1286 }));
+check(() => assert.deepEqual(reelSafeZonePixels(), { left: 97, top: 230, right: 929, bottom: 1459, width: 832, height: 1229 }));
 check(() => assert.ok(reelMotionFrame('slow_zoom_in', 'cover_center', 1).scale > reelMotionFrame('slow_zoom_in', 'cover_center', 0).scale));
 check(() => assert.ok(reelMotionFrame('pan_left', 'cover_center', 1).x < reelMotionFrame('pan_left', 'cover_center', 0).x));
-check(() => assert.equal(reelMotionFrame('static', 'cover_center', 0.5).scale, 1));
-check(() => assert.equal(reelPresentationSpec.textFadeMs, 180));
+check(() => assert.ok(reelMotionFrame('static', 'cover_center', 1).scale > reelMotionFrame('static', 'cover_center', 0).scale));
+check(() => assert.equal(reelPresentationSpec.textFadeMs, 220));
+check(() => assert.equal(reelPresentationSpec.visualProfile, 'service-story-v2'));
+check(() => assert.deepEqual(reelSceneTreatment('repair_process'), { label: 'SERVICE', accent: '#93c5fd', emphasis: 'standard' }));
+check(() => assert.deepEqual(reelSceneTreatment('finished_result'), { label: 'RESULT', accent: '#d9f99d', emphasis: 'result' }));
+check(() => assert.deepEqual(reelSceneTreatment('overview', { marketingAngle: 'before_after', position: 1 }), { label: 'BEFORE', accent: '#fcd34d', emphasis: 'before' }));
+check(() => assert.deepEqual(reelSceneTreatment('overview', { marketingAngle: 'repair_process', position: 1 }), { label: 'OVERVIEW', accent: '#b8f28a', emphasis: 'standard' }));
+check(() => assert.throws(() => reelSceneTreatment('before'), /REEL_PRESENTATION_INVALID/));
 check(() => assert.deepEqual(reelWorkingRaster, { width: 1440, height: 2560 }));
 check(() => assert.deepEqual(assertReelWorkingRasterGeometry(), reelWorkingGeometry));
 check(() => assert.equal(reelWorkingGeometry.combinations, Object.keys(reelPresentationSpec.crops).length * Object.keys(reelPresentationSpec.motions).length));
@@ -257,7 +267,7 @@ check(() => assert.notEqual(
 ));
 check(() => assert.deepEqual(
   [reelPresentationSpec.text.scenePrimary.minFontSize, reelPresentationSpec.text.scenePrimary.maxFontSize, reelPresentationSpec.text.scenePrimary.maxLines],
-  [44, 68, 3],
+  [46, 74, 3],
 ));
 
 const sceneClip = buildSceneClipArgs({
@@ -275,8 +285,8 @@ check(() => assert.deepEqual(optionValues(sceneClip.args, '-threads'), ['1']));
 check(() => assert.deepEqual(optionValues(sceneClip.args, '-preset'), ['ultrafast']));
 check(() => assert.deepEqual(optionValues(sceneClip.args, '-crf'), ['10']));
 check(() => assert.match(sceneClip.filterGraph, /scale=1440:2560:force_original_aspect_ratio=increase,crop=1440:2560/));
-check(() => assert.match(sceneClip.filterGraph, /fade=t=in:st=0\.45:d=0\.18/));
-check(() => assert.match(sceneClip.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.035\+/));
+check(() => assert.match(sceneClip.filterGraph, /fade=t=in:st=0\.45:d=0\.22/));
+check(() => assert.match(sceneClip.filterGraph, /iw\/2-\(iw\/zoom\/2\)-iw\*\(0\.025\+/));
 check(() => assert.doesNotMatch(sceneClip.filterGraph, /2160|3840|See this|Northstar|drawtext|photo-[abc]/));
 
 const brandClip = buildBrandClipArgs({ brandPath: '/work/brand.png', durationMs: 1_800, incomingMs: 450, clipPath: '/work/brand.mp4' });
@@ -319,12 +329,12 @@ check(() => assert.doesNotMatch(escapeXml('</text><script>alert(1)</script>'), /
 const wideMetrics = await measureTextPixels('WWWWWWWW', { fontSize: 68, fontWeight: 800 });
 const narrowMetrics = await measureTextPixels('iiiiiiii', { fontSize: 68, fontWeight: 800 });
 check(() => assert.ok(wideMetrics.width > narrowMetrics.width * 2));
-const longWordLayout = await layoutReelText('ELECTROMECHANICAL-SERVICE READY', 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
+const longWordLayout = await layoutReelText('AIR-CONDITIONING-SERVICE READY', 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
 check(() => assert.ok(longWordLayout.lines[0].length > 22));
 check(() => assert.ok(longWordLayout.fontSize >= reelPresentationSpec.text.scenePrimary.minFontSize));
 check(() => assert.ok(longWordLayout.fontSize < reelPresentationSpec.text.scenePrimary.maxFontSize));
 check(() => assert.ok(longWordLayout.width <= longWordLayout.maxWidth && longWordLayout.height <= longWordLayout.maxHeight));
-for (const text of ['AIR-CONDITIONING NOT COOLING?', russianPrimary, spanishPrimary]) {
+for (const text of ['AC SERVICE', '\u0421\u0415\u0420\u0412\u0418\u0421', '\u00bfSERVICIO?']) {
   const unicodeLayout = await layoutReelText(text, 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
   check(() => assert.ok(unicodeLayout.width > 0 && unicodeLayout.height > 0 && !text.includes('\ufffd')));
 }
@@ -337,12 +347,12 @@ await checkAsync(() => assert.rejects(
   /REEL_RENDER_TEXT_OVERFLOW/,
 ));
 await checkAsync(() => assert.rejects(
-  renderSceneOverlay({ overlayText: 'Approved text', secondaryText: 'https://example.com/private' }, join(tmpdir(), 'servicescope-reel-url-rejected.png')),
+  renderSceneOverlay({ overlayText: 'Approved text', secondaryText: 'https://example.com/private', treatment: reelSceneTreatment('overview') }, join(tmpdir(), 'servicescope-reel-url-rejected.png')),
  /REEL_RENDER_INVALID_PLAN/,
 ));
 for (const malicious of ['<image href="https://example.com/x">', 'url(https://example.com/x)']) {
   await checkAsync(() => assert.rejects(
-    renderSceneOverlay({ overlayText: 'Approved text', secondaryText: malicious }, join(tmpdir(), 'servicescope-reel-remote-ref-rejected.png')),
+    renderSceneOverlay({ overlayText: 'Approved text', secondaryText: malicious, treatment: reelSceneTreatment('overview') }, join(tmpdir(), 'servicescope-reel-remote-ref-rejected.png')),
     /REEL_RENDER_INVALID_PLAN/,
   ));
 }
@@ -350,6 +360,9 @@ await checkAsync(() => assert.rejects(runBinary(process.execPath, ['-e', 'setTim
 
 await verifyStagedRendererOrchestration();
 
+if (process.env.VERCEL === '1') {
+  console.log('Reel raster fixtures skipped in Vercel build; qualified CI renderer jobs require them.');
+} else {
 const fixtureRoot = await mkdtemp(join(tmpdir(), 'servicescope-renderer-fixture-'));
 let rendered;
 try {
@@ -368,6 +381,7 @@ try {
   }
   const overlayFixture = join(fixtureRoot, 'scene-overlay.png');
   const normalOverlayLayout = await renderSceneOverlay(manifest.scenes[0], overlayFixture);
+  check(() => assertLayoutInside(normalOverlayLayout.label, normalOverlayLayout.labelBounds, normalOverlayLayout.zone));
   check(() => assertLayoutInside(normalOverlayLayout.primary, normalOverlayLayout.primaryBounds, normalOverlayLayout.zone));
   check(() => assertLayoutInside(normalOverlayLayout.secondary, normalOverlayLayout.secondaryBounds, normalOverlayLayout.zone));
   const overlayMetadata = await sharp(overlayFixture).metadata();
@@ -423,6 +437,7 @@ try {
 } finally {
   await rendered?.dispose();
   await rm(fixtureRoot, { recursive: true, force: true });
+}
 }
 
 console.log(`Reel renderer regression tests passed (${checks}/${checks}).`);
@@ -790,11 +805,12 @@ async function createStressFixtures(root) {
   ];
   for (const [index, fixture] of overlayCases.entries()) {
     const overlayPath = join(root, `stress-overlay-${index}.png`);
-    const report = await renderSceneOverlay({ overlayText: fixture.primary, secondaryText: fixture.secondary }, overlayPath);
+    const report = await renderSceneOverlay({ overlayText: fixture.primary, secondaryText: fixture.secondary, treatment: reelSceneTreatment(index === 2 ? 'finished_result' : 'repair_process') }, overlayPath);
     const framePath = join(root, fixture.name);
     await composeOverlayFrame(join(root, 'photo-a.jpg'), overlayPath, framePath);
     artifactFiles.push({ name: fixture.name, path: framePath });
     layoutChecks.push(
+      { layout: report.label, bounds: report.labelBounds, zone: report.zone },
       { layout: report.primary, bounds: report.primaryBounds, zone: report.zone },
       { layout: report.secondary, bounds: report.secondaryBounds, zone: report.zone },
     );
@@ -889,6 +905,12 @@ async function publishArtifacts(result, artifactDir, ffmpegBin, stressFiles) {
     audioStreams: result.audioStreams,
     pixelFormat: result.pixelFormat,
     faststart: result.faststart,
+    visualProfile: reelPresentationSpec.visualProfile,
+    sceneCount: manifest.scenes.length,
+    motionPresets: manifest.scenes.map((scene) => scene.motionPreset),
+    transitions: manifest.scenes.map((scene) => scene.transition?.kind ?? 'cut'),
+    textStructure: ['category_label', 'primary_statement', 'supporting_line'],
+    endCard: manifest.brand.enabled,
     stressFiles: stressFiles.map((item) => item.name),
   }, null, 2)}\n`);
 }

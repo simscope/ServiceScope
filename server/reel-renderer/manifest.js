@@ -1,4 +1,4 @@
-import { buildReelTimeline, reelPresentationSpec, reelSafeZonePixels } from '../../src/features/reel-director/presentationSpec.js';
+import { buildReelTimeline, reelPresentationSpec, reelSafeZonePixels, reelSceneTreatment } from '../../src/features/reel-director/presentationSpec.js';
 import { requireAuthorizedReelPlan } from './authorization.js';
 import { ReelRenderError } from './errors.js';
 
@@ -23,6 +23,7 @@ export function buildReelRenderManifest(authorization, stagedAssets) {
   const sourceKeys = new Map([...expectedIds].map((id, index) => [id, `asset-${index + 1}`]));
   const manifest = Object.freeze({
     schemaVersion: reelRenderManifestSchemaVersion,
+    visualProfile: reelPresentationSpec.visualProfile,
     width: reelPresentationSpec.width,
     height: reelPresentationSpec.height,
     fps: reelPresentationSpec.fps,
@@ -36,6 +37,7 @@ export function buildReelRenderManifest(authorization, stagedAssets) {
       durationMs: scene.durationMs,
       overlayText: scene.overlayText,
       secondaryText: scene.secondaryText ?? '',
+      treatment: reelSceneTreatment(scene.sceneRole, { marketingAngle: canonicalPlan.marketingAngle, position: scene.position }),
       motionPreset: scene.motionPreset,
       cropStrategy: scene.cropStrategy,
       transitionOut: scene.transitionOut,

@@ -433,10 +433,14 @@ check(() => assert.match(previewSource, /textOpacity \* outgoingTextOpacity/));
 check(() => assert.match(presentationSpec, /scene\.transitionOut/));
 check(() => assert.match(previewSource, /reelPreviewTextStyle\('scenePrimary'\)/));
 check(() => assert.match(previewSource, /reelPreviewTextStyle\('brandDisplayName'\)/));
-check(() => assert.match(presentationSpec, /scenePrimary:[\s\S]*minFontSize:\s*44[\s\S]*maxFontSize:\s*68[\s\S]*maxLines:\s*3/));
-check(() => assert.match(presentationSpec, /sceneSecondary:[\s\S]*widthRatio:\s*0\.9/));
+check(() => assert.match(previewSource, /reelSceneTreatment\(scene\.sceneRole, \{ marketingAngle: plan\.marketingAngle, position: scene\.position \}\)/));
+check(() => assert.match(previewSource, /reel-preview-role-label/));
+check(() => assert.match(presentationSpec, /visualProfile:\s*'service-story-v2'/));
+check(() => assert.match(presentationSpec, /sceneLabel:[\s\S]*maxLines:\s*1/));
+check(() => assert.match(presentationSpec, /scenePrimary:[\s\S]*minFontSize:\s*46[\s\S]*maxFontSize:\s*74[\s\S]*maxLines:\s*3/));
+check(() => assert.match(presentationSpec, /sceneSecondary:[\s\S]*widthRatio:\s*0\.88/));
 check(() => assert.match(previewCss, /@media \(max-width: 520px\)/));
-check(() => assert.match(presentationSpec, /safeZone:[\s\S]*top:\s*0\.15[\s\S]*right:\s*0\.15[\s\S]*bottom:\s*0\.18[\s\S]*left:\s*0\.08/));
+check(() => assert.match(presentationSpec, /safeZone:[\s\S]*top:\s*0\.12[\s\S]*right:\s*0\.14[\s\S]*bottom:\s*0\.24[\s\S]*left:\s*0\.09/));
 check(() => assert.doesNotMatch(aiPage, /providerResponse|rawJson|error\.stack/));
 
 // Network and regression boundaries.

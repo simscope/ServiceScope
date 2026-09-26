@@ -1501,7 +1501,7 @@ button {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background: linear-gradient(to bottom, rgba(0, 0, 0, .12), transparent 36%, rgba(0, 0, 0, .62));
+  background: linear-gradient(to bottom, rgba(0, 0, 0, .08), transparent 34%, rgba(0, 0, 0, .5));
   content: '';
   pointer-events: none;
 }
@@ -1561,8 +1561,31 @@ button {
 
 .reel-preview-copy {
   display: grid;
-  gap: 7px;
+  gap: 9px;
   min-width: 0;
+  border-left: 3px solid #b8f28a;
+  border-radius: 6px;
+  background: rgba(16, 24, 32, .84);
+  padding: 12px 12px 13px;
+}
+
+.reel-preview-role-label {
+  justify-self: start;
+  border-radius: 999px;
+  color: #101820;
+  padding: 4px 8px;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.reel-preview-copy-result {
+  background: rgba(11, 35, 23, .9);
+}
+
+.reel-preview-copy-before {
+  background: rgba(36, 27, 12, .9);
 }
 
 .reel-preview-copy strong {
@@ -1578,10 +1601,7 @@ button {
 .reel-preview-copy span {
   justify-self: start;
   max-width: 100%;
-  border-radius: 5px;
-  background: rgba(16, 24, 32, .82);
   color: #f8fafc;
-  padding: 7px 9px;
   font-size: 14px;
   font-weight: 800;
   line-height: 1.35;
@@ -1603,6 +1623,22 @@ button {
 
 .reel-preview-brand-frame {
   background: #173827;
+}
+
+.reel-preview-brand-frame::before {
+  width: 52px;
+  height: 4px;
+  border-radius: 999px;
+  background: #93c5fd;
+  content: '';
+  justify-self: center;
+}
+
+.reel-preview-brand-frame small {
+  color: #d7f49a;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .reel-preview-brand-frame strong {

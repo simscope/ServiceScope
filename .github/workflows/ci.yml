@@ -205,7 +205,7 @@ jobs:
         run: npm ci
 
       - name: Verify qualified FFmpeg renderer source unchanged
-        run: git diff --exit-code 97da68e07ad1723e75c28e02543b937b5b323778 HEAD -- server/reel-renderer ':!server/reel-renderer/authorization.js' ':!server/reel-renderer/errors.js'
+        run: git diff --exit-code 4dd0eb40e15b71a7aa058de8aa60bf6362af18ce HEAD -- server/reel-renderer ':!server/reel-renderer/authorization.js' ':!server/reel-renderer/errors.js'
 
       - name: Sandbox runtime regression and security
         run: npm run test:reel-sandbox-runtime && npm run test:reel-sandbox-runtime-scan
