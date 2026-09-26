@@ -1,16 +1,24 @@
 -- REEL_MEDIA_SELECTION_BEGIN
 
+create unique index if not exists job_attachments_id_company_job_reel_media_selection_uidx
+  on public.job_attachments (id, company_id, job_id);
+
 create table public.company_reel_media_selections (
   company_id uuid not null references public.companies(id) on delete cascade,
-  job_id uuid not null references public.jobs(id) on delete cascade,
-  attachment_id uuid not null references public.job_attachments(id) on delete cascade,
+  job_id uuid not null,
+  attachment_id uuid not null,
   role text not null check (role in ('problem', 'process', 'result', 'supporting')),
   position smallint not null check (position between 1 and 4),
   selected_by uuid not null references auth.users(id) on delete restrict,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   primary key (company_id, job_id, attachment_id),
-  unique (company_id, job_id, position)
+  unique (company_id, job_id, position),
+  constraint company_reel_media_selections_job_tenant_fk
+    foreign key (job_id, company_id) references public.jobs(id, company_id) on delete cascade,
+  constraint company_reel_media_selections_attachment_tenant_fk
+    foreign key (attachment_id, company_id, job_id)
+    references public.job_attachments(id, company_id, job_id) on delete cascade
 );
 
 alter table public.company_reel_media_selections enable row level security;
@@ -125,7 +133,7 @@ begin
     count(*) between 3 and 4
     and bool_or(selection.role = 'result')
     and bool_or(selection.role = 'process')
-    and bool_or(selection.role in ('problem', 'supporting'))
+    and bool_or(selection.role = 'problem')
     and bool_and(
       attachment.kind::text <> 'video'
       and lower(attachment.mime_type) in ('image/jpeg', 'image/png', 'image/webp')

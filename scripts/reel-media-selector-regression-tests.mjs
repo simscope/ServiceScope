@@ -32,6 +32,10 @@ check(() => assert.equal(validateManualSelection(mediaPlan, []).size, 0));
 check(() => assert.throws(() => validateManualSelection(mediaPlan, manualRows.slice(0, 2)), /REEL_MEDIA_SELECTION_NOT_READY/));
 check(() => assert.throws(() => validateManualSelection(mediaPlan, [...manualRows].reverse()), /REEL_MEDIA_SELECTION_CONFLICT/));
 check(() => assert.throws(() => validateManualSelection(mediaPlan, manualRows.map((row) => ({ ...row, role: 'supporting' }))), /REEL_MEDIA_SELECTION_NOT_READY/));
+check(() => assert.throws(() => validateManualSelection(mediaPlan, manualRows.map((row, index) => ({
+  ...row,
+  role: ['supporting', 'process', 'result'][index],
+}))), /REEL_MEDIA_SELECTION_NOT_READY/));
 
 const authoritativeRows = mediaPlan.map((item) => ({
   attachment_id: item.attachmentId,
@@ -53,6 +57,13 @@ const authoritativeRows = mediaPlan.map((item) => ({
 }));
 const manualMedia = reconstructAuthoritativeReelMedia(mediaPlan, authoritativeRows, roleMap);
 check(() => assert.deepEqual(manualMedia.map((item) => item.role), ['detail', 'repair_process', 'finished_result']));
+const weakManualRows = authoritativeRows.map((row) => row.attachment_id === mediaPlan[2].attachmentId
+  ? { ...row, finding_category: 'low_information' }
+  : row);
+check(() => assert.deepEqual(
+  reconstructAuthoritativeReelMedia(mediaPlan, weakManualRows, roleMap).map((item) => item.attachmentId),
+  mediaPlan.map((item) => item.attachmentId),
+));
 const fallbackMedia = reconstructAuthoritativeReelMedia(mediaPlan, authoritativeRows);
 check(() => assert.deepEqual(fallbackMedia.map((item) => item.role), ['overview', 'overview', 'overview']));
 check(() => assert.throws(() => reconstructAuthoritativeReelMedia(mediaPlan, authoritativeRows.map((row, index) => index === 0 ? { ...row, unresolved_privacy_count: 1 } : row), roleMap), /REEL_PRIVACY_REVIEW_REQUIRED/));
@@ -70,7 +81,9 @@ check(() => assert.match(migration, /can_manage_company_ai_assistant\(target_com
 check(() => assert.match(migration, /count\(\*\) between 3 and 4/));
 check(() => assert.match(migration, /bool_or\(selection\.role = 'result'\)/));
 check(() => assert.match(migration, /bool_or\(selection\.role = 'process'\)/));
-check(() => assert.match(migration, /bool_or\(selection\.role in \('problem', 'supporting'\)\)/));
+check(() => assert.match(migration, /bool_or\(selection\.role = 'problem'\)/));
+check(() => assert.match(migration, /foreign key \(job_id, company_id\) references public\.jobs\(id, company_id\)/));
+check(() => assert.match(migration, /foreign key \(attachment_id, company_id, job_id\)[\s\S]*references public\.job_attachments\(id, company_id, job_id\)/));
 check(() => assert.doesNotMatch(migration, /company_reel_creative_plans|company_reel_render_jobs|company_social_publications/));
 
 console.log(`Reel media selector regression checks passed: ${checks}`);

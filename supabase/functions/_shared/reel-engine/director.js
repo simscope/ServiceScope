@@ -209,7 +209,7 @@ export function validateManualSelection(requestMedia, rows) {
     roleMap.set(attachmentId, manualRoleToSceneRole(role));
     roles.add(role);
   }
-  if (!roles.has('result') || !roles.has('process') || (!roles.has('problem') && !roles.has('supporting'))) {
+  if (!roles.has('result') || !roles.has('process') || !roles.has('problem')) {
     throw new ReelHttpError('REEL_MEDIA_SELECTION_NOT_READY', 409);
   }
   return roleMap;

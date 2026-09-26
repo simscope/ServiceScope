@@ -22,6 +22,7 @@ await db.exec(`
   create function auth.uid() returns uuid language sql stable as $$ select '00000000-0000-4000-8000-000000009001'::uuid $$;
   create table public.companies (id uuid primary key);
   create table public.jobs (id uuid primary key, company_id uuid not null references public.companies(id), status text not null);
+  create unique index jobs_id_company_reel_render_jobs_uidx on public.jobs (id, company_id);
   create table public.job_attachments (
     id uuid primary key, company_id uuid not null references public.companies(id), job_id uuid not null references public.jobs(id),
     name text not null, mime_type text not null, size_bytes bigint not null, kind text not null,
@@ -84,6 +85,11 @@ check(() => assert.equal(saved.rows[0].value.items.filter((item) => item.positio
 check(() => assert.equal(saved.rows[0].value.items.filter((item) => item.privacyState === 'passed').length, 3));
 check(() => assert.equal(saved.rows[0].value.items.find((item) => item.attachmentId === ids.attachments[3]).privacyState, 'not_analyzed'));
 
+const supportingInsteadOfProblem = selected.map((item) => item.role === 'problem' ? { ...item, role: 'supporting' } : item);
+const supportingOnly = await db.query('select public.replace_company_reel_media_selection($1,$2::jsonb) value', [ids.job, JSON.stringify(supportingInsteadOfProblem)]);
+check(() => assert.equal(supportingOnly.rows[0].value.ready, false));
+await db.query('select public.replace_company_reel_media_selection($1,$2::jsonb)', [ids.job, JSON.stringify(selected)]);
+
 const persisted = await db.query(`select role,position,selected_by,created_at,updated_at
   from public.company_reel_media_selections order by position`);
 check(() => assert.deepEqual(persisted.rows.map((row) => row.role), ['problem', 'process', 'result']));
@@ -127,5 +133,22 @@ await assert.rejects(() => db.query("select public.replace_company_reel_media_se
 checks += 1;
 const afterForbidden = await db.query('select count(*)::integer count from public.company_reel_media_selections');
 check(() => assert.equal(afterForbidden.rows[0].count, 3));
+
+const otherCompany = '00000000-0000-4000-8000-000000009102';
+const otherJob = '00000000-0000-4000-8000-000000009202';
+const otherAttachment = '00000000-0000-4000-8000-000000009305';
+await db.query('insert into public.companies(id) values ($1)', [otherCompany]);
+await db.query("insert into public.jobs(id,company_id,status) values ($1,$2,'Completed')", [otherJob, otherCompany]);
+await db.query(`insert into public.job_attachments(id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path)
+  values ($1,$2,$3,'other.jpg','image/jpeg',100,'photo','job-files','other.jpg')`,
+[otherAttachment, otherCompany, otherJob]);
+await assert.rejects(() => db.query(`insert into public.company_reel_media_selections
+  (company_id,job_id,attachment_id,role,position,selected_by)
+  values ($1,$2,$3,'supporting',4,$4)`, [ids.company, ids.job, otherAttachment, ids.user]));
+checks += 1;
+
+await db.exec('create or replace function public.can_access_company_ai_assistant(uuid) returns boolean language sql stable as $$ select false $$');
+await assert.rejects(() => db.query('select public.get_company_reel_media_selector($1)', [ids.job]), /FORBIDDEN/);
+checks += 1;
 
 console.log(`Reel media selector SQL checks passed: ${checks}`);

@@ -34,7 +34,7 @@ export function isReelMediaSelectionReady(items: ReelMediaSelectorItem[]) {
     && selected.length <= MAX_REEL_MEDIA_SELECTION
     && roles.has('result')
     && roles.has('process')
-    && (roles.has('problem') || roles.has('supporting'))
+    && roles.has('problem')
     && selected.every((item) => item.privacyState === 'passed' && item.unresolvedPrivacyCount === 0);
 }
 

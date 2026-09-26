@@ -27,10 +27,10 @@ type ReelMediaSelectorProps = {
 };
 
 const roleLabels: Record<ReelMediaRole, string> = {
-  problem: 'Problem',
+  problem: 'Problem / Context',
   process: 'Process',
   result: 'Result',
-  supporting: 'Context',
+  supporting: 'Supporting',
 };
 
 const privacyLabels = {

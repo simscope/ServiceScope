@@ -78,6 +78,7 @@ export function reconstructAuthoritativeReelMedia(requestMedia, rows, manualRole
     };
   });
 
+  if (manualRoleByAttachment.size > 0) return safeMedia;
   const meaningful = safeMedia.filter((item) => item.meaningful);
   return meaningful.length >= 2 ? meaningful : safeMedia;
 }
