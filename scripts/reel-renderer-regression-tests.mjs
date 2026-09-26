@@ -329,7 +329,7 @@ check(() => assert.doesNotMatch(escapeXml('</text><script>alert(1)</script>'), /
 const wideMetrics = await measureTextPixels('WWWWWWWW', { fontSize: 68, fontWeight: 800 });
 const narrowMetrics = await measureTextPixels('iiiiiiii', { fontSize: 68, fontWeight: 800 });
 check(() => assert.ok(wideMetrics.width > narrowMetrics.width * 2));
-const longWordLayout = await layoutReelText('ELECTROMECHANICAL-SERVICE READY', 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
+const longWordLayout = await layoutReelText('AIR-CONDITIONING-SERVICE READY', 'scenePrimary', { maxWidth: 788, maxHeight: 300, fontWeight: 800 });
 check(() => assert.ok(longWordLayout.lines[0].length > 22));
 check(() => assert.ok(longWordLayout.fontSize >= reelPresentationSpec.text.scenePrimary.minFontSize));
 check(() => assert.ok(longWordLayout.fontSize < reelPresentationSpec.text.scenePrimary.maxFontSize));
