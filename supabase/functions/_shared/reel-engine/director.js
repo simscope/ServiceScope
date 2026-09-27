@@ -142,10 +142,13 @@ export class ReelHttpError extends Error {
   }
 }
 
-export async function buildReelContext(request, baseContext, repository) {
+export async function buildReelContext(request, baseContext, repository, { requireManualSelection = false } = {}) {
   const manualSelection = typeof repository.listReelMediaSelection === 'function'
     ? await repository.listReelMediaSelection(baseContext.companyId, request.jobId)
     : [];
+  if (requireManualSelection && (!Array.isArray(manualSelection) || manualSelection.length === 0)) {
+    throw new ReelHttpError('REEL_MEDIA_SELECTION_NOT_READY', 409);
+  }
   const manualRoleByAttachment = validateManualSelection(request.mediaPlan, manualSelection);
   const authoritativeRows = await repository.listReelMediaCandidates(
     baseContext.companyId,

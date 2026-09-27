@@ -91,7 +91,7 @@ export async function handleManualReelGeneration({ rawBody, authorization, auth,
   };
   const baseContext = await buildAuthorizedContext({ request: contentRequest, session, repository });
   if (baseContext.accessLevel !== 'full') throw new ReelHttpError('FORBIDDEN', 403);
-  const context = await buildReelContext(request, baseContext, repository);
+  const context = await buildReelContext(request, baseContext, repository, { requireManualSelection: true });
   const cacheKey = [context.companyId, context.actorId, request.jobId, 'Manual Reel', request.operation, request.planningRevision, request.idempotencyKey].join(':');
   const cached = guards.get(cacheKey);
   if (cached) return cached;
@@ -101,7 +101,7 @@ export async function handleManualReelGeneration({ rawBody, authorization, auth,
     ? defaultManualScenes(context)
     : request.scenes;
   assertSceneAuthority(scenes, context.safeMedia);
-  const localFacts = manualFactsFromScenes(scenes);
+  const localFacts = manualFactsFromAuthoritativeMedia(context.safeMedia);
   const groundedContext = withManualFacts(context, localFacts);
   const plan = buildManualReelPlan(scenes, groundedContext);
   try {
@@ -213,12 +213,10 @@ export function buildManualReelPlan(scenes, context) {
 }
 
 export function defaultManualScenes(context) {
-  const allEvidence = context.evidence.map((item) => String(item.text ?? '')).join(' ');
-  const valveStory = /\bvalves?\b/i.test(allEvidence);
   return context.safeMedia.map((media, index) => {
     const role = manualRoleBySceneRole[media.role];
     if (!role) fail('REEL_MEDIA_SELECTION_CONFLICT');
-    const text = defaultSceneText(role, media.evidenceText, valveStory);
+    const text = defaultSceneText(role, media.evidenceText);
     return {
       attachmentId: media.attachmentId,
       position: index + 1,
@@ -230,40 +228,45 @@ export function defaultManualScenes(context) {
   });
 }
 
-export function manualFactsFromScenes(scenes) {
-  const problem = scenes.find((scene) => scene.role === 'problem');
-  const process = scenes.find((scene) => scene.role === 'process');
-  const result = scenes.find((scene) => scene.role === 'result');
-  const supporting = scenes.find((scene) => scene.role === 'supporting');
+export function manualFactsFromAuthoritativeMedia(safeMedia) {
+  const problem = safeMedia.find((media) => media.role === 'detail');
+  const process = safeMedia.find((media) => media.role === 'repair_process');
+  const result = safeMedia.find((media) => media.role === 'finished_result');
+  const supporting = safeMedia.find((media) => media.role === 'supporting_image');
   return {
-    diagnosis: sceneFact(problem),
-    repairPerformed: [sceneFact(process), sceneFact(result), sceneFact(supporting)].filter(Boolean).join('. '),
-    finalResult: sceneFact(result),
+    diagnosis: mediaFact(problem),
+    repairPerformed: [mediaFact(process), mediaFact(result), mediaFact(supporting)].filter(Boolean).join('. '),
+    finalResult: mediaFact(result),
   };
 }
 
-function sceneFact(scene) {
-  return scene ? [scene.primaryText, scene.supportingText].filter(Boolean).join('. ') : '';
+function mediaFact(media) {
+  return String(media?.evidenceText ?? '').trim();
 }
 
-function defaultSceneText(role, evidenceText, valveStory) {
-  if (role === 'problem' && valveStory && /\b(?:corrod|rust|oxid|worn|wear)/i.test(evidenceText)) {
+function defaultSceneText(role, evidenceText) {
+  const valveEvidence = /\bvalves?\b/i.test(evidenceText);
+  if (role === 'problem' && valveEvidence && /\b(?:corrod|rust|oxid|worn|wear)/i.test(evidenceText)) {
     return 'Corroded valve and worn connections';
   }
-  if (role === 'process' && valveStory) return 'Valve replacement in progress';
-  if (role === 'result' && valveStory) return 'Replacement valve installed';
-  if (role === 'problem') return 'Visible service problem detail';
-  if (role === 'process') return 'Selected service work in progress';
-  if (role === 'result') return 'Selected completed service result';
-  return 'Additional service detail';
+  if (role === 'process' && valveEvidence && /\b(?:replac|install)/i.test(evidenceText)) {
+    return 'Valve replacement in progress';
+  }
+  if (role === 'result' && valveEvidence && /\b(?:replac|install)/i.test(evidenceText)) {
+    return 'Replacement valve installed';
+  }
+  if (role === 'problem') return 'A service problem detail is visible';
+  if (role === 'process') return 'Service work is shown in progress';
+  if (role === 'result') return 'The completed service result is shown';
+  return 'An additional service detail is shown';
 }
 
 function withManualFacts(context, localFacts) {
   const localFactIds = new Set(['diagnosis', 'repair-performed', 'final-result']);
   const manualEvidence = [
-    { id: 'diagnosis', label: 'Problem', text: localFacts.diagnosis, source: 'Authorized manual plan text' },
-    { id: 'repair-performed', label: 'Service', text: localFacts.repairPerformed, source: 'Authorized manual plan text' },
-    { id: 'final-result', label: 'Result', text: localFacts.finalResult, source: 'Authorized manual plan text' },
+    { id: 'diagnosis', label: 'Problem', text: localFacts.diagnosis, source: 'Authoritative selected media analysis' },
+    { id: 'repair-performed', label: 'Service', text: localFacts.repairPerformed, source: 'Authoritative selected media analysis' },
+    { id: 'final-result', label: 'Result', text: localFacts.finalResult, source: 'Authoritative selected media analysis' },
   ].map(withReelEvidenceCapability);
   return {
     ...context,

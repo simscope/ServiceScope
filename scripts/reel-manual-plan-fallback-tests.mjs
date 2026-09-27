@@ -51,9 +51,9 @@ const genericPreview = await handleManualReelGeneration(makeDependencies({
   reelRows: genericMediaRows(),
 }));
 check(() => assert.deepEqual(genericPreview.scenes.map((scene) => scene.overlayText), [
-  'Visible service problem detail',
-  'Selected service work in progress',
-  'Selected completed service result',
+  'A service problem detail is visible',
+  'Service work is shown in progress',
+  'The completed service result is shown',
 ]));
 
 const editedScenes = preview.scenes.map((scene, index) => ({
@@ -62,7 +62,7 @@ const editedScenes = preview.scenes.map((scene, index) => ({
   role: selected[index].role,
   categoryLabel: index === 0 ? 'DETAIL' : scene.categoryLabel,
   primaryText: scene.overlayText,
-  supportingText: index === 1 ? 'Selected service step' : '',
+  supportingText: index === 1 ? 'Valve replacement in progress' : '',
 }));
 const createDependencies = makeDependencies({ operation: 'create', scenes: editedScenes });
 const created = await handleManualReelGeneration(createDependencies);
@@ -70,7 +70,7 @@ check(() => assert.equal(created.creativePlanId, '00000000-0000-4000-8000-000000
 check(() => assert.equal(createDependencies.counters.persisted, 1));
 check(() => assert.equal(createDependencies.counters.providerCalls, 0));
 check(() => assert.equal(created.scenes[0].categoryLabel, 'DETAIL'));
-check(() => assert.equal(created.scenes[1].secondaryText, 'Selected service step'));
+check(() => assert.equal(created.scenes[1].secondaryText, 'Valve replacement in progress'));
 check(() => assert.equal(createDependencies.counters.rendered, 0));
 check(() => assert.deepEqual(createDependencies.persistedPlan.mediaPlan, mediaPlan));
 check(() => assert.equal(createDependencies.persistedPlan.plan.marketingAngle, 'manual_selection'));
@@ -95,6 +95,11 @@ await rejectsCode(handleManualReelGeneration(makeDependencies({
   operation: 'create',
   scenes: [{ ...editedScenes[0], primaryText: 'Jane Customer private valve detail' }, ...editedScenes.slice(1)],
 })), 'REEL_PRIVACY_FAILED');
+await rejectsCode(handleManualReelGeneration(makeDependencies({ selection: [] })), 'REEL_MEDIA_SELECTION_NOT_READY');
+await rejectsCode(handleManualReelGeneration(makeDependencies({
+  operation: 'create',
+  scenes: [...editedScenes.slice(0, 2), { ...editedScenes[2], primaryText: 'Cooling system fully restored' }],
+})), 'REEL_GROUNDING_FAILED');
 await rejectsCode(handleManualReelGeneration(makeDependencies({ selection: selected.slice().reverse() })), 'REEL_MEDIA_SELECTION_CONFLICT');
 await rejectsCode(handleManualReelGeneration(makeDependencies({ access: 'readonly' })), 'FORBIDDEN');
 await rejectsCode(handleManualReelGeneration(makeDependencies({ sessionCompanyId: 'company-2' })), 'FORBIDDEN');
