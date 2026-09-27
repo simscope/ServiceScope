@@ -635,7 +635,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
         mediaPlan: savedManualReelMediaPlan,
         scenes: [],
         planningRevision: currentReelInputRevision,
-        idempotencyKey: manualReelPlanIdempotencyKey('preview', manualReelSelectionRevision),
+        idempotencyKey: await manualReelPlanIdempotencyKey('preview', manualReelSelectionRevision),
       });
       if (selectedJobIdRef.current !== requestJobId) return;
       setManualReelPreview(plan);
@@ -672,7 +672,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
         mediaPlan: savedManualReelMediaPlan,
         scenes: manualReelDraft,
         planningRevision: requestRevision,
-        idempotencyKey: manualReelPlanIdempotencyKey('create', manualReelSelectionRevision),
+        idempotencyKey: await manualReelPlanIdempotencyKey('create', manualReelSelectionRevision),
       });
       if (selectedJobIdRef.current !== requestJobId) return;
       const nextIdentity = reelPlanIdentity(plan.creativePlanId, plan.revision);

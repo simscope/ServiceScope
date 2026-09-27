@@ -10,11 +10,16 @@ export function stableReelFingerprint(value) {
   return `reel-input-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }
 
-export function manualReelPlanIdempotencyKey(operation, authoritativeSelectionRevision) {
+export async function manualReelPlanIdempotencyKey(operation, authoritativeSelectionRevision) {
   if (!manualReelOperations.has(operation)
     || typeof authoritativeSelectionRevision !== 'string'
     || !authoritativeSelectionRevision) {
     throw new Error('INVALID_MANUAL_REEL_REQUEST_IDENTITY');
   }
-  return `manual-plan:${operation}:${stableReelFingerprint(authoritativeSelectionRevision)}`;
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(authoritativeSelectionRevision),
+  );
+  const token = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `manual-plan:${operation}:sha256-${token}`;
 }

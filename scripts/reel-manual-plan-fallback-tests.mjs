@@ -16,6 +16,10 @@ const selected = [
 ];
 const mediaPlan = selected.map(({ attachmentId, position }) => ({ attachmentId, position }));
 const selectionRevision = revisionFor(selected);
+const manualIdentity = {
+  preview: await manualReelPlanIdempotencyKey('preview', selectionRevision),
+  create: await manualReelPlanIdempotencyKey('create', selectionRevision),
+};
 let checks = 0;
 
 function check(fn) {
@@ -47,22 +51,35 @@ check(() => assert.equal(preview.safety.privacy, 'passed'));
 check(() => assert.equal(preview.scenes.every((scene) => scene.secondaryText === null && scene.voiceoverLine === null), true));
 check(() => assert.equal(buildReelProviderOutputJsonSchema().properties.marketingAngle.enum.includes('manual_selection'), false));
 
-const previewIdentity = manualReelPlanIdempotencyKey('preview', selectionRevision);
-check(() => assert.equal(previewIdentity, 'manual-plan:preview:reel-input-f01a7a08'));
-check(() => assert.equal(previewIdentity, manualReelPlanIdempotencyKey('preview', selectionRevision)));
+const previewIdentity = manualIdentity.preview;
+check(() => assert.equal(previewIdentity, 'manual-plan:preview:sha256-681af0c89a8ec64b3c7e9976f54b1cbe0d537abceac8e1f4f73028fbaef11ca7'));
+check(() => assert.equal(previewIdentity, manualIdentity.preview));
 check(() => assert.match(previewIdentity, /^[A-Za-z0-9:_-]+$/));
 check(() => assert.ok(previewIdentity.length <= 180));
 check(() => assert.doesNotMatch(previewIdentity, /[\[\]",]/));
-check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('preview', revisionFor([
+const changedRoleIdentity = await manualReelPlanIdempotencyKey('preview', revisionFor([
   { ...selected[0], role: 'supporting' }, ...selected.slice(1),
-]))));
-check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('preview', revisionFor([
+]));
+const changedOrderIdentity = await manualReelPlanIdempotencyKey('preview', revisionFor([
   { ...selected[1], position: 1 }, { ...selected[0], position: 2 }, selected[2],
-]))));
-check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('preview', revisionFor([
+]));
+const changedMediaIdentity = await manualReelPlanIdempotencyKey('preview', revisionFor([
   { ...selected[0], attachmentId: '00000000-0000-4000-8000-000000002499' }, ...selected.slice(1),
-]))));
-check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('create', selectionRevision)));
+]));
+check(() => assert.notEqual(previewIdentity, changedRoleIdentity));
+check(() => assert.notEqual(previewIdentity, changedOrderIdentity));
+check(() => assert.notEqual(previewIdentity, changedMediaIdentity));
+check(() => assert.notEqual(previewIdentity, manualIdentity.create));
+const fnvCollisionLeft = revisionFor([
+  { ...selected[0], attachmentId: '00000000-0000-4000-8000-4816ef1ff945' }, ...selected.slice(1),
+]);
+const fnvCollisionRight = revisionFor([
+  { ...selected[0], attachmentId: '00000000-0000-4000-8000-10dfd77b8e03' }, ...selected.slice(1),
+]);
+check(() => assert.equal(stableFNVFingerprint(fnvCollisionLeft), stableFNVFingerprint(fnvCollisionRight)));
+const collisionIdentityLeft = await manualReelPlanIdempotencyKey('preview', fnvCollisionLeft);
+const collisionIdentityRight = await manualReelPlanIdempotencyKey('preview', fnvCollisionRight);
+check(() => assert.notEqual(collisionIdentityLeft, collisionIdentityRight));
 
 const genericPreview = await handleManualReelGeneration(makeDependencies({
   system: 'Appliance',
@@ -143,8 +160,8 @@ check(() => assert.doesNotMatch(manualSource, /provider\.generate|beginReelRende
 check(() => assert.match(assistantSource, /Create simple plan from selected media/));
 check(() => assert.match(assistantSource, /AI plan could not be created from this evidence/));
 check(() => assert.match(assistantSource, /manualReelPending === 'create'/));
-check(() => assert.match(assistantSource, /manualReelPlanIdempotencyKey\('preview', manualReelSelectionRevision\)/));
-check(() => assert.match(assistantSource, /manualReelPlanIdempotencyKey\('create', manualReelSelectionRevision\)/));
+check(() => assert.match(assistantSource, /await manualReelPlanIdempotencyKey\('preview', manualReelSelectionRevision\)/));
+check(() => assert.match(assistantSource, /await manualReelPlanIdempotencyKey\('create', manualReelSelectionRevision\)/));
 check(() => assert.doesNotMatch(assistantSource, /manual-reel:preview:\$\{manualReelSelectionRevision\}/));
 check(() => assert.match(manualSource, /exactId\(body\.idempotencyKey, 180\)/));
 
@@ -159,8 +176,18 @@ function payload(operation = 'preview', scenes = []) {
     mediaPlan,
     scenes,
     planningRevision: 'job-248-manual-selection-v1',
-    idempotencyKey: manualReelPlanIdempotencyKey(operation, selectionRevision),
+    idempotencyKey: manualIdentity[operation],
   };
+}
+
+function stableFNVFingerprint(value) {
+  const text = JSON.stringify(value);
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function revisionFor(items) {
