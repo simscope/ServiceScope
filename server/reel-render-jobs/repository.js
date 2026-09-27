@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { buildAuthorizedContext } from '../../supabase/functions/_shared/content-engine/context.js';
 import { sha256DigestsEqual } from '../../supabase/functions/_shared/media-analysis/checksum.js';
 import { buildReelContext } from '../../supabase/functions/_shared/reel-engine/director.js';
-import { buildManualReelAuthority } from '../../supabase/functions/_shared/reel-engine/manualPlan.js';
+import { buildManualReelAuthority } from '../../supabase/functions/_shared/reel-engine/manualPlanContract.js';
 import { authorizeReelForRender } from '../reel-renderer/authorization.js';
 import { normalizeRenderError, reelRenderMaxMediaBytes, reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
 

@@ -1,5 +1,5 @@
 import { parseReelPlanShape, validateReelPlan } from '../../supabase/functions/_shared/reel-engine/schemas.js';
-import { validateManualReelPlanForRender } from '../../supabase/functions/_shared/reel-engine/manualPlan.js';
+import { validateManualReelPlanForRender } from '../../supabase/functions/_shared/reel-engine/manualPlanContract.js';
 import { ReelRenderError } from './errors.js';
 
 const authorizedPlans = new WeakMap();
