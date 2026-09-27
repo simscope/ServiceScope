@@ -327,7 +327,7 @@ function readerResponse({ chunks, contentLength, onRead = () => {}, onCancel = (
 
 function renderAuthorityClient(bytes, persistedChecksum) {
   const attachmentId = '00000000-0000-4000-8000-000000000401';
-  const calls = { downloads: 0 };
+  const calls = { downloads: 0, selections: 0 };
   return {
     attachmentId,
     calls,
@@ -364,6 +364,11 @@ function renderAuthorityClient(bytes, persistedChecksum) {
         throw new Error(`Unexpected table ${table}`);
       },
       async adminRpc(name, body) {
+        if (name === 'list_company_reel_media_selection_for_planning') {
+          calls.selections += 1;
+          assert.deepEqual(body, { p_company_id: companyId, p_job_id: 'job-1' });
+          return [];
+        }
         assert.equal(name, 'list_company_reel_media_analysis_candidates');
         assert.deepEqual(body.p_attachment_ids, [attachmentId]);
         return [{
@@ -407,6 +412,7 @@ function renderAuthorityClient(bytes, persistedChecksum) {
     company_id: companyId, job_id: 'job-1', creative_plan_id: creativePlanId,
   });
   check(() => assert.equal(fixture.calls.downloads, 1));
+  check(() => assert.equal(fixture.calls.selections, 1));
   check(() => assert.deepEqual(authority.assets.get(fixture.attachmentId), bytes));
   check(() => assert.equal(authority.context.safeMedia[0].attachmentSha256, rpcChecksum));
 
