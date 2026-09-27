@@ -6,6 +6,7 @@ import {
   validateManualReelRequest,
 } from '../supabase/functions/_shared/reel-engine/manualPlan.js';
 import { buildReelProviderOutputJsonSchema, parseReelPlanShape } from '../supabase/functions/_shared/reel-engine/schemas.js';
+import { manualReelPlanIdempotencyKey } from '../src/features/reel-director/requestIdentity.js';
 
 const jobId = '8edc53e7-3188-414b-acc3-44d205b238da';
 const selected = [
@@ -14,6 +15,7 @@ const selected = [
   { attachmentId: '2a23b063-340e-4591-9c3c-48cf545f06d5', position: 3, role: 'result' },
 ];
 const mediaPlan = selected.map(({ attachmentId, position }) => ({ attachmentId, position }));
+const selectionRevision = revisionFor(selected);
 let checks = 0;
 
 function check(fn) {
@@ -44,6 +46,23 @@ check(() => assert.equal(preview.brand.cta, 'Having a similar issue? Send us a m
 check(() => assert.equal(preview.safety.privacy, 'passed'));
 check(() => assert.equal(preview.scenes.every((scene) => scene.secondaryText === null && scene.voiceoverLine === null), true));
 check(() => assert.equal(buildReelProviderOutputJsonSchema().properties.marketingAngle.enum.includes('manual_selection'), false));
+
+const previewIdentity = manualReelPlanIdempotencyKey('preview', selectionRevision);
+check(() => assert.equal(previewIdentity, 'manual-plan:preview:reel-input-f01a7a08'));
+check(() => assert.equal(previewIdentity, manualReelPlanIdempotencyKey('preview', selectionRevision)));
+check(() => assert.match(previewIdentity, /^[A-Za-z0-9:_-]+$/));
+check(() => assert.ok(previewIdentity.length <= 180));
+check(() => assert.doesNotMatch(previewIdentity, /[\[\]",]/));
+check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('preview', revisionFor([
+  { ...selected[0], role: 'supporting' }, ...selected.slice(1),
+]))));
+check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('preview', revisionFor([
+  { ...selected[1], position: 1 }, { ...selected[0], position: 2 }, selected[2],
+]))));
+check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('preview', revisionFor([
+  { ...selected[0], attachmentId: '00000000-0000-4000-8000-000000002499' }, ...selected.slice(1),
+]))));
+check(() => assert.notEqual(previewIdentity, manualReelPlanIdempotencyKey('create', selectionRevision)));
 
 const genericPreview = await handleManualReelGeneration(makeDependencies({
   system: 'Appliance',
@@ -77,6 +96,13 @@ check(() => assert.equal(createDependencies.persistedPlan.plan.marketingAngle, '
 const { revision: _revision, creativePlanId: _creativePlanId, ...persistedShape } = created;
 check(() => assert.equal(parseReelPlanShape(persistedShape).scenes[0].categoryLabel, 'DETAIL'));
 
+const retryDependencies = makeDependencies({ operation: 'create', scenes: editedScenes });
+const firstRetry = await handleManualReelGeneration(retryDependencies);
+const secondRetry = await handleManualReelGeneration(retryDependencies);
+check(() => assert.equal(firstRetry.creativePlanId, secondRetry.creativePlanId));
+check(() => assert.equal(retryDependencies.counters.persisted, 1));
+check(() => assert.equal(retryDependencies.counters.providerCalls, 0));
+
 check(() => assert.throws(() => validateManualReelRequest(payload('create', [
   { ...editedScenes[0], categoryLabel: 'SERVICE' },
   ...editedScenes.slice(1),
@@ -100,7 +126,10 @@ await rejectsCode(handleManualReelGeneration(makeDependencies({
   operation: 'create',
   scenes: [...editedScenes.slice(0, 2), { ...editedScenes[2], primaryText: 'Cooling system fully restored' }],
 })), 'REEL_GROUNDING_FAILED');
-await rejectsCode(handleManualReelGeneration(makeDependencies({ selection: selected.slice().reverse() })), 'REEL_MEDIA_SELECTION_CONFLICT');
+const staleSelectionDependencies = makeDependencies({ selection: selected.slice().reverse() });
+await rejectsCode(handleManualReelGeneration(staleSelectionDependencies), 'REEL_MEDIA_SELECTION_CONFLICT');
+check(() => assert.equal(staleSelectionDependencies.counters.persisted, 0));
+check(() => assert.equal(staleSelectionDependencies.counters.providerCalls, 0));
 await rejectsCode(handleManualReelGeneration(makeDependencies({ access: 'readonly' })), 'FORBIDDEN');
 await rejectsCode(handleManualReelGeneration(makeDependencies({ sessionCompanyId: 'company-2' })), 'FORBIDDEN');
 
@@ -114,6 +143,10 @@ check(() => assert.doesNotMatch(manualSource, /provider\.generate|beginReelRende
 check(() => assert.match(assistantSource, /Create simple plan from selected media/));
 check(() => assert.match(assistantSource, /AI plan could not be created from this evidence/));
 check(() => assert.match(assistantSource, /manualReelPending === 'create'/));
+check(() => assert.match(assistantSource, /manualReelPlanIdempotencyKey\('preview', manualReelSelectionRevision\)/));
+check(() => assert.match(assistantSource, /manualReelPlanIdempotencyKey\('create', manualReelSelectionRevision\)/));
+check(() => assert.doesNotMatch(assistantSource, /manual-reel:preview:\$\{manualReelSelectionRevision\}/));
+check(() => assert.match(manualSource, /exactId\(body\.idempotencyKey, 180\)/));
 
 console.log(`reel manual plan fallback tests: ${checks} passed`);
 
@@ -126,8 +159,20 @@ function payload(operation = 'preview', scenes = []) {
     mediaPlan,
     scenes,
     planningRevision: 'job-248-manual-selection-v1',
-    idempotencyKey: `job-248:manual-plan:${operation}:v1`,
+    idempotencyKey: manualReelPlanIdempotencyKey(operation, selectionRevision),
   };
+}
+
+function revisionFor(items) {
+  return JSON.stringify(items.map((item, index) => [
+    item.attachmentId,
+    item.role,
+    item.position,
+    `run-${index + 1}`,
+    `result-${index + 1}`,
+    'passed',
+    0,
+  ]));
 }
 
 function makeDependencies(options = {}) {
