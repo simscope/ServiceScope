@@ -2,6 +2,7 @@ import type { AssistantLocalFacts, AssistantMediaItem, AssistantMediaLabel } fro
 import type { MediaAnalysisResult } from '../media-analysis/contracts';
 import type { MediaPlanningState } from '../media-planning/planningState';
 import type { ReelCreativePlanV1, ReelMediaPlanItem } from './contracts';
+import { stableReelFingerprint } from './requestIdentity.js';
 
 export type ReelGenerationStatus =
   | 'ready'
@@ -63,7 +64,7 @@ export function reelInputRevision(input: {
   authoritativeMediaPlan?: ReelMediaPlanItem[];
   authoritativeMediaRevision?: string;
 }) {
-  return stableFingerprint({
+  return stableReelFingerprint({
     jobId: input.jobId,
     localFacts: input.localFacts,
     planningRevision: input.planning.revision,
@@ -156,14 +157,4 @@ function mediaLabelPriority(label: AssistantMediaLabel | undefined) {
   if (label === 'Part') return 3;
   if (label === 'Result') return 4;
   return 5;
-}
-
-function stableFingerprint(value: unknown) {
-  const text = JSON.stringify(value);
-  let hash = 2166136261;
-  for (let index = 0; index < text.length; index += 1) {
-    hash ^= text.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `reel-input-${(hash >>> 0).toString(16).padStart(8, '0')}`;
 }

@@ -68,6 +68,7 @@ import { generateAiReel, generateManualReelPlan } from '../../features/reel-dire
 import { reelErrorMessage, type ManualReelSceneInput, type ReelCreativePlanV1 } from '../../features/reel-director/contracts';
 import { manualReelFacts, manualReelScenesFromPlan } from '../../features/reel-director/manualPlan';
 import { runOneClickReel } from '../../features/reel-director/oneClickReel';
+import { manualReelPlanIdempotencyKey } from '../../features/reel-director/requestIdentity.js';
 import {
   applyReelPlan,
   approveCurrentReel,
@@ -634,7 +635,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
         mediaPlan: savedManualReelMediaPlan,
         scenes: [],
         planningRevision: currentReelInputRevision,
-        idempotencyKey: `${requestJobId}:manual-reel:preview:${manualReelSelectionRevision}`,
+        idempotencyKey: await manualReelPlanIdempotencyKey('preview', manualReelSelectionRevision),
       });
       if (selectedJobIdRef.current !== requestJobId) return;
       setManualReelPreview(plan);
@@ -671,7 +672,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
         mediaPlan: savedManualReelMediaPlan,
         scenes: manualReelDraft,
         planningRevision: requestRevision,
-        idempotencyKey: `${requestJobId}:manual-reel:create:${requestRevision}`,
+        idempotencyKey: await manualReelPlanIdempotencyKey('create', manualReelSelectionRevision),
       });
       if (selectedJobIdRef.current !== requestJobId) return;
       const nextIdentity = reelPlanIdentity(plan.creativePlanId, plan.revision);

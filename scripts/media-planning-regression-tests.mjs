@@ -20,6 +20,7 @@ execFileSync(process.execPath, [
 execFileSync(process.execPath, [
   'node_modules/typescript/bin/tsc',
   'src/features/reel-director/reelState.ts',
+  'src/features/reel-director/requestIdentity.js',
   '--target',
   'ES2020',
   '--module',
@@ -28,6 +29,7 @@ execFileSync(process.execPath, [
   'Bundler',
   '--outDir',
   '.tmp/media-planning-reel-tests',
+  '--allowJs',
   '--skipLibCheck',
 ], { stdio: 'pipe' });
 
