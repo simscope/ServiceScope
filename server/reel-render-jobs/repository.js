@@ -84,6 +84,14 @@ function contextRepository(client, assets) {
     listAttachments: (companyId, jobId) => many(client, 'job_attachments', `select=id,company_id,job_id,name,mime_type,kind,created_at&company_id=eq.${companyId}&job_id=eq.${jobId}&limit=200`),
     listInvoices: (companyId, jobId) => many(client, 'job_invoices', `select=invoice_number,amount_cents,status&company_id=eq.${companyId}&job_id=eq.${jobId}&limit=50`),
     listComments: (companyId, jobId) => many(client, 'job_comments', `select=message&company_id=eq.${companyId}&job_id=eq.${jobId}&limit=200`),
+    async listReelMediaSelection(companyId, jobId) {
+      const rows = await client.adminRpc('list_company_reel_media_selection_for_planning', {
+        p_company_id: companyId,
+        p_job_id: jobId,
+      });
+      if (!Array.isArray(rows)) throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
+      return rows;
+    },
     async listReelMediaCandidates(companyId, jobId, attachmentIds) {
       const rows = await client.adminRpc('list_company_reel_media_analysis_candidates', {
         p_company_id: companyId, p_job_id: jobId, p_attachment_ids: attachmentIds,

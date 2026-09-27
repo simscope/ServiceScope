@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const read = (path) => readFile(path, 'utf8');
 const [
   client, browserContracts, approval, producer, worker, repository, contracts, artifacts, telemetry,
-  approvalApi, requestApi, queueApi, migration, upgradeMigration, controlledMigration, schema, packageJson, vercel, aiEdge, director,
+  approvalApi, requestApi, queueApi, migration, upgradeMigration, controlledMigration, retryMigration, schema, packageJson, vercel, aiEdge, director,
   dispatchRecovery, assistantPage, supabaseHttp, queueConsumer, renderState,
 ] = await Promise.all([
   read('src/features/reel-render-jobs/clientApi.ts'),
@@ -22,6 +22,7 @@ const [
   read('supabase/migrations/20260809234500_reel_render_jobs.sql'),
   read('supabase/migrations/20260811022000_reel_renderer_v2_contract.sql'),
   read('supabase/migrations/20260814143000_reel_render_controlled_pipeline.sql'),
+  read('supabase/migrations/20260927190000_reel_failed_render_retry.sql'),
   read('supabase/schema.sql'),
   read('package.json'),
   read('vercel.json'),
@@ -39,6 +40,7 @@ const check = (fn) => { fn(); checks += 1; };
 const renderRequestBody = client.match(/'\/api\/reel-render-request',\s*\{([^}]+)\}/)?.[1] ?? '';
 check(() => assert.match(renderRequestBody, /creativePlanId/));
 check(() => assert.match(renderRequestBody, /expectedPlanRevision/));
+check(() => assert.match(renderRequestBody, /retryOfRenderJobId/));
 for (const forbidden of ['companyId', 'jobId', 'localFacts', 'plan', 'scenes', 'bucket', 'outputPath', 'manifest', 'rendererVersion', 'renderer_version', 'renderFingerprint', 'render_fingerprint']) {
   check(() => assert.doesNotMatch(renderRequestBody, new RegExp(`\\b${forbidden}\\b`, 'i')));
 }
@@ -49,6 +51,7 @@ check(() => assert.match(client, /'\/api\/reel-plan-approve'/));
 check(() => assert.match(assistantPage, /await approveReelPlan\(creativePlanId, revision\)/));
 check(() => assert.match(assistantPage, /!reelApproved \|\|/));
 check(() => assert.match(contracts, /new Set\(\['creativePlanId', 'expectedPlanRevision'\]\)/));
+check(() => assert.match(contracts, /new Set\(\['creativePlanId', 'expectedPlanRevision', 'retryOfRenderJobId'\]\)/));
 check(() => assert.match(contracts, /new Set\(\['schemaVersion', 'renderJobId'\]\)/));
 check(() => assert.match(contracts, /return \{ schemaVersion: reelRenderMessageSchema, renderJobId:/));
 check(() => assert.doesNotMatch(contracts.match(/function renderMessage[\s\S]*?\n\}/)?.[0] ?? '', /plan|localFacts|companyId|job_id/));
@@ -124,7 +127,7 @@ check(() => assert.match(director, /plan\.decision !== 'create_reel'/));
 check(() => assert.match(director, /mediaPlan: request\.mediaPlan\.map/));
 check(() => assert.doesNotMatch(director.match(/async function persistCreativePlan[\s\S]*?\n\}/)?.[0] ?? '', /token|signed|storage|providerRaw|prompt/));
 check(() => assert.doesNotMatch(`${worker}\n${repository}\n${producer}`, /stderr|error\.stack|error\.message/));
-check(() => assert.doesNotMatch(`${worker}\n${repository}\n${producer}\n${migration}\n${upgradeMigration}\n${controlledMigration}`, /meta_social|facebook|graph\.facebook|\/feed|\/photos/i));
+check(() => assert.doesNotMatch(`${worker}\n${repository}\n${producer}\n${migration}\n${upgradeMigration}\n${controlledMigration}\n${retryMigration}`, /meta_social|facebook|graph\.facebook|\/feed|\/photos/i));
 check(() => assert.match(telemetry, /eventNames = new Set/));
 check(() => assert.doesNotMatch(telemetry, /plan|caption|notes|secret|token|environment|attachment/));
 check(() => assert.match(producer, /render_blocked_feature_flag/));
@@ -150,7 +153,15 @@ check(() => assert.match(assistantPage, /return idleReelRender\(nextIdentity\)/)
 check(() => assert.match(assistantPage, /sameReelPlanIdentity\(startedScope, savedIdentity\)/));
 check(() => assert.match(assistantPage, /activeReelRender\.videoUrl/));
 check(() => assert.doesNotMatch(assistantPage, /reelRender\.videoUrl/));
-check(() => assert.match(assistantPage, /beginReelRender\(creativePlanId, revision\)/));
+check(() => assert.match(assistantPage, /beginReelRender\(creativePlanId, revision, retryOfRenderJobId\)/));
+check(() => assert.match(assistantPage, /activeReelRender\.errorCode === 'REEL_RENDER_CONTEXT_STALE'/));
+check(() => assert.match(producer, /prepare_company_reel_render_retry/));
+check(() => assert.match(producer, /begin_company_reel_render_retry/));
+check(() => assert.match(requestApi, /authorizeReelForRender\(await repository\.loadAuthority\(claim\)\)/));
+check(() => assert.match(retryMigration, /base_fingerprint \|\| ':retry:1'/));
+check(() => assert.match(retryMigration, /retry_ordinal = 1/));
+check(() => assert.match(retryMigration, /REEL_RENDER_CONTEXT_STALE/));
+check(() => assert.doesNotMatch(retryMigration, /random\(|clock_timestamp\(\).*render_fingerprint|retry_nonce/i));
 
 check(() => assert.match(migration, /company_reel_render_jobs_renderer_check[\s\S]*servicescope-reel-renderer-v1/));
 check(() => assert.doesNotMatch(migration, /servicescope-reel-renderer-v2/));

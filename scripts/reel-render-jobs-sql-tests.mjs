@@ -7,6 +7,7 @@ import { reelRendererVersion } from '../server/reel-render-jobs/contracts.js';
 const migration = await readFile('supabase/migrations/20260809234500_reel_render_jobs.sql', 'utf8');
 const upgradeMigration = await readFile('supabase/migrations/20260811022000_reel_renderer_v2_contract.sql', 'utf8');
 const controlledPipelineMigration = await readFile('supabase/migrations/20260814143000_reel_render_controlled_pipeline.sql', 'utf8');
+const retryMigration = await readFile('supabase/migrations/20260927190000_reel_failed_render_retry.sql', 'utf8');
 const schema = await readFile('supabase/schema.sql', 'utf8');
 const markers = { begin: '-- REEL_RENDER_JOBS_BEGIN', end: '-- REEL_RENDER_JOBS_END', label: 'Reel render jobs' };
 const block = extractExactMarkedBlock(migration, markers);
@@ -17,6 +18,7 @@ const beginFunction = (sql) => sql.match(/create or replace function public\.beg
 const namedFunction = (sql, name) => sql.match(new RegExp(`create or replace function public\\.${name}[\\s\\S]*?\\$\\$;`, 'i'))?.[0] ?? '';
 const constraintVersion = (sql) => sql.match(/company_reel_render_jobs_renderer_check\s+check \(renderer_version = '([^']+)'\)/i)?.[1];
 const rendererConstantVersion = (sql) => sql.match(/current_renderer_version constant text :=\s*'([^']+)'/i)?.[1];
+const compactSql = (sql) => sql.replace(/\s+/g, ' ').trim();
 const currentSchemaBlock = extractExactMarkedBlock(schema, markers);
 const normalizedUpgradeMigration = upgradeMigration.trim();
 const normalizedControlledPipelineMigration = controlledPipelineMigration.trim();
@@ -59,6 +61,11 @@ check(() => assert.match(normalizedControlledPipelineMigration, /commit\s*;$/i))
 check(() => assert.equal((normalizedControlledPipelineMigration.match(/^\s*begin\s*;\s*$/gim) ?? []).length, 1));
 check(() => assert.equal((normalizedControlledPipelineMigration.match(/^\s*commit\s*;\s*$/gim) ?? []).length, 1));
 check(() => assert.doesNotMatch(controlledPipelineMigration, /\b(?:drop table|drop column|truncate|delete from)\b|disable row level security|\bcascade\b/i));
+check(() => assert.match(retryMigration.trim(), /^begin\s*;/i));
+check(() => assert.match(retryMigration.trim(), /commit\s*;$/i));
+check(() => assert.doesNotMatch(retryMigration, /\b(?:drop table|drop column|truncate|delete from|update public\.company_reel_render_jobs)\b|disable row level security|\bcascade\b/i));
+check(() => assert.equal(compactSql(namedFunction(retryMigration, 'prepare_company_reel_render_retry')), compactSql(namedFunction(currentSchemaBlock, 'prepare_company_reel_render_retry'))));
+check(() => assert.equal(compactSql(namedFunction(retryMigration, 'begin_company_reel_render_retry')), compactSql(namedFunction(currentSchemaBlock, 'begin_company_reel_render_retry'))));
 
 const baseDatabaseSql = `
   create role anon nologin; create role authenticated nologin; create role service_role nologin;
@@ -125,6 +132,7 @@ await guardDb.close();
 const db = await historicalDatabase();
 await db.exec(upgradeMigration);
 await db.exec(controlledPipelineMigration);
+await db.exec(retryMigration);
 const upgradedConstraintVersion = await databaseConstraintVersion(db);
 check(() => assert.equal(upgradedConstraintVersion, reelRendererVersion));
 
@@ -282,9 +290,80 @@ const otherRenderJob = await begin(plan.revision, otherPlanId);
 check(() => assert.notEqual(otherRenderJob.render_job_id, first.render_job_id));
 await setActor(ids.user, 'owner@example.com');
 
+const retryPlanRevision = 'reel-v1-retry-context-stale';
+const retryPlanId = await persist({ ...plan, revision: retryPlanRevision }, retryPlanRevision);
+await approve(retryPlanRevision, retryPlanId);
+const retrySource = await begin(retryPlanRevision, retryPlanId);
+const retrySourceClaim = (await db.query(
+  'select * from public.claim_company_reel_render_job($1,60)',
+  [retrySource.render_job_id],
+)).rows[0];
+await db.query(
+  "select * from public.fail_company_reel_render_job($1,$2,'REEL_RENDER_CONTEXT_STALE')",
+  [retrySource.render_job_id, retrySourceClaim.lease_token],
+);
+const retrySourceBefore = (await db.query(
+  'select * from public.company_reel_render_jobs where id=$1',
+  [retrySource.render_job_id],
+)).rows[0];
+const normalRetryRequest = await begin(retryPlanRevision, retryPlanId);
+check(() => assert.equal(normalRetryRequest.render_job_id, retrySource.render_job_id));
+check(() => assert.equal(normalRetryRequest.status, 'failed'));
+const preparedRetry = (await db.query(
+  'select * from public.prepare_company_reel_render_retry($1,$2)',
+  [retrySource.render_job_id, retryPlanRevision],
+)).rows[0];
+check(() => assert.equal(preparedRetry.failed_render_job_id, retrySource.render_job_id));
+check(() => assert.equal(preparedRetry.creative_plan_id, retryPlanId));
+check(() => assert.equal(preparedRetry.retry_render_job_id, null));
+const retryRace = await Promise.all([
+  db.query('select * from public.begin_company_reel_render_retry($1,$2)', [retrySource.render_job_id, retryPlanRevision]),
+  db.query('select * from public.begin_company_reel_render_retry($1,$2)', [retrySource.render_job_id, retryPlanRevision]),
+]);
+const retryRows = retryRace.map((result) => result.rows[0]);
+check(() => assert.equal(retryRows[0].render_job_id, retryRows[1].render_job_id));
+check(() => assert.equal(retryRows.filter((row) => row.created).length, 1));
+check(() => assert.equal(retryRows[0].status, 'queued'));
+check(() => assert.equal(retryRows[0].retry_of_render_job_id, retrySource.render_job_id));
+check(() => assert.equal(retryRows[0].retry_ordinal, 1));
+const retryJobs = await db.query(
+  'select * from public.company_reel_render_jobs where creative_plan_id=$1 order by retry_ordinal',
+  [retryPlanId],
+);
+check(() => assert.equal(retryJobs.rows.length, 2));
+check(() => assert.equal(retryJobs.rows[0].id, retrySource.render_job_id));
+check(() => assert.equal(retryJobs.rows[0].retry_ordinal, 0));
+check(() => assert.equal(retryJobs.rows[1].retry_ordinal, 1));
+const expectedRetryFingerprint = (await db.query(
+  "select encode(sha256(convert_to($1 || ':retry:1','UTF8')),'hex') fingerprint",
+  [retrySourceBefore.render_fingerprint],
+)).rows[0].fingerprint;
+check(() => assert.equal(retryJobs.rows[1].render_fingerprint, expectedRetryFingerprint));
+check(() => assert.notEqual(retryJobs.rows[1].render_fingerprint, retrySourceBefore.render_fingerprint));
+const retrySourceAfter = (await db.query(
+  'select * from public.company_reel_render_jobs where id=$1',
+  [retrySource.render_job_id],
+)).rows[0];
+check(() => assert.deepEqual(retrySourceAfter, retrySourceBefore));
+const preparedExistingRetry = (await db.query(
+  'select * from public.prepare_company_reel_render_retry($1,$2)',
+  [retrySource.render_job_id, retryPlanRevision],
+)).rows[0];
+check(() => assert.equal(preparedExistingRetry.retry_render_job_id, retryRows[0].render_job_id));
+await assert.rejects(() => db.query(`insert into public.company_reel_render_jobs (
+  company_id,job_id,creative_plan_id,requested_by,status,render_fingerprint,renderer_version,
+  retry_of_render_job_id,retry_ordinal
+) values ($1,$2,$3,$4,'queued',$5,$6,$7,2)`, [
+  ids.company, ids.job, retryPlanId, ids.user, 'd'.repeat(64), reelRendererVersion, retrySource.render_job_id,
+])); checks += 1;
+const retryWorkspace = (await db.query('select * from public.get_company_reel_workspace($1)', [ids.job])).rows[0];
+check(() => assert.equal(retryWorkspace.render_job_id, retryRows[0].render_job_id));
+check(() => assert.equal(retryWorkspace.render_retry_of_render_job_id, retrySource.render_job_id));
+check(() => assert.equal(retryWorkspace.render_retry_ordinal, 1));
+
 await assert.rejects(() => db.query('update public.company_reel_render_jobs set requested_by=$1 where id=$2', [ids.otherUser, first.render_job_id])); checks += 1;
 const workspace = await db.query('select * from public.get_company_reel_workspace($1)', [ids.job]);
-check(() => assert.equal(workspace.rows[0].creative_plan_id, changedMediaPlanId));
+check(() => assert.equal(workspace.rows[0].creative_plan_id, retryPlanId));
 check(() => assert.ok(!Object.hasOwn(workspace.rows[0], 'local_facts')));
 await setActor(ids.explicitOff, 'off@example.com');
 await assert.rejects(() => begin()); checks += 1;
@@ -332,6 +411,10 @@ await assert.rejects(() => db.query("update public.company_reel_render_jobs set 
 await assert.rejects(() => db.query("update public.company_reel_render_jobs set status='rendering' where id=$1", [first.render_job_id]), /transition is invalid/); checks += 1;
 const completedClaim = await db.query('select * from public.claim_company_reel_render_job($1,60)', [first.render_job_id]);
 check(() => assert.equal(completedClaim.rows.length, 0));
+await assert.rejects(
+  () => db.query('select * from public.prepare_company_reel_render_retry($1,$2)', [first.render_job_id, plan.revision]),
+  /REEL_RENDER_RETRY_UNAVAILABLE/,
+); checks += 1;
 
 const failedRevision = 'reel-v1-87654321';
 const failedPlanId = await persist({ ...plan, revision: failedRevision }, failedRevision);
@@ -344,6 +427,10 @@ await assert.rejects(() => db.query("select * from public.fail_company_reel_rend
 const failed = await db.query("select * from public.fail_company_reel_render_job($1,$2,'REEL_RENDER_MEDIA_MISSING')", [failedJob.render_job_id, failedClaim.lease_token]);
 check(() => assert.equal(failed.rows[0].status, 'failed'));
 check(() => assert.equal(failed.rows[0].error_code, 'REEL_RENDER_MEDIA_MISSING'));
+await assert.rejects(
+  () => db.query('select * from public.prepare_company_reel_render_retry($1,$2)', [failedJob.render_job_id, failedRevision]),
+  /REEL_RENDER_RETRY_UNAVAILABLE/,
+); checks += 1;
 await assert.rejects(() => db.query("update public.company_reel_render_jobs set error_code='REEL_RENDER_FAILED' where id=$1", [failedJob.render_job_id]), /transition is invalid/); checks += 1;
 
 const crashRevision = 'reel-v1-crash-reclaim';
@@ -388,8 +475,12 @@ const tableSecurity = await db.query(`select
   has_function_privilege('authenticated','public.get_company_reel_workspace(uuid)','EXECUTE') auth_read,
   has_function_privilege('anon','public.get_company_reel_workspace(uuid)','EXECUTE') anon_read,
   has_function_privilege('authenticated','public.begin_company_reel_render_request(uuid,text)','EXECUTE') auth_begin,
+  has_function_privilege('authenticated','public.prepare_company_reel_render_retry(uuid,text)','EXECUTE') auth_prepare_retry,
+  has_function_privilege('authenticated','public.begin_company_reel_render_retry(uuid,text)','EXECUTE') auth_begin_retry,
   has_function_privilege('authenticated','public.approve_company_reel_creative_plan(uuid,text)','EXECUTE') auth_approve,
   has_function_privilege('anon','public.begin_company_reel_render_request(uuid,text)','EXECUTE') anon_begin,
+  has_function_privilege('anon','public.prepare_company_reel_render_retry(uuid,text)','EXECUTE') anon_prepare_retry,
+  has_function_privilege('anon','public.begin_company_reel_render_retry(uuid,text)','EXECUTE') anon_begin_retry,
   has_function_privilege('authenticated','public.claim_company_reel_render_job(uuid,integer)','EXECUTE') auth_claim,
   has_function_privilege('service_role','public.claim_company_reel_render_job(uuid,integer)','EXECUTE') service_claim,
   has_function_privilege('authenticated','public.release_company_reel_render_job_for_retry(uuid,uuid)','EXECUTE') auth_release,
@@ -398,8 +489,8 @@ const tableSecurity = await db.query(`select
   has_function_privilege('service_role','public.can_access_company_ai_assistant(uuid)','EXECUTE') service_ai_helper,
   has_function_privilege('authenticated','public.can_manage_company_ai_assistant(uuid)','EXECUTE') auth_manage_helper,
   has_function_privilege('service_role','public.can_manage_company_ai_assistant(uuid)','EXECUTE') service_manage_helper`);
-for (const key of ['plans_rls','approvals_rls','jobs_rls','auth_read','auth_begin','auth_approve','service_claim','service_release','service_ai_helper','service_manage_helper']) check(() => assert.equal(tableSecurity.rows[0][key], true));
-for (const key of ['auth_plan_select','auth_approval_select','auth_job_update','auth_claim','auth_release','auth_ai_helper','auth_manage_helper','anon_read','anon_begin']) check(() => assert.equal(tableSecurity.rows[0][key], false));
+for (const key of ['plans_rls','approvals_rls','jobs_rls','auth_read','auth_begin','auth_prepare_retry','auth_begin_retry','auth_approve','service_claim','service_release','service_ai_helper','service_manage_helper']) check(() => assert.equal(tableSecurity.rows[0][key], true));
+for (const key of ['auth_plan_select','auth_approval_select','auth_job_update','auth_claim','auth_release','auth_ai_helper','auth_manage_helper','anon_read','anon_begin','anon_prepare_retry','anon_begin_retry']) check(() => assert.equal(tableSecurity.rows[0][key], false));
 const functionSecurity = await db.query(`select proname, prosecdef, proconfig, pg_get_function_arguments(oid) arguments
   from pg_proc where oid in (
     'public.can_access_company_ai_assistant(uuid)'::regprocedure,
@@ -407,12 +498,14 @@ const functionSecurity = await db.query(`select proname, prosecdef, proconfig, p
     'public.get_company_reel_workspace(uuid)'::regprocedure,
     'public.approve_company_reel_creative_plan(uuid,text)'::regprocedure,
     'public.begin_company_reel_render_request(uuid,text)'::regprocedure,
+    'public.prepare_company_reel_render_retry(uuid,text)'::regprocedure,
+    'public.begin_company_reel_render_retry(uuid,text)'::regprocedure,
     'public.claim_company_reel_render_job(uuid,integer)'::regprocedure,
     'public.release_company_reel_render_job_for_retry(uuid,uuid)'::regprocedure,
     'public.complete_company_reel_render_job(uuid,uuid,text,text,text,integer,integer,integer,integer,text,text,integer,bigint,bigint,text,text,boolean)'::regprocedure,
     'public.fail_company_reel_render_job(uuid,uuid,text)'::regprocedure
   ) order by proname`);
-check(() => assert.equal(functionSecurity.rows.length, 9));
+check(() => assert.equal(functionSecurity.rows.length, 11));
 for (const row of functionSecurity.rows) {
   check(() => assert.equal(row.prosecdef, true));
   check(() => assert.deepEqual(row.proconfig, ['search_path=""']));
@@ -441,6 +534,10 @@ check(() => assert.match(controlledPipelineMigration, /company_reel_render_jobs_
 check(() => assert.match(controlledPipelineMigration, /video_sha256 ~ '\^\[0-9a-f\]\{64\}\$'/));
 check(() => assert.match(controlledPipelineMigration, /company_reel_render_jobs_transition_guard/));
 check(() => assert.match(controlledPipelineMigration, /can_manage_company_ai_assistant/));
+check(() => assert.match(retryMigration, /retry_fingerprint := encode\(sha256\(convert_to\(base_fingerprint \|\| ':retry:1'/));
+check(() => assert.match(retryMigration, /source_job\.error_code <> 'REEL_RENDER_CONTEXT_STALE'/));
+check(() => assert.match(retryMigration, /retry_ordinal = 1/));
+check(() => assert.match(retryMigration, /company_reel_render_jobs_retry_identity_unique/));
 
 await db.close();
 console.log(`Reel render job SQL regression tests passed (${checks}/${checks}).`);

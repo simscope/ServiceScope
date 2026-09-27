@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { normalizeRenderError } from '../server/reel-render-jobs/contracts.js';
+import { createRenderRepository } from '../server/reel-render-jobs/repository.js';
+import { authorizeReelForRender } from '../server/reel-renderer/authorization.js';
 import { createMemoryGuards } from '../supabase/functions/_shared/content-engine/rateLimit.js';
 import {
   handleManualReelGeneration,
@@ -103,6 +107,60 @@ check(() => assert.deepEqual(genericPreview.scenes.map((scene) => scene.overlayT
   'Service work is shown in progress',
   'The completed service result is shown',
 ]));
+
+const job248Rows = genericMediaRows().map((row, index) => ({
+  ...row,
+  finding_category: index === 1 ? 'equipment_overview' : 'possible_problem_detail',
+}));
+const job248Scenes = genericPreview.scenes.map((scene, index) => ({
+  attachmentId: scene.attachmentId,
+  position: scene.position,
+  role: selected[index].role,
+  categoryLabel: scene.categoryLabel,
+  primaryText: scene.overlayText,
+  supportingText: '',
+}));
+const job248Dependencies = makeDependencies({
+  operation: 'create',
+  scenes: job248Scenes,
+  system: 'Appliance',
+  issue: 'Service requested.',
+  reelRows: job248Rows,
+});
+await handleManualReelGeneration(job248Dependencies);
+const job248RenderFixture = renderRepositoryFixture(job248Dependencies.persistedPlan, job248Rows);
+const job248Authority = await createRenderRepository(job248RenderFixture.client).loadAuthority({
+  company_id: 'company-1',
+  job_id: jobId,
+  creative_plan_id: '00000000-0000-4000-8000-000000002480',
+});
+check(() => assert.deepEqual(job248Authority.context.safeMedia.map((item) => item.role), [
+  'detail',
+  'repair_process',
+  'finished_result',
+]));
+check(() => assert.doesNotThrow(() => authorizeReelForRender(job248Authority)));
+check(() => assert.equal(job248RenderFixture.calls.selection, 1));
+check(() => assert.equal(job248RenderFixture.calls.candidates, 1));
+check(() => assert.equal(job248Dependencies.counters.providerCalls, 0));
+check(() => assert.equal(job248Dependencies.counters.rendered, 0));
+
+const staleJob248Fixture = renderRepositoryFixture(job248Dependencies.persistedPlan, job248Rows, []);
+const staleJob248Authority = await createRenderRepository(staleJob248Fixture.client).loadAuthority({
+  company_id: 'company-1',
+  job_id: jobId,
+  creative_plan_id: '00000000-0000-4000-8000-000000002480',
+});
+check(() => {
+  let caught;
+  try {
+    authorizeReelForRender(staleJob248Authority);
+  } catch (error) {
+    caught = error;
+  }
+  assert.equal(caught?.message, 'REEL_GROUNDING_FAILED');
+  assert.equal(normalizeRenderError(caught), 'REEL_RENDER_CONTEXT_STALE');
+});
 
 const editedScenes = preview.scenes.map((scene, index) => ({
   attachmentId: scene.attachmentId,
@@ -362,4 +420,87 @@ function genericMediaRows() {
     finding_category: findings[index][0],
     explanation: findings[index][1],
   }));
+}
+
+function renderRepositoryFixture(persistedPlan, rows, selection = selected) {
+  const calls = { candidates: 0, downloads: 0, selection: 0 };
+  const bytesByAttachment = new Map(selected.map((item, index) => [
+    item.attachmentId,
+    new TextEncoder().encode(`job-248-media-${index + 1}`),
+  ]));
+  const authorityRows = rows.map((row) => {
+    const bytes = bytesByAttachment.get(row.attachment_id);
+    return {
+      ...row,
+      attachment_sha256: `\\x${createHash('sha256').update(bytes).digest('hex')}`,
+      storage_bucket: 'job-files',
+      storage_path: `company-1/${jobId}/${row.attachment_id}.jpg`,
+    };
+  });
+  return {
+    calls,
+    client: {
+      async select(table) {
+        if (table === 'company_reel_creative_plans') return [{
+          id: '00000000-0000-4000-8000-000000002480',
+          company_id: persistedPlan.companyId,
+          job_id: persistedPlan.jobId,
+          created_by: persistedPlan.createdBy,
+          locale: persistedPlan.locale,
+          local_facts: persistedPlan.localFacts,
+          media_plan: persistedPlan.mediaPlan,
+          planning_revision: persistedPlan.planningRevision,
+          plan_json: persistedPlan.plan,
+        }];
+        if (table === 'jobs') return [{
+          id: jobId, company_id: 'company-1', job_number: '248', status: 'Completed',
+          system: 'Appliance', issue: 'Service requested.', notes: 'Private job note',
+          service_call_fee_cents: 10000, labor_cents: 20000,
+          customer_id: 'customer-1', customer_location_id: 'location-1',
+        }];
+        if (table === 'companies') return [{ id: 'company-1', owner_email: 'owner@example.test' }];
+        if (table === 'company_profiles') return [{
+          access_rules: { aiAssistant: 'full' }, ai_voice_enabled: true,
+          ai_public_display_name: 'Northstar Service', ai_default_tone: 'Professional',
+          ai_custom_voice_guidance: '', ai_service_areas: [], ai_public_location_wording: '',
+          ai_cta_guidance: '', ai_hashtag_guidance: [], ai_channel_defaults: {},
+        }];
+        if (table === 'customers') return [{
+          organization: '', primary_name: 'Jane Customer', primary_email: 'jane@example.test',
+          primary_phone: '(212) 555-0199', notes: '',
+        }];
+        if (table === 'customer_locations') return [{ address: '123 Market Street' }];
+        if (table === 'job_attachments') return selected.map((item) => ({
+          id: item.attachmentId, company_id: 'company-1', job_id: jobId,
+          name: `${item.role}.jpg`, mime_type: 'image/jpeg', kind: 'photo',
+          created_at: '2026-09-26T00:00:00Z',
+        }));
+        if (['job_materials', 'job_invoices', 'job_comments'].includes(table)) return [];
+        throw new Error(`Unexpected table ${table}`);
+      },
+      async adminRpc(name, body) {
+        if (name === 'list_company_reel_media_selection_for_planning') {
+          calls.selection += 1;
+          assert.deepEqual(body, { p_company_id: 'company-1', p_job_id: jobId });
+          return selection.map((item) => ({
+            attachment_id: item.attachmentId,
+            role: item.role,
+            selection_position: item.position,
+          }));
+        }
+        if (name === 'list_company_reel_media_analysis_candidates') {
+          calls.candidates += 1;
+          assert.deepEqual(body.p_attachment_ids, mediaPlan.map((item) => item.attachmentId));
+          return authorityRows;
+        }
+        throw new Error(`Unexpected RPC ${name}`);
+      },
+      async downloadBounded(bucket, path) {
+        calls.downloads += 1;
+        assert.equal(bucket, 'job-files');
+        const row = authorityRows.find((candidate) => candidate.storage_path === path);
+        return bytesByAttachment.get(row?.attachment_id) ?? new Uint8Array();
+      },
+    },
+  };
 }

@@ -117,6 +117,7 @@ const exposedDatabaseErrors = new Set([
   'REEL_RENDER_PLAN_UNAVAILABLE',
   'REEL_RENDER_APPROVAL_REQUIRED',
   'REEL_RENDER_APPROVAL_CONFLICT',
+  'REEL_RENDER_RETRY_UNAVAILABLE',
 ]);
 
 async function safeSupabaseErrorCode(response) {

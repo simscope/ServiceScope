@@ -18,6 +18,7 @@ export const reelRenderMaxMediaItems = reelLimits.maxMediaItems;
 export const reelRenderMaxAggregateMediaBytes = reelRenderMaxMediaBytes * reelRenderMaxMediaItems;
 
 const requestFields = new Set(['creativePlanId', 'expectedPlanRevision']);
+const retryRequestFields = new Set(['creativePlanId', 'expectedPlanRevision', 'retryOfRenderJobId']);
 const messageFields = new Set(['schemaVersion', 'renderJobId']);
 const artifactFields = new Set(['renderJobId']);
 export const safeRenderErrorCodes = Object.freeze([
@@ -28,10 +29,14 @@ export const safeRenderErrorCodes = Object.freeze([
 ]);
 
 export function parseRenderRequest(value) {
-  const row = exactObject(value, requestFields);
+  const fields = value && typeof value === 'object' && !Array.isArray(value) && Object.hasOwn(value, 'retryOfRenderJobId')
+    ? retryRequestFields
+    : requestFields;
+  const row = exactObject(value, fields);
   return {
     creativePlanId: uuid(row.creativePlanId),
     expectedPlanRevision: exactId(row.expectedPlanRevision, 180),
+    retryOfRenderJobId: fields === retryRequestFields ? uuid(row.retryOfRenderJobId) : null,
   };
 }
 
