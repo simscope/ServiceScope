@@ -1,4 +1,5 @@
 export const reelRequestSchemaVersion = 'reel-creative-request-v1';
+export const reelManualRequestSchemaVersion = 'reel-manual-plan-request-v1';
 export const reelPlanSchemaVersion = 'reel-creative-plan-v1';
 
 export const reelDecisions = Object.freeze(['create_reel', 'needs_more_media', 'skip']);
@@ -13,6 +14,7 @@ export const reelMarketingAngles = Object.freeze([
   'maintenance_tip',
   'technician_insight',
   'unusual_failure',
+  'manual_selection',
 ]);
 export const reelSceneRoles = Object.freeze([
   'overview',
@@ -32,6 +34,15 @@ export const reelMotionPresets = Object.freeze([
 ]);
 export const reelCropStrategies = Object.freeze(['cover_center', 'subject_center', 'detail_crop']);
 export const reelTransitions = Object.freeze(['cut', 'crossfade', 'quick_fade']);
+export const reelSceneCategoryLabels = Object.freeze([
+  'PROBLEM',
+  'DETAIL',
+  'SERVICE',
+  'PROCESS',
+  'RESULT',
+  'FIELD NOTE',
+  'SUPPORTING',
+]);
 export const reelPrivacyStatuses = Object.freeze(['passed', 'reviewed']);
 export const reelMusicModes = Object.freeze(['none', 'future_library']);
 

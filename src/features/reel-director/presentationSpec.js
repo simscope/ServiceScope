@@ -44,14 +44,22 @@ const reelSceneTreatments = Object.freeze({
   finished_result: Object.freeze({ label: 'RESULT', accent: '#d9f99d', emphasis: 'result' }),
   supporting_image: Object.freeze({ label: 'FIELD NOTE', accent: '#e2e8f0', emphasis: 'standard' }),
 });
+const manualLabelsBySceneRole = Object.freeze({
+  detail: new Set(['PROBLEM', 'DETAIL']),
+  repair_process: new Set(['SERVICE', 'PROCESS']),
+  finished_result: new Set(['RESULT']),
+  supporting_image: new Set(['FIELD NOTE', 'SUPPORTING']),
+});
 
-export function reelSceneTreatment(sceneRole, { marketingAngle, position } = {}) {
+export function reelSceneTreatment(sceneRole, { marketingAngle, position, categoryLabel } = {}) {
   const isSupportedBefore = marketingAngle === 'before_after'
     && position === 1
     && (sceneRole === 'overview' || sceneRole === 'detail');
   const treatment = isSupportedBefore ? reelBeforeTreatment : reelSceneTreatments[sceneRole];
   if (!treatment) throw new Error('REEL_PRESENTATION_INVALID');
-  return treatment;
+  if (marketingAngle !== 'manual_selection' || categoryLabel === undefined) return treatment;
+  if (!manualLabelsBySceneRole[sceneRole]?.has(categoryLabel)) throw new Error('REEL_PRESENTATION_INVALID');
+  return Object.freeze({ ...treatment, label: categoryLabel });
 }
 
 export function buildReelTimeline(plan) {

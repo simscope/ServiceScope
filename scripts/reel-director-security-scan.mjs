@@ -3,9 +3,11 @@ import { readFile } from 'node:fs/promises';
 
 const browserFiles = [
   'src/components/portal/AiAssistantPage.tsx',
+  'src/components/portal/ManualReelPlanEditor.tsx',
   'src/components/portal/ReelPreview.tsx',
   'src/features/reel-director/clientApi.ts',
   'src/features/reel-director/contracts.ts',
+  'src/features/reel-director/manualPlan.ts',
   'src/features/reel-director/reelState.ts',
   'src/features/reel-director/oneClickReel.ts',
 ];
@@ -16,12 +18,13 @@ const serverFiles = [
   'supabase/functions/_shared/reel-engine/schemas.js',
   'supabase/functions/_shared/reel-engine/mediaEvidence.js',
   'supabase/functions/_shared/reel-engine/evidenceCapabilities.js',
+  'supabase/functions/_shared/reel-engine/manualPlan.js',
 ];
 const browser = (await Promise.all(browserFiles.map((file) => readFile(file, 'utf8')))).join('\n');
 const reelContractSurface = (await Promise.all(browserFiles.slice(1).map((file) => readFile(file, 'utf8')))).join('\n');
 const server = (await Promise.all(serverFiles.map((file) => readFile(file, 'utf8')))).join('\n');
 const aiPage = await readFile(browserFiles[0], 'utf8');
-const preview = await readFile(browserFiles[1], 'utf8');
+const preview = await readFile('src/components/portal/ReelPreview.tsx', 'utf8');
 const reelContracts = await readFile('src/features/reel-director/contracts.ts', 'utf8');
 const reelRequestMediaContract = reelContracts.match(/export type ReelMediaPlanItem = \{[\s\S]*?\n\};/)?.[0] ?? '';
 const reelEdge = await readFile('supabase/functions/ai-content-generate/index.ts', 'utf8');
@@ -31,6 +34,7 @@ const canonicalSchema = await readFile('supabase/schema.sql', 'utf8');
 const oneClickSource = await readFile('src/features/reel-director/oneClickReel.ts', 'utf8');
 const reelStateSource = await readFile('src/features/reel-director/reelState.ts', 'utf8');
 const reelRegression = await readFile('scripts/reel-director-regression-tests.mjs', 'utf8');
+const manualReelServer = await readFile('supabase/functions/_shared/reel-engine/manualPlan.js', 'utf8');
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
 
@@ -59,6 +63,11 @@ check(() => assert.match(aiPage, /reconcileReelApproval/));
 check(() => assert.match(server, /context\.safeMedia/));
 check(() => assert.doesNotMatch(server, /generated image|image generation|text-to-image/i));
 check(() => assert.doesNotMatch(server, /musicUrl|audioUrl|licensedMusic/i));
+check(() => assert.doesNotMatch(manualReelServer, /provider\.generate|beginReelRender|meta-social-publish|graph\.facebook\.com|\/feed|\/photos/i));
+check(() => assert.match(manualReelServer, /baseContext\.accessLevel !== 'full'/));
+check(() => assert.match(manualReelServer, /assertSceneAuthority\(scenes, context\.safeMedia\)/));
+check(() => assert.match(manualReelServer, /validateReelPlan\(plan, groundedContext\)/));
+check(() => assert.match(reelEdge, /reel-manual-plan-request-v1[\s\S]*handleManualReelGeneration/));
 check(() => assert.match(reelRequestMediaContract, /attachmentId:\s*string/));
 check(() => assert.match(reelRequestMediaContract, /position:\s*number/));
 for (const forbidden of ['role', 'evidenceFindingId', 'evidenceCategory', 'evidenceText', 'confidence', 'privacyStatus']) {

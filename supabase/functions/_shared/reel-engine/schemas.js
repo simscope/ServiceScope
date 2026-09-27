@@ -7,6 +7,7 @@ import {
   reelMotionPresets,
   reelMusicModes,
   reelPlanSchemaVersion,
+  reelSceneCategoryLabels,
   reelRequestSchemaVersion,
   reelSceneRoles,
   reelTransitions,
@@ -60,6 +61,14 @@ const sceneFields = [
   'evidenceIds',
   'voiceoverLine',
 ];
+const sceneAllowedFields = new Set([...sceneFields, 'categoryLabel']);
+const manualCategoryLabelsByRole = Object.freeze({
+  detail: new Set(['PROBLEM', 'DETAIL']),
+  repair_process: new Set(['SERVICE', 'PROCESS']),
+  finished_result: new Set(['RESULT']),
+  supporting_image: new Set(['FIELD NOTE', 'SUPPORTING']),
+});
+const providerReelMarketingAngles = reelMarketingAngles.filter((angle) => angle !== 'manual_selection');
 const captionFields = ['text', 'evidenceIds'];
 const voiceoverFields = ['enabled', 'script', 'evidenceIds'];
 const claimFields = ['id', 'text', 'evidenceIds'];
@@ -105,6 +114,7 @@ export function validateReelRequestBody(value) {
 
 export function parseReelProviderResult(rawJson, context) {
   const result = parseReelPlanShape(rawJson);
+  if (result.marketingAngle === 'manual_selection') fail('INVALID_REEL_PROVIDER_OUTPUT');
   validateReelPlan(result, context);
   return result;
 }
@@ -202,6 +212,7 @@ export function validateReelPlan(plan, context) {
       sceneIds.add(scene.id);
       if (scene.position !== index + 1 || !safeMediaById.has(scene.attachmentId)) fail('REEL_MEDIA_UNAVAILABLE');
       if (safeMediaById.get(scene.attachmentId).role !== scene.sceneRole) fail('REEL_GROUNDING_FAILED');
+      validateSceneCategoryLabel(scene, plan.marketingAngle);
       const mediaEvidencePrefix = `media:${scene.attachmentId}:`;
       if (!scene.evidenceIds.some((id) => id.startsWith(mediaEvidencePrefix))) fail('REEL_GROUNDING_FAILED');
       if (wordCount(scene.overlayText) < 2 || wordCount(scene.overlayText) > 8) fail('REEL_QUALITY_FAILED');
@@ -233,7 +244,7 @@ export function buildReelProviderOutputJsonSchema() {
       decision: { type: 'string', enum: reelDecisions },
       qualityScore: { type: 'integer', minimum: 0, maximum: 100 },
       qualityReasons: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'string', minLength: 1, maxLength: 180 } },
-      marketingAngle: { type: 'string', enum: reelMarketingAngles },
+      marketingAngle: { type: 'string', enum: providerReelMarketingAngles },
       hook: objectSchema(hookFields, {
         text: { type: 'string', minLength: 1, maxLength: 60 },
         evidenceIds: optionalIds,
@@ -288,7 +299,11 @@ function parseCover(value) {
 function parseScenes(value) {
   if (!Array.isArray(value) || value.length > reelLimits.maxCreateScenes) fail('INVALID_REEL_PROVIDER_OUTPUT');
   return value.map((item) => {
-    const row = exactObject(item, sceneFields);
+    const row = plainObject(item, 'INVALID_REEL_PROVIDER_OUTPUT');
+    assertNoUnknownFields(row, sceneAllowedFields, 'INVALID_REEL_PROVIDER_OUTPUT');
+    for (const field of sceneFields) {
+      if (!Object.prototype.hasOwnProperty.call(row, field)) fail('INVALID_REEL_PROVIDER_OUTPUT');
+    }
     if (!Number.isInteger(row.position) || !Number.isInteger(row.durationMs) || row.durationMs < reelLimits.minSceneDurationMs || row.durationMs > reelLimits.maxSceneDurationMs) fail('INVALID_REEL_PROVIDER_OUTPUT');
     if (!reelSceneRoles.includes(row.sceneRole) || !reelMotionPresets.includes(row.motionPreset) || !reelCropStrategies.includes(row.cropStrategy) || !reelTransitions.includes(row.transitionOut)) fail('INVALID_REEL_PROVIDER_OUTPUT');
     return {
@@ -296,6 +311,7 @@ function parseScenes(value) {
       position: row.position,
       attachmentId: exactId(row.attachmentId, 128),
       sceneRole: row.sceneRole,
+      categoryLabel: row.categoryLabel === undefined ? undefined : requiredText(row.categoryLabel, 24),
       durationMs: row.durationMs,
       overlayText: requiredText(row.overlayText, reelLimits.maxOverlayLength),
       secondaryText: row.secondaryText === null ? undefined : cleanText(row.secondaryText, reelLimits.maxSecondaryLength),
@@ -306,6 +322,17 @@ function parseScenes(value) {
       voiceoverLine: row.voiceoverLine === null ? undefined : cleanText(row.voiceoverLine, 220),
     };
   });
+}
+
+function validateSceneCategoryLabel(scene, marketingAngle) {
+  if (marketingAngle !== 'manual_selection') {
+    if (scene.categoryLabel !== undefined) fail('INVALID_REEL_PROVIDER_OUTPUT');
+    return;
+  }
+  if (!reelSceneCategoryLabels.includes(scene.categoryLabel)
+    || !manualCategoryLabelsByRole[scene.sceneRole]?.has(scene.categoryLabel)) {
+    fail('INVALID_REEL_PROVIDER_OUTPUT');
+  }
 }
 
 function parseCaption(value) {
