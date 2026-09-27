@@ -25,6 +25,7 @@ COPY server/reel-sandbox-runner/runner.js server/reel-sandbox-runner/run.mjs ./s
 COPY src/features/reel-director/presentationSpec.js ./src/features/reel-director/presentationSpec.js
 COPY supabase/functions/_shared/reel-engine/contracts.js ./supabase/functions/_shared/reel-engine/contracts.js
 COPY supabase/functions/_shared/reel-engine/evidenceCapabilities.js ./supabase/functions/_shared/reel-engine/evidenceCapabilities.js
+COPY supabase/functions/_shared/reel-engine/manualPlanContract.js ./supabase/functions/_shared/reel-engine/manualPlanContract.js
 COPY supabase/functions/_shared/reel-engine/schemas.js ./supabase/functions/_shared/reel-engine/schemas.js
 COPY supabase/functions/_shared/content-engine/contracts.js ./supabase/functions/_shared/content-engine/contracts.js
 COPY supabase/functions/_shared/content-engine/errors.js ./supabase/functions/_shared/content-engine/errors.js

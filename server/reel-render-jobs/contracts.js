@@ -58,7 +58,9 @@ export function renderMessage(renderJobId) {
 export function normalizeRenderError(error) {
   const message = error instanceof Error ? error.message : String(error ?? '');
   if (message.includes('REEL_PRIVACY_FAILED')) return 'REEL_PRIVACY_FAILED';
-  if (/REEL_(?:ANALYSIS|PRIVACY|GROUNDING|QUALITY|MEDIA_UNAVAILABLE)/.test(message)) return 'REEL_RENDER_CONTEXT_STALE';
+  if (/REEL_(?:ANALYSIS|PRIVACY|GROUNDING|QUALITY|MEDIA_UNAVAILABLE|MEDIA_SELECTION_(?:NOT_READY|CONFLICT))/.test(message)) {
+    return 'REEL_RENDER_CONTEXT_STALE';
+  }
   return safeRenderErrorCodes.find((code) => message.includes(code)) ?? 'REEL_RENDER_FAILED';
 }
 

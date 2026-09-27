@@ -1,4 +1,5 @@
 import { parseReelPlanShape, validateReelPlan } from '../../supabase/functions/_shared/reel-engine/schemas.js';
+import { validateManualReelPlanForRender } from '../../supabase/functions/_shared/reel-engine/manualPlanContract.js';
 import { ReelRenderError } from './errors.js';
 
 const authorizedPlans = new WeakMap();
@@ -7,6 +8,8 @@ const validationErrorCodes = new Set([
   'REEL_PRIVACY_FAILED',
   'REEL_QUALITY_FAILED',
   'REEL_MEDIA_UNAVAILABLE',
+  'REEL_MEDIA_SELECTION_NOT_READY',
+  'REEL_MEDIA_SELECTION_CONFLICT',
 ]);
 const invalidPlanErrorCodes = new Set(['INVALID_REEL_PROVIDER_OUTPUT', 'INVALID_REQUEST']);
 
@@ -18,7 +21,11 @@ export function authorizeReelForRender({ plan, context }) {
     }
     const { revision, ...providerPlan } = plan;
     const canonicalPlan = parseReelPlanShape(providerPlan);
-    validateReelPlan(canonicalPlan, context);
+    if (canonicalPlan.marketingAngle === 'manual_selection') {
+      validateManualReelPlanForRender(providerPlan, context);
+    } else {
+      validateReelPlan(canonicalPlan, context);
+    }
     if (canonicalPlan.audio.musicMode !== 'none' || canonicalPlan.voiceover.enabled || canonicalPlan.voiceover.script !== '') {
       throw new ReelRenderError('REEL_RENDER_AUDIO_UNSUPPORTED');
     }

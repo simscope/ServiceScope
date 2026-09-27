@@ -47,6 +47,7 @@ check(() => assert.match(contracts, /messageFields = new Set\(\['schemaVersion',
 check(() => assert.match(dockerfile, /^FROM node:22-bookworm-slim@sha256:[0-9a-f]{64}$/m));
 check(() => assert.match(dockerfile, /ffmpeg[\s\\]+fonts-dejavu-core[\s\\]+fonts-liberation2/));
 check(() => assert.doesNotMatch(dockerfile, /ffmpeg-static|@ffmpeg-installer|curl|wget|\.env|Dockerfile\.vercel/i));
+check(() => assert.match(dockerfile, /COPY supabase\/functions\/_shared\/reel-engine\/manualPlanContract\.js/));
 check(() => assert.match(dockerfile, /USER node/));
 check(() => assert.match(ci, /Verify qualified FFmpeg renderer source unchanged/));
 check(() => assert.doesNotMatch(ci, /HEAD\^1|HEAD\^2/));
@@ -61,6 +62,7 @@ check(() => assert.match(ci, /Verify Sandbox image contains no secret material/)
 check(() => assert.match(ci, /TOKEN\|SECRET\|PASSWORD\|PRIVATE_KEY\|SUPABASE\|OPENAI\|META_/));
 check(() => assert.match(ci, /-name "\.env"[\s\S]*-path "\*\/\.ssh\/\*"/));
 check(() => assert.match(ci, /server\/reel-sandbox-runner\/runner\.js[\s\S]*supabase\/functions\/_shared\/reel-engine\/schemas\.js/));
+check(() => assert.match(ci, /supabase\/functions\/_shared\/reel-engine\/manualPlanContract\.js/));
 check(() => assert.match(ci, /test "\$HOST_SHA" = "\$IMAGE_SHA"/));
 
 console.log(`Reel Sandbox runtime security scan passed (${checks}/${checks}).`);

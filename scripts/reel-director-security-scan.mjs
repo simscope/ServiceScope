@@ -19,6 +19,7 @@ const serverFiles = [
   'supabase/functions/_shared/reel-engine/mediaEvidence.js',
   'supabase/functions/_shared/reel-engine/evidenceCapabilities.js',
   'supabase/functions/_shared/reel-engine/manualPlan.js',
+  'supabase/functions/_shared/reel-engine/manualPlanContract.js',
 ];
 const browser = (await Promise.all(browserFiles.map((file) => readFile(file, 'utf8')))).join('\n');
 const reelContractSurface = (await Promise.all(browserFiles.slice(1).map((file) => readFile(file, 'utf8')))).join('\n');
@@ -35,6 +36,8 @@ const oneClickSource = await readFile('src/features/reel-director/oneClickReel.t
 const reelStateSource = await readFile('src/features/reel-director/reelState.ts', 'utf8');
 const reelRegression = await readFile('scripts/reel-director-regression-tests.mjs', 'utf8');
 const manualReelServer = await readFile('supabase/functions/_shared/reel-engine/manualPlan.js', 'utf8');
+const manualReelContract = await readFile('supabase/functions/_shared/reel-engine/manualPlanContract.js', 'utf8');
+const manualReelSurface = `${manualReelServer}\n${manualReelContract}`;
 let checks = 0;
 function check(fn) { fn(); checks += 1; }
 
@@ -63,11 +66,12 @@ check(() => assert.match(aiPage, /reconcileReelApproval/));
 check(() => assert.match(server, /context\.safeMedia/));
 check(() => assert.doesNotMatch(server, /generated image|image generation|text-to-image/i));
 check(() => assert.doesNotMatch(server, /musicUrl|audioUrl|licensedMusic/i));
-check(() => assert.doesNotMatch(manualReelServer, /provider\.generate|beginReelRender|meta-social-publish|graph\.facebook\.com|\/feed|\/photos/i));
+check(() => assert.doesNotMatch(manualReelSurface, /provider\.generate|beginReelRender|meta-social-publish|graph\.facebook\.com|\/feed|\/photos/i));
 check(() => assert.match(manualReelServer, /baseContext\.accessLevel !== 'full'/));
-check(() => assert.match(manualReelServer, /assertSceneAuthority\(scenes, context\.safeMedia\)/));
+check(() => assert.match(manualReelServer, /assertManualSceneAuthority\(scenes, context\.safeMedia\)/));
+check(() => assert.match(manualReelContract, /export function assertManualSceneAuthority\(scenes, safeMedia\)/));
 check(() => assert.match(manualReelServer, /validateManualReelPlan\(plan, scenes, groundedContext\)/));
-check(() => assert.doesNotMatch(manualReelServer, /validateReelPlan\(plan, groundedContext\)/));
+check(() => assert.doesNotMatch(manualReelSurface, /validateReelPlan\(plan, groundedContext\)/));
 check(() => assert.match(reelEdge, /reel-manual-plan-request-v1[\s\S]*handleManualReelGeneration/));
 check(() => assert.match(reelRequestMediaContract, /attachmentId:\s*string/));
 check(() => assert.match(reelRequestMediaContract, /position:\s*number/));

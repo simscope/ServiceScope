@@ -240,6 +240,7 @@ jobs:
             server/reel-renderer/authorization.js \
             server/reel-renderer/errors.js \
             server/reel-sandbox-runtime/contracts.js \
+            supabase/functions/_shared/reel-engine/manualPlanContract.js \
             supabase/functions/_shared/reel-engine/schemas.js
           do
             HOST_SHA="$(sha256sum "$FILE" | cut -d ' ' -f 1)"

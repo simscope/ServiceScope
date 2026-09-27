@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { normalizeRenderError } from '../server/reel-render-jobs/contracts.js';
-import { createRenderRepository } from '../server/reel-render-jobs/repository.js';
+import { createRenderRepository, preflightRenderRetry } from '../server/reel-render-jobs/repository.js';
 import { authorizeReelForRender } from '../server/reel-renderer/authorization.js';
 import { createMemoryGuards } from '../supabase/functions/_shared/content-engine/rateLimit.js';
 import {
@@ -38,6 +37,11 @@ function check(fn) {
 
 async function rejectsCode(promise, code) {
   await assert.rejects(promise, (error) => error?.message === code);
+  checks += 1;
+}
+
+async function checkAsync(fn) {
+  await fn();
   checks += 1;
 }
 
@@ -108,9 +112,16 @@ check(() => assert.deepEqual(genericPreview.scenes.map((scene) => scene.overlayT
   'The completed service result is shown',
 ]));
 
+const job248Findings = [
+  ['finding-1', 'possible_problem_detail', 'Shows components with heavy rust and corrosion, which may indicate potential degradation risk for these parts.'],
+  ['finding-3', 'equipment_overview', 'Image shows the exterior of a large HVAC or mechanical unit with rust on top and open panel revealing internal components, useful as equipment overview.'],
+  ['finding-3', 'possible_problem_detail', 'Visible rust and corrosion on pipes and surface, suggesting possible deterioration in the equipment area.'],
+];
 const job248Rows = genericMediaRows().map((row, index) => ({
   ...row,
-  finding_category: index === 1 ? 'equipment_overview' : 'possible_problem_detail',
+  finding_id: job248Findings[index][0],
+  finding_category: job248Findings[index][1],
+  explanation: job248Findings[index][2],
 }));
 const job248Scenes = genericPreview.scenes.map((scene, index) => ({
   attachmentId: scene.attachmentId,
@@ -129,37 +140,42 @@ const job248Dependencies = makeDependencies({
 });
 await handleManualReelGeneration(job248Dependencies);
 const job248RenderFixture = renderRepositoryFixture(job248Dependencies.persistedPlan, job248Rows);
-const job248Authority = await createRenderRepository(job248RenderFixture.client).loadAuthority({
+const job248Repository = createRenderRepository(job248RenderFixture.client);
+const job248Claim = {
   company_id: 'company-1',
   job_id: jobId,
   creative_plan_id: '00000000-0000-4000-8000-000000002480',
-});
+};
+const job248Authority = await job248Repository.loadAuthority(job248Claim);
 check(() => assert.deepEqual(job248Authority.context.safeMedia.map((item) => item.role), [
   'detail',
   'repair_process',
   'finished_result',
 ]));
+check(() => {
+  const { revision: _revision, ...manualPlan } = job248Authority.plan;
+  assert.throws(() => validateReelPlan(parseReelPlanShape(manualPlan), job248Authority.context), /REEL_GROUNDING_FAILED/);
+});
 check(() => assert.doesNotThrow(() => authorizeReelForRender(job248Authority)));
-check(() => assert.equal(job248RenderFixture.calls.selection, 1));
-check(() => assert.equal(job248RenderFixture.calls.candidates, 1));
+await checkAsync(() => preflightRenderRetry(job248Repository, job248Claim));
+check(() => assert.equal(job248RenderFixture.calls.selection, 2));
+check(() => assert.equal(job248RenderFixture.calls.candidates, 2));
 check(() => assert.equal(job248Dependencies.counters.providerCalls, 0));
 check(() => assert.equal(job248Dependencies.counters.rendered, 0));
 
-const staleJob248Fixture = renderRepositoryFixture(job248Dependencies.persistedPlan, job248Rows, []);
-const staleJob248Authority = await createRenderRepository(staleJob248Fixture.client).loadAuthority({
-  company_id: 'company-1',
-  job_id: jobId,
-  creative_plan_id: '00000000-0000-4000-8000-000000002480',
+await expectJob248PreflightStale({ selection: [] });
+await expectJob248PreflightStale({ selection: [selected[1], selected[0], selected[2]] });
+await expectJob248PreflightStale({
+  selection: [{ ...selected[0], role: 'supporting' }, selected[1], selected[2]],
 });
-check(() => {
-  let caught;
-  try {
-    authorizeReelForRender(staleJob248Authority);
-  } catch (error) {
-    caught = error;
-  }
-  assert.equal(caught?.message, 'REEL_GROUNDING_FAILED');
-  assert.equal(normalizeRenderError(caught), 'REEL_RENDER_CONTEXT_STALE');
+await expectJob248PreflightStale({
+  selection: [{ ...selected[0], attachmentId: '00000000-0000-4000-8000-000000002499' }, selected[1], selected[2]],
+});
+await expectJob248PreflightStale({
+  rows: job248Rows.map((row, index) => index === 0 ? { ...row, unresolved_privacy_count: 1 } : row),
+});
+await expectJob248PreflightStale({
+  rows: job248Rows.map((row, index) => index === 0 ? { ...row, finding_id: 'finding-current' } : row),
 });
 
 const editedScenes = preview.scenes.map((scene, index) => ({
@@ -217,6 +233,11 @@ await rejectsCode(handleManualReelGeneration(makeDependencies({
 const aiContext = aiValidationContext(preview);
 const { revision: _previewRevision, ...previewPlan } = preview;
 check(() => assert.throws(() => validateReelPlan(previewPlan, aiContext), /REEL_GROUNDING_FAILED/));
+const { plan: validAiPlan, context: validAiContext } = aiRenderCompatibilityFixture();
+check(() => assert.doesNotThrow(() => authorizeReelForRender({
+  plan: validAiPlan,
+  context: validAiContext,
+})));
 const aiPlan = {
   ...previewPlan,
   marketingAngle: 'repair_process',
@@ -233,10 +254,11 @@ check(() => assert.equal(staleSelectionDependencies.counters.providerCalls, 0));
 await rejectsCode(handleManualReelGeneration(makeDependencies({ access: 'readonly' })), 'FORBIDDEN');
 await rejectsCode(handleManualReelGeneration(makeDependencies({ sessionCompanyId: 'company-2' })), 'FORBIDDEN');
 
-const [edgeSource, manualSource, assistantSource] = await Promise.all([
+const [edgeSource, manualSource, assistantSource, renderRequestSource] = await Promise.all([
   readFile('supabase/functions/ai-content-generate/index.ts', 'utf8'),
   readFile('supabase/functions/_shared/reel-engine/manualPlan.js', 'utf8'),
   readFile('src/components/portal/AiAssistantPage.tsx', 'utf8'),
+  readFile('api/reel-render-request.js', 'utf8'),
 ]);
 check(() => assert.match(edgeSource, /reel-manual-plan-request-v1[\s\S]*handleManualReelGeneration/));
 check(() => assert.doesNotMatch(manualSource, /provider\.generate|beginReelRender|OpenAI|Vision/));
@@ -247,6 +269,7 @@ check(() => assert.match(assistantSource, /await manualReelPlanIdempotencyKey\('
 check(() => assert.match(assistantSource, /await manualReelPlanIdempotencyKey\('create', manualReelSelectionRevision\)/));
 check(() => assert.doesNotMatch(assistantSource, /manual-reel:preview:\$\{manualReelSelectionRevision\}/));
 check(() => assert.match(manualSource, /exactId\(body\.idempotencyKey, 180\)/));
+check(() => assert.match(renderRequestSource, /preflightRenderRetry\(repository, claim\)/));
 
 console.log(`reel manual plan fallback tests: ${checks} passed`);
 
@@ -422,6 +445,69 @@ function genericMediaRows() {
   }));
 }
 
+function aiRenderCompatibilityFixture() {
+  const caption = 'Visible service issue documented before careful service work in progress and a verified finished equipment result from the approved job media.';
+  const plan = {
+    schemaVersion: 'reel-creative-plan-v1',
+    revision: 'reel-v1-ai-compatibility',
+    decision: 'create_reel',
+    qualityScore: 90,
+    qualityReasons: ['The approved evidence supports a complete service story.'],
+    marketingAngle: 'repair_process',
+    hook: { text: 'Visible service issue documented', evidenceIds: ['diagnosis'] },
+    cover: { title: 'Visible service issue', attachmentId: 'photo-a' },
+    scenes: [
+      aiScene('scene-1', 1, 'photo-a', 'overview', 'Visible service issue documented', ['media:photo-a:finding']),
+      aiScene('scene-2', 2, 'photo-b', 'repair_process', 'Careful service work in progress', ['media:photo-b:finding', 'repair-performed']),
+      aiScene('scene-3', 3, 'photo-c', 'finished_result', 'Verified finished equipment result', ['media:photo-c:finding', 'final-result']),
+    ],
+    caption: { text: caption, evidenceIds: ['diagnosis'] },
+    voiceover: { enabled: false, script: '', evidenceIds: [] },
+    missingShots: [],
+    claims: [],
+    safety: { ok: true, privacy: 'passed', grounding: 'passed', quality: 'passed', blockedReasons: [] },
+    brand: { enabled: false, displayName: '', cta: '', durationMs: 0, evidenceIds: [] },
+    audio: { musicMode: 'none' },
+  };
+  return {
+    plan,
+    context: {
+      privateValuesForLeakDetection: [],
+      companyVoice: { enabled: false, publicDisplayName: '' },
+      evidence: [
+        { id: 'diagnosis', text: `${plan.hook.text}. ${caption}` },
+        { id: 'repair-performed', text: plan.scenes[1].overlayText },
+        { id: 'final-result', text: plan.scenes[2].overlayText },
+        { id: 'media:photo-a:finding', text: plan.scenes[0].overlayText },
+        { id: 'media:photo-b:finding', text: plan.scenes[1].overlayText },
+        { id: 'media:photo-c:finding', text: plan.scenes[2].overlayText },
+      ],
+      safeMedia: [
+        { attachmentId: 'photo-a', role: 'overview' },
+        { attachmentId: 'photo-b', role: 'repair_process' },
+        { attachmentId: 'photo-c', role: 'finished_result' },
+      ],
+    },
+  };
+}
+
+function aiScene(id, position, attachmentId, sceneRole, overlayText, evidenceIds) {
+  return {
+    id,
+    position,
+    attachmentId,
+    sceneRole,
+    durationMs: 4000,
+    overlayText,
+    secondaryText: null,
+    motionPreset: 'static',
+    cropStrategy: 'cover_center',
+    transitionOut: 'cut',
+    evidenceIds,
+    voiceoverLine: null,
+  };
+}
+
 function renderRepositoryFixture(persistedPlan, rows, selection = selected) {
   const calls = { candidates: 0, downloads: 0, selection: 0 };
   const bytesByAttachment = new Map(selected.map((item, index) => [
@@ -503,4 +589,14 @@ function renderRepositoryFixture(persistedPlan, rows, selection = selected) {
       },
     },
   };
+}
+
+async function expectJob248PreflightStale({ rows = job248Rows, selection = selected } = {}) {
+  const fixture = renderRepositoryFixture(job248Dependencies.persistedPlan, rows, selection);
+  const repository = createRenderRepository(fixture.client);
+  await assert.rejects(
+    preflightRenderRetry(repository, job248Claim),
+    (error) => error?.message === 'REEL_RENDER_CONTEXT_STALE' && error?.status === 409,
+  );
+  checks += 1;
 }
