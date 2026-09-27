@@ -14,6 +14,7 @@ import { assertAngleSupport, assertClaimSupport, buildReelProviderOutputJsonSche
 execFileSync(process.execPath, [
   'node_modules/typescript/bin/tsc',
   'src/features/reel-director/reelState.ts',
+  'src/features/reel-director/requestIdentity.js',
   'src/features/reel-director/contracts.ts',
   'src/features/reel-director/oneClickReel.ts',
   'src/features/ai-assistant/assistantModel.ts',
@@ -23,6 +24,7 @@ execFileSync(process.execPath, [
   '--module', 'ESNext',
   '--moduleResolution', 'Bundler',
   '--outDir', '.tmp/reel-director-tests',
+  '--allowJs',
   '--skipLibCheck',
 ], { stdio: 'pipe' });
 
