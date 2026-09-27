@@ -105,8 +105,7 @@ export async function handleManualReelGeneration({ rawBody, authorization, auth,
     ? defaultManualScenes(context)
     : request.scenes;
   assertSceneAuthority(scenes, context.safeMedia);
-  const localFacts = manualFactsFromAuthoritativeMedia(context.safeMedia);
-  const groundedContext = withManualFacts(context, localFacts);
+  const { localFacts, context: groundedContext } = buildManualReelAuthority(context);
   const plan = buildManualReelPlan(scenes, groundedContext);
   try {
     validateManualReelPlan(plan, scenes, groundedContext);
@@ -210,12 +209,16 @@ export function buildManualReelPlan(scenes, context) {
 }
 
 export function validateManualReelPlan(plan, scenes, context) {
-  parseReelPlanShape(plan);
-  const { evidenceById } = validateReelPlanReferencesAndPrivacy(plan, context);
+  const canonicalPlan = parseReelPlanShape(plan);
+  return validateCanonicalManualReelPlan(canonicalPlan, scenes, context);
+}
+
+function validateCanonicalManualReelPlan(canonicalPlan, scenes, context) {
+  const { evidenceById } = validateReelPlanReferencesAndPrivacy(canonicalPlan, context);
   assertSceneAuthority(scenes, context.safeMedia);
 
-  const expectedPlan = buildManualReelPlan(scenes, context);
-  if (JSON.stringify(plan) !== JSON.stringify(expectedPlan)) fail('INVALID_REQUEST');
+  const expectedPlan = parseReelPlanShape(buildManualReelPlan(scenes, context));
+  if (JSON.stringify(canonicalPlan) !== JSON.stringify(expectedPlan)) fail('INVALID_REQUEST');
 
   const mediaById = new Map(context.safeMedia.map((item) => [item.attachmentId, item]));
   for (const scene of scenes) {
@@ -225,7 +228,24 @@ export function validateManualReelPlan(plan, scenes, context) {
     assertManualTextEvidence(scene.primaryText, scene.role, media.evidenceText, evidenceIds, evidenceById);
     assertManualTextEvidence(scene.supportingText, scene.role, media.evidenceText, evidenceIds, evidenceById);
   }
-  return plan;
+  return canonicalPlan;
+}
+
+export function validateManualReelPlanForRender(plan, context) {
+  const canonicalPlan = parseReelPlanShape(plan);
+  const scenes = canonicalPlan.scenes.map((scene) => {
+    const role = manualRoleBySceneRole[scene.sceneRole];
+    if (!role) fail('REEL_GROUNDING_FAILED');
+    return {
+      attachmentId: scene.attachmentId,
+      position: scene.position,
+      role,
+      categoryLabel: scene.categoryLabel,
+      primaryText: scene.overlayText,
+      supportingText: scene.secondaryText ?? '',
+    };
+  });
+  return validateCanonicalManualReelPlan(canonicalPlan, scenes, context);
 }
 
 export function defaultManualScenes(context) {
@@ -254,6 +274,14 @@ export function manualFactsFromAuthoritativeMedia(safeMedia) {
     repairPerformed: [mediaFact(process), mediaFact(result), mediaFact(supporting)].filter(Boolean).join('. '),
     finalResult: mediaFact(result),
   };
+}
+
+export function buildManualReelAuthority(context, expectedLocalFacts) {
+  const localFacts = manualFactsFromAuthoritativeMedia(context.safeMedia);
+  if (expectedLocalFacts !== undefined && !sameManualFacts(expectedLocalFacts, localFacts)) {
+    fail('REEL_GROUNDING_FAILED');
+  }
+  return { localFacts, context: withManualFacts(context, localFacts) };
 }
 
 function mediaFact(media) {
@@ -305,6 +333,13 @@ function withManualFacts(context, localFacts) {
       ...manualEvidence,
     ],
   };
+}
+
+function sameManualFacts(left, right) {
+  const fields = ['diagnosis', 'repairPerformed', 'finalResult'];
+  return Boolean(left && typeof left === 'object' && !Array.isArray(left))
+    && Object.keys(left).length === fields.length
+    && fields.every((field) => typeof left[field] === 'string' && left[field] === right[field]);
 }
 
 function assertSceneAuthority(scenes, safeMedia) {

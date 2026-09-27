@@ -157,7 +157,9 @@ check(() => assert.match(assistantPage, /beginReelRender\(creativePlanId, revisi
 check(() => assert.match(assistantPage, /activeReelRender\.errorCode === 'REEL_RENDER_CONTEXT_STALE'/));
 check(() => assert.match(producer, /prepare_company_reel_render_retry/));
 check(() => assert.match(producer, /begin_company_reel_render_retry/));
-check(() => assert.match(requestApi, /authorizeReelForRender\(await repository\.loadAuthority\(claim\)\)/));
+check(() => assert.match(requestApi, /preflightRenderRetry\(repository, claim\)/));
+check(() => assert.match(repository, /export async function preflightRenderRetry/));
+check(() => assert.match(repository, /authorizeReelForRender\(await repository\.loadAuthority\(claim\)\)/));
 check(() => assert.match(retryMigration, /base_fingerprint \|\| ':retry:1'/));
 check(() => assert.match(retryMigration, /retry_ordinal = 1/));
 check(() => assert.match(retryMigration, /REEL_RENDER_CONTEXT_STALE/));

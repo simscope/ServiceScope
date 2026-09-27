@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { buildAuthorizedContext } from '../../supabase/functions/_shared/content-engine/context.js';
 import { sha256DigestsEqual } from '../../supabase/functions/_shared/media-analysis/checksum.js';
 import { buildReelContext } from '../../supabase/functions/_shared/reel-engine/director.js';
-import { reelRenderMaxMediaBytes, reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
+import { buildManualReelAuthority } from '../../supabase/functions/_shared/reel-engine/manualPlan.js';
+import { authorizeReelForRender } from '../reel-renderer/authorization.js';
+import { normalizeRenderError, reelRenderMaxMediaBytes, reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
 
 export function createRenderRepository(client) {
   return {
@@ -39,7 +41,10 @@ export function createRenderRepository(client) {
         session,
         repository,
       });
-      const context = await buildReelContext(request, base, repository);
+      let context = await buildReelContext(request, base, repository);
+      if (planRow.plan_json?.marketingAngle === 'manual_selection') {
+        context = buildManualReelAuthority(context, request.localFacts).context;
+      }
       return { plan: planRow.plan_json, context, assets };
     },
     complete(renderJobId, leaseToken, paths, metadata) {
@@ -66,6 +71,14 @@ export function createRenderRepository(client) {
     },
     upload: client.upload,
   };
+}
+
+export async function preflightRenderRetry(repository, claim) {
+  try {
+    authorizeReelForRender(await repository.loadAuthority(claim));
+  } catch (error) {
+    throw new RenderJobError(normalizeRenderError(error), 409);
+  }
 }
 
 function contextRepository(client, assets) {
