@@ -5,7 +5,12 @@ import {
   handleManualReelGeneration,
   validateManualReelRequest,
 } from '../supabase/functions/_shared/reel-engine/manualPlan.js';
-import { buildReelProviderOutputJsonSchema, parseReelPlanShape } from '../supabase/functions/_shared/reel-engine/schemas.js';
+import {
+  buildReelProviderOutputJsonSchema,
+  parseReelPlanShape,
+  parseReelProviderResult,
+  validateReelPlan,
+} from '../supabase/functions/_shared/reel-engine/schemas.js';
 import { manualReelPlanIdempotencyKey } from '../src/features/reel-director/requestIdentity.js';
 
 const jobId = '8edc53e7-3188-414b-acc3-44d205b238da';
@@ -49,6 +54,13 @@ check(() => assert.deepEqual(preview.scenes.map((scene) => scene.overlayText), [
 check(() => assert.equal(preview.brand.cta, 'Having a similar issue? Send us a message.'));
 check(() => assert.equal(preview.safety.privacy, 'passed'));
 check(() => assert.equal(preview.scenes.every((scene) => scene.secondaryText === null && scene.voiceoverLine === null), true));
+check(() => assert.deepEqual(preview.scenes.map(({ motionPreset, cropStrategy, transitionOut, durationMs }) => ({
+  motionPreset, cropStrategy, transitionOut, durationMs,
+})), [
+  { motionPreset: 'focus_detail', cropStrategy: 'detail_crop', transitionOut: 'quick_fade', durationMs: 4000 },
+  { motionPreset: 'pan_right', cropStrategy: 'subject_center', transitionOut: 'crossfade', durationMs: 4000 },
+  { motionPreset: 'slow_zoom_out', cropStrategy: 'subject_center', transitionOut: 'quick_fade', durationMs: 4000 },
+]));
 check(() => assert.equal(buildReelProviderOutputJsonSchema().properties.marketingAngle.enum.includes('manual_selection'), false));
 
 const previewIdentity = manualIdentity.preview;
@@ -143,6 +155,19 @@ await rejectsCode(handleManualReelGeneration(makeDependencies({
   operation: 'create',
   scenes: [...editedScenes.slice(0, 2), { ...editedScenes[2], primaryText: 'Cooling system fully restored' }],
 })), 'REEL_GROUNDING_FAILED');
+
+const aiContext = aiValidationContext(preview);
+const { revision: _previewRevision, ...previewPlan } = preview;
+check(() => assert.throws(() => validateReelPlan(previewPlan, aiContext), /REEL_GROUNDING_FAILED/));
+const aiPlan = {
+  ...previewPlan,
+  marketingAngle: 'repair_process',
+  scenes: previewPlan.scenes.map(({ categoryLabel: _categoryLabel, ...scene }, index) => (
+    index === 2 ? { ...scene, overlayText: 'Cooling system fully restored' } : scene
+  )),
+};
+check(() => assert.throws(() => parseReelProviderResult(aiPlan, aiContext), /REEL_GROUNDING_FAILED/));
+check(() => assert.throws(() => parseReelProviderResult({ ...aiPlan, qualityScore: 69 }, aiContext), /REEL_QUALITY_FAILED/));
 const staleSelectionDependencies = makeDependencies({ selection: selected.slice().reverse() });
 await rejectsCode(handleManualReelGeneration(staleSelectionDependencies), 'REEL_MEDIA_SELECTION_CONFLICT');
 check(() => assert.equal(staleSelectionDependencies.counters.persisted, 0));
@@ -277,9 +302,9 @@ function makeDependencies(options = {}) {
 
 function mediaRows() {
   const findings = [
-    ['possible_problem_detail', 'Corroded valve and worn connections are visible.'],
-    ['repair_process', 'Valve replacement in progress is visible.'],
-    ['finished_result', 'Replacement valve installed is visible.'],
+    ['possible_problem_detail', 'Corrosion and wear are visible around a valve and its connections.'],
+    ['repair_process', 'A replacement valve is shown during service work.'],
+    ['finished_result', 'The finished image shows a replacement valve after installation.'],
   ];
   return selected.map((item, index) => ({
     requested_position: item.position,
@@ -301,6 +326,29 @@ function mediaRows() {
     risk_level: 'none',
     requires_user_approval: false,
   }));
+}
+
+function aiValidationContext(plan) {
+  const rows = mediaRows();
+  const safeMedia = plan.scenes.map((scene, index) => ({
+    attachmentId: scene.attachmentId,
+    role: scene.sceneRole,
+    evidenceId: scene.evidenceIds.find((id) => id.startsWith(`media:${scene.attachmentId}:`)),
+    evidenceText: rows[index].explanation,
+  }));
+  const evidence = [
+    ...safeMedia.map((media) => ({ id: media.evidenceId, text: media.evidenceText })),
+    { id: 'diagnosis', text: rows[0].explanation },
+    { id: 'repair-performed', text: `${rows[1].explanation}. ${rows[2].explanation}` },
+    { id: 'final-result', text: rows[2].explanation },
+    { id: 'company-public-display-name', text: 'Northstar Service' },
+  ];
+  return {
+    evidence,
+    safeMedia,
+    privateValuesForLeakDetection: [],
+    companyVoice: { enabled: true, publicDisplayName: 'Northstar Service' },
+  };
 }
 
 function genericMediaRows() {

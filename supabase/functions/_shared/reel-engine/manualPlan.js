@@ -13,7 +13,11 @@ import {
   persistCreativePlan,
   ReelHttpError,
 } from './director.js';
-import { validateReelPlan } from './schemas.js';
+import {
+  assertStatementEvidenceCoverage,
+  parseReelPlanShape,
+  validateReelPlanReferencesAndPrivacy,
+} from './schemas.js';
 
 const requestFields = new Set([
   'schemaVersion',
@@ -105,7 +109,7 @@ export async function handleManualReelGeneration({ rawBody, authorization, auth,
   const groundedContext = withManualFacts(context, localFacts);
   const plan = buildManualReelPlan(scenes, groundedContext);
   try {
-    validateReelPlan(plan, groundedContext);
+    validateManualReelPlan(plan, scenes, groundedContext);
   } catch (error) {
     const code = error instanceof Error ? error.message : 'INVALID_REQUEST';
     throw new ReelHttpError(code, manualStatusForCode(code));
@@ -162,14 +166,7 @@ export function buildManualReelPlan(scenes, context) {
   const result = scenes.find((scene) => scene.role === 'result');
   if (!problem || !process || !result) fail('INVALID_REQUEST');
   const mediaById = new Map(context.safeMedia.map((item) => [item.attachmentId, item]));
-  const evidenceIdsFor = (scene) => {
-    const mediaEvidenceId = mediaById.get(scene.attachmentId)?.evidenceId;
-    if (!mediaEvidenceId) fail('REEL_MEDIA_UNAVAILABLE');
-    if (scene.role === 'problem') return [mediaEvidenceId, 'diagnosis'];
-    if (scene.role === 'process') return [mediaEvidenceId, 'repair-performed'];
-    if (scene.role === 'result') return [mediaEvidenceId, 'repair-performed', 'final-result'];
-    return [mediaEvidenceId, 'repair-performed'];
-  };
+  const evidenceIdsFor = (scene) => manualEvidenceIdsFor(scene, mediaById);
   const caption = `${problem.primaryText}. ${process.primaryText}. ${result.primaryText}.`;
   if (caption.length < 80 || caption.length > reelLimits.maxCaptionLength) fail('INVALID_REQUEST');
   const brandEnabled = context.companyVoice?.enabled === true && Boolean(context.companyVoice.publicDisplayName);
@@ -210,6 +207,25 @@ export function buildManualReelPlan(scenes, context) {
       : { enabled: false, displayName: '', cta: '', durationMs: 0, evidenceIds: [] },
     audio: { musicMode: 'none' },
   };
+}
+
+export function validateManualReelPlan(plan, scenes, context) {
+  parseReelPlanShape(plan);
+  const { evidenceById } = validateReelPlanReferencesAndPrivacy(plan, context);
+  assertSceneAuthority(scenes, context.safeMedia);
+
+  const expectedPlan = buildManualReelPlan(scenes, context);
+  if (JSON.stringify(plan) !== JSON.stringify(expectedPlan)) fail('INVALID_REQUEST');
+
+  const mediaById = new Map(context.safeMedia.map((item) => [item.attachmentId, item]));
+  for (const scene of scenes) {
+    const media = mediaById.get(scene.attachmentId);
+    if (!media) fail('REEL_MEDIA_UNAVAILABLE');
+    const evidenceIds = manualEvidenceIdsFor(scene, mediaById);
+    assertManualTextEvidence(scene.primaryText, scene.role, media.evidenceText, evidenceIds, evidenceById);
+    assertManualTextEvidence(scene.supportingText, scene.role, media.evidenceText, evidenceIds, evidenceById);
+  }
+  return plan;
 }
 
 export function defaultManualScenes(context) {
@@ -259,6 +275,20 @@ function defaultSceneText(role, evidenceText) {
   if (role === 'process') return 'Service work is shown in progress';
   if (role === 'result') return 'The completed service result is shown';
   return 'An additional service detail is shown';
+}
+
+function assertManualTextEvidence(text, role, evidenceText, evidenceIds, evidenceById) {
+  if (!text || text === defaultSceneText(role, evidenceText)) return;
+  assertStatementEvidenceCoverage({ text, evidenceIds }, evidenceById);
+}
+
+function manualEvidenceIdsFor(scene, mediaById) {
+  const mediaEvidenceId = mediaById.get(scene.attachmentId)?.evidenceId;
+  if (!mediaEvidenceId) fail('REEL_MEDIA_UNAVAILABLE');
+  if (scene.role === 'problem') return [mediaEvidenceId, 'diagnosis'];
+  if (scene.role === 'process') return [mediaEvidenceId, 'repair-performed'];
+  if (scene.role === 'result') return [mediaEvidenceId, 'repair-performed', 'final-result'];
+  return [mediaEvidenceId, 'repair-performed'];
 }
 
 function withManualFacts(context, localFacts) {
