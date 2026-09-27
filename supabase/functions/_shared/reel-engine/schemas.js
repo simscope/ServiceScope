@@ -158,20 +158,7 @@ export function parseReelPlanShape(rawJson) {
 }
 
 export function validateReelPlan(plan, context) {
-  const evidenceById = new Map(context.evidence.map((item) => [item.id, item]));
-  const safeMediaById = new Map(context.safeMedia.map((item) => [item.attachmentId, item]));
-  const allEvidenceLists = [
-    plan.hook.evidenceIds,
-    plan.caption.evidenceIds,
-    plan.voiceover.evidenceIds,
-    plan.brand.evidenceIds,
-    ...plan.scenes.map((scene) => scene.evidenceIds),
-    ...plan.claims.map((claim) => claim.evidenceIds),
-  ];
-  for (const evidenceIds of allEvidenceLists) {
-    if (!evidenceIds.every((id) => evidenceById.has(id))) fail('REEL_GROUNDING_FAILED');
-  }
-  assertNoPrivateOrForbiddenText(plan, context.privateValuesForLeakDetection);
+  const { evidenceById, safeMediaById } = validateReelPlanReferencesAndPrivacy(plan, context);
 
   const scoreDecision = plan.qualityScore >= 70
     ? 'create_reel'
@@ -230,6 +217,24 @@ export function validateReelPlan(plan, context) {
     if (plan.decision === 'needs_more_media' && plan.missingShots.length < 1) fail('REEL_QUALITY_FAILED');
   }
   return plan;
+}
+
+export function validateReelPlanReferencesAndPrivacy(plan, context) {
+  const evidenceById = new Map(context.evidence.map((item) => [item.id, item]));
+  const safeMediaById = new Map(context.safeMedia.map((item) => [item.attachmentId, item]));
+  const allEvidenceLists = [
+    plan.hook.evidenceIds,
+    plan.caption.evidenceIds,
+    plan.voiceover.evidenceIds,
+    plan.brand.evidenceIds,
+    ...plan.scenes.map((scene) => scene.evidenceIds),
+    ...plan.claims.map((claim) => claim.evidenceIds),
+  ];
+  for (const evidenceIds of allEvidenceLists) {
+    if (!evidenceIds.every((id) => evidenceById.has(id))) fail('REEL_GROUNDING_FAILED');
+  }
+  assertNoPrivateOrForbiddenText(plan, context.privateValuesForLeakDetection);
+  return { evidenceById, safeMediaById };
 }
 
 export function buildReelProviderOutputJsonSchema() {
