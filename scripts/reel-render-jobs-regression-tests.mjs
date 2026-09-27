@@ -177,6 +177,7 @@ for (const invalid of [
         error_code: null,
         retry_of_render_job_id: failedRenderJobId,
         retry_ordinal: 1,
+        created: calls.begin === 1,
       }];
     },
     async preflightRenderRetry(claim) {
@@ -217,6 +218,7 @@ for (const invalid of [
   check(() => assert.equal(calls.prepare, 3));
   check(() => assert.equal(calls.preflight, 2));
   check(() => assert.equal(calls.begin, 3));
+  check(() => assert.equal(calls.publish.length, 1));
   check(() => assert.equal(calls.logicalMessages.size, 1));
   check(() => assert.ok(calls.publish.every((item) => item.idempotencyKey === retryRenderJobId)));
 }

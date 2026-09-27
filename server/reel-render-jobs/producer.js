@@ -48,7 +48,7 @@ export function createRenderRequestHandler({ client, publish, enabled, telemetry
       }
       const job = Array.isArray(rows) ? rows[0] : null;
       if (!job?.render_job_id) throw new RenderJobError('REEL_RENDER_PLAN_UNAVAILABLE', 409);
-      if (job.status === 'queued') {
+      if (job.status === 'queued' && (!input.retryOfRenderJobId || job.created === true)) {
         await publishQueuedJob(publish, job.render_job_id);
       }
       return json({
