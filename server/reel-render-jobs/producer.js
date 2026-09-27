@@ -23,16 +23,43 @@ export function createRenderRequestHandler({ client, publish, enabled, telemetry
         recordRenderEvent(telemetry, 'render_blocked_feature_flag', { code: 'REEL_RENDER_NOT_CONFIGURED' });
         throw new RenderJobError('REEL_RENDER_NOT_CONFIGURED', 503);
       }
-      const rows = await client.userRpc('begin_company_reel_render_request', {
-        p_creative_plan_id: input.creativePlanId,
-        p_expected_plan_revision: input.expectedPlanRevision,
-      }, session.token);
+      let rows;
+      if (input.retryOfRenderJobId) {
+        const preparedRows = await client.userRpc('prepare_company_reel_render_retry', {
+          p_failed_render_job_id: input.retryOfRenderJobId,
+          p_expected_plan_revision: input.expectedPlanRevision,
+        }, session.token);
+        const prepared = Array.isArray(preparedRows) ? preparedRows[0] : null;
+        if (!prepared
+          || prepared.failed_render_job_id !== input.retryOfRenderJobId
+          || prepared.creative_plan_id !== input.creativePlanId) {
+          throw new RenderJobError('REEL_RENDER_RETRY_UNAVAILABLE', 409);
+        }
+        if (!prepared.retry_render_job_id) await client.preflightRenderRetry(prepared);
+        rows = await client.userRpc('begin_company_reel_render_retry', {
+          p_failed_render_job_id: input.retryOfRenderJobId,
+          p_expected_plan_revision: input.expectedPlanRevision,
+        }, session.token);
+      } else {
+        rows = await client.userRpc('begin_company_reel_render_request', {
+          p_creative_plan_id: input.creativePlanId,
+          p_expected_plan_revision: input.expectedPlanRevision,
+        }, session.token);
+      }
       const job = Array.isArray(rows) ? rows[0] : null;
       if (!job?.render_job_id) throw new RenderJobError('REEL_RENDER_PLAN_UNAVAILABLE', 409);
       if (job.status === 'queued') {
         await publishQueuedJob(publish, job.render_job_id);
       }
-      return json({ renderJobId: job.render_job_id, status: job.status, errorCode: job.error_code ?? null }, 202);
+      return json({
+        renderJobId: job.render_job_id,
+        status: job.status,
+        errorCode: job.error_code ?? null,
+        ...(input.retryOfRenderJobId ? {
+          retryOfRenderJobId: job.retry_of_render_job_id,
+          retryOrdinal: job.retry_ordinal,
+        } : {}),
+      }, 202);
     } catch (error) {
       const status = error instanceof RenderJobError ? error.status : 500;
       const code = error instanceof RenderJobError ? error.code : 'INTERNAL_ERROR';

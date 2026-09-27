@@ -125,6 +125,8 @@ function renderWorkspaceFromSaved(saved: PersistedReelWorkspace): ReelRenderWork
     creativePlanId: saved.creative_plan_id,
     planRevision: saved.plan_revision,
     renderJobId: saved.render_job_id ?? undefined,
+    retryOfRenderJobId: saved.render_retry_of_render_job_id ?? undefined,
+    retryOrdinal: saved.render_retry_ordinal ?? undefined,
     status: saved.render_status ?? 'idle',
     errorCode: saved.render_error_code ?? undefined,
     durationMs: saved.duration_ms ?? undefined,
@@ -707,11 +709,24 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     const revision = reelWorkspace.plan?.revision;
     const identity = reelPlanIdentity(creativePlanId, revision);
     const startedScope = { ...reelPlanScopeRef.current };
-    if (!creativePlanId || !revision || !reelApproved || !sameReelPlanIdentity(startedScope, identity) || ['queued', 'rendering'].includes(activeReelRender.status)) return;
+    const retryOfRenderJobId = activeReelRender.status === 'failed'
+      && activeReelRender.errorCode === 'REEL_RENDER_CONTEXT_STALE'
+      ? activeReelRender.renderJobId
+      : undefined;
+    if (!creativePlanId || !revision || !reelApproved || !sameReelPlanIdentity(startedScope, identity)
+      || ['queued', 'rendering', 'completed'].includes(activeReelRender.status)
+      || (activeReelRender.status === 'failed' && !retryOfRenderJobId)) return;
     try {
-      const result = await beginReelRender(creativePlanId, revision);
+      const result = await beginReelRender(creativePlanId, revision, retryOfRenderJobId);
       if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
-      setReelRender({ ...identity, renderJobId: result.renderJobId, status: result.status, errorCode: result.errorCode ?? undefined });
+      setReelRender({
+        ...identity,
+        renderJobId: result.renderJobId,
+        retryOfRenderJobId: result.retryOfRenderJobId,
+        retryOrdinal: result.retryOrdinal,
+        status: result.status,
+        errorCode: result.errorCode ?? undefined,
+      });
     } catch (error) {
       if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
       const code = error instanceof Error ? error.message : 'REEL_RENDER_FAILED';
@@ -758,7 +773,11 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     ) || !isReelAsyncScopeCurrent(scope, reelPlanScopeRef.current)
       || !sameReelPlanIdentity(scope, persistedReelPlanIdentity(saved))) return;
     reelDispatchRecoveryAtRef.current.set(saved.render_job_id, Date.now());
-    await beginReelRender(saved.creative_plan_id, saved.plan_revision).catch(() => undefined);
+    await beginReelRender(
+      saved.creative_plan_id,
+      saved.plan_revision,
+      saved.render_retry_of_render_job_id ?? undefined,
+    ).catch(() => undefined);
   }
 
   async function refreshReelArtifacts() {
@@ -1125,9 +1144,9 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
                     </button>
                     {reelWorkspace.creativePlanId || reelWorkspace.plan.creativePlanId ? (
                       <div className="ai-reel-render-actions">
-                        <button className="primary-button" type="button" onClick={createMp4} disabled={!reelApproved || ['queued', 'rendering', 'completed', 'failed'].includes(activeReelRender.status)}>
+                        <button className="primary-button" type="button" onClick={createMp4} disabled={!reelApproved || ['queued', 'rendering', 'completed'].includes(activeReelRender.status) || (activeReelRender.status === 'failed' && activeReelRender.errorCode !== 'REEL_RENDER_CONTEXT_STALE')}>
                           <Video size={18} aria-hidden="true" />
-                          {activeReelRender.status === 'queued' ? 'Queued' : activeReelRender.status === 'rendering' ? 'Rendering' : activeReelRender.status === 'completed' ? 'MP4 ready' : activeReelRender.status === 'failed' ? 'MP4 failed' : 'Create MP4'}
+                          {activeReelRender.status === 'queued' ? 'Queued' : activeReelRender.status === 'rendering' ? 'Rendering' : activeReelRender.status === 'completed' ? 'MP4 ready' : activeReelRender.status === 'failed' && activeReelRender.errorCode === 'REEL_RENDER_CONTEXT_STALE' ? 'Retry MP4' : activeReelRender.status === 'failed' ? 'MP4 failed' : 'Create MP4'}
                         </button>
                         {activeReelRender.status === 'failed' || activeReelRender.status === 'not_configured' || activeReelRender.errorCode === 'REEL_RENDER_DISPATCH_FAILED'
                           ? <span className="ai-reel-approval-note">{renderErrorMessage(activeReelRender.errorCode)}</span>

@@ -39,6 +39,8 @@ import {
 
 const creativePlanId = '00000000-0000-4000-8000-000000000101';
 const renderJobId = '00000000-0000-4000-8000-000000000201';
+const failedRenderJobId = '00000000-0000-4000-8000-000000000202';
+const retryRenderJobId = '00000000-0000-4000-8000-000000000203';
 const companyId = '00000000-0000-4000-8000-000000000301';
 const revision = 'reel-v1-regression';
 let checks = 0;
@@ -70,6 +72,7 @@ function producerFixture({ enabled = true, status = 'queued', rpcError, publishF
       if (rpcError) throw rpcError;
       return [{ render_job_id: renderJobId, status, error_code: status === 'failed' ? 'REEL_RENDER_FAILED' : null }];
     },
+    async preflightRenderRetry() { throw new Error('retry preflight must not run'); },
   };
   const handler = createRenderRequestHandler({
     client,
@@ -133,12 +136,116 @@ for (const invalid of [
   '{', {}, { ...validBody, companyId }, { ...validBody, jobId: renderJobId },
   { ...validBody, plan: {} }, { ...validBody, localFacts: {} }, { creativePlanId },
   { ...validBody, expectedPlanRevision: 'bad revision' },
+  { ...validBody, retryOfRenderJobId: 'not-a-uuid' },
 ]) {
   const { handler, calls } = producerFixture();
   const response = await handler(request(invalid));
   check(() => assert.equal(response.status, 400));
   check(() => assert.equal(calls.rpc, 0));
   check(() => assert.equal(calls.publish.length, 0));
+}
+{
+  const calls = { prepare: 0, preflight: 0, begin: 0, publish: [], logicalMessages: new Set() };
+  const client = {
+    async authenticate() { return { token: 'user-token', userId: 'user-1' }; },
+    async userRpc(name, body, token) {
+      check(() => assert.equal(token, 'user-token'));
+      if (name === 'prepare_company_reel_render_retry') {
+        calls.prepare += 1;
+        check(() => assert.deepEqual(body, {
+          p_failed_render_job_id: failedRenderJobId,
+          p_expected_plan_revision: revision,
+        }));
+        return [{
+          failed_render_job_id: failedRenderJobId,
+          company_id: companyId,
+          job_id: '00000000-0000-4000-8000-000000000401',
+          creative_plan_id: creativePlanId,
+          retry_render_job_id: calls.begin ? retryRenderJobId : null,
+          retry_status: calls.begin ? 'queued' : null,
+        }];
+      }
+      check(() => assert.equal(name, 'begin_company_reel_render_retry'));
+      calls.begin += 1;
+      check(() => assert.deepEqual(body, {
+        p_failed_render_job_id: failedRenderJobId,
+        p_expected_plan_revision: revision,
+      }));
+      return [{
+        render_job_id: retryRenderJobId,
+        status: 'queued',
+        error_code: null,
+        retry_of_render_job_id: failedRenderJobId,
+        retry_ordinal: 1,
+      }];
+    },
+    async preflightRenderRetry(claim) {
+      calls.preflight += 1;
+      check(() => assert.equal(claim.failed_render_job_id, failedRenderJobId));
+      check(() => assert.equal(claim.creative_plan_id, creativePlanId));
+    },
+  };
+  const handler = createRenderRequestHandler({
+    client,
+    enabled: () => true,
+    publish: async (message, idempotencyKey) => {
+      calls.publish.push({ message, idempotencyKey });
+      calls.logicalMessages.add(idempotencyKey);
+    },
+  });
+  const retryBody = { ...validBody, retryOfRenderJobId: failedRenderJobId };
+  const [firstResponse, repeatedResponse] = await Promise.all([
+    handler(request(retryBody)),
+    handler(request(retryBody)),
+  ]);
+  const firstBody = await firstResponse.json();
+  const repeatedBody = await repeatedResponse.json();
+  const settledResponse = await handler(request(retryBody));
+  const settledBody = await settledResponse.json();
+  check(() => assert.equal(firstResponse.status, 202));
+  check(() => assert.equal(repeatedResponse.status, 202));
+  check(() => assert.deepEqual(firstBody, {
+    renderJobId: retryRenderJobId,
+    status: 'queued',
+    errorCode: null,
+    retryOfRenderJobId: failedRenderJobId,
+    retryOrdinal: 1,
+  }));
+  check(() => assert.deepEqual(repeatedBody, firstBody));
+  check(() => assert.equal(settledResponse.status, 202));
+  check(() => assert.deepEqual(settledBody, firstBody));
+  check(() => assert.equal(calls.prepare, 3));
+  check(() => assert.equal(calls.preflight, 2));
+  check(() => assert.equal(calls.begin, 3));
+  check(() => assert.equal(calls.logicalMessages.size, 1));
+  check(() => assert.ok(calls.publish.every((item) => item.idempotencyKey === retryRenderJobId)));
+}
+{
+  const calls = { begin: 0, publish: 0 };
+  const handler = createRenderRequestHandler({
+    client: {
+      async authenticate() { return { token: 'user-token', userId: 'user-1' }; },
+      async userRpc(name) {
+        if (name === 'begin_company_reel_render_retry') calls.begin += 1;
+        return [{
+          failed_render_job_id: failedRenderJobId,
+          company_id: companyId,
+          job_id: '00000000-0000-4000-8000-000000000401',
+          creative_plan_id: creativePlanId,
+          retry_render_job_id: null,
+        }];
+      },
+      async preflightRenderRetry() { throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409); },
+    },
+    enabled: () => true,
+    publish: async () => { calls.publish += 1; },
+  });
+  const response = await handler(request({ ...validBody, retryOfRenderJobId: failedRenderJobId }));
+  const responseBody = await response.json();
+  check(() => assert.equal(response.status, 409));
+  check(() => assert.deepEqual(responseBody, { code: 'REEL_RENDER_CONTEXT_STALE' }));
+  check(() => assert.equal(calls.begin, 0));
+  check(() => assert.equal(calls.publish, 0));
 }
 {
   const events = [];

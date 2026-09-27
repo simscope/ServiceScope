@@ -6,10 +6,16 @@ export async function loadPersistedReelWorkspace(jobId: string) {
   return rows?.[0] ?? null;
 }
 
-export async function beginReelRender(creativePlanId: string, expectedPlanRevision: string) {
-  return serverRequest<{ renderJobId: string; status: 'queued' | 'rendering' | 'completed' | 'failed'; errorCode: string | null }>(
+export async function beginReelRender(creativePlanId: string, expectedPlanRevision: string, retryOfRenderJobId?: string) {
+  return serverRequest<{
+    renderJobId: string;
+    status: 'queued' | 'rendering' | 'completed' | 'failed';
+    errorCode: string | null;
+    retryOfRenderJobId?: string;
+    retryOrdinal?: number;
+  }>(
     '/api/reel-render-request',
-    { creativePlanId, expectedPlanRevision },
+    { creativePlanId, expectedPlanRevision, ...(retryOfRenderJobId ? { retryOfRenderJobId } : {}) },
   );
 }
 

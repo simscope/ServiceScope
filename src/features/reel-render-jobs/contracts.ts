@@ -6,6 +6,8 @@ export type ReelRenderWorkspace = {
   creativePlanId?: string;
   planRevision?: string;
   renderJobId?: string;
+  retryOfRenderJobId?: string;
+  retryOrdinal?: number;
   status: ReelRenderStatus;
   errorCode?: string;
   durationMs?: number;
@@ -22,6 +24,8 @@ export type PersistedReelWorkspace = {
   plan_json: ReelCreativePlanV1;
   plan_created_at: string;
   render_job_id: string | null;
+  render_retry_of_render_job_id: string | null;
+  render_retry_ordinal: number | null;
   render_status: Exclude<ReelRenderStatus, 'idle' | 'not_configured'> | null;
   render_error_code: string | null;
   duration_ms: number | null;
@@ -39,6 +43,7 @@ export const REEL_RENDER_ERROR_MESSAGES: Record<string, string> = {
   REEL_RENDER_PLAN_UNAVAILABLE: 'The saved Reel plan changed. Generate a current Reel before rendering.',
   REEL_RENDER_APPROVAL_REQUIRED: 'Approve the current Reel before creating its MP4.',
   REEL_RENDER_APPROVAL_CONFLICT: 'The saved Reel approval does not match the current plan.',
+  REEL_RENDER_RETRY_UNAVAILABLE: 'This failed MP4 is not eligible for a safe retry.',
   REEL_PRIVACY_FAILED: 'Private information was detected. Review the Reel inputs before rendering.',
   REEL_RENDER_CONTEXT_STALE: 'Job evidence changed. Generate a current Reel before rendering.',
   REEL_RENDER_MEDIA_MISSING: 'A selected photo is no longer available.',
