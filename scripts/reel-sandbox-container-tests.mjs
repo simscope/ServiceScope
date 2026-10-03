@@ -5,13 +5,18 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { authorizeReelForRender } from '../server/reel-renderer/authorization.js';
 import { reelSandboxRoot, reelSandboxRunnerPath } from '../server/reel-sandbox-runtime/contracts.js';
-import { sandboxFixtureAuthority, writeSandboxContainerFixture } from './reel-sandbox-fixture.mjs';
+import { verifyQualifiedRendererImage } from './reel-qualified-image-reference.mjs';
 
-const [mode, rootArgument] = process.argv.slice(2);
+const [mode, rootArgument, expectedDigest] = process.argv.slice(2);
+if (mode === 'verify-image') {
+  console.log(JSON.stringify({ qualifiedImageIdentity: 'PASS', ...verifyQualifiedRendererImage(rootArgument, expectedDigest) }));
+  process.exit(0);
+}
 const root = resolve(rootArgument ?? '');
 if (!rootArgument || !['prepare', 'verify'].includes(mode)) throw new Error('USAGE: prepare|verify <absolute-root>');
 
 if (mode === 'prepare') {
+  const { sandboxFixtureAuthority, writeSandboxContainerFixture } = await import('./reel-sandbox-fixture.mjs');
   authorizeReelForRender(sandboxFixtureAuthority);
   await writeSandboxContainerFixture(root);
   console.log(JSON.stringify({
