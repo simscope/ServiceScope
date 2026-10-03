@@ -72,6 +72,7 @@ import { manualReelPlanIdempotencyKey } from '../../features/reel-director/reque
 import {
   applyReelPlan,
   approveCurrentReel,
+  canRetryPersistedReel,
   createReelWorkspaceState,
   isCurrentReelApproved,
   reconcileReelApproval,
@@ -241,7 +242,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
       if (reelPlanScopeRef.current.creativePlanId && !sameReelPlanIdentity(reelPlanScopeRef.current, savedIdentity)) return;
       const activeScope = activateReelPlanScope(savedIdentity);
       const plan = { ...saved.plan_json, creativePlanId: saved.creative_plan_id };
-      setReelWorkspace((current) => ({ ...current, status: 'reel_ready', plan, creativePlanId: saved.creative_plan_id, inputRevision: saved.plan_revision, error: '' }));
+      setReelWorkspace((current) => ({ ...current, status: 'reel_ready', plan, creativePlanId: saved.creative_plan_id, inputRevision: saved.plan_revision, persistedApproval: saved.approvalAuthority, error: '' }));
       if (saved.render_job_id && saved.render_status) {
         const next = renderWorkspaceFromSaved(saved);
         setReelRender(next);
@@ -715,7 +716,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
       : undefined;
     if (!creativePlanId || !revision || !reelApproved || !sameReelPlanIdentity(startedScope, identity)
       || ['queued', 'rendering', 'completed'].includes(activeReelRender.status)
-      || (activeReelRender.status === 'failed' && !retryOfRenderJobId)) return;
+      || (activeReelRender.status === 'failed' && !canRetryPersistedReel(reelWorkspace, currentReelInputRevision, activeReelRender))) return;
     try {
       const result = await beginReelRender(creativePlanId, revision, retryOfRenderJobId);
       if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
@@ -748,7 +749,7 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     const revision = reelWorkspace.plan?.revision;
     const identity = reelPlanIdentity(creativePlanId, revision);
     const startedScope = { ...reelPlanScopeRef.current };
-    if (!creativePlanId || !revision || !sameReelPlanIdentity(startedScope, identity)) return;
+    if (!creativePlanId || !revision || reelApproved || reelWorkspace.persistedApproval === null || !sameReelPlanIdentity(startedScope, identity)) return;
     try {
       await approveReelPlan(creativePlanId, revision);
       if (!isReelAsyncScopeCurrent(startedScope, reelPlanScopeRef.current)) return;
@@ -1137,14 +1138,14 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
                       className={reelApproved ? 'secondary-button ai-reel-approved' : 'primary-button'}
                       type="button"
                       onClick={approveReelForRendering}
-                      disabled={reelApproved}
+                      disabled={reelApproved || reelWorkspace.persistedApproval === null}
                     >
                       <CheckCircle2 size={18} aria-hidden="true" />
-                      {reelApproved ? 'Reel approved' : 'Approve Reel'}
+                      {reelApproved ? 'Reel approved' : reelWorkspace.persistedApproval === null ? 'Approval unavailable' : 'Approve Reel'}
                     </button>
                     {reelWorkspace.creativePlanId || reelWorkspace.plan.creativePlanId ? (
                       <div className="ai-reel-render-actions">
-                        <button className="primary-button" type="button" onClick={createMp4} disabled={!reelApproved || ['queued', 'rendering', 'completed'].includes(activeReelRender.status) || (activeReelRender.status === 'failed' && activeReelRender.errorCode !== 'REEL_RENDER_CONTEXT_STALE')}>
+                        <button className="primary-button" type="button" onClick={createMp4} disabled={!reelApproved || ['queued', 'rendering', 'completed'].includes(activeReelRender.status) || (activeReelRender.status === 'failed' && !canRetryPersistedReel(reelWorkspace, currentReelInputRevision, activeReelRender))}>
                           <Video size={18} aria-hidden="true" />
                           {activeReelRender.status === 'queued' ? 'Queued' : activeReelRender.status === 'rendering' ? 'Rendering' : activeReelRender.status === 'completed' ? 'MP4 ready' : activeReelRender.status === 'failed' && activeReelRender.errorCode === 'REEL_RENDER_CONTEXT_STALE' ? 'Retry MP4' : activeReelRender.status === 'failed' ? 'MP4 failed' : 'Create MP4'}
                         </button>
