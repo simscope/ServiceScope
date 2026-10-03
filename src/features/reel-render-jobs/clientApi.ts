@@ -3,7 +3,15 @@ import type { PersistedReelWorkspace } from './contracts';
 
 export async function loadPersistedReelWorkspace(jobId: string) {
   const rows = await supabaseRpc<PersistedReelWorkspace[]>('get_company_reel_workspace', { p_job_id: jobId });
-  return rows?.[0] ?? null;
+  const saved = rows?.[0];
+  if (!saved) return null;
+  const authority = await serverRequest<{
+    creativePlanId: string; planRevision: string; approved: boolean;
+    retryEligible: boolean; retryOfRenderJobId: string | null;
+  }>('/api/reel-plan-status', {
+    jobId, creativePlanId: saved.creative_plan_id, expectedPlanRevision: saved.plan_revision,
+  }).catch(() => null);
+  return { ...saved, approvalAuthority: authority };
 }
 
 export async function beginReelRender(creativePlanId: string, expectedPlanRevision: string, retryOfRenderJobId?: string) {

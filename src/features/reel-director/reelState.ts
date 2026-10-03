@@ -21,6 +21,7 @@ export type ReelWorkspaceState = {
   creativePlanId?: string;
   inputRevision?: string;
   approvedRevision?: string;
+  persistedApproval?: { creativePlanId: string; planRevision: string; approved: boolean; retryEligible: boolean; retryOfRenderJobId: string | null } | null;
   approvalInvalidated?: boolean;
   error: string;
 };
@@ -94,6 +95,7 @@ export function applyReelPlan(state: ReelWorkspaceState, plan: ReelCreativePlanV
     creativePlanId: plan.creativePlanId,
     inputRevision,
     approvedRevision: undefined,
+    persistedApproval: undefined,
     approvalInvalidated: Boolean(state.approvedRevision || state.approvalInvalidated),
     error: '',
   };
@@ -110,7 +112,18 @@ export function reconcileReelApproval(state: ReelWorkspaceState, currentInputRev
 }
 
 export function isCurrentReelApproved(state: ReelWorkspaceState, currentInputRevision: string) {
-  return Boolean(state.plan && state.approvedRevision === state.plan.revision && state.inputRevision === currentInputRevision);
+  const authority = state.persistedApproval;
+  return Boolean(state.status === 'reel_ready' && state.plan && (
+    (authority?.approved && authority.creativePlanId === state.creativePlanId && authority.planRevision === state.plan.revision)
+    || (state.approvedRevision === state.plan.revision && state.inputRevision === currentInputRevision)
+  ));
+}
+
+export function canRetryPersistedReel(state: ReelWorkspaceState, currentInputRevision: string,
+  render: { status: string; errorCode?: string; renderJobId?: string }) {
+  return Boolean(isCurrentReelApproved(state, currentInputRevision) && state.persistedApproval?.retryEligible
+    && render.status === 'failed' && render.errorCode === 'REEL_RENDER_CONTEXT_STALE'
+    && render.renderJobId && state.persistedApproval.retryOfRenderJobId === render.renderJobId);
 }
 
 export function reelStatusLabel(status: ReelGenerationStatus) {
