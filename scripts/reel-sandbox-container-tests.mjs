@@ -3,15 +3,26 @@ import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { writeSandboxContainerFixture } from './reel-sandbox-fixture.mjs';
+import { authorizeReelForRender } from '../server/reel-renderer/authorization.js';
+import { reelSandboxRoot, reelSandboxRunnerPath } from '../server/reel-sandbox-runtime/contracts.js';
+import { sandboxFixtureAuthority, writeSandboxContainerFixture } from './reel-sandbox-fixture.mjs';
 
 const [mode, rootArgument] = process.argv.slice(2);
 const root = resolve(rootArgument ?? '');
 if (!rootArgument || !['prepare', 'verify'].includes(mode)) throw new Error('USAGE: prepare|verify <absolute-root>');
 
 if (mode === 'prepare') {
+  authorizeReelForRender(sandboxFixtureAuthority);
   await writeSandboxContainerFixture(root);
-  console.log('Sandbox container fixture prepared.');
+  console.log(JSON.stringify({
+    container_fixture: 'PREPARED',
+    authorization: 'PASS',
+    command: {
+      executable: '/usr/local/bin/node',
+      arguments: [reelSandboxRunnerPath],
+      workingDirectory: reelSandboxRoot,
+    },
+  }));
 } else {
   const result = JSON.parse(await readFile(join(root, 'output', 'result.json'), 'utf8'));
   assert.deepEqual(Object.keys(result), [
