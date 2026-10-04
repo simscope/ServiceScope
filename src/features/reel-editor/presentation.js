@@ -129,6 +129,7 @@ export function frameSvg(draft, media, frame, safeArea = false) {
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1080 1920" width="1080" height="1920"><rect width="1080" height="1920" fill="#07131c"/>${body}</svg>`;
 }
 function brandSvg(brand, media) {
+  if (!brand.enabled) return '';
   const logo = brand.logo ? media.get('brand-logo') : null;
   return (logo ? `<image href="${escape(logo.url)}" x="340" y="430" width="400" height="300" preserveAspectRatio="xMidYMid meet"/>` : '')
     + drawText({ label: '', headline: brand.displayName, subline: brand.cta, x: .12, y: .43, width: .72, fontSize: 70, align: 'center', color: '#ffffff', background: '#102736', backplate: false });

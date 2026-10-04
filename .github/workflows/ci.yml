@@ -231,6 +231,9 @@ jobs:
       - name: Sandbox runtime regression and security
         run: npm run test:reel-sandbox-runtime && npm run test:reel-sandbox-runtime-scan
 
+      - name: Editor brand boundary regression
+        run: node scripts/reel-editor-brand-boundary-tests.mjs
+
       - name: Build candidate Sandbox image without push
         run: |
           BASE_IMAGE="node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436"
@@ -322,3 +325,31 @@ jobs:
             candidate-image-evidence.json
           if-no-files-found: error
           retention-days: 7
+
+  reel-editor-auth-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.17.1'
+          cache: npm
+      - run: npm ci
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.39.2
+      - name: One temporary real Auth and PostgREST editor scenario
+        env:
+          REEL_AUTH_STACK_ROOT: ${{ runner.temp }}/servicescope-reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
+          REEL_AUTH_STACK_PROJECT: reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/reel-editor-auth-stack.mjs
+      - name: Always remove only this temporary stack
+        if: always()
+        env:
+          REEL_AUTH_STACK_ROOT: ${{ runner.temp }}/servicescope-reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
+          REEL_AUTH_STACK_PROJECT: reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node scripts/reel-editor-auth-stack.mjs cleanup
