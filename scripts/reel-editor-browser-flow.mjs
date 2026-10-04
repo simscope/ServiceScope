@@ -4,9 +4,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
+import { createHash } from 'node:crypto';
+import sharp from 'sharp';
 import { classifyBrowserRequest } from './reel-browser-request-guard.mjs';
 
-export async function browserEditorFlow({ endpoint, anon, email, password, managerId, apiOrigin }) {
+export async function browserEditorFlow({ endpoint, anon, email, password, managerId, apiOrigin, browserMedia, privateFixtureUrl }) {
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
   const evidence = resolve(process.env.REEL_BROWSER_EVIDENCE);
   assert(!relative(resolve(process.env.RUNNER_TEMP), evidence).startsWith('..'));
@@ -23,6 +25,8 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
   forbiddenRequest.catch(() => {});
   const counts = { render: 0, publication: 0, ai: 0, blockedExternal: 0, blockedUnknown: 0, blockedAttempts: 0, frontendModules: 0, providerRequestsSent: 0 };
   const results = {};
+  const mediaResponses = new Map();
+  const expectedMedia = new Set(browserMedia.map(m => m.url));
   let stage = 'launch';
   try {
     vite = await createServer({ configFile: resolve('vite.config.ts'), server: { host: '127.0.0.1', port: 5189, strictPort: true, proxy: { '/api': apiOrigin } } });
@@ -53,9 +57,14 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     page.on('pageerror', error => record({ event: 'pageerror', condition: safe(error.message) }));
     page.on('requestfailed', request => {
       const u = new URL(request.url());
-      record({ event: 'requestfailed', origin: u.origin, pathname: u.pathname, method: request.method(), resourceType: request.resourceType(), condition: safe(request.failure()?.errorText || 'unknown') });
+      record({ event: 'requestfailed', origin: u.origin, pathname: u.pathname, method: request.method(), resourceType: request.resourceType(), condition: safe(request.failure()?.errorText || 'unknown'), ...(request.resourceType() === 'image' ? { expectedFixture: expectedMedia.has(request.url()), ...(mediaResponses.get(request.url()) || {}) } : {}) });
     });
     page.on('response', response => {
+      if (response.request().resourceType() === 'image') {
+        const detail = { status: response.status(), contentType: response.headers()['content-type'] || '', expectedFixture: expectedMedia.has(response.url()) };
+        mediaResponses.set(response.url(), detail);
+        if (response.status() >= 400) { const u = new URL(response.url()); record({ event: 'image-http-error', origin: u.origin, pathname: u.pathname, method: response.request().method(), resourceType: 'image', ...detail }); }
+      }
       if (response.status() < 400 || !['document', 'script'].includes(response.request().resourceType())) return;
       const u = new URL(response.url());
       record({ event: 'load-http-error', origin: u.origin, pathname: u.pathname, method: response.request().method(), resourceType: response.request().resourceType(), status: response.status() });
@@ -96,6 +105,22 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
       await page.getByRole('region', { name: 'Manager Reel Editor' }).waitFor();
       return page.locator('.reel-manager-editor');
     }
+    async function anonymousMediaGet(url) {
+      const u = new URL(url);
+      assert.equal(u.origin, new URL(endpoint).origin, 'MEDIA_OUTSIDE_TEST_BACKEND');
+      assert(u.pathname.startsWith('/storage/v1/object/public/'), 'MEDIA_PATH_MISMATCH');
+      // Deliberately no Authorization/apikey; redirect:error prevents external redirects.
+      const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(10000) });
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const png = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+      let errorCode;
+      if (!response.ok) { try { const body = JSON.parse(bytes.toString('utf8')); const value = body.error || body.code || body.statusCode; if (/^[A-Za-z0-9_ -]{1,64}$/.test(String(value))) errorCode = String(value); } catch {} }
+      return { evidence: { origin: u.origin, pathname: u.pathname, status: response.status, contentType: response.headers.get('content-type'), png, ...(errorCode ? { errorCode } : {}) }, bytes };
+    }
+    stage = 'private fixture negative public GET';
+    const privateGet = await anonymousMediaGet(privateFixtureUrl);
+    results.privateFixturePublicGet = privateGet.evidence;
+    assert(!privateGet.evidence.png && privateGet.evidence.status >= 400, 'PRIVATE_FIXTURE_PUBLIC_READ_UNEXPECTED');
     await Promise.race([forbiddenRequest, (async () => {
     stage = 'normal login';
     const document = await page.goto('http://127.0.0.1:5189/');
@@ -110,7 +135,29 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     results.login = 'PASS';
     stage = 'Job UI → Editor';
     let editor = await openEditor();
+    stage = 'synthetic Job media delivery';
+    const actualUrls = await editor.locator('.editor-media img').evaluateAll(nodes => nodes.map(n => n.src));
+    assert.deepEqual([...new Set(actualUrls)].sort(), [...expectedMedia].sort(), 'JOB_MEDIA_LOADER_FIXTURE_URL_MISMATCH');
+    results.media = [];
+    for (const fixture of browserMedia) {
+      const checked = await anonymousMediaGet(fixture.url);
+      const row = { ...checked.evidence, expectedFixture: actualUrls.includes(fixture.url) };
+      results.media.push(row);
+      assert.equal(row.status, 200, 'MEDIA_HTTP_FAILED ' + row.pathname + ' status=' + row.status + ' code=' + row.errorCode);
+      assert.equal(row.contentType?.split(';')[0], 'image/png', 'MEDIA_CONTENT_TYPE_FAILED ' + row.pathname);
+      assert(row.png, 'MEDIA_PNG_SIGNATURE_FAILED ' + row.pathname);
+      assert.equal(createHash('sha256').update(checked.bytes).digest('hex'), fixture.sha256, 'MEDIA_BYTES_MISMATCH');
+      await sharp(checked.bytes).raw().toBuffer();
+      row.pngBytes = 'PASS';
+      // Decode the actual DOM image selected by its unchanged Job-loader src.
+      row.browserDecode = await editor.locator('.editor-media img').evaluateAll(async (nodes, url) => {
+        const node = nodes.find(n => n.src === url); if (!node) return false;
+        try { await node.decode(); return node.naturalWidth > 0 && node.naturalHeight > 0; } catch { return false; }
+      }, fixture.url);
+      assert(row.browserDecode, 'MEDIA_BROWSER_DECODE_FAILED ' + row.pathname);
+    }
     await editor.getByText('Media and font ready', { exact: false }).waitFor();
+    results.mediaFontReady = 'PASS';
     stage = 'edit synthetic brief/scenes';
     await editor.getByLabel('Problem found *', { exact: true }).fill('Synthetic inspection found a loose fitting.');
     await editor.getByLabel('Work actually done *', { exact: true }).fill('Synthetic fitting was secured.');

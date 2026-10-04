@@ -138,7 +138,7 @@ try {
     sql(`insert into public.job_attachments(id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path) values(${q(id)},${q(company)},${q(job)},'Synthetic grid','image/png',${bytes.length},'photo','reel-auth-fixtures',${q(path)});
       insert into public.company_media_analysis_runs(id,company_id,job_id,correlation_id,status,provider,analysis_version) values(${q(analysis)},${q(company)},${q(job)},'synthetic-auth-fixture','completed','synthetic-fixture','synthetic-v1');
       insert into public.company_media_analysis_attachment_results(id,analysis_run_id,company_id,job_id,attachment_id,attachment_sha256,detected_mime_type,analysis_status,privacy_review_status) values(${q(analysis)},${q(analysis)},${q(company)},${q(job)},${q(id)},decode(${q(sha)},'hex'),'image/png','analyzed','passed');`, 'SYNTHETIC_MEDIA');
-    media.push({ attachmentId: id });
+    media.push({ attachmentId: id, bytes, sha, privatePath: path });
   }
   process.env.SUPABASE_URL = endpoint;
   process.env.SUPABASE_ANON_KEY = anon;
@@ -151,18 +151,26 @@ try {
   if (process.env.REEL_BROWSER_FLOW === '1') {
     // A separate synthetic Job; UI actions must not reuse an HTTP-smoke approval.
     const browserJob = randomUUID();
+    const publicBucket = await local('/storage/v1/bucket/job-files');
+    assert.equal(publicBucket.public, true, 'JOB_FILES_PUBLIC_CONTRACT_MISMATCH');
+    assert.equal((await local('/storage/v1/bucket/reel-auth-fixtures')).public, false);
+    assert.equal((await local('/storage/v1/bucket/company-reel-renders')).public, false);
     sql(`update public.companies set status='active' where id=${q(company)};
       insert into public.jobs(id,company_id,job_number,status) values(${q(browserJob)},${q(company)},'SYNTHETIC-BROWSER','Completed');
-      insert into public.job_attachments(id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path)
-        select gen_random_uuid(),company_id,${q(browserJob)},name,mime_type,size_bytes,kind,storage_bucket,storage_path from public.job_attachments where job_id=${q(job)};
       insert into public.company_media_analysis_runs(id,company_id,job_id,correlation_id,status,provider,analysis_version)
-        values(${q(browserJob)},${q(company)},${q(browserJob)},'synthetic-browser-fixture','completed','synthetic-fixture','synthetic-v1');
-      insert into public.company_media_analysis_attachment_results(id,analysis_run_id,company_id,job_id,attachment_id,attachment_sha256,detected_mime_type,analysis_status,privacy_review_status)
-        select gen_random_uuid(),${q(browserJob)},a.company_id,a.job_id,a.id,r.attachment_sha256,r.detected_mime_type,r.analysis_status,r.privacy_review_status
-        from public.job_attachments a join public.job_attachments original on original.job_id=${q(job)} and original.storage_path=a.storage_path
-        join public.company_media_analysis_attachment_results r on r.attachment_id=original.id where a.job_id=${q(browserJob)};`, 'SYNTHETIC_BROWSER_JOB');
+        values(${q(browserJob)},${q(company)},${q(browserJob)},'synthetic-browser-fixture','completed','synthetic-fixture','synthetic-v1');`, 'SYNTHETIC_BROWSER_JOB');
+    const browserMedia = [];
+    for (let i = 0; i < media.length; i++) {
+      const id = randomUUID(), item = media[i], path = `${company}/${browserJob}/${id}-synthetic-${i}.png`;
+      await local(`/storage/v1/object/job-files/${path}`, { method: 'POST', raw: item.bytes, headers: { 'Content-Type': 'image/png' } });
+      sql(`insert into public.job_attachments(id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path)
+        values(${q(id)},${q(company)},${q(browserJob)},'Synthetic grid','image/png',${item.bytes.length},'photo','job-files',${q(path)});
+        insert into public.company_media_analysis_attachment_results(id,analysis_run_id,company_id,job_id,attachment_id,attachment_sha256,detected_mime_type,analysis_status,privacy_review_status)
+        values(gen_random_uuid(),${q(browserJob)},${q(company)},${q(browserJob)},${q(id)},decode(${q(item.sha)},'hex'),'image/png','analyzed','passed');`, 'SYNTHETIC_BROWSER_MEDIA');
+      browserMedia.push({ url: `${endpoint}/storage/v1/object/public/job-files/${path}`, sha256: item.sha });
+    }
     const { browserEditorFlow } = await import('./reel-editor-browser-flow.mjs');
-    await browserEditorFlow({ endpoint, anon, email: manager.email, password, managerId: manager.id, apiOrigin: new URL(app).origin });
+    await browserEditorFlow({ endpoint, anon, email: manager.email, password, managerId: manager.id, apiOrigin: new URL(app).origin, browserMedia, privateFixtureUrl: `${endpoint}/storage/v1/object/public/reel-auth-fixtures/${media[0].privatePath}` });
   } else {
   async function call(operation, extra = {}, token = manager.token) {
     const response = await fetch(app, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ operation, jobId: job, ...extra }), signal: AbortSignal.timeout(15000) });
