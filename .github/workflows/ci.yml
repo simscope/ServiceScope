@@ -342,10 +342,17 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.39.2
+      - name: Install pinned CI-only browser
+        run: |
+          npm install --prefix "$RUNNER_TEMP/reel-browser-tools" --no-save --package-lock=false playwright@1.55.1
+          node "$RUNNER_TEMP/reel-browser-tools/node_modules/playwright/cli.js" install --with-deps chromium
       - name: One temporary real Auth and PostgREST editor scenario
         env:
           REEL_AUTH_STACK_ROOT: ${{ runner.temp }}/servicescope-reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
           REEL_AUTH_STACK_PROJECT: reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
+          REEL_BROWSER_FLOW: '1'
+          REEL_BROWSER_MODULE: ${{ runner.temp }}/reel-browser-tools/node_modules/playwright/index.mjs
+          REEL_BROWSER_EVIDENCE: ${{ runner.temp }}/reel-browser-evidence
         run: node scripts/reel-editor-auth-stack.mjs
       - name: Always remove only this temporary stack
         if: always()
@@ -353,3 +360,11 @@ jobs:
           REEL_AUTH_STACK_ROOT: ${{ runner.temp }}/servicescope-reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
           REEL_AUTH_STACK_PROJECT: reel-auth-${{ github.run_id }}-${{ github.run_attempt }}
         run: node scripts/reel-editor-auth-stack.mjs cleanup
+      - name: Preserve synthetic browser evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-editor-browser-evidence
+          path: ${{ runner.temp }}/reel-browser-evidence/
+          if-no-files-found: warn
+          retention-days: 7

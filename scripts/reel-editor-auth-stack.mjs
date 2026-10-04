@@ -148,6 +148,22 @@ try {
   server = createServer((req, res) => { if (req.url !== '/api/reel-editor') { res.writeHead(404).end(); return; } handler(req, res).catch(() => { res.writeHead(500).end(); }); });
   await new Promise(resolveReady => server.listen(0, '127.0.0.1', resolveReady));
   const app = `http://127.0.0.1:${server.address().port}/api/reel-editor`;
+  if (process.env.REEL_BROWSER_FLOW === '1') {
+    // A separate synthetic Job; UI actions must not reuse an HTTP-smoke approval.
+    const browserJob = randomUUID();
+    sql(`update public.companies set status='active' where id=${q(company)};
+      insert into public.jobs(id,company_id,job_number,status) values(${q(browserJob)},${q(company)},'SYNTHETIC-BROWSER','Completed');
+      insert into public.job_attachments(id,company_id,job_id,name,mime_type,size_bytes,kind,storage_bucket,storage_path)
+        select gen_random_uuid(),company_id,${q(browserJob)},name,mime_type,size_bytes,kind,storage_bucket,storage_path from public.job_attachments where job_id=${q(job)};
+      insert into public.company_media_analysis_runs(id,company_id,job_id,correlation_id,status,provider,analysis_version)
+        values(${q(browserJob)},${q(company)},${q(browserJob)},'synthetic-browser-fixture','completed','synthetic-fixture','synthetic-v1');
+      insert into public.company_media_analysis_attachment_results(id,analysis_run_id,company_id,job_id,attachment_id,attachment_sha256,detected_mime_type,analysis_status,privacy_review_status)
+        select gen_random_uuid(),${q(browserJob)},a.company_id,a.job_id,a.id,r.attachment_sha256,r.detected_mime_type,r.analysis_status,r.privacy_review_status
+        from public.job_attachments a join public.job_attachments original on original.job_id=${q(job)} and original.storage_path=a.storage_path
+        join public.company_media_analysis_attachment_results r on r.attachment_id=original.id where a.job_id=${q(browserJob)};`, 'SYNTHETIC_BROWSER_JOB');
+    const { browserEditorFlow } = await import('./reel-editor-browser-flow.mjs');
+    await browserEditorFlow({ endpoint, anon, email: manager.email, password, managerId: manager.id, apiOrigin: new URL(app).origin });
+  } else {
   async function call(operation, extra = {}, token = manager.token) {
     const response = await fetch(app, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ operation, jobId: job, ...extra }), signal: AbortSignal.timeout(15000) });
     return { status: response.status, body: await response.json() };
@@ -177,6 +193,8 @@ try {
   console.log('PASS no JWT, readonly mutation, foreign-company read/mutation denied.');
   sql("do $$ begin if exists(select 1 from public.company_reel_render_jobs) then raise exception 'UNEXPECTED_RENDER_JOB'; end if; end $$;", 'NO_RENDER_JOB');
   console.log('PASS HTTP/JWT/PostgREST flow checked; no render job, Queue, AI or provider calls. Not Vercel UI E2E.');
+  }
+  sql("do $$ begin if exists(select 1 from public.company_reel_render_jobs) then raise exception 'UNEXPECTED_RENDER_JOB'; end if; end $$;", 'NO_BROWSER_RENDER_JOB');
 } catch (error) {
   // No CLI start/status output is logged: it can contain local credentials.
   console.error(error.message?.startsWith('SQL_REPLAY_FAILED') ? error.message : `AUTH_STACK_FAILED ${error.code || error.name}: ${error.message?.startsWith('Command failed') ? 'CLI command failed; credential-bearing output withheld' : error.message}`);
