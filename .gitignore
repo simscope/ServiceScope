@@ -1,4 +1,6 @@
 node_modules
+.tmp/reel-editor-tools/
+.tmp/reel-manager-editor-v1/
 dist
 .env
 .env.local

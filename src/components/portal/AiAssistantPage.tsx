@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Bot, BriefcaseBusiness, CheckCircle2, Copy, Download, Film, Image, Lock, RotateCcw, SlidersHorizontal, Sparkles, Video } from 'lucide-react';
 import type { MaterialRow, ServiceJob } from '../../types';
 import {
@@ -81,6 +81,7 @@ import {
   reelStatusLabel,
 } from '../../features/reel-director/reelState';
 import { ReelPreview } from './ReelPreview';
+const ReelManagerEditor = lazy(() => import('./ReelManagerEditor').then(module => ({ default: module.ReelManagerEditor })));
 import { ManualReelPlanEditor } from './ManualReelPlanEditor';
 import {
   approveReelPlan,
@@ -137,6 +138,7 @@ function renderWorkspaceFromSaved(saved: PersistedReelWorkspace): ReelRenderWork
 }
 
 export function AiAssistantPage({ companyId, selectedJob, materials, currentUserRole }: AiAssistantPageProps) {
+  const [managerEditorOpen, setManagerEditorOpen] = useState(false);
   const [selectedChannels, setSelectedChannels] = useState<AssistantChannel[]>(['Instagram']);
   const [localFacts, setLocalFacts] = useState<AssistantLocalFacts>({});
   const [mediaState, setMediaState] = useState<AssistantMediaState[]>([]);
@@ -379,6 +381,10 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
     }),
   ), [selectedJob?.attachments]);
   const reelApproved = isCurrentReelApproved(reelWorkspace, currentReelInputRevision);
+  const managerEditorMedia = useMemo(() => (manualReelSelection?.items ?? []).flatMap(item => {
+    const source = reelMediaUrls.get(item.attachmentId);
+    return source ? [{ attachmentId: item.attachmentId, url: source.url, name: item.name, width: 0, height: 0, privacy: item.privacyState }] : [];
+  }), [manualReelSelection, reelMediaUrls]);
   useEffect(() => {
     selectedJobIdRef.current = selectedJob?.id;
     setReelWorkspace((current) => reconcileReelApproval(current, currentReelInputRevision));
@@ -1105,6 +1111,8 @@ export function AiAssistantPage({ companyId, selectedJob, materials, currentUser
                 </button>
               </div>
 
+              {manualReelSelection?.canManage && selectedJob && <button className="secondary-button" type="button" onClick={() => setManagerEditorOpen(true)}>Open manager photo editor</button>}
+              {managerEditorOpen && selectedJob && <Suspense fallback={<p>Loading editor…</p>}><ReelManagerEditor key={selectedJob.id} jobId={selectedJob.id} companyId={companyId} media={managerEditorMedia} onClose={() => setManagerEditorOpen(false)} /></Suspense>}
               {manualReelPreview ? (
                 <ManualReelPlanEditor
                   plan={manualReelPreview}

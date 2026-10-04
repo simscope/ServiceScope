@@ -17,9 +17,10 @@ type FacebookReelPublishPanelProps = {
   videoUrl: string;
   coverUrl?: string | null;
   canPublish: boolean;
+  initialCaption?: string;
 };
 
-export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoUrl, coverUrl, canPublish }: FacebookReelPublishPanelProps) {
+export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoUrl, coverUrl, canPublish, initialCaption = '' }: FacebookReelPublishPanelProps) {
   const [open, setOpen] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,7 +30,7 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoU
   const [publishingReady, setPublishingReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [facebookPageName, setFacebookPageName] = useState<string | null>(null);
-  const [captionDraft, setCaptionDraft] = useState('');
+  const [captionDraft, setCaptionDraft] = useState(initialCaption);
   const [reviewedCaption, setReviewedCaption] = useState('');
   const idempotencyKey = useRef<string | null>(null);
 
@@ -57,7 +58,7 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoU
     setActivePublication(null);
     setPublishingReady(false);
     setFacebookPageName(null);
-    setCaptionDraft('');
+    setCaptionDraft(initialCaption);
     setReviewedCaption('');
   }, [companyId, jobId, renderJobId]);
 

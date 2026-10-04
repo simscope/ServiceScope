@@ -15,6 +15,7 @@ export const reelRenderMaxAttempts = 5;
 export const reelDispatchMaxAttempts = 2;
 export const reelRenderMaxMediaBytes = 12_000_000;
 export const reelRenderMaxMediaItems = reelLimits.maxMediaItems;
+export const reelEditorMaxMediaItems = 9; // v2: eight distinct photos plus one approved company logo.
 export const reelRenderMaxAggregateMediaBytes = reelRenderMaxMediaBytes * reelRenderMaxMediaItems;
 
 const requestFields = new Set(['creativePlanId', 'expectedPlanRevision']);

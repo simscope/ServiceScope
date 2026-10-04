@@ -7,6 +7,7 @@ import {
   reelRenderMaxAggregateMediaBytes,
   reelRenderMaxMediaBytes,
   reelRenderMaxMediaItems,
+  reelEditorMaxMediaItems,
   RenderJobError,
 } from '../reel-render-jobs/contracts.js';
 import { reelRenderErrorCodes } from '../reel-renderer/errors.js';
@@ -15,6 +16,7 @@ import {
   assertImmutableSandboxImage,
   parseSandboxResultJson,
   reelSandboxAssetSchemaVersion,
+  reelSandboxEditorAssetSchemaVersion,
   reelSandboxAuthorityPath,
   reelSandboxCoverMaxBytes,
   reelSandboxCoverPath,
@@ -78,6 +80,7 @@ export function createSandboxRenderAdapter({
       await downloadRequired(sandbox, reelSandboxResultPath, resultPath);
       await assertFileSize(resultPath, 1, reelSandboxResultMaxBytes);
       const result = parseSandboxResultJson(await readFile(resultPath, 'utf8'));
+      if (authority.plan.schemaVersion === 'reel-manager-plan-v2' && result.presentationContract !== authority.plan.contract) throw new RenderJobError('REEL_RENDER_OUTPUT_INVALID', 400);
       await downloadRequired(sandbox, reelSandboxVideoPath, videoPath);
       await downloadRequired(sandbox, reelSandboxCoverPath, coverPath);
       const videoSize = await assertFileSize(videoPath, 20_000, reelSandboxVideoMaxBytes);
@@ -134,8 +137,9 @@ export function createSandboxRenderAdapter({
 }
 
 async function buildTransfer(authority, stagedAssets, stagingRoot) {
+  const editor = authority?.plan?.schemaVersion === 'reel-manager-plan-v2';
   if (!plainObject(authority) || Object.keys(authority).sort().join(',') !== 'context,plan'
-    || !Array.isArray(stagedAssets) || stagedAssets.length < 1 || stagedAssets.length > reelRenderMaxMediaItems
+    || !Array.isArray(stagedAssets) || stagedAssets.length < 1 || stagedAssets.length > (editor ? reelEditorMaxMediaItems : reelRenderMaxMediaItems)
     || typeof stagingRoot !== 'string') {
     throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
   }
@@ -155,7 +159,7 @@ async function buildTransfer(authority, stagedAssets, stagingRoot) {
     if (basename(localPath) !== row.path) throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
     const size = await assertFileSize(localPath, 1, reelRenderMaxMediaBytes, 'REEL_RENDER_MEDIA_INVALID');
     aggregateBytes += size;
-    if (aggregateBytes > reelRenderMaxAggregateMediaBytes) throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
+    if (aggregateBytes > (editor ? reelEditorMaxMediaItems * reelRenderMaxMediaBytes : reelRenderMaxAggregateMediaBytes)) throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
     const bytes = await readFile(localPath);
     const sandboxPath = `input/asset-${index + 1}.bin`;
     assets.push({ attachmentId: row.attachmentId, path: sandboxPath, size, sha256: sha256(bytes) });
@@ -163,7 +167,7 @@ async function buildTransfer(authority, stagedAssets, stagingRoot) {
     attachmentIds.add(row.attachmentId);
   }
   const manifestJson = JSON.stringify({
-    schemaVersion: reelSandboxAssetSchemaVersion,
+    schemaVersion: editor ? reelSandboxEditorAssetSchemaVersion : reelSandboxAssetSchemaVersion,
     authoritySha256: sha256(authorityJson),
     assets,
   });

@@ -19,6 +19,11 @@ RUN npm ci --omit=dev --ignore-scripts=false \
   && npm cache clean --force
 
 COPY server/reel-renderer ./server/reel-renderer
+COPY server/reel-editor ./server/reel-editor
+COPY src/features/reel-editor/presentation.js ./src/features/reel-editor/presentation.js
+COPY public/reel-editor/fonts ./public/reel-editor/fonts
+COPY supabase/functions/_shared/content-engine/privacy.js ./supabase/functions/_shared/content-engine/privacy.js
+COPY supabase/functions/_shared/privacy/privateValues.js ./supabase/functions/_shared/privacy/privateValues.js
 COPY server/reel-render-jobs/contracts.js ./server/reel-render-jobs/contracts.js
 COPY server/reel-sandbox-runtime/contracts.js ./server/reel-sandbox-runtime/contracts.js
 COPY server/reel-sandbox-runner/runner.js server/reel-sandbox-runner/run.mjs ./server/reel-sandbox-runner/

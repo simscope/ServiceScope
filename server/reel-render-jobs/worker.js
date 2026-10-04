@@ -11,6 +11,8 @@ import {
   reelRenderMaxAggregateMediaBytes,
   reelRenderMaxAttempts,
   reelRenderMaxMediaItems,
+  reelEditorMaxMediaItems,
+  reelRenderMaxMediaBytes,
   reelRendererVersion,
   RenderJobError,
 } from './contracts.js';
@@ -43,7 +45,7 @@ export function createRenderWorker({
     try {
       const authority = await repository.loadAuthority(claim);
       const authorized = authorize({ plan: authority.plan, context: authority.context });
-      assertAggregateAssets(authority.assets);
+      assertAggregateAssets(authority.assets, authority.plan.schemaVersion === 'reel-manager-plan-v2');
       stagingRoot = await createStagingRoot();
       const stagedAssets = [];
       let index = 0;
@@ -137,8 +139,9 @@ function oneRow(value) {
   return Array.isArray(value) && value.length === 1;
 }
 
-function assertAggregateAssets(assets) {
-  if (!(assets instanceof Map) || assets.size < 1 || assets.size > reelRenderMaxMediaItems) {
+function assertAggregateAssets(assets, editor = false) {
+  const limit = editor ? reelEditorMaxMediaItems : reelRenderMaxMediaItems;
+  if (!(assets instanceof Map) || assets.size < 1 || assets.size > limit) {
     throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
   }
   let aggregateBytes = 0;
@@ -147,7 +150,7 @@ function assertAggregateAssets(assets) {
       throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
     }
     aggregateBytes += bytes.byteLength;
-    if (aggregateBytes > reelRenderMaxAggregateMediaBytes) {
+    if (aggregateBytes > (editor ? limit * reelRenderMaxMediaBytes : reelRenderMaxAggregateMediaBytes)) {
       throw new RenderJobError('REEL_RENDER_MEDIA_INVALID', 400);
     }
   }

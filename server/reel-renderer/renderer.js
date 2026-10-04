@@ -10,6 +10,8 @@ import { renderBrandCard, renderCover, renderSceneOverlay } from './overlays.js'
 import { validateRenderedVideo } from './probe.js';
 import { runBinary } from './process.js';
 import { reelWorkingRaster } from './runtimeSpec.js';
+import { renderEditorReel } from './editorRenderer.js';
+import { requireAuthorizedReelPlan } from './authorization.js';
 
 export const reelIntermediateSpec = Object.freeze({
   width: 1080,
@@ -149,7 +151,11 @@ export function createReelRenderer({
   };
 }
 
-export const renderAuthorizedReel = createReelRenderer();
+const renderLegacyReel = createReelRenderer();
+export async function renderAuthorizedReel(input) {
+  return requireAuthorizedReelPlan(input.authorized).schemaVersion === 'reel-manager-plan-v2'
+    ? renderEditorReel(input) : renderLegacyReel(input);
+}
 
 export function buildSceneClipArgs({ scene, incomingMs, normalizedPath, overlayPath, clipPath }) {
   if (!scene || !Number.isInteger(incomingMs) || incomingMs < 0) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');

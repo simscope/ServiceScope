@@ -1,4 +1,5 @@
 import { reelRendererVersion } from '../reel-render-jobs/contracts.js';
+import { sanitizeEditorAuthority } from '../reel-editor/service.js';
 
 export const reelSandboxSessionTimeoutMs = 240_000;
 export const reelSandboxRenderTimeoutMs = 210_000;
@@ -18,6 +19,7 @@ export const reelSandboxVideoPath = `${reelSandboxOutputDir}/reel.mp4`;
 export const reelSandboxCoverPath = `${reelSandboxOutputDir}/cover.jpg`;
 export const reelSandboxAuthoritySchemaVersion = 'reel-sandbox-authority-v1';
 export const reelSandboxAssetSchemaVersion = 'reel-sandbox-assets-v1';
+export const reelSandboxEditorAssetSchemaVersion = 'reel-sandbox-assets-v2';
 
 // Provisioning builds and tags v2-<source-sha>, pushes, resolves and verifies the VCR digest,
 // then configures this runtime with repository@sha256:<digest>; tags never become runtime authority.
@@ -46,6 +48,7 @@ export function serializeSandboxAuthority(authority) {
     || !plainObject(authority.plan) || !plainObject(authority.context)) {
     fail('REEL_RENDER_INVALID_PLAN');
   }
+  if (authority.plan.schemaVersion === 'reel-manager-plan-v2') authority = sanitizeEditorAuthority(authority);
   const serialized = JSON.stringify({
     schemaVersion: reelSandboxAuthoritySchemaVersion,
     plan: authority.plan,
@@ -58,8 +61,9 @@ export function serializeSandboxAuthority(authority) {
 export function parseSandboxAssetManifestJson(text) {
   const value = boundedJson(text, reelSandboxManifestMaxBytes, 'REEL_RENDER_MEDIA_INVALID');
   exactFields(value, manifestFields, 'REEL_RENDER_MEDIA_INVALID');
-  if (value.schemaVersion !== reelSandboxAssetSchemaVersion || !sha(value.authoritySha256) || !Array.isArray(value.assets)
-    || value.assets.length < 1 || value.assets.length > 4) fail('REEL_RENDER_MEDIA_INVALID');
+  const editor = value.schemaVersion === reelSandboxEditorAssetSchemaVersion;
+  if ((!editor && value.schemaVersion !== reelSandboxAssetSchemaVersion) || !sha(value.authoritySha256) || !Array.isArray(value.assets)
+    || value.assets.length < 1 || value.assets.length > (editor ? 9 : 4)) fail('REEL_RENDER_MEDIA_INVALID');
   const ids = new Set();
   const assets = value.assets.map((row, index) => {
     exactFields(row, assetFields, 'REEL_RENDER_MEDIA_INVALID');
@@ -78,9 +82,10 @@ export function parseSandboxAssetManifestJson(text) {
 
 export function parseSandboxResultJson(text) {
   const value = boundedJson(text, reelSandboxResultMaxBytes, 'REEL_RENDER_OUTPUT_INVALID');
-  exactFields(value, [...reelSandboxResultFields].sort(), 'REEL_RENDER_OUTPUT_INVALID');
+  const editor = value.presentationContract === 'reel-manager-presentation-v2';
+  exactFields(value, [...reelSandboxResultFields, ...(editor ? ['presentationContract'] : [])].sort(), 'REEL_RENDER_OUTPUT_INVALID');
   if (value.rendererVersion !== reelRendererVersion
-    || !integer(value.durationMs, 1, 30_000)
+    || !integer(value.durationMs, 1, editor ? 60_000 : 30_000)
     || value.width !== 1080 || value.height !== 1920 || value.fps !== 30
     || value.videoCodec !== 'h264' || value.pixelFormat !== 'yuv420p'
     || value.audioStreams !== 0 || !integer(value.fileSize, 20_000, reelSandboxVideoMaxBytes)
