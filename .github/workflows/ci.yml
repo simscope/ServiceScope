@@ -200,6 +200,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -210,13 +211,27 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Verify qualified FFmpeg renderer source unchanged
-        run: git diff --exit-code 4dd0eb40e15b71a7aa058de8aa60bf6362af18ce HEAD -- server/reel-renderer ':!server/reel-renderer/authorization.js' ':!server/reel-renderer/errors.js'
+      - name: Legacy presentation profile unchanged; candidate is not qualified
+        run: |
+          git diff --exit-code 4dd0eb40e15b71a7aa058de8aa60bf6362af18ce HEAD -- server/reel-renderer/runtimeSpec.js
+          # The reviewed main already contains manual label handling absent from the old qualified source.
+          # This checks compatibility with that main baseline, not image qualification.
+          git diff --exit-code 08c6a3f83d4de996d533c493821a56392e6532b8 HEAD -- src/features/reel-director/presentationSpec.js
+
+      - name: Prepare exact candidate source manifest
+        env:
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          CANDIDATE_SOURCE_SHA="$(git rev-parse HEAD)"
+          test "$CANDIDATE_SOURCE_SHA" = "$EXPECTED_SOURCE_SHA"
+          echo "CANDIDATE_SOURCE_SHA=$CANDIDATE_SOURCE_SHA" >> "$GITHUB_ENV"
+          node scripts/reel-candidate-manifest.mjs prepare
+          echo "CANDIDATE_MANIFEST_SHA=$(sha256sum infra/reel-render-sandbox/candidate-manifest.json | cut -d ' ' -f 1)" >> "$GITHUB_ENV"
 
       - name: Sandbox runtime regression and security
         run: npm run test:reel-sandbox-runtime && npm run test:reel-sandbox-runtime-scan
 
-      - name: Build qualified Sandbox image without push
+      - name: Build candidate Sandbox image without push
         run: |
           BASE_IMAGE="node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436"
           # This tag is a temporary build locator; runtime configuration accepts only the resolved OCI digest.
@@ -224,17 +239,20 @@ jobs:
           docker image inspect "$BASE_IMAGE" --format 'base={{index .RepoDigests 0}}'
           docker build \
             --file infra/reel-render-sandbox/Dockerfile \
-            --build-arg "REEL_SOURCE_SHA=${GITHUB_SHA}" \
+            --build-arg "REEL_SOURCE_SHA=${CANDIDATE_SOURCE_SHA}" \
             --build-arg "REEL_RUNNER_CONTRACT_VERSION=reel-sandbox-authority-v1" \
-            --tag "servicescope-reel-renderer:v2-${GITHUB_SHA}" \
+            --build-arg "REEL_CANDIDATE_MANIFEST_SHA=${CANDIDATE_MANIFEST_SHA}" \
+            --tag "servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}" \
             .
-          docker image inspect "servicescope-reel-renderer:v2-${GITHUB_SHA}" --format 'image_id={{.Id}} os={{.Os}} architecture={{.Architecture}}'
+          docker image inspect "servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}" --format 'image_id={{.Id}} os={{.Os}} architecture={{.Architecture}}'
 
       - name: Verify Sandbox image source provenance
         run: |
-          IMAGE="servicescope-reel-renderer:v2-${GITHUB_SHA}"
-          test "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$GITHUB_SHA"
+          IMAGE="servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}"
+          test "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')" = "$CANDIDATE_SOURCE_SHA"
           test "$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "io.servicescope.reel.runner-contract" }}')" = "reel-sandbox-authority-v1"
+          # The complete COPY/import/font/lockfile/Docker input manifest is authoritative.
+          node scripts/reel-candidate-manifest.mjs verify "$IMAGE" | tee candidate-image-evidence.json
           for FILE in \
             server/reel-sandbox-runner/runner.js \
             server/reel-renderer/authorization.js \
@@ -251,14 +269,14 @@ jobs:
 
       - name: Verify Sandbox image contains no secret material
         run: |
-          IMAGE="servicescope-reel-renderer:v2-${GITHUB_SHA}"
+          IMAGE="servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}"
           IMAGE_ENV="$(docker image inspect "$IMAGE" --format '{{json .Config.Env}}')"
           ! printf '%s' "$IMAGE_ENV" | grep -Eiq '(TOKEN|SECRET|PASSWORD|PRIVATE_KEY|SUPABASE|OPENAI|META_)'
           docker run --rm --entrypoint sh "$IMAGE" -c 'test -z "$(find /app -type f \( -name ".env" -o -name ".env.*" -o -name "id_rsa" -o -name "id_ed25519" -o -name "credentials" -o -path "*/.git/*" -o -path "*/.ssh/*" \) -print -quit)"'
 
       - name: Record FFmpeg package and license evidence
         run: |
-          IMAGE="servicescope-reel-renderer:v2-${GITHUB_SHA}"
+          IMAGE="servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}"
           docker run --rm "$IMAGE" /usr/bin/ffmpeg -version
           docker run --rm "$IMAGE" /usr/bin/ffmpeg -buildconf
           docker run --rm "$IMAGE" /usr/bin/ffmpeg -L
@@ -268,11 +286,14 @@ jobs:
           docker run --rm "$IMAGE" sh -c "ffmpeg -buildconf 2>&1 | grep -- '--enable-gpl'"
           docker run --rm "$IMAGE" sh -c "test -f /usr/share/doc/ffmpeg/copyright && find /usr/share/doc -maxdepth 2 -path '*x264*/copyright' -print"
 
-      - name: Isolated synthetic runner end-to-end
+      - name: Legacy and editor contracts through isolated canonical runner
         run: |
           FIXTURE_ROOT="${RUNNER_TEMP}/servicescope-reel-sandbox-fixture"
           node scripts/reel-sandbox-container-tests.mjs prepare "$FIXTURE_ROOT"
+          EDITOR_ROOT="${RUNNER_TEMP}/servicescope-reel-editor-fixture"
+          node scripts/reel-editor-integration-smoke.mjs "$EDITOR_ROOT"
           chmod -R a+rwX "$FIXTURE_ROOT"
+          chmod -R a+rwX "$EDITOR_ROOT"
           START_SECONDS=$SECONDS
           docker run --rm \
             --network none \
@@ -280,6 +301,24 @@ jobs:
             --memory 2g \
             --pids-limit 256 \
             --volume "$FIXTURE_ROOT:/vercel/sandbox/reel" \
-            "servicescope-reel-renderer:v2-${GITHUB_SHA}"
+            "servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}"
           echo "wall_seconds=$((SECONDS - START_SECONDS))"
           node scripts/reel-sandbox-container-tests.mjs verify "$FIXTURE_ROOT"
+          docker run --rm \
+            --network none \
+            --cpus 1 \
+            --memory 2g \
+            --pids-limit 256 \
+            --volume "$EDITOR_ROOT:/vercel/sandbox/reel" \
+            "servicescope-reel-renderer:v2-${CANDIDATE_SOURCE_SHA}"
+          node scripts/reel-sandbox-container-tests.mjs verify-editor "$EDITOR_ROOT"
+
+      - name: Preserve candidate manifest and verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-candidate-provenance
+          path: |
+            infra/reel-render-sandbox/candidate-manifest.json
+            candidate-image-evidence.json
+          if-no-files-found: error
+          retention-days: 7

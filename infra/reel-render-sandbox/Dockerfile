@@ -2,8 +2,10 @@ FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0
 
 ARG REEL_SOURCE_SHA
 ARG REEL_RUNNER_CONTRACT_VERSION
+ARG REEL_CANDIDATE_MANIFEST_SHA
 LABEL org.opencontainers.image.revision="${REEL_SOURCE_SHA}" \
-  io.servicescope.reel.runner-contract="${REEL_RUNNER_CONTRACT_VERSION}"
+  io.servicescope.reel.runner-contract="${REEL_RUNNER_CONTRACT_VERSION}" \
+  io.servicescope.reel.candidate-manifest="${REEL_CANDIDATE_MANIFEST_SHA}"
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -13,6 +15,9 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+COPY infra/reel-render-sandbox/Dockerfile ./infra/reel-render-sandbox/Dockerfile
+COPY .dockerignore ./.dockerignore
+COPY infra/reel-render-sandbox/candidate-manifest.json ./candidate-manifest.json
 
 COPY server/reel-sandbox-runner/package.json server/reel-sandbox-runner/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts=false \

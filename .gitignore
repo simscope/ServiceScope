@@ -1,6 +1,7 @@
 node_modules
 .tmp/reel-editor-tools/
 .tmp/reel-manager-editor-v1/
+infra/reel-render-sandbox/candidate-manifest.json
 dist
 .env
 .env.local

@@ -3,6 +3,7 @@ import { CheckCircle2, Film, RefreshCw, X } from 'lucide-react';
 import { loadFacebookPublishingStatus, publishFacebookReel, reconcileFacebookReel } from '../../features/meta-publishing/clientApi';
 import { normalizeFacebookPublishingMessage, normalizePublishingError } from '../../features/meta-publishing/contracts';
 import type { FacebookReelPublishResult } from '../../features/meta-publishing/contracts';
+import { captionReview, newCaptionReview } from '../../features/meta-publishing/reelCaptionReview.js';
 import {
   canPrepareFreshFacebookReel,
   facebookActiveReelPublication,
@@ -21,8 +22,15 @@ type FacebookReelPublishPanelProps = {
 };
 
 export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoUrl, coverUrl, canPublish, initialCaption = '' }: FacebookReelPublishPanelProps) {
-  const [open, setOpen] = useState(false);
-  const [confirmed, setConfirmed] = useState(false);
+  const scope = JSON.stringify([companyId, jobId, renderJobId]);
+  const [captionState, setCaptionState] = useState(() => newCaptionReview(scope, initialCaption));
+  // Synchronize during render so an old tenant's review cannot be actionable for one frame.
+  const currentCaption = captionReview(captionState, { type: 'sync', scope, initialCaption });
+  if (currentCaption !== captionState) setCaptionState(currentCaption);
+  const { open, confirmed, captionDraft, reviewedCaption } = currentCaption;
+  const setOpen = (value: boolean) => setCaptionState(s => captionReview(s, { type: value ? 'open' : 'close' }));
+  const setConfirmed = (value: boolean) => setCaptionState(s => captionReview(s, { type: 'confirm', value }));
+  const setReviewedCaption = (value: string) => setCaptionState(s => captionReview(s, { type: 'normalize', value }));
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<FacebookReelPublishResult | null>(null);
   const [history, setHistory] = useState<FacebookReelPublishResult | null>(null);
@@ -30,8 +38,6 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoU
   const [publishingReady, setPublishingReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [facebookPageName, setFacebookPageName] = useState<string | null>(null);
-  const [captionDraft, setCaptionDraft] = useState(initialCaption);
-  const [reviewedCaption, setReviewedCaption] = useState('');
   const idempotencyKey = useRef<string | null>(null);
 
   useEffect(() => {
@@ -58,22 +64,17 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoU
     setActivePublication(null);
     setPublishingReady(false);
     setFacebookPageName(null);
-    setCaptionDraft(initialCaption);
-    setReviewedCaption('');
   }, [companyId, jobId, renderJobId]);
 
   function openReview() {
     idempotencyKey.current = crypto.randomUUID();
-    setReviewedCaption(captionDraft);
     setConfirmed(false);
     setError(null);
     setOpen(true);
   }
 
   function updateReviewedCaption(value: string) {
-    setReviewedCaption(value);
-    setCaptionDraft(value);
-    setConfirmed(false);
+    setCaptionState(s => captionReview(s, { type: 'edit', value }));
     setError(null);
   }
 
@@ -85,7 +86,6 @@ export function FacebookReelPublishPanel({ companyId, jobId, renderJobId, videoU
     try {
       const normalized = normalizeFacebookPublishingMessage(reviewedCaption);
       setReviewedCaption(normalized);
-      setCaptionDraft(normalized);
       setConfirmed(true);
       setError(null);
     } catch (nextError) {
