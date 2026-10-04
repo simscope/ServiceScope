@@ -66,8 +66,32 @@ try {
   sql(baseline, `schema.sql@${baselineSha}`);
   console.log(`PASS baseline schema.sql@${baselineSha}`);
   for (const name of (await readdir('supabase/migrations')).filter(n => n.endsWith('.sql')).sort()) {
+    if (name === '20260712090000_lock_legacy_import_tables.sql') {
+      sql(await readFile('scripts/fixtures/reel-auth-legacy-prerequisite.sql', 'utf8'), 'CI_ONLY_LEGACY_PREREQUISITE');
+      console.log('PASS CI-only empty legacy prerequisite; no Auth/RPC substitutions or exposed schema.');
+    }
     sql(await readFile(join('supabase/migrations', name), 'utf8'), name);
     console.log(`PASS migration ${name}`);
+    if (name === '20260712090000_lock_legacy_import_tables.sql') {
+      sql(`do $$ begin
+        if (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
+          where n.nspname='legacy_import' and c.relname in ('mail_accounts','materials') and c.relrowsecurity) <> 2
+          then raise exception 'LEGACY_RLS_NOT_ENABLED'; end if;
+        if exists(select 1 from legacy_import.mail_accounts) or exists(select 1 from legacy_import.materials)
+          then raise exception 'LEGACY_FIXTURE_NOT_EMPTY'; end if;
+      end $$;`, 'LEGACY_RLS_EMPTY_CHECK');
+      console.log('PASS legacy RLS enabled on both empty tables.');
+      sql(`do $$ begin
+        if exists(select 1 from pg_policies where schemaname='legacy_import')
+          then raise exception 'LEGACY_PERMISSIVE_POLICY_REMAINS'; end if;
+        if exists(select 1 from (values ('anon'),('authenticated')) roles(role_name)
+          cross join (values ('legacy_import.mail_accounts'),('legacy_import.materials')) tables(table_name)
+          cross join (values ('SELECT'),('INSERT'),('UPDATE'),('DELETE')) privileges(privilege_name)
+          where has_table_privilege(role_name,table_name,privilege_name))
+          then raise exception 'LEGACY_BROWSER_CRUD_REMAINS'; end if;
+      end $$;`, 'LEGACY_ACL_POLICY_CHECK');
+      console.log('PASS legacy anon/authenticated CRUD revoked and permissive policies absent.');
+    }
   }
   sql("notify pgrst, 'reload schema';", 'POSTGREST_SCHEMA_RELOAD');
   const key = status.SERVICE_ROLE_KEY, anon = status.ANON_KEY;
