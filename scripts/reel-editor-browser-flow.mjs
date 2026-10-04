@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'vite';
+import { classifyBrowserRequest } from './reel-browser-request-guard.mjs';
 
 export async function browserEditorFlow({ endpoint, anon, email, password, managerId, apiOrigin }) {
   assert.equal(process.env.GITHUB_ACTIONS, 'true');
@@ -12,27 +13,60 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
   await mkdir(evidence, { recursive: true });
   process.env.VITE_SUPABASE_URL = endpoint;
   process.env.VITE_SUPABASE_ANON_KEY = anon;
-  const vite = await createServer({ configFile: resolve('vite.config.ts'), server: { host: '127.0.0.1', port: 5189, strictPort: true, proxy: { '/api': apiOrigin } } });
-  let browser;
-  const counts = { render: 0, publication: 0, ai: 0, blockedExternal: 0 };
+  let vite;
+  let browser, page;
+  const diagnostics = [];
+  const safe = value => String(value).replaceAll(password, '[redacted]').replaceAll(anon, '[redacted]').replaceAll(email, '[redacted]').replace(/eyJ[\w.-]+/g, '[redacted]').replace(/https?:\/\/[^\s)]+/g, value => { try { const u = new URL(value); return u.origin + u.pathname; } catch { return '[url]'; } }).slice(0, 1500);
+  const record = event => { if (diagnostics.length < 20) diagnostics.push({ stage, ...event }); };
+  let forbidden, rejectForbidden, pageState;
+  const forbiddenRequest = new Promise((_, reject) => { rejectForbidden = reject; });
+  forbiddenRequest.catch(() => {});
+  const counts = { render: 0, publication: 0, ai: 0, blockedExternal: 0, blockedUnknown: 0, blockedAttempts: 0, frontendModules: 0, providerRequestsSent: 0 };
   const results = {};
   let stage = 'launch';
   try {
+    vite = await createServer({ configFile: resolve('vite.config.ts'), server: { host: '127.0.0.1', port: 5189, strictPort: true, proxy: { '/api': apiOrigin } } });
     await vite.listen();
     const { chromium } = await import(pathToFileURL(process.env.REEL_BROWSER_MODULE).href);
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: { width: 1440, height: 1100 } });
+    const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1440, height: 1100 } });
     await context.route('**/*', async route => {
-      const url = new URL(route.request().url());
-      if (!['127.0.0.1', 'localhost'].includes(url.hostname) || !['http:', 'ws:'].includes(url.protocol)) { counts.blockedExternal++; await route.abort(); return; }
-      const path = url.pathname;
-      if (/reel-render-request|begin_company_reel_render_request/.test(path)) counts.render++;
-      if (/meta-social-publish|reconcile.*publication|publication.*reconcile/.test(path)) counts.publication++;
-      if (/ai-content-generate|ai-media-analy|ai-reel-director|media-plan/.test(path)) counts.ai++;
-      if (counts.render || counts.publication || counts.ai) { await route.abort(); return; }
+      const request = route.request();
+      const pathname = new URL(request.url()).pathname;
+      let action;
+      if (request.method() === 'POST' && (pathname === '/api/reel-editor' || ['/functions/v1/meta-social-publish', '/functions/v1/meta-social-connection'].includes(pathname))) {
+        try { const body = request.postDataJSON(); action = pathname === '/api/reel-editor' ? body?.operation : body?.action; } catch {}
+      }
+      const decision = classifyBrowserRequest({ url: request.url(), method: request.method(), resourceType: request.resourceType(), action }, { appOrigin: 'http://127.0.0.1:5189', backendOrigin: new URL(endpoint).origin });
+      if (decision.decision === 'block') {
+        counts.blockedAttempts++;
+        const counter = { external: 'blockedExternal', unknown: 'blockedUnknown' }[decision.operation] || decision.operation;
+        counts[counter]++;
+        record({ event: 'routeblock', ...decision });
+        forbidden ||= 'FORBIDDEN_OPERATION ' + decision.rule + ' ' + decision.method + ' ' + decision.origin + decision.pathname;
+        await route.abort(); rejectForbidden(new Error(forbidden)); return;
+      }
+      if (decision.rule === 'frontend-module') counts.frontendModules++;
       await route.continue();
     });
-    const page = await context.newPage();
+    page = await context.newPage();
+    page.on('pageerror', error => record({ event: 'pageerror', condition: safe(error.message) }));
+    page.on('requestfailed', request => {
+      const u = new URL(request.url());
+      record({ event: 'requestfailed', origin: u.origin, pathname: u.pathname, method: request.method(), resourceType: request.resourceType(), condition: safe(request.failure()?.errorText || 'unknown') });
+    });
+    page.on('response', response => {
+      if (response.status() < 400 || !['document', 'script'].includes(response.request().resourceType())) return;
+      const u = new URL(response.url());
+      record({ event: 'load-http-error', origin: u.origin, pathname: u.pathname, method: response.request().method(), resourceType: response.request().resourceType(), status: response.status() });
+    });
+    pageState = async function () {
+      const u = new URL(page.url());
+      return { url: u.origin + u.pathname, title: safe(await page.title()), rootPresent: await page.locator('#root').count() > 0,
+        rootHasContent: await page.locator('#root').textContent().then(t => Boolean(t?.trim())).catch(() => false),
+        loginLabels: await page.locator('label').evaluateAll(nodes => nodes.filter(n => n.getClientRects().length).map(n => n.textContent?.trim()).slice(0, 12)).then(rows => rows.map(safe)),
+        visibleButtons: await page.getByRole('button').evaluateAll(nodes => nodes.filter(n => n.getClientRects().length).map(n => n.textContent?.trim()).slice(0, 12)).then(rows => rows.map(safe)) };
+    };
     page.setDefaultTimeout(20000);
     // Keep only safe editor response bodies in memory, never headers/JWT/HAR.
     const responses = [];
@@ -62,12 +96,18 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
       await page.getByRole('region', { name: 'Manager Reel Editor' }).waitFor();
       return page.locator('.reel-manager-editor');
     }
+    await Promise.race([forbiddenRequest, (async () => {
     stage = 'normal login';
-    await page.goto('http://127.0.0.1:5189/');
+    const document = await page.goto('http://127.0.0.1:5189/');
+    results.documentStatus = document?.status();
+    try { await page.getByLabel('Email', { exact: true }).waitFor({ state: 'visible' }); } finally { results.initialPage = await pageState(); }
+    if (forbidden) throw new Error(forbidden);
+    results.loginPageLoaded = true;
     await page.getByLabel('Email', { exact: true }).fill(email);
     await page.getByLabel('Password', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await page.getByRole('button', { name: 'All Jobs', exact: true }).waitFor();
+    results.login = 'PASS';
     stage = 'Job UI → Editor';
     let editor = await openEditor();
     await editor.getByText('Media and font ready', { exact: false }).waitFor();
@@ -129,13 +169,22 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     results.videoChange = 'PASS';
     await page.screenshot({ path: join(evidence, '03-approval-required.png'), fullPage: false });
     assert.equal(responses.filter(r => r.operation === 'approve').length, 1);
-    assert.equal(counts.render + counts.publication + counts.ai, 0);
-    await writeFile(join(evidence, 'result.json'), JSON.stringify({ status: 'PASS', results, counts, pageReloads: 2, boundary: 'ordinary browser Job/Editor on ephemeral CI Auth/PostgREST; not Production E2E' }, null, 2));
+    })()]);
+    if (forbidden) throw new Error(forbidden);
+    assert.equal(counts.blockedAttempts, 0);
+    await writeFile(join(evidence, 'result.json'), JSON.stringify({ status: 'PASS', results, counts, diagnostics, pageReloads: 2, boundary: 'ordinary browser Job/Editor on ephemeral CI Auth/PostgREST; not Production E2E' }, null, 2));
     console.log(`PASS ordinary browser Job → Editor → Auth/PostgREST → Save/reload → Approval; caption-only/video-change PASS; counts=${JSON.stringify(counts)}`);
   } catch (error) {
-    // Only stage and safe condition; never raw browser/network/session dumps.
-    const condition = String(error.message).replaceAll(password, '[redacted]').replaceAll(anon, '[redacted]').replace(/eyJ[\w.-]+/g, '[redacted]').slice(0, 1500);
-    await writeFile(join(evidence, 'result.json'), JSON.stringify({ status: 'FAIL', stage, condition, results, counts }, null, 2));
+    const condition = safe(forbidden || error.message);
+    if (page) {
+      try {
+        results.failurePage = await pageState();
+        if (stage === 'normal login' && !results.loginPageLoaded) results.loginFailureCategory = diagnostics.some(d => d.event === 'pageerror' || d.event === 'load-http-error') ? 'page/import error' : !results.failurePage.rootHasContent ? 'empty application' : results.failurePage.loginLabels.length ? 'accessible login labels differ or Email absent' : 'other UI';
+        await page.screenshot({ path: join(evidence, 'failure.png'), fullPage: false, mask: [page.locator('input, textarea, [contenteditable="true"]')] });
+        results.failureScreenshot = 'failure.png';
+      } catch (captureError) { results.captureError = safe(captureError.message); }
+    }
+    await writeFile(join(evidence, 'result.json'), JSON.stringify({ status: 'FAIL', stage, condition, results, counts, diagnostics }, null, 2));
     throw new Error(`BROWSER_FLOW_FAILED at ${stage}: ${condition.slice(0, 1200)}`);
-  } finally { if (browser) await browser.close(); await vite.close(); }
+  } finally { if (browser) await browser.close(); if (vite) await vite.close(); }
 }
