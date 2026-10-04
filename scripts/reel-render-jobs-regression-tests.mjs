@@ -370,12 +370,15 @@ for (const invalid of [
 {
   const client = createSupabaseHttpClient(
     { SUPABASE_URL: 'https://project.supabase.test', SUPABASE_ANON_KEY: 'public-anon-key', SUPABASE_SERVICE_ROLE_KEY: 'server-secret-key' },
-    async (_url, options) => new Response(JSON.stringify(
-      options.method === 'POST' && String(options.body).includes('expiresIn') ? { signedURL: '/storage/v1/object/sign/private' } : [],
-    ), { status: 200 }),
+    async (url, options) => {
+      check(() => assert.equal(url, 'https://project.supabase.test/storage/v1/object/sign/company-reel-renders/company/job/reel.mp4'));
+      check(() => assert.equal(options.method, 'POST'));
+      check(() => assert.deepEqual(JSON.parse(options.body), { expiresIn: 300 }));
+      return Response.json({ signedURL: '/object/sign/company-reel-renders/company/job/reel.mp4?token=fixture-only-token' });
+    },
   );
   const signed = await client.sign('company-reel-renders', 'company/job/reel.mp4', 300);
-  check(() => assert.equal(signed.signedURL, 'https://project.supabase.test/storage/v1/object/sign/private'));
+  check(() => assert.equal(signed.signedURL, 'https://project.supabase.test/storage/v1/object/sign/company-reel-renders/company/job/reel.mp4?token=fixture-only-token'));
 }
 {
   const client = createSupabaseHttpClient(
