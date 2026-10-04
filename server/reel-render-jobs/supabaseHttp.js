@@ -107,9 +107,25 @@ export function createSupabaseHttpClient(env = process.env, fetchImpl = fetch) {
         method: 'POST', service: true, body: JSON.stringify({ expiresIn }), headers: { 'Content-Type': 'application/json' },
       });
       const signed = result?.signedURL ?? result?.signedUrl;
-      return { signedURL: typeof signed === 'string' && signed.startsWith('/') ? `${url}${signed}` : signed };
+      return { signedURL: signedStorageUrl(signed, url, bucket, path) };
     },
   };
+}
+
+function signedStorageUrl(signed, projectUrl, bucket, path) {
+  try {
+    const project = new URL(projectUrl);
+    if (typeof signed !== 'string' || project.protocol !== 'https:') throw new Error();
+    const candidate = signed.startsWith('/object/sign/') ? `/storage/v1${signed}` : signed;
+    const resolved = new URL(candidate, project.origin);
+    const expectedPath = `/storage/v1/object/sign/${encodeURIComponent(bucket)}/${objectPath(path)}`;
+    if (resolved.protocol !== 'https:' || resolved.origin !== project.origin
+      || resolved.username || resolved.password || resolved.hash
+      || resolved.pathname !== expectedPath || !resolved.searchParams.get('token')) throw new Error();
+    return resolved.href;
+  } catch {
+    throw new RenderJobError('REEL_RENDER_SERVICE_UNAVAILABLE', 503);
+  }
 }
 
 const exposedDatabaseErrors = new Set([
