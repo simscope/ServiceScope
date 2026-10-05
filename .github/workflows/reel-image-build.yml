@@ -7,7 +7,7 @@ on:
 permissions: {}
 
 jobs:
-  oidc-claims-diagnostic:
+  oidc-workflow-name-exchange:
     if: github.repository == 'simscope/ServiceScope' && github.ref == 'refs/heads/ops/reel-image-build-d45d05b'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -15,37 +15,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - name: Issue one GitHub OIDC token and record only allowlisted claims
-        uses: actions/github-script@v7
-        env:
-          DIAGNOSTIC_HEAD_REF: ${{ github.head_ref }}
-          DIAGNOSTIC_BASE_REF: ${{ github.base_ref }}
+      - name: One VCR OIDC login using workflow-name diagnostic policy
+        uses: vercel/vcr-action/login@v1
         with:
-          script: |
-            const fs = require('node:fs');
-            const token = await core.getIDToken('https://github.com/simscope');
-            // Payload inspection only inside the trusted runner; not signature validation.
-            const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
-            const allowed = ['iss', 'aud', 'sub', 'repository', 'repository_id', 'repository_owner', 'repository_owner_id', 'ref', 'ref_type', 'workflow', 'workflow_ref', 'workflow_sha', 'job_workflow_ref', 'job_workflow_sha', 'event_name', 'actor', 'actor_id', 'repository_visibility', 'run_id', 'run_number', 'run_attempt', 'environment'];
-            const claims = Object.fromEntries(allowed.map(key => [key, payload[key] ?? null]));
-            const githubContext = {
-              'github.repository': process.env.GITHUB_REPOSITORY,
-              'github.ref': process.env.GITHUB_REF,
-              'github.workflow': process.env.GITHUB_WORKFLOW,
-              'github.workflow_ref': process.env.GITHUB_WORKFLOW_REF,
-              'github.workflow_sha': process.env.GITHUB_WORKFLOW_SHA,
-              'github.event_name': process.env.GITHUB_EVENT_NAME,
-              'github.head_ref': process.env.DIAGNOSTIC_HEAD_REF || '',
-              'github.base_ref': process.env.DIAGNOSTIC_BASE_REF || ''
-            };
-            const safeResult = {claims, githubContext};
-            fs.writeFileSync('oidc-safe-claims.json', JSON.stringify(safeResult, null, 2) + '\n');
-            core.info(JSON.stringify(safeResult));
-
-      - name: Preserve only safe claims and GitHub context
-        uses: actions/upload-artifact@v4
-        with:
-          name: reel-oidc-safe-claims
-          path: oidc-safe-claims.json
-          if-no-files-found: error
-          retention-days: 7
+          team: ${{ vars.VERCEL_TEAM_ID }}
+          policy: pol_96f9db0b-6e28-4896-889d-a3b63f4c2e3d
+          audience: https://github.com/simscope
+          engines: docker
+          logout: 'true'
+          revoke: 'true'
