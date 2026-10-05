@@ -1,4 +1,9 @@
 {
+  "git": {
+    "deploymentEnabled": {
+      "ops/reel-image-build-d45d05b": false
+    }
+  },
   "functions": {
     "api/queues/reel-render.js": {
       "maxDuration": 300,
