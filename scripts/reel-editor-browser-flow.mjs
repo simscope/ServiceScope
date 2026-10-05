@@ -86,13 +86,16 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     });
     const controlFailure = detail => { results.controlFailure = detail; };
     const control = (editor, role, name, options = {}) => editorControl(editor, role, name, { ...options, onFailure: controlFailure });
-    async function openCaptionDetails(editor) {
-      const summary = editor.getByText('Company branding & separate Facebook caption', { exact: true });
-      assert.equal(await summary.count(), 1, 'CAPTION_SUMMARY_NOT_UNIQUE');
+    async function openTab(editor, name) {
+      await (await control(editor, 'button', name)).click();
+    }
+    async function openGroup(editor, name) {
+      const summary = editor.getByText(name, { exact: typeof name === 'string' });
+      assert.equal(await summary.count(), 1, 'EDITOR_GROUP_NOT_UNIQUE');
       assert.equal(await summary.evaluate(e => e.tagName), 'SUMMARY');
-      assert(await summary.isVisible(), 'CAPTION_SUMMARY_HIDDEN');
-      await summary.click();
-      assert(await summary.evaluate(e => e.parentElement.open), 'CAPTION_DETAILS_CLOSED');
+      assert(await summary.isVisible(), 'EDITOR_GROUP_HIDDEN');
+      if (!await summary.evaluate(e => e.parentElement.open)) await summary.click();
+      assert(await summary.evaluate(e => e.parentElement.open), 'EDITOR_GROUP_CLOSED');
     }
     async function clickOperation(button, operation) {
       const waiting = page.waitForResponse(r => new URL(r.url()).pathname === '/api/reel-editor' && r.request().postDataJSON()?.operation === operation);
@@ -172,23 +175,30 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     await editor.getByText('Media and font ready', { exact: false }).waitFor();
     results.mediaFontReady = 'PASS';
     stage = 'edit synthetic brief/scenes';
+    await openTab(editor, 'Story');
     await (await control(editor, 'textbox', 'Problem found *')).fill('Synthetic inspection found a loose fitting.');
     await (await control(editor, 'textbox', 'Work actually done *')).fill('Synthetic fitting was secured.');
+    await openTab(editor, 'Editor');
     const sceneButtons = editor.getByRole('button', { name: /^Scene \d/ });
     assert.equal(await sceneButtons.count(), 3, 'Expected three synthetic scenes');
     await (await control(editor, 'button', /^Scene 2 ·/)).click();
+    await openGroup(editor, /^Text(?: ·.*)?$/);
     await selectEditorOption(editor, 'Confirmed fact source', 'work', controlFailure);
     await (await control(editor, 'textbox', 'headline')).fill('Synthetic fitting was secured.');
     await selectEditorOption(editor, 'Motion', 'none', controlFailure);
+    await openGroup(editor, 'Advanced position');
     await (await control(editor, 'spinbutton', 'Focal X')).fill('0.62');
     await (await control(editor, 'spinbutton', 'Duration (seconds)')).fill('3');
     await (await control(editor, 'button', 'Move earlier')).click();
     // No unconfirmed text on other scenes; claims must remain grounded on approval.
-    for (let i = 1; i < 3; i++) { await (await control(editor, 'button', new RegExp('^Scene ' + (i + 1) + ' ·'))).click(); await selectEditorOption(editor, 'Confirmed fact source', 'work', controlFailure); await (await control(editor, 'textbox', 'headline')).fill('Synthetic fitting was secured.'); }
+    for (let i = 1; i < 3; i++) { await (await control(editor, 'button', new RegExp('^Scene ' + (i + 1) + ' ·'))).click(); await openGroup(editor, /^Text(?: ·.*)?$/); await selectEditorOption(editor, 'Confirmed fact source', 'work', controlFailure); await (await control(editor, 'textbox', 'headline')).fill('Synthetic fitting was secured.'); }
     await (await control(editor, 'button', /^Scene 1 ·/)).click();
-    await openCaptionDetails(editor);
+    await openTab(editor, 'Branding');
     await (await control(editor, 'checkbox', /^Company end card:/)).uncheck();
+    await openTab(editor, 'Story');
     await (await control(editor, 'checkbox', /^I confirm these facts/)).check();
+    await openTab(editor, 'Editor');
+    await openGroup(editor, 'Advanced preview');
     await (await control(editor, 'spinbutton', 'Preview frame')).fill('30');
     assert(await editor.locator('.editor-canvas').textContent().then(t => t.replace(/\s+/g, '').includes('Syntheticfittingwassecured.')), 'Preview text not updated');
     await page.screenshot({ path: join(evidence, '01-editor.png'), fullPage: false });
@@ -202,6 +212,7 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     const reloaded = responses.filter(r => r.operation === 'load' && r.body.row).at(-1)?.body.row;
     assert.deepEqual(reloaded.draft, saved.draft); assert.deepEqual(reloaded.brief_confirmation, saved.brief_confirmation);
     assert.equal(await (await control(editor, 'combobox', 'Motion')).inputValue(), 'none');
+    await openGroup(editor, 'Advanced position');
     assert.equal(await (await control(editor, 'spinbutton', 'Focal X')).inputValue(), '0.62');
     assert.equal(await (await control(editor, 'spinbutton', 'Duration (seconds)')).inputValue(), '3');
     results.saveReload = 'PASS';
@@ -216,12 +227,13 @@ export async function browserEditorFlow({ endpoint, anon, email, password, manag
     results.approvalReload = 'PASS';
     await page.screenshot({ path: join(evidence, '02-approved-reload.png'), fullPage: false });
     stage = 'caption-only save';
-    await openCaptionDetails(editor);
+    await openTab(editor, 'Caption');
     await (await control(editor, 'textbox', 'Facebook caption (does not change MP4)')).fill('Synthetic equipment details and work in progress.');
     const caption = await clickOperation((await control(editor, 'button', 'Save draft')), 'save');
     assert.equal(caption.approval.creativePlanId, approved.approval.creativePlanId); assert.equal(caption.approval.revision, approved.approval.revision);
     await editor.getByText('Approved exact version', { exact: false }).waitFor(); results.captionOnly = 'PASS';
     stage = 'video change invalidates approval';
+    await openTab(editor, 'Editor');
     await (await control(editor, 'spinbutton', 'Duration (seconds)')).fill('5');
     const changed = await clickOperation((await control(editor, 'button', 'Save draft')), 'save');
     assert.equal(changed.approval, null);
