@@ -5,6 +5,8 @@ export async function loadPersistedReelWorkspace(jobId: string) {
   const rows = await supabaseRpc<PersistedReelWorkspace[]>('get_company_reel_workspace', { p_job_id: jobId });
   const saved = rows?.[0];
   if (!saved) return null;
+  // v2 editor drafts/approvals have their own UI; never reinterpret them as v1.
+  if (saved.plan_json?.schemaVersion !== 'reel-creative-plan-v1') return null;
   const authority = await serverRequest<{
     creativePlanId: string; planRevision: string; approved: boolean;
     retryEligible: boolean; retryOfRenderJobId: string | null;

@@ -129,6 +129,10 @@ function signedStorageUrl(signed, projectUrl, bucket, path) {
 }
 
 const exposedDatabaseErrors = new Set([
+  'EDITOR_DRAFT_CONFLICT',
+  'EDITOR_BRIEF_CONFIRMATION_REQUIRED',
+  'EDITOR_INVALID_DRAFT',
+  'FORBIDDEN',
   'AUTH_REQUIRED',
   'REEL_RENDER_PLAN_UNAVAILABLE',
   'REEL_RENDER_APPROVAL_REQUIRED',

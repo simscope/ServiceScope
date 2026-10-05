@@ -1,6 +1,7 @@
 import { parseReelPlanShape, validateReelPlan } from '../../supabase/functions/_shared/reel-engine/schemas.js';
 import { validateManualReelPlanForRender } from '../../supabase/functions/_shared/reel-engine/manualPlanContract.js';
 import { ReelRenderError } from './errors.js';
+import { assertSnapshotCurrent } from '../reel-editor/service.js';
 
 const authorizedPlans = new WeakMap();
 const validationErrorCodes = new Set([
@@ -15,6 +16,12 @@ const invalidPlanErrorCodes = new Set(['INVALID_REEL_PROVIDER_OUTPUT', 'INVALID_
 
 export function authorizeReelForRender({ plan, context }) {
   try {
+    if (plan?.schemaVersion === 'reel-manager-plan-v2') {
+      assertSnapshotCurrent(plan, context);
+      const authorization = Object.freeze(Object.create(null));
+      authorizedPlans.set(authorization, deepFreeze(structuredClone(plan)));
+      return authorization;
+    }
     if (!validAuthorityContext(context)) throw new ReelRenderError('REEL_RENDER_CONTEXT_STALE');
     if (!plainObject(plan) || typeof plan.revision !== 'string' || !/^[A-Za-z0-9:_-]{1,180}$/.test(plan.revision)) {
       throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
@@ -35,6 +42,7 @@ export function authorizeReelForRender({ plan, context }) {
     return authorization;
   } catch (error) {
     if (error instanceof ReelRenderError) throw error;
+    if (error?.code?.startsWith('EDITOR_')) throw new ReelRenderError(error.code === 'EDITOR_TEXT_OVERFLOW' ? 'REEL_RENDER_TEXT_OVERFLOW' : error.code === 'EDITOR_UNCONFIRMED_CLAIM' ? 'REEL_GROUNDING_FAILED' : 'REEL_RENDER_CONTEXT_STALE');
     if (validationErrorCodes.has(error?.message)) throw new ReelRenderError(error.message);
     if (invalidPlanErrorCodes.has(error?.message)) throw new ReelRenderError('REEL_RENDER_INVALID_PLAN');
     throw new ReelRenderError('REEL_RENDER_FAILED');

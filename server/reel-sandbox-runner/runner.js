@@ -34,6 +34,7 @@ export async function executeSandboxRunner({
   if (root !== reelSandboxRoot) throw safeError('REEL_RENDER_MEDIA_INVALID');
   await mkdir(reelSandboxOutputDir, { recursive: true });
   const authorityJson = await readBoundedUtf8(reelSandboxAuthorityPath, reelSandboxAuthorityMaxBytes);
+  const editor = parseSandboxAuthorityJson(authorityJson).plan.schemaVersion === 'reel-manager-plan-v2';
   const manifest = parseSandboxAssetManifestJson(await readBoundedUtf8(reelSandboxManifestPath, reelSandboxManifestMaxBytes));
   const authority = reauthorizeSerializedAuthority(authorityJson, manifest.authoritySha256, authorize);
   const stagedAssets = [];
@@ -65,6 +66,7 @@ export async function executeSandboxRunner({
     await copyFile(output.videoPath, reelSandboxVideoPath);
     await copyFile(output.coverPath, reelSandboxCoverPath);
     const result = {
+      ...(editor ? { presentationContract: 'reel-manager-presentation-v2' } : {}),
       rendererVersion: reelRendererVersion,
       durationMs: output.durationMs,
       width: output.width,

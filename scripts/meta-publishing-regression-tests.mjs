@@ -669,7 +669,9 @@ async function sourceChecks() {
   check(() => assert.match(reelPanel, /message: normalizedCaption/));
   check(() => assert.doesNotMatch(assistant, /caption=\{reelWorkspace\.plan\.caption\.text\}/));
   check(() => assert.doesNotMatch(reelPanel, /caption: string|useState\(caption\)|setCaptionDraft\(caption\)/));
-  check(() => assert.match(reelPanel, /const \[captionDraft, setCaptionDraft\] = useState\(''\)/));
+  const { checkCaptionComponent } = await import('./reel-caption-component-tests.mjs');
+  await checkAsync(checkCaptionComponent);
+  check(() => assert.match(reelPanel, /captionReview\(captionState, \{ type: 'sync', scope, initialCaption \}\)/));
   check(() => assert.match(reelPanel, /Facebook Page: \{facebookPageName/));
   check(() => assert.match(reelPanel, /publishingReady\s*&& canPrepareFreshFacebookReel/));
   check(() => assert.match(reelPanel, /resultIsActive = result && \['publishing', 'delivery_unknown'\]\.includes\(result\.status\)/));

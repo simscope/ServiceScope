@@ -5,6 +5,8 @@ import { buildReelContext } from '../../supabase/functions/_shared/reel-engine/d
 import { buildManualReelAuthority } from '../../supabase/functions/_shared/reel-engine/manualPlanContract.js';
 import { authorizeReelForRender } from '../reel-renderer/authorization.js';
 import { normalizeRenderError, reelRenderMaxMediaBytes, reelWorkerLeaseSeconds, RenderJobError } from './contracts.js';
+import { hydrateEditorContext } from '../reel-editor/context.js';
+import { assertSnapshotCurrent } from '../reel-editor/service.js';
 
 export function createRenderRepository(client) {
   return {
@@ -24,6 +26,15 @@ export function createRenderRepository(client) {
       const planRow = planRows?.[0];
       if (!planRow) throw new RenderJobError('REEL_RENDER_CONTEXT_STALE', 409);
       const assets = new Map();
+      if (planRow.schema_version === 'reel-manager-plan-v2') {
+        const approvals = await client.select('company_reel_creative_plan_approvals', `select=plan_revision,approved_by&creative_plan_id=eq.${planRow.id}&company_id=eq.${claim.company_id}&job_id=eq.${claim.job_id}&limit=1`);
+        if (approvals?.[0]?.plan_revision !== planRow.plan_revision || approvals?.[0]?.approved_by !== planRow.created_by) throw new RenderJobError('REEL_RENDER_APPROVAL_REQUIRED', 409);
+        const context = await client.adminRpc('build_company_reel_editor_context', { p_job_id: claim.job_id, p_actor_id: planRow.created_by });
+        await hydrateEditorContext(client, context, planRow.plan_json.media.filter(m => m.attachmentId !== 'brand-logo').map(m => m.attachmentId), assets);
+        if (!planRow.plan_json.draft.brand.logo) assets.delete('brand-logo');
+        assertSnapshotCurrent(planRow.plan_json, context);
+        return { plan: planRow.plan_json, context, assets };
+      }
       const repository = contextRepository(client, assets);
       const session = await ownerSession(client, claim.company_id, planRow.created_by);
       const request = {
