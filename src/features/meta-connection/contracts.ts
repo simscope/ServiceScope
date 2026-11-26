@@ -1,4 +1,5 @@
 export const META_PROVIDER = 'meta-facebook-login' as const;
+export const META_NO_PAGES_NOTICE_PARAM = 'metaNoPages';
 export const META_REQUESTED_SCOPES = ['pages_show_list', 'pages_read_engagement', 'instagram_basic'] as const;
 export const META_FACEBOOK_PUBLISHING_SCOPE =
   'pages_manage_posts' as const;

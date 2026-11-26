@@ -1,7 +1,8 @@
 import { CheckCircle2, Facebook, Instagram, Link2, RefreshCw, ShieldCheck, Unplug } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   META_FACEBOOK_PUBLISHING_SCOPE,
+  META_NO_PAGES_NOTICE_PARAM,
   META_REQUESTED_SCOPES,
   type MetaAuthorizationIntent,
   type MetaSafeConnection,
@@ -11,8 +12,24 @@ import { useMetaSocialConnection } from './useMetaSocialConnection';
 export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
   const connection = useMetaSocialConnection(companyId);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [noPagesCompanyId, setNoPagesCompanyId] = useState(() => (
+    new URLSearchParams(window.location.search).get(META_NO_PAGES_NOTICE_PARAM) === '1' ? companyId : null
+  ));
   const snapshot = connection.snapshot;
   const busy = Boolean(connection.busy);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has(META_NO_PAGES_NOTICE_PARAM)) return;
+    url.searchParams.delete(META_NO_PAGES_NOTICE_PARAM);
+    window.history.replaceState(window.history.state, '', url);
+  }, []);
+
+  useEffect(() => {
+    if (noPagesCompanyId && (companyId !== noPagesCompanyId || connection.busy === 'starting')) {
+      setNoPagesCompanyId(null);
+    }
+  }, [companyId, connection.busy, noPagesCompanyId]);
 
   return (
     <section className="panel social-connections-panel" aria-labelledby="social-connections-title">
@@ -43,11 +60,20 @@ export function SocialConnectionsPanel({ companyId }: { companyId: string }) {
         </div>
       ) : null}
 
+      {snapshot?.configured && !snapshot.pending && noPagesCompanyId === companyId ? (
+        <div className="social-connection-state warning-state" role="status">
+          <div className="social-connection-copy">
+            <strong>No Facebook Page was authorized</strong>
+            <p>Use a Facebook account that can manage the Page and select the Page in the Meta authorization dialog.</p>
+          </div>
+        </div>
+      ) : null}
+
       {snapshot?.configured && snapshot.pending ? (
         <div className="social-connection-state">
           <div>
             <strong>Choose a Facebook Page</strong>
-            <p>Select one Page from the assets returned by your Meta authorization.</p>
+            <p>No Facebook Page selected for this authorization yet. Select a Page below to finish connecting.</p>
           </div>
           <div className="social-asset-list">
             {snapshot.pending.assets.map((asset) => (
@@ -152,9 +178,13 @@ function ConnectedState({
         <div><dt>Authorization expiry</dt><dd>{value.tokenExpiryStatus}</dd></div>
       </dl>
       <ScopeList scopes={value.grantedScopes} />
+      {authorizationReconnectRequired ? (
+        <p className="social-connection-status">{reauthorizationGuidance(value)}</p>
+      ) : null}
       {publishingReconnectRequired ? (
         <p className="social-connection-status">
-          Facebook publishing permission is not enabled. Reconnect Meta to add pages_manage_posts.
+          Facebook publishing permission is not enabled. Reconnect Meta to add pages_manage_posts, then allow
+          ServiceScope to create and manage posts for this Page in the Meta dialog.
         </p>
       ) : null}
       <div className="social-connection-actions">
@@ -189,6 +219,19 @@ function ConnectedState({
       ) : null}
     </div>
   );
+}
+
+function reauthorizationGuidance(value: MetaSafeConnection) {
+  if (value.tokenExpiryStatus === 'expired') {
+    return 'Your Meta authorization has expired. Reconnect Meta to renew access to this Page.';
+  }
+  if (value.lastErrorCode === 'META_TOKEN_INVALID') {
+    return 'Meta no longer accepts the access token. The token may have been revoked. Reconnect Meta to restore access.';
+  }
+  if (value.lastErrorCode === 'META_PAGE_UNAVAILABLE') {
+    return 'Meta could not access the connected Facebook Page. Check that your Facebook account can manage it, then reconnect Meta and select the Page.';
+  }
+  return 'Reconnect Meta to grant ServiceScope access to this Page again.';
 }
 
 function ScopeList({ scopes = [...META_REQUESTED_SCOPES] }: { scopes?: readonly string[] }) {

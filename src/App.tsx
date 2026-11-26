@@ -185,7 +185,7 @@ import { googleRouteUrl, money, statusClassName } from './utils/format';
 import { consumeMetaOAuthCallbackLocation } from './features/meta-connection/callback';
 import { MetaOAuthCallbackPage } from './features/meta-connection/MetaOAuthCallbackPage';
 import { canManageCompanySettings } from './features/company-portal/companySettingsAccess';
-import type { MetaReturnDestination } from './features/meta-connection/contracts';
+import { META_NO_PAGES_NOTICE_PARAM, type MetaReturnDestination } from './features/meta-connection/contracts';
 
 const previewQaToolsBuildEnabled = (import.meta as unknown as {
   env: { VITE_PREVIEW_QA_TOOLS_ENABLED?: string };
@@ -910,8 +910,12 @@ export function App() {
       staffRole: authSession?.kind === 'company' && authSession.role === 'Manager' ? 'manager' : undefined,
       staffStatus: authSession?.kind === 'company' && authSession.role === 'Manager' ? 'active' : undefined,
     });
-    const returnToDestination = (destination: MetaReturnDestination) => {
-      if (destination === 'social_connections') window.location.assign('/?view=onboarding#portal');
+    const returnToDestination = (destination: MetaReturnDestination, noPages: boolean) => {
+      if (destination === 'social_connections') {
+        const url = new URL('/?view=onboarding#portal', window.location.origin);
+        if (noPages) url.searchParams.set(META_NO_PAGES_NOTICE_PARAM, '1');
+        window.location.assign(url);
+      }
     };
     return (
       <MetaOAuthCallbackPage
