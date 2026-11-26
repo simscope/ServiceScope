@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { completeMetaConnection } from './clientApi';
 import type { MetaOAuthCallbackPayload, MetaReturnDestination } from './contracts';
 
-type CallbackState = 'idle' | 'completing' | 'complete' | 'expired' | 'error' | 'authentication_required';
+type CallbackState = 'idle' | 'completing' | 'complete' | 'expired' | 'no_pages' | 'error' | 'authentication_required';
 
 export function MetaOAuthCallbackPage({
   callback,
@@ -14,7 +14,7 @@ export function MetaOAuthCallbackPage({
   callback: MetaOAuthCallbackPayload;
   authenticated: boolean;
   allowedRole: boolean;
-  onReturn: (destination: MetaReturnDestination) => void;
+  onReturn: (destination: MetaReturnDestination, noPages: boolean) => void;
 }) {
   const [state, setState] = useState<CallbackState>('idle');
   const [destination, setDestination] = useState<MetaReturnDestination>('social_connections');
@@ -38,7 +38,10 @@ export function MetaOAuthCallbackPage({
       })
       .catch((error: unknown) => {
         if (!active) return;
-        setState(error instanceof Error && error.message.includes('OAUTH_STATE_EXPIRED') ? 'expired' : 'error');
+        const code = error instanceof Error ? error.message.split(':', 1)[0] : '';
+        if (code === 'OAUTH_STATE_EXPIRED') setState('expired');
+        else if (code === 'META_NO_PAGES') setState('no_pages');
+        else setState('error');
       });
     return () => { active = false; };
   }, [allowedRole, authenticated, callback]);
@@ -56,7 +59,9 @@ export function MetaOAuthCallbackPage({
               ? 'Completing secure connection...'
               : state === 'expired'
                 ? 'Authorization expired'
-                : 'Connection could not be completed'}
+                : state === 'no_pages'
+                  ? 'No Facebook Page was authorized'
+                  : 'Connection could not be completed'}
         </h1>
         <p className="auth-copy">
           {complete
@@ -67,9 +72,11 @@ export function MetaOAuthCallbackPage({
                 ? 'ServiceScope is validating the one-time authorization response.'
                 : state === 'expired'
                   ? 'This Meta authorization took too long to complete. Return to Social connections and start a new authorization.'
-                  : 'No connection was saved. Return to Settings and start a new authorization.'}
+                  : state === 'no_pages'
+                    ? 'Return to Social connections, sign in with a Facebook account that can manage the Page, and select it in the Meta authorization dialog.'
+                    : 'No connection was saved. Return to Settings and start a new authorization.'}
         </p>
-        {state !== 'completing' ? <button className="primary-button" type="button" onClick={() => onReturn(destination)}>Return to ServiceScope</button> : null}
+        {state !== 'completing' ? <button className="primary-button" type="button" onClick={() => onReturn(destination, state === 'no_pages')}>Return to ServiceScope</button> : null}
       </section>
     </main>
   );
